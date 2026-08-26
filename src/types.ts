@@ -1,0 +1,43 @@
+export type ViewMode = 'course' | 'chat';
+export type ResourceKind = 'audio' | 'image' | 'document' | 'transcript';
+export type ArtifactKind = 'summary' | 'guide' | 'quiz' | 'flashcards' | 'mindmap' | 'glossary';
+
+export interface Lesson {
+  id: string;
+  subject: string;
+  chapter: string;
+  title: string;
+  teacher: string;
+  duration: string;
+  date: string;
+  progress: number;
+}
+
+export interface Resource {
+  id: string;
+  name: string;
+  meta: string;
+  kind: ResourceKind;
+}
+
+export interface TranscriptSegment {
+  id: string;
+  timestamp: string;
+  speaker: string;
+  text: string;
+  status?: 'verified' | 'review';
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  citations?: string[];
+}
+
+export interface Artifact {
+  id: string;
+  kind: ArtifactKind;
+  label: string;
+  createdAt: string;
+}
