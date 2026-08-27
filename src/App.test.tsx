@@ -125,6 +125,20 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText(/Bookmark added at/)).toBeInTheDocument();
   });
 
+  it('toggles a transcript segment between review and verified', async () => {
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Mark segment 01:15:02 verified' }));
+
+    const segment = screen.getByText('Without this normalization, dot products grow with the key dimension.').closest('article');
+    expect(segment).toBeTruthy();
+    expect(within(segment as HTMLElement).queryByText('Needs review')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mark segment 01:15:02 for review' })).toBeInTheDocument();
+    expect(screen.getByText('Transcript segment verified.')).toBeInTheDocument();
+  });
+
   it('adds a durable recording resource after a successful stop', async () => {
     const user = userEvent.setup();
     const session = {
