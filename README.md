@@ -20,6 +20,7 @@ StudentLLM is built around three principles:
 - Versioned local workspace persistence for courses, transcript segments, and artifacts.
 - Chunked `MediaRecorder` capture with IndexedDB persistence when supported by the browser.
 - OpenAI-compatible smoke checks for NVIDIA NIM and LM Studio.
+- Optional live LM Studio chat through a browser-safe OpenAI-compatible provider adapter; no remote API key is bundled in the client.
 - Vitest unit and integration coverage, Playwright browser coverage, axe accessibility checks, and GitHub Actions CI.
 
 ## Quick start
@@ -57,6 +58,7 @@ Provider credentials are read at runtime and are never loaded from a repository 
 - NVIDIA NIM reads `NVIDIA_API_KEY` from the Windows User environment or the current process.
 - NVIDIA defaults to `https://integrate.api.nvidia.com/v1` and `openai/gpt-oss-20b`.
 - LM Studio defaults to `http://127.0.0.1:1234/v1` and `qwen/qwen3-4b`.
+- Set `VITE_LM_STUDIO_BASE_URL` before `npm run dev` to enable live chat against the local server; the browser integration never accepts an NVIDIA credential.
 - Optional endpoint and model overrides are listed in [.env.example](./.env.example); it contains no secret values.
 
 See [docs/providers.md](./docs/providers.md) for provider-specific commands.
