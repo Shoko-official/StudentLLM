@@ -38,9 +38,12 @@ The first generation benchmark uses the official [EleutherAI lm-evaluation-harne
 | --- | --- | --- | --- | --- |
 | 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test split, 14 categories, 1 item per category, seed 42, `temperature=0`, `/no_think` | exact match `0.2143` (3/14) | Technical pipeline pass, partial sample |
 | 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test split, 14 categories, 5 items per category, seed 42, `temperature=0`, `/no_think` | exact match `0.3000` (21/70), stderr `0.0484` | Partial public sample; per-category results retained in the local receipt |
+| 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test split, 14 categories, 10 items per category, seed 42, `temperature=0`, `/no_think` | exact match `0.2143` (30/140), stderr `0.0347` | Complete 140-item public sample; aggregate and per-task receipts written |
 | 2026-08-27 | `openai/gpt-oss-20b` / NVIDIA NIM | same protocol, credential from `NVIDIA_API_KEY` | network timeout before the first response, no aggregate | Transport failure, no score |
 
-The 0.2143 and 0.3000 values are not leaderboard scores. The harness documents that `--limit` is not suitable for a final metric; these runs validate dataset loading, prompt construction, API routing, answer extraction, and metric calculation on partial public samples. Model strength remains unverified.
+The 0.2143 and 0.3000 values are not leaderboard scores. The harness documents that `--limit` is not suitable for a final metric; these runs validate dataset loading, prompt construction, API routing, answer extraction, and metric calculation on public samples. Model strength remains unverified.
+
+The 140-item run completed all API requests and saved the aggregate receipt `artifacts/benchmarks/mmlu-pro/qwen3-4b-limit10_2026-08-27T15-43-26.008905.json` before the first invocation failed while printing a Unicode arrow to a CP1252 terminal. The adapter now configures UTF-8 stdout so future runs report a clean exit status; the saved metrics are valid for the stated public sample and the presentation failure is recorded separately.
 
 An expanded LM Studio run with 20 items per category was interrupted by the transport at 132/280 before aggregation. It is rejected and contributes no score.
 

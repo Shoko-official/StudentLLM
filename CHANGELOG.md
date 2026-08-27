@@ -38,6 +38,7 @@
 - full FiQA dense receipt using `BAAI/bge-small-en-v1.5`, with the shared BM25 comparison;
 - deterministic single-worker local Playwright mode to prevent Windows browser-test contention while keeping CI parallel;
 - 70-item public MMLU-Pro LM Studio receipt covering all 14 categories with explicit partial-sample validity;
+- 140-item public MMLU-Pro LM Studio receipt covering all 14 categories, plus UTF-8 output handling for Windows benchmark runs;
 - benchmark adapter syntax checks included in the local and GitHub verification gates;
 - NVIDIA NIM and LM Studio OpenAI-compatible smoke checks with runtime credentials;
 - live NVIDIA NIM and LM Studio smoke checks reverified on 2026-08-27 without restarting the local model process;
