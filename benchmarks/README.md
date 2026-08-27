@@ -130,19 +130,20 @@ An observed 140-item run covered all 14 categories with 10 items per category an
 
 ## NVIDIA NIM
 
-The same adapter can target NVIDIA NIM without placing the credential on the command line:
+The same adapter can target NVIDIA NIM through the Windows User environment variable:
 
 ```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
 $env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
 .\.venv-bench\Scripts\python.exe benchmarks\run_mmlu_pro.py run `
   --model local-chat-completions `
   --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=1,max_retries=3" `
   --tasks mmlu_pro --limit 1 --num_fewshot 0 --batch_size 1 --apply_chat_template `
-  --gen_kwargs "temperature=0,max_gen_toks=256" --seed 42 `
+  --gen_kwargs "temperature=0,max_gen_toks=512,reasoning_effort=low" --seed 42 `
   --output_path artifacts/benchmarks/mmlu-pro/gpt-oss-20b.json --log_samples
 ```
 
-The August 27, 2026 NVIDIA run timed out after retries before producing a response aggregate. It is recorded as a transport failure with no score. The credential remains runtime-only through the Windows User environment.
+The first August 27, 2026 NVIDIA run timed out after retries before producing a response aggregate and is recorded as a transport failure with no score. A subsequent 140-item public sample across all 14 MMLU-Pro categories completed through NVIDIA NIM with exact match `0.2857` (40/140, stderr `0.0387`) using `reasoning_effort=low`. This is a partial public sample, not a leaderboard score or a full-suite result.
 
 ## BEIR BM25 baselines
 
