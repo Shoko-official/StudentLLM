@@ -77,7 +77,7 @@ describe('StudentLLM workspace', () => {
     await user.type(screen.getByLabelText('Ask the course chat'), 'What updates parameters using the learning rate?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByRole('button', { name: 'Source · optimization.md' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Source · optimization.md · part 1' })).toBeInTheDocument();
   });
 
   it('sends retrieved source context to an injected live provider', async () => {
@@ -95,7 +95,7 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('The source explains gradient descent.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Source · optimization.md' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Source · optimization.md · part 1' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'LM Studio · mock-local-model' })).toBeInTheDocument();
     expect(generate).toHaveBeenCalledWith([
       { role: 'system', content: expect.stringContaining('Gradient descent updates parameters using the learning rate.') },

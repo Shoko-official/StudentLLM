@@ -23,7 +23,7 @@ StudentLLM is built around three principles:
 - Original imported source blobs are stored in IndexedDB when available, alongside their fingerprints.
 - OpenAI-compatible smoke checks for NVIDIA NIM and LM Studio.
 - Optional live LM Studio chat through a browser-safe OpenAI-compatible provider adapter; no remote API key is bundled in the client.
-- Local lexical retrieval selects transcript or imported text excerpts and preserves source citations before a live provider request.
+- Local lexical retrieval selects transcript or bounded imported text passages and preserves source-part citations before a live provider request.
 - Vitest unit and integration coverage, Playwright browser coverage, axe accessibility checks, and GitHub Actions CI.
 
 ## Quick start
@@ -77,6 +77,7 @@ src/
   lib/recording-storage.ts   IndexedDB audio chunk storage
   lib/source-ingest.ts        local source classification and fingerprinting
   lib/source-storage.ts       IndexedDB source blob storage
+  lib/source-chunking.ts      bounded text passages for retrieval
   lib/workspace-storage.ts   versioned workspace persistence
   *.test.tsx                 UI and storage tests
 scripts/
