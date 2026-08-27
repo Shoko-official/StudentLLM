@@ -72,7 +72,7 @@ try {
     headers: nvidiaKey ? { authorization: `Bearer ${nvidiaKey}` } : {},
     requestedModel: process.env.NVIDIA_MODEL || DEFAULT_NVIDIA_MODEL,
     preferredPatterns: [/mistral-7b/i, /nemotron.*nano/i, /llama.*8b/i],
-    prompt: 'Réponds exactement par une phrase courte: les sources originales restent la vérité.',
+    prompt: 'Reply with exactly one short sentence: original sources remain the source of truth.',
   }));
 } catch (error) {
   results.push({ name: 'NVIDIA', status: 'failed', error: error instanceof Error ? error.message : String(error), keyConfigured: Boolean(nvidiaKey) });
@@ -85,7 +85,7 @@ try {
     headers: {},
     requestedModel: process.env.LM_STUDIO_MODEL || DEFAULT_LM_STUDIO_MODEL,
     preferredPatterns: [/qwen3-4b/i, /qwen/i, /gemma/i],
-    prompt: 'Réponds exactement par une phrase courte: les sources originales restent la vérité. /no_think',
+    prompt: 'Reply with exactly one short sentence: original sources remain the source of truth. /no_think',
   }));
 } catch (error) {
   results.push({ name: 'LM Studio', status: 'failed', error: error instanceof Error ? error.message : String(error) });

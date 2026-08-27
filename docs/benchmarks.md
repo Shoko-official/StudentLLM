@@ -1,36 +1,36 @@
-# Benchmarks et gates de release
+# Benchmark evidence and release gates
 
-## Règle de preuve
+## Measurement methodology
 
-Un test UI vert prouve un parcours d'interface. Il ne prouve pas la qualité ASR, OCR, RAG ou génération. StudentLLM publiera les résultats avec le dataset, la version du modèle, le matériel, la quantification, les seeds et la commande exacte.
+A passing UI test demonstrates an interface workflow. It does not measure ASR, OCR, retrieval, or generation quality. StudentLLM records the dataset, model version, hardware, quantization, seed, command, raw output, and validity of every published result.
 
-Les benchmarks faciles ou auto-construits ne sont pas utilisés seuls pour déclarer une release frontier.
+Easy or self-authored checks are useful for regression coverage but are never the only evidence for a frontier claim.
 
-## Vérifications disponibles maintenant
+## Available local checks
 
-| Vérification | Nature | Commande | Statut |
+| Check | Method | Command | Observed result |
 | --- | --- | --- | --- |
-| TypeScript | gate locale | `npm run check` | PASS observé |
-| UI integration | Vitest + Testing Library | `npm run test:run` | PASS observé, 6 tests |
-| Production build | Vite | `npm run build` | PASS observé |
-| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS observé, 3 tests |
-| NVIDIA generation | API réelle, clé runtime | `npm run providers:smoke` | PASS observé, 1,288 ms |
-| LM Studio generation | serveur local réel | `npm run providers:smoke` | PASS observé, 351 ms |
+| TypeScript | TypeScript project check | `npm run check` | PASS |
+| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 13 tests |
+| Production artifact | Vite | `npm run build` | PASS |
+| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 4 tests |
+| NVIDIA generation | Live API, runtime credential | `npm run providers:smoke` | PASS observed, 1,288 ms |
+| LM Studio generation | Live local server | `npm run providers:smoke` | PASS observed, 351 ms |
 
-Les latences ci-dessus sont des observations ponctuelles de la machine de développement, pas des SLO de production.
+The provider latencies are point observations on the development machine, not production SLOs.
 
-## Résultat public observé: MMLU-Pro
+## Observed public result: MMLU-Pro
 
-Le premier benchmark de génération utilise le harness officiel [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) et le dataset public [TIGER-Lab/MMLU-Pro](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro). Il passe par l'API OpenAI-compatible de LM Studio, sans clé distante.
+The first generation benchmark uses the official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) and the public [TIGER-Lab/MMLU-Pro dataset](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro). It calls the LM Studio OpenAI-compatible API without a remote credential.
 
-| Run | Modèle / backend | Protocole | Résultat | Statut |
+| Run | Model and backend | Protocol | Result | Validity |
 | --- | --- | --- | --- | --- |
-| 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test, 14 catégories, 1 item par catégorie, seed 42, `temperature=0`, `/no_think` | exact-match `0.2143` (3/14) | PASS technique, échantillon partiel |
-| 2026-08-27 | `openai/gpt-oss-20b` / NVIDIA NIM | même protocole, clé issue de `NVIDIA_API_KEY` | timeout réseau avant la première réponse, aucun agrégat | network-failed, aucun score |
+| 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test split, 14 categories, 1 item per category, seed 42, `temperature=0`, `/no_think` | exact match `0.2143` (3/14) | Technical pipeline pass, partial sample |
+| 2026-08-27 | `openai/gpt-oss-20b` / NVIDIA NIM | same protocol, credential from `NVIDIA_API_KEY` | network timeout before the first response, no aggregate | Transport failure, no score |
 
-Ce score n'est pas un score leaderboard: le harness avertit lui-même que `--limit` ne doit pas servir à calculer une métrique finale. Il sert à vérifier la chaîne dataset -> prompt -> API -> extraction -> métrique. La force du modèle reste `strength-unverified`.
+The 0.2143 value is not a leaderboard score. The harness documents that `--limit` is not suitable for a final metric; this run validates dataset loading, prompt construction, API routing, answer extraction, and metric calculation. Model strength remains unverified.
 
-La passe élargie à 20 items par catégorie a été interrompue par le transport à 132/280 avant agrégation; elle est rejetée et aucun score n'en est déduit.
+An expanded LM Studio run with 20 items per category was interrupted by the transport at 132/280 before aggregation. It is rejected and contributes no score.
 
 Reproduction:
 
@@ -46,63 +46,62 @@ python benchmarks/run_mmlu_pro.py run `
   --output_path artifacts/benchmarks/mmlu-pro/qwen3-4b.json --log_samples
 ```
 
-Les sorties brutes sont locales et ignorées par Git. Une exécution complète ou un run limité ne peut être promu sans conserver la commande, le commit, le dataset, le matériel et le statut de validité.
+Raw outputs are local and ignored by Git. A partial or full run is not promoted without its command, commit, dataset, hardware, and validity record.
 
-## Benchmarks publics à intégrer progressivement
+## Public benchmarks to integrate
 
-| Domaine | Benchmark public | Mesures principales |
+| Domain | Public benchmark | Primary measurements |
 | --- | --- | --- |
-| ASR multilingue | [FLEURS](https://huggingface.co/datasets/google/fleurs) | WER, CER |
-| ASR français | [MLS](https://www.openslr.org/94/) | WER, terme technique |
-| ASR français | [Common Voice](https://commonvoice.mozilla.org/datasets) | WER par accent/bruit |
-| traduction | [CoVoST 2](https://github.com/facebookresearch/fairseq/tree/main/examples/speech_to_text) | BLEU, COMET |
-| far-field | [AMI](https://groups.inf.ed.ac.uk/ami/corpus/) | WER, DER, SA-WER |
-| bruit | [MUSAN](https://www.openslr.org/17/) | WER par SNR |
-| diarisation | [DIHARD](https://dihardchallenge.github.io/dihard3/) | DER, JER |
-| document parsing | [OmniDocBench](https://github.com/opendatalab/OmniDocBench) | TextEdit, TEDS, CDM |
-| document QA | [DocVQA](https://www.docvqa.org/) | ANLS, exact match |
-| tables | [PubTabNet](https://github.com/ibm-aur-nlp/PubTabNet) | TEDS |
-| retrieval | [BEIR](https://github.com/beir-cellar/beir) | nDCG, Recall, MRR |
-| embeddings | [MTEB](https://github.com/embeddings-benchmark/mteb) | scores par tâche/langue |
-| tool calling | [BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html) | tool accuracy, AST |
-| génération multi-domaine | [MMLU-Pro](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro) | exact-match par domaine |
+| Multilingual ASR | [FLEURS](https://huggingface.co/datasets/google/fleurs) | WER, CER |
+| French ASR | [MLS](https://www.openslr.org/94/) | WER, technical term accuracy |
+| French ASR | [Common Voice](https://commonvoice.mozilla.org/datasets) | WER by accent and noise |
+| Speech translation | [CoVoST 2](https://github.com/facebookresearch/fairseq/tree/main/examples/speech_to_text) | BLEU, COMET |
+| Far-field speech | [AMI](https://groups.inf.ed.ac.uk/ami/corpus/) | WER, DER, SA-WER |
+| Noise robustness | [MUSAN](https://www.openslr.org/17/) | WER by SNR |
+| Diarization | [DIHARD](https://dihardchallenge.github.io/dihard3/) | DER, JER |
+| Document parsing | [OmniDocBench](https://github.com/opendatalab/OmniDocBench) | TextEdit, TEDS, CDM |
+| Document QA | [DocVQA](https://www.docvqa.org/) | ANLS, exact match |
+| Tables | [PubTabNet](https://github.com/ibm-aur-nlp/PubTabNet) | TEDS |
+| Retrieval | [BEIR](https://github.com/beir-cellar/beir) | nDCG, Recall, MRR |
+| Embeddings | [MTEB](https://github.com/embeddings-benchmark/mteb) | scores by task and language |
+| Tool calling | [BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html) | tool accuracy, AST validity |
+| General generation | [MMLU-Pro](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro) | exact match by domain |
 
 ## LectureBench
 
-LectureBench est le benchmark produit versionné, pas un remplacement des jeux publics. Il contiendra:
+LectureBench is the versioned product benchmark, not a replacement for public datasets. It will include:
 
-- un golden set stable et rarement modifié;
-- des données classroom avec français, anglais, code-switching, bruit, distance micro et parole superposée;
-- documents avec pages, tableaux, formules, schémas et handwriting;
-- questions RAG answerable et volontairement impossibles;
-- citations exactes et timestamps de référence;
-- tests de crash, reprise, export/import et suppression.
+- a stable golden set with controlled changes;
+- classroom audio in French and English, code-switching, noise, microphone distance, and overlapping speech;
+- documents with pages, tables, formulas, diagrams, and handwriting;
+- answerable and intentionally unanswerable retrieval questions;
+- exact citations and reference timestamps;
+- crash, recovery, export, import, and deletion scenarios.
 
-## Hard gates ciblés
+## Initial hard gates
 
-Les seuils détaillés seront dans les manifests versionnés. Les premiers P0 sont:
+The detailed thresholds belong in versioned manifests. Initial P0 gates are:
 
 ```text
-audio perdu = 0
-source corrompue = 0
-violation de scope = 0
-trafic réseau inattendu en local-only = 0
-erreur critique de formule sur golden set = 0
-échec de migration = 0
-échec de soak recording = 0
+lost audio = 0
+corrupted source = 0
+scope violation = 0
+unexpected local-only network traffic = 0
+critical formula error on the golden set = 0
+migration failure = 0
+recording soak failure = 0
 ```
 
-Les objectifs de calibration V1 incluent notamment WER classe normale <= 10 %, RTF < 1, RAG Recall@10 >= 98 %, faithfulness >= 98 %, précision des citations >= 99 % et exactitude QCM >= 99 %. Tant que les moteurs et les datasets ne sont pas intégrés, ces valeurs sont des objectifs, pas des résultats.
+Initial V1 calibration targets include normal-class WER <= 10%, RTF < 1, RAG Recall@10 >= 98%, faithfulness >= 98%, citation precision >= 99%, and quiz accuracy >= 99%. Until the engines and datasets are integrated, these are targets rather than results.
 
-## Reproductibilité
+## Reproducibility record
 
-Chaque résultat doit conserver:
+Every result keeps:
 
-- commit Git et version du manifest;
-- dataset et split exact;
-- modèle, backend et quantification;
-- OS, CPU, RAM, GPU, VRAM, threads et mode énergie;
-- seed et paramètres;
-- métriques brutes et résumé;
-- raison de promotion ou de rejet.
-
+- Git commit and manifest version;
+- exact dataset and split;
+- model, backend, and quantization;
+- OS, CPU, RAM, GPU, VRAM, threads, and power mode;
+- seed and generation parameters;
+- raw metrics and summary;
+- promotion or rejection reason.

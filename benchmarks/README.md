@@ -1,19 +1,19 @@
-# Benchmarks reproductibles
+# Reproducible benchmarks
 
-Ce dossier contient les adaptateurs et commandes de benchmark, pas les sorties brutes. Les artefacts locaux sont écrits sous `artifacts/` et ignorés par Git pour éviter de publier des prompts ou des données de benchmark inutilement.
+This directory contains benchmark adapters and commands, not raw outputs. Local artifacts are written under `artifacts/` and ignored by Git so prompts and private data are not published accidentally.
 
-## MMLU-Pro via LM Studio
+## MMLU-Pro through LM Studio
 
-`run_mmlu_pro.py` utilise le task public MMLU-Pro du projet [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness). L'adaptateur ajoute `/no_think` au dernier message utilisateur pour les modèles Qwen3 afin que le canal de réponse finale soit évalué au lieu du seul canal de raisonnement.
+`run_mmlu_pro.py` uses the public MMLU-Pro task from the [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) project. The adapter appends `/no_think` to the final user message for Qwen3 models so scoring evaluates the final answer channel.
 
-Préparer un environnement Python local:
+Prepare a local Python environment:
 
 ```powershell
 python -m venv .venv-bench
 .\.venv-bench\Scripts\python.exe -m pip install "lm-eval[api]"
 ```
 
-Le serveur LM Studio doit déjà être lancé et exposer le modèle demandé. La commande ci-dessous est un smoke de reproductibilité sur un item par catégorie, pas un score final:
+LM Studio must already be running and expose the requested model. The following command is a reproducibility smoke run with one item per category, not a final score:
 
 ```powershell
 $env:PYTHONUTF8 = '1'
@@ -25,11 +25,11 @@ $env:PYTHONUTF8 = '1'
   --output_path artifacts/benchmarks/mmlu-pro/qwen3-4b.json --log_samples
 ```
 
-Pour toute publication, utiliser un split et une taille d'échantillon explicitement déclarés, conserver les sorties brutes localement et ne jamais transformer un run `--limit` en affirmation frontier.
+Every published result declares its split and sample size, keeps raw outputs locally, and identifies partial runs separately from aggregate benchmark results.
 
 ## NVIDIA NIM
 
-Le même adaptateur peut viser NVIDIA NIM sans placer la clé dans la ligne de commande:
+The same adapter can target NVIDIA NIM without placing the credential on the command line:
 
 ```powershell
 $env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
@@ -41,4 +41,4 @@ $env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
   --output_path artifacts/benchmarks/mmlu-pro/gpt-oss-20b.json --log_samples
 ```
 
-Le run NVIDIA du 27 août 2026 a expiré sur le réseau après retries; il est conservé comme échec de transport, sans score. La clé reste lue au runtime depuis l'environnement utilisateur Windows.
+The August 27, 2026 NVIDIA run timed out after retries before producing a response aggregate. It is recorded as a transport failure with no score. The credential remains runtime-only through the Windows User environment.

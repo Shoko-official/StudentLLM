@@ -4,8 +4,9 @@
 
 ### Added
 
-- première vertical slice React + TypeScript de l'espace StudentLLM;
-- navigation cours, transcript, enregistrement démonstration, chat et Studio;
-- smoke test NVIDIA NIM + LM Studio avec secrets runtime;
-- tests Vitest, Playwright, build TypeScript/Vite et CI GitHub Actions;
-- documentation architecture, providers, benchmarks, contribution et sécurité.
+- React and TypeScript learning workspace;
+- course navigation, transcript review, recording controls, chat, and Studio artifact actions;
+- versioned local workspace persistence and chunked `MediaRecorder` audio storage;
+- NVIDIA NIM and LM Studio OpenAI-compatible smoke checks with runtime credentials;
+- Vitest, Playwright, axe, TypeScript, Vite, and GitHub Actions verification;
+- architecture, provider, benchmark, contribution, and security documentation.

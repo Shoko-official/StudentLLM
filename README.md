@@ -1,108 +1,102 @@
 # StudentLLM
 
-StudentLLM est un learning studio local-first pour transformer les cours en connaissances vérifiables. L'interface relie une session de cours, son transcript, ses sources et ses artefacts de révision sans remplacer la source originale.
+StudentLLM is a local-first learning studio that turns lectures into searchable, source-linked study material. It connects a course session, its transcript, original sources, and review artifacts without replacing the source material.
 
-> Statut: vertical slice frontend fonctionnelle. La capture microphone navigateur, la navigation de cours, le chat local simulé et le Studio sont testables. Les workers ASR, OCR, stockage persistant et RAG de production restent à intégrer derrière des interfaces stables.
+[![CI](https://github.com/Shoko-official/StudentLLM/actions/workflows/ci.yml/badge.svg)](https://github.com/Shoko-official/StudentLLM/actions/workflows/ci.yml)
 
-## Ce qui est déjà livré
+## Product direction
 
-- Interface trois panneaux responsive: bibliothèque, cours/chat, Studio.
-- Session de cours avec état d'enregistrement, compteur, marque-page et transcript à vérifier.
-- Création d'un nouveau cours via le bouton ou `Ctrl/Cmd + N`.
-- Recherche dans la bibliothèque et navigation entre cours.
-- Sources du cours et artefacts de révision: résumé, fiche, QCM, flashcards, carte conceptuelle, glossaire.
-- Chat avec citations de contexte visibles.
-- Accès microphone via `getUserMedia` quand le navigateur l'autorise, avec mode démonstration sinon.
-- Smoke test réel de NVIDIA NIM et LM Studio via APIs OpenAI-compatible.
-- Tests unitaires/intégration Vitest et tests E2E Playwright.
+StudentLLM is built around three principles:
 
-## Principes du produit
+- Original audio, documents, and images remain recoverable and traceable.
+- Generated answers and study artifacts link back to a source, page, or timestamp.
+- Local processing is the default; remote providers are explicit integrations.
 
-1. Les sources originales sont la vérité: audio, documents et images ne sont jamais remplacés par du contenu généré.
-2. Toute sortie générée doit pouvoir pointer vers une source, une page ou un timestamp.
-3. Le local-first est le comportement par défaut; une requête distante doit être explicite.
-4. Les moteurs IA sont interchangeables: LM Studio, NVIDIA NIM, vLLM et les futurs backends ne doivent pas contaminer le modèle métier.
-5. La fiabilité prime sur un score IA isolé: aucune perte, corruption ou fuite réseau implicite.
+## Included today
 
-## Démarrage rapide
+- Responsive three-panel workspace: Library, Course or Chat, and Studio.
+- Course creation, navigation, search, bookmarks, transcript review states, and artifact creation.
+- Browser microphone access with a demonstration fallback.
+- Versioned local workspace persistence for courses, transcript segments, and artifacts.
+- Chunked `MediaRecorder` capture with IndexedDB persistence when supported by the browser.
+- OpenAI-compatible smoke checks for NVIDIA NIM and LM Studio.
+- Vitest unit and integration coverage, Playwright browser coverage, axe accessibility checks, and GitHub Actions CI.
 
-Pré-requis: Node.js 22+ et npm 10+.
+## Quick start
+
+Requirements: Node.js 22.13+ and npm 10+.
 
 ```bash
 npm ci
 npm run dev
 ```
 
-Puis ouvrir l'URL affichée par Vite. Pour une prévisualisation de production:
+Open the local URL printed by Vite. To inspect the production build:
 
 ```bash
 npm run build
 npm run preview
 ```
 
-## Vérifications
+## Verification
 
 ```bash
-npm run check
-npm run test:run
-npm run build
-npm run test:e2e
+npm run verify
 ```
 
-Le test E2E installe/utilise Chromium via Playwright. Le smoke provider est volontairement manuel car il consomme des APIs et des ressources locales:
+`verify` runs the TypeScript project check, Vitest, the Vite production build, and Playwright Chromium tests. Provider checks are run separately because they depend on a local server or a remote API:
 
 ```bash
 npm run providers:smoke
 ```
 
-## Providers locaux et NVIDIA
+## Provider configuration
 
-Les credentials ne sont pas lus depuis un fichier du dépôt.
+Provider credentials are read at runtime and are never loaded from a repository file.
 
-- NVIDIA: la variable `NVIDIA_API_KEY` est lue au runtime depuis l'environnement Windows utilisateur ou processus.
-- LM Studio: serveur local par défaut sur `http://127.0.0.1:1234/v1`.
-- Variables optionnelles: voir [.env.example](./.env.example). Ce fichier ne contient aucune valeur secrète.
+- NVIDIA NIM reads `NVIDIA_API_KEY` from the Windows User environment or the current process.
+- NVIDIA defaults to `https://integrate.api.nvidia.com/v1` and `openai/gpt-oss-20b`.
+- LM Studio defaults to `http://127.0.0.1:1234/v1` and `qwen/qwen3-4b`.
+- Optional endpoint and model overrides are listed in [.env.example](./.env.example); it contains no secret values.
 
-Le smoke test masque la clé et n'affiche que le nom du modèle, la latence et un court échantillon de réponse. Voir [docs/providers.md](./docs/providers.md).
+See [docs/providers.md](./docs/providers.md) for provider-specific commands.
 
-## Organisation
+## Repository layout
 
 ```text
 src/
-  App.tsx              UI et flux de la vertical slice
-  styles.css           système visuel responsive
-  types.ts             contrats de données frontend
-  lib/recorder.ts      accès microphone isolé
-  App.test.tsx         tests UI Vitest
+  App.tsx                    workspace UI and interactions
+  styles.css                 responsive visual system
+  types.ts                   frontend data contracts
+  lib/recorder.ts            microphone and MediaRecorder capture
+  lib/recording-storage.ts   IndexedDB audio chunk storage
+  lib/workspace-storage.ts   versioned workspace persistence
+  *.test.tsx                 UI and storage tests
 scripts/
-  provider-smoke.mjs   vérification NVIDIA + LM Studio
+  provider-smoke.mjs         NVIDIA and LM Studio smoke check
 benchmarks/
-  run_mmlu_pro.py      adaptateur lm-evaluation-harness pour MMLU-Pro
+  run_mmlu_pro.py            lm-evaluation-harness adapter for MMLU-Pro
 tests/e2e/
-  workspace.spec.ts    parcours navigateur réel
+  workspace.spec.ts          real browser workflows
 docs/
-  architecture.md     modèle cible et limites actuelles
-  benchmarks.md       résultats observés, benchmarks publics et gates
-  providers.md        configuration sans secret dans le repo
+  architecture.md            system boundaries and target runtime
+  benchmarks.md              public benchmark evidence and gates
+  providers.md               provider setup and runtime configuration
 ```
 
-## Feuille de route
+## Roadmap
 
-- Persistance SQLite WAL, chunks audio et reprise après crash.
-- Abstractions `SpeechEngine` et `LLMProvider` côté Rust/sidecars.
-- Import PDF/images, OCR et provenance par page/région.
-- Retrieval hybride BM25 + dense + reranker, puis agent loop contrôlée par l'application.
-- Tauri 2 après validation de la vertical slice web sur Windows, macOS et Linux.
-- LectureBench et intégration progressive des jeux de données publics documentés dans [docs/benchmarks.md](./docs/benchmarks.md).
+- Move browser persistence to SQLite WAL in the Tauri desktop runtime, with crash recovery and tested migrations.
+- Add `SpeechEngine` and `LLMProvider` implementations behind stable application contracts.
+- Add PDF and image import, OCR, page or region provenance, and formula-aware extraction.
+- Add hybrid BM25 plus dense retrieval, reranking, and a permissioned citation-first agent loop.
+- Validate the desktop shell on Windows, macOS, and Linux.
+- Expand public benchmark coverage and the versioned LectureBench described in [docs/benchmarks.md](./docs/benchmarks.md).
 
-## Contribuer
+## Contributing
 
-Lire [CONTRIBUTING.md](./CONTRIBUTING.md). Les changements passent par une branche de travail, des commits ciblés, les gates locales et une PR mergée en squash après CI verte.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the development and pull request workflow.
 
-## Sécurité
+## License
 
-Ne commitez jamais de clé NVIDIA, token, fichier `.env`, audio de cours ou document étudiant. Lire [SECURITY.md](./SECURITY.md).
-
-## Licence
-
-MIT. Voir [LICENSE](./LICENSE).
+MIT. See [LICENSE](./LICENSE).

@@ -1,48 +1,57 @@
-# Providers et secrets
+# Provider configuration
+
+The provider smoke script uses OpenAI-compatible endpoints. It reads configuration at runtime and does not require provider values in the repository.
 
 ## NVIDIA NIM
 
-La clé NVIDIA n'est pas stockée dans le dépôt et ne doit pas l'être. Le programme lit `NVIDIA_API_KEY` depuis l'environnement au moment de l'exécution.
+The NVIDIA credential is read from the Windows User environment variable `NVIDIA_API_KEY`.
 
-Dans PowerShell, configurer le scope utilisateur avec une valeur fournie hors dépôt:
+Set it outside the repository in PowerShell:
 
 ```powershell
-[Environment]::SetEnvironmentVariable('NVIDIA_API_KEY', '<votre-cle>', 'User')
+[Environment]::SetEnvironmentVariable('NVIDIA_API_KEY', '<your-key>', 'User')
 ```
 
-Fermer puis rouvrir le terminal pour que les nouveaux processus héritent de la variable. Ne jamais afficher la valeur dans un log, une capture d'écran ou une commande commitée.
+Close and reopen the terminal so new processes inherit the variable. The smoke script never prints the credential.
 
-Endpoint par défaut: `https://integrate.api.nvidia.com/v1`.
+Defaults:
 
-Le modèle par défaut du smoke test est `openai/gpt-oss-20b`, surchargeable avec `NVIDIA_MODEL`. Le catalogue NVIDIA peut exposer des modèles historiques ou indisponibles pour la génération; le smoke test vérifie séparément la liste et une vraie génération.
+- endpoint: `https://integrate.api.nvidia.com/v1`;
+- model: `openai/gpt-oss-20b`, override with `NVIDIA_MODEL`.
+
+The NVIDIA catalog may contain models that are unavailable for generation. The smoke script checks the exposed catalog and a real completion independently.
 
 ## LM Studio
 
-LM Studio est consommé comme serveur local OpenAI-compatible:
+LM Studio is consumed through its local OpenAI-compatible server:
 
 ```powershell
 lms server status
 lms ls
-lms load qwen/qwen3-4b --gpu max --ttl 600 --yes
 ```
 
-Endpoint par défaut: `http://127.0.0.1:1234/v1`.
+The server must already be running with the intended model loaded. The project does not start, stop, or reload the local compute process as part of the frontend test suite.
 
-Surcharge possible:
+Defaults:
+
+- endpoint: `http://127.0.0.1:1234/v1`;
+- model: `qwen/qwen3-4b`, override with `LM_STUDIO_MODEL`.
+
+Optional overrides:
 
 ```powershell
 $env:LM_STUDIO_BASE_URL = 'http://127.0.0.1:1234/v1'
 $env:LM_STUDIO_MODEL = 'qwen/qwen3-4b'
 ```
 
-Le smoke test ajoute `/no_think` au prompt du modèle Qwen afin de mesurer le contenu final et non une sortie de raisonnement tronquée.
+The smoke script appends `/no_think` for Qwen models so the measured response uses the final content channel.
 
-## Test réel
+## Run the live check
 
 ```bash
 npm run providers:smoke
 ```
 
-Le résultat attendu comprend une ligne `PASS` pour chaque provider disponible. Un provider indisponible doit être signalé comme tel, pas remplacé silencieusement par une simulation.
+The command prints the selected model, exposed model count, latency, and a short response sample. An unavailable provider is reported as unavailable rather than replaced by a simulation.
 
-Les secrets ne sont jamais nécessaires pour les tests Vitest, les tests E2E ou le build frontend.
+Provider credentials are not needed for Vitest, Playwright, or the frontend build.

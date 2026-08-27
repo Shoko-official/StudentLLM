@@ -1,15 +1,15 @@
-# Sécurité
+# Security
 
-## Règles de base
+## Credential handling
 
-- Les credentials provider sont fournis par l'environnement ou le gestionnaire de secrets de l'OS.
-- `NVIDIA_API_KEY` n'est pas lu depuis un fichier du repo et sa valeur n'est jamais journalisée.
-- Le mode local ne doit pas effectuer de requête réseau implicite.
-- Les données de cours sont considérées comme privées par défaut.
-- Les fichiers audio, images et documents d'utilisateurs ne doivent pas être ajoutés aux fixtures publiques sans autorisation.
+- Provider credentials are supplied by the process environment or the operating system credential manager.
+- `NVIDIA_API_KEY` is read from the Windows User environment and is never read from a repository file.
+- Credential values are not written to logs, fixtures, screenshots, or benchmark artifacts.
+- Local mode does not make an implicit network request.
+- Course data is private by default.
 
-## Signaler une vulnérabilité
+## Reporting a vulnerability
 
-Ne publiez pas de secret ni de détail exploitable dans une issue publique. Contactez les mainteneurs via les canaux privés du dépôt avec une description, une reproduction minimale et l'impact observé.
+Do not publish credentials or exploitable details in a public issue. Contact the maintainers through the repository's private GitHub security channel with a concise description, minimal reproduction, and observed impact.
 
-Les rapports de sécurité sont traités avant toute publication d'une correction afin d'éviter d'exposer une donnée utilisateur.
+Reports are handled before a fix is published so user data and affected deployments can be protected.
