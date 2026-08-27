@@ -21,6 +21,7 @@
 - course sources, transcripts, chats, and artifacts are isolated per lesson with legacy workspace migration;
 - full public French FLEURS ASR benchmarking is available through a faster-whisper adapter with WER, CER, RTF, and hardware receipts;
 - a generic Hugging Face ASR adapter and full public MLS French receipt are available with explicit dataset, split, and validity metadata;
+- a dated English project status page summarizes verified workflows, public benchmark coverage, and remaining evaluation work;
 - imported course sources can be removed from the active workspace and their IndexedDB blobs are deleted;
 - durable recordings can be sent to an optional local faster-whisper service and added back as reviewable transcript segments;
 - course deletion clears the active lesson workspace and its local source and recording blobs;
