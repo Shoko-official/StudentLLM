@@ -64,6 +64,22 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('Connect LM Studio to ask the local model. The current workspace keeps this interaction offline.')).toBeInTheDocument();
   });
 
+  it('uses an imported text source as an offline chat citation', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['Gradient descent updates parameters using the learning rate.'],
+      'optimization.md',
+      { type: 'text/markdown' },
+    ));
+    await user.click(screen.getByRole('tab', { name: /Chat/ }));
+    await user.type(screen.getByLabelText('Ask the course chat'), 'What updates parameters using the learning rate?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByRole('button', { name: 'Source · optimization.md' })).toBeInTheDocument();
+  });
+
   it('records a bookmark and exposes a review segment', async () => {
     render(<App />);
 
