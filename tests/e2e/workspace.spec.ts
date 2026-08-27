@@ -207,6 +207,43 @@ test.describe('StudentLLM workspace', () => {
     expect(storedChunkCount).toBe(1);
   });
 
+  test('recovers durable audio after an interrupted browser session', async ({ page }) => {
+    await page.addInitScript(() => {
+      const track = { stop: () => undefined };
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => ({ getTracks: () => [track] }) },
+      });
+
+      class BrowserRecorderMock {
+        static isTypeSupported = () => false;
+        ondataavailable: ((event: { data: Blob }) => void) | null = null;
+        onstop: (() => void) | null = null;
+
+        start() {
+          queueMicrotask(() => this.ondataavailable?.({ data: new Blob(['interrupted audio'], { type: 'audio/webm' }) }));
+        }
+
+        stop() {
+          this.onstop?.();
+        }
+      }
+
+      Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: BrowserRecorderMock });
+    });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Start recording' }).click();
+    await expect(page.getByText('Microphone active, audio autosave ready.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => {
+      const raw = window.localStorage.getItem('studentllm.recording-recovery.v1');
+      return raw ? JSON.parse(raw).recordings?.length ?? 0 : 0;
+    })).toBe(1);
+
+    await page.reload();
+    await expect(page.getByText('1 audio chunk recovered from an interrupted session.')).toBeVisible();
+    await expect(page.getByText('Attention & Scaled Dot-Product audio.webm')).toBeVisible();
+  });
+
   test('reports a clear recording fallback when microphone APIs are unavailable', async ({ page }) => {
     await page.addInitScript(() => {
       Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });

@@ -47,6 +47,7 @@ import type { DocumentEngine } from './lib/document-engine';
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore } from './lib/source-storage';
 import { createRecordingChunkStore } from './lib/recording-storage';
+import { listPendingRecordings, removePendingRecording, savePendingRecording } from './lib/recording-recovery';
 import { buildCourseExport, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
@@ -270,6 +271,58 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     saveWorkspace({ activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces });
   }, [activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const pendingRecordings = listPendingRecordings();
+    if (!pendingRecordings.length) return undefined;
+
+    void (async () => {
+      for (const pending of pendingRecordings) {
+        const lesson = lessons.find((item) => item.id === pending.lessonId);
+        if (!lesson) {
+          removePendingRecording(pending.recordingId);
+          continue;
+        }
+
+        try {
+          const chunks = await recordingChunkStore.list(pending.recordingId);
+          if (cancelled) return;
+          if (!chunks.length) {
+            removePendingRecording(pending.recordingId);
+            continue;
+          }
+
+          setLessonWorkspaces((current) => {
+            const lessonWorkspace = current[pending.lessonId] ?? emptyLessonWorkspace;
+            if (lessonWorkspace.resources.some((resource) => resource.id === pending.recordingId)) return current;
+            return {
+              ...current,
+              [pending.lessonId]: {
+                ...lessonWorkspace,
+                resources: [{
+                  id: pending.recordingId,
+                  name: `${lesson.title} audio.webm`,
+                  meta: `Recovered audio · ${chunks.length} chunk${chunks.length === 1 ? '' : 's'}`,
+                  kind: 'audio',
+                  mimeType: chunks[0].blob.type || 'audio/webm',
+                  sizeBytes: chunks.reduce((total, chunk) => total + chunk.blob.size, 0),
+                }, ...lessonWorkspace.resources],
+              },
+            };
+          });
+          removePendingRecording(pending.recordingId);
+          setToast(`${chunks.length} audio chunk${chunks.length === 1 ? '' : 's'} recovered from an interrupted session.`);
+        } catch {
+          // Keep the manifest so a later launch can retry recovery.
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useEffect(() => () => {
     void recorderRef.current?.stop();
   }, []);
@@ -313,6 +366,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     if (isRecording) {
       const session = recorderRef.current;
       const recordingLessonId = activeLesson.id;
+      const recordingLessonTitle = activeLesson.title;
       recorderRef.current = null;
       setIsRecording(false);
       if (!session) {
@@ -325,7 +379,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             ...current,
             resources: [{
               id: session.recordingId,
-              name: `${activeLesson.title} audio.webm`,
+              name: `${recordingLessonTitle} audio.webm`,
               meta: `Audio · ${chunksPersisted} chunk${chunksPersisted === 1 ? '' : 's'}`,
               kind: 'audio',
               mimeType: 'audio/webm',
@@ -366,7 +420,16 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
 
     try {
-      recorderRef.current = await recorderSessionFactory();
+      const session = await recorderSessionFactory();
+      if (session.stream && session.durability === 'durable') {
+        savePendingRecording({
+          recordingId: session.recordingId,
+          lessonId: activeLesson.id,
+          lessonTitle: activeLesson.title,
+          startedAt: Date.now(),
+        });
+      }
+      recorderRef.current = session;
       setIsRecording(true);
       setRecordingSeconds(0);
       notify(recorderRef.current.stream
