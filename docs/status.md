@@ -51,4 +51,4 @@ The current Hugging Face `mozilla-foundation/common_voice_17_0` repository probe
 
 ## Delivery state
 
-Changes are delivered through short-lived branches and pull requests into `main`. The latest validated delivery is PR [#74](https://github.com/Shoko-official/StudentLLM/pull/74), which records the complete MLS French ASR result. Its PR checks and post-merge GitHub Actions run passed, and the temporary branch was deleted.
+Changes are delivered through short-lived branches and pull requests into `main`. The latest validated delivery is PR [#76](https://github.com/Shoko-official/StudentLLM/pull/76), which adds the public FLEURS plus MUSAN SNR robustness benchmark. Its PR checks and post-merge GitHub Actions run passed, and the temporary branch was deleted.
