@@ -46,59 +46,59 @@ const initialLessons: Lesson[] = [
     title: 'Attention & Scaled Dot-Product',
     teacher: 'Prof. Yann LeCun',
     duration: '01:32:47',
-    date: '15 mai 2025',
+    date: '15 May 2025',
     progress: 72,
   },
   {
     id: 'transformers-05',
     subject: 'Machine Learning',
     chapter: 'Transformers',
-    title: 'Self-attention et contexte',
+    title: 'Self-attention and Context',
     teacher: 'Prof. Yann LeCun',
     duration: '01:18:12',
-    date: '08 mai 2025',
+    date: '08 May 2025',
     progress: 100,
   },
   {
     id: 'linear-algebra-03',
     subject: 'Mathematics',
     chapter: 'Linear Algebra',
-    title: 'Matrices et applications linéaires',
+    title: 'Matrices and Linear Maps',
     teacher: 'Dr. Camille Roux',
     duration: '00:54:08',
-    date: '02 mai 2025',
+    date: '02 May 2025',
     progress: 36,
   },
 ];
 
 const initialResources: Resource[] = [
-  { id: 'r1', name: 'transcription.txt', meta: 'Texte · 126 KB', kind: 'transcript' },
-  { id: 'r2', name: 'enregistrement_audio.mp3', meta: 'Audio HD · 98,3 MB', kind: 'audio' },
-  { id: 'r3', name: 'photo_tableau_02.jpg', meta: 'Tableau · 3,4 MB', kind: 'image' },
-  { id: 'r4', name: 'support_slides.pdf', meta: 'Diapos · 5,6 MB', kind: 'document' },
-  { id: 'r5', name: 'notes_manuscrites.pdf', meta: 'Notes · 1,8 MB', kind: 'document' },
+  { id: 'r1', name: 'transcript.txt', meta: 'Text · 126 KB', kind: 'transcript' },
+  { id: 'r2', name: 'lecture_audio.mp3', meta: 'HD audio · 98.3 MB', kind: 'audio' },
+  { id: 'r3', name: 'board_photo_02.jpg', meta: 'Board · 3.4 MB', kind: 'image' },
+  { id: 'r4', name: 'lecture_slides.pdf', meta: 'Slides · 5.6 MB', kind: 'document' },
+  { id: 'r5', name: 'handwritten_notes.pdf', meta: 'Notes · 1.8 MB', kind: 'document' },
 ];
 
 const initialTranscript: TranscriptSegment[] = [
   {
     id: 't1',
     timestamp: '01:13:42',
-    speaker: 'Professeur',
-    text: 'On peut donc écrire l’attention sous la forme softmax de Q K transposée sur racine de d, multiplié par V.',
+    speaker: 'Professor',
+    text: 'We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.',
     status: 'verified',
   },
   {
     id: 't2',
     timestamp: '01:14:18',
-    speaker: 'Professeur',
-    text: 'Et le facteur racine de d permet de garder les logits dans une zone où le softmax reste sensible.',
+    speaker: 'Professor',
+    text: 'The square-root factor keeps the logits in a range where softmax remains sensitive.',
     status: 'verified',
   },
   {
     id: 't3',
     timestamp: '01:15:02',
-    speaker: 'Professeur',
-    text: 'Sans cette normalisation, les produits scalaires grandissent avec la dimension des clés.',
+    speaker: 'Professor',
+    text: 'Without this normalization, dot products grow with the key dimension.',
     status: 'review',
   },
 ];
@@ -107,23 +107,23 @@ const initialChat: ChatMessage[] = [
   {
     id: 'm1',
     role: 'user',
-    content: 'Pourquoi divise-t-on par √dₖ dans le scaled dot-product attention ?',
+    content: 'Why do we divide by √dₖ in scaled dot-product attention?',
   },
   {
     id: 'm2',
     role: 'assistant',
-    content: 'On divise par √dₖ pour conserver une variance stable lorsque la dimension des clés augmente. Sans ce facteur, les logits deviennent trop grands, le softmax se sature et les gradients deviennent très faibles.',
-    citations: ['Audio du cours · 01:14:18', 'Support · diapositive 31'],
+    content: 'We divide by √dₖ to keep variance stable as the key dimension grows. Without this factor, logits become too large, softmax saturates, and gradients become very small.',
+    citations: ['Course audio · 01:14:18', 'Slides · page 31'],
   },
 ];
 
 const artifactCatalog: { kind: ArtifactKind; label: string; description: string }[] = [
-  { kind: 'summary', label: 'Résumé express', description: 'Les idées essentielles en une page.' },
-  { kind: 'guide', label: 'Fiche de révision', description: 'Une synthèse structurée et sourcée.' },
-  { kind: 'quiz', label: 'QCM ciblé', description: 'Teste les notions qui restent fragiles.' },
-  { kind: 'flashcards', label: 'Flashcards', description: 'Prépare un paquet de cartes révisables.' },
-  { kind: 'mindmap', label: 'Carte conceptuelle', description: 'Relie les concepts et leurs dépendances.' },
-  { kind: 'glossary', label: 'Glossaire', description: 'Définitions des termes du cours.' },
+  { kind: 'summary', label: 'Quick summary', description: 'The essential ideas on one page.' },
+  { kind: 'guide', label: 'Study guide', description: 'A structured, source-linked synthesis.' },
+  { kind: 'quiz', label: 'Targeted quiz', description: 'Test the concepts that remain uncertain.' },
+  { kind: 'flashcards', label: 'Flashcards', description: 'Prepare a review-ready card deck.' },
+  { kind: 'mindmap', label: 'Concept map', description: 'Connect concepts and their dependencies.' },
+  { kind: 'glossary', label: 'Glossary', description: 'Definitions for the course vocabulary.' },
 ];
 
 function formatElapsed(totalSeconds: number) {
@@ -213,6 +213,10 @@ function App() {
     saveWorkspace({ activeLessonId, lessons, transcript, artifacts });
   }, [activeLessonId, lessons, transcript, artifacts]);
 
+  useEffect(() => () => {
+    void recorderRef.current?.stop();
+  }, []);
+
   const notify = (message: string) => setToast(message);
 
   const selectLesson = (lessonId: string) => {
@@ -224,10 +228,24 @@ function App() {
   const toggleRecording = async () => {
     setRecordingError('');
     if (isRecording) {
-      recorderRef.current?.stop();
+      const session = recorderRef.current;
       recorderRef.current = null;
       setIsRecording(false);
-      notify('Session enregistrée en segments locaux.');
+      if (!session) {
+        notify('Session stopped.');
+        return;
+      }
+      void session.stop().then(({ chunksPersisted, persistenceError }) => {
+        if (!session.stream) {
+          notify('Demo session ended.');
+        } else if (persistenceError) {
+          notify(`${chunksPersisted} audio chunks preserved; persistence needs review.`);
+        } else if (session.durability === 'durable') {
+          notify(`${chunksPersisted} audio chunks saved locally.`);
+        } else {
+          notify(`${chunksPersisted} audio chunks kept in memory only.`);
+        }
+      }).catch(() => setRecordingError('The audio session could not be finalized correctly.'));
       return;
     }
 
@@ -235,9 +253,9 @@ function App() {
       recorderRef.current = await requestRecorderSession();
       setIsRecording(true);
       setRecordingSeconds(0);
-      notify(recorderRef.current.stream ? 'Microphone actif, transcription live prête.' : 'Mode démonstration actif: microphone non disponible.');
+      notify(recorderRef.current.stream ? 'Microphone active, live transcription ready.' : 'Demo mode active: microphone unavailable.');
     } catch {
-      setRecordingError('Le microphone est indisponible. Vérifiez l’autorisation puis réessayez.');
+      setRecordingError('The microphone is unavailable. Check permission and try again.');
     }
   };
 
@@ -245,12 +263,12 @@ function App() {
     const nextSegment: TranscriptSegment = {
       id: `bookmark-${Date.now()}`,
       timestamp: formatElapsed(recordingSeconds),
-      speaker: 'Marque-page',
-      text: 'Point marqué par l’étudiant: à revoir dans le cours.',
+      speaker: 'Bookmark',
+      text: 'Student bookmark: review this point in the course.',
       status: 'review',
     };
     setTranscript((segments) => [...segments, nextSegment]);
-    notify(`Point marqué à ${nextSegment.timestamp}.`);
+    notify(`Bookmark added at ${nextSegment.timestamp}.`);
   };
 
   const submitComposer = (event: FormEvent) => {
@@ -263,8 +281,8 @@ function App() {
       {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: 'Je vais chercher dans les sources du cours et afficher les passages utilisés pour répondre.',
-        citations: ['Contexte du cours · recherche locale'],
+        content: 'I will search the course sources and show the passages used for the answer.',
+        citations: ['Course context · local search'],
       },
     ]);
     setComposerValue('');
@@ -277,10 +295,10 @@ function App() {
       id: `${kind}-${Date.now()}`,
       kind,
       label: definition.label,
-      createdAt: 'à l’instant',
+      createdAt: 'just now',
     };
     setArtifacts((current) => [artifact, ...current].slice(0, 4));
-    notify(`${definition.label} ajouté au Studio.`);
+    notify(`${definition.label} added to Studio.`);
   };
 
   const createCourse = (event: FormEvent) => {
@@ -291,28 +309,28 @@ function App() {
     const lesson: Lesson = {
       id,
       subject: newCourseSubject,
-      chapter: 'Nouveaux cours',
+      chapter: 'New courses',
       title,
-      teacher: 'À renseigner',
+      teacher: 'To be added',
       duration: '00:00:00',
-      date: 'aujourd’hui',
+      date: 'today',
       progress: 0,
     };
     setLessons((current) => [lesson, ...current]);
     setActiveLessonId(id);
     setNewCourseTitle('');
     setShowNewCourse(false);
-    notify('Nouveau cours créé. Prêt à enregistrer.');
+    notify('New course created. Ready to record.');
   };
 
   return (
     <div className="app-shell">
       <header className="topbar">
         <div className="topbar-leading">
-          <button className="icon-button mobile-menu" aria-label="Ouvrir le menu" onClick={() => setShowLeftSidebar((value) => !value)}>
+          <button className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setShowLeftSidebar((value) => !value)}>
             <Menu size={17} />
           </button>
-          <button className="icon-button desktop-only" aria-label="Afficher ou masquer la navigation" onClick={() => setShowLeftSidebar((value) => !value)}>
+          <button className="icon-button desktop-only" aria-label="Show or hide navigation" onClick={() => setShowLeftSidebar((value) => !value)}>
             {showLeftSidebar ? <LayoutPanelLeft size={17} /> : <Menu size={17} />}
           </button>
           <div className="brand-mark" aria-hidden="true"><Sparkles size={15} /></div>
@@ -327,17 +345,17 @@ function App() {
         <div className="topbar-actions">
           <label className="search-field desktop-only">
             <Search size={15} />
-            <input aria-label="Rechercher dans les cours" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Rechercher dans vos cours" />
+            <input aria-label="Search courses" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search your courses" />
             <kbd>⌘ K</kbd>
           </label>
-          <button className={`icon-button ${showRightSidebar ? 'selected' : ''}`} aria-label="Afficher ou masquer le Studio" onClick={() => setShowRightSidebar((value) => !value)}>
+          <button className={`icon-button ${showRightSidebar ? 'selected' : ''}`} aria-label="Show or hide Studio" onClick={() => setShowRightSidebar((value) => !value)}>
             {showRightSidebar ? <PanelRight size={17} /> : <Layers3 size={17} />}
           </button>
-          <button className="icon-button notification-button" aria-label="Notifications" onClick={() => notify('Aucune nouvelle notification.') }>
+          <button className="icon-button notification-button" aria-label="Notifications" onClick={() => notify('No new notifications.') }>
             <Activity size={17} />
             <span />
           </button>
-          <button className="profile-chip" aria-label="Ouvrir le profil">
+          <button className="profile-chip" aria-label="Open profile">
             <span>SO</span>
             <strong className="desktop-only">Shoko-official</strong>
           </button>
@@ -346,16 +364,16 @@ function App() {
 
       <div className="workspace-grid">
         {showLeftSidebar && (
-          <aside className="left-sidebar" aria-label="Navigation des cours">
+          <aside className="left-sidebar" aria-label="Course navigation">
             <div className="sidebar-scroll">
               <button className="primary-action" onClick={() => setShowNewCourse(true)}>
-                <span><Plus size={16} /> Nouveau cours</span>
+                <span><Plus size={16} /> New course</span>
                 <kbd>Ctrl N</kbd>
               </button>
 
               <div className="sidebar-section-header">
-                <span>Bibliothèque</span>
-                <span className="eyebrow-count">{lessons.length} cours</span>
+                <span>Library</span>
+                <span className="eyebrow-count">{lessons.length} courses</span>
               </div>
 
               <nav className="course-tree">
@@ -382,7 +400,7 @@ function App() {
                               {activeLesson.id === lesson.id && <span className="active-dot" />}
                             </button>
                           ))}
-                          {!subjectLessons.length && <span className="tree-empty">Aucun résultat</span>}
+                          {!subjectLessons.length && <span className="tree-empty">No results</span>}
                         </div>
                       )}
                     </div>
@@ -390,18 +408,18 @@ function App() {
                 })}
               </nav>
 
-              <button className="ghost-row" onClick={() => notify('La recherche globale sera disponible avec l’index local.') }><Search size={14} /> Recherche globale <ArrowUpRight size={13} /></button>
-              <button className="ghost-row attention-row" onClick={() => notify('3 éléments attendent une vérification manuelle.') }><Lightbulb size={14} /> À vérifier <span className="count-pill">3</span></button>
+              <button className="ghost-row" onClick={() => notify('Global search will be available with the local index.') }><Search size={14} /> Global search <ArrowUpRight size={13} /></button>
+              <button className="ghost-row attention-row" onClick={() => notify('3 items need manual review.') }><Lightbulb size={14} /> Needs review <span className="count-pill">3</span></button>
             </div>
 
             <div className="sidebar-footer">
-              <div className="privacy-status"><span className="status-dot" /> Traitement local activé</div>
+              <div className="privacy-status"><span className="status-dot" /> Local processing enabled</div>
               <div className="profile-card">
                 <div className="profile-avatar">SO</div>
-                <div><strong>Shoko-official</strong><span>Plan étudiant</span></div>
+                <div><strong>Shoko-official</strong><span>Student plan</span></div>
                 <GraduationCap size={16} />
               </div>
-              <div className="footer-links"><button onClick={() => notify('Les paramètres seront disponibles dans la prochaine tranche.') }><Settings2 size={14} /> Paramètres</button><button aria-label="Aide" onClick={() => notify('Besoin d’aide ? Consultez la documentation du projet.') }><CircleHelp size={15} /></button></div>
+              <div className="footer-links"><button onClick={() => notify('Settings will be available in a future update.') }><Settings2 size={14} /> Settings</button><button aria-label="Help" onClick={() => notify('Need help? Check the project documentation.') }><CircleHelp size={15} /></button></div>
             </div>
           </aside>
         )}
@@ -414,84 +432,84 @@ function App() {
               <p>{activeLesson.teacher} · {activeLesson.date}</p>
             </div>
             <div className="main-header-actions">
-              <div className="view-tabs" role="tablist" aria-label="Vue du cours">
-                <button role="tab" aria-selected={view === 'course'} className={view === 'course' ? 'active' : ''} onClick={() => setView('course')}><BookOpen size={14} /> Cours</button>
+              <div className="view-tabs" role="tablist" aria-label="Course view">
+                <button role="tab" aria-selected={view === 'course'} className={view === 'course' ? 'active' : ''} onClick={() => setView('course')}><BookOpen size={14} /> Course</button>
                 <button role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'active' : ''} onClick={() => setView('chat')}><MessageCircle size={14} /> Chat</button>
               </div>
-              <button className="secondary-action desktop-only" onClick={() => notify('Lien de partage local copié.') }><Copy size={14} /> Partager</button>
+              <button className="secondary-action desktop-only" onClick={() => notify('Local share link copied.') }><Copy size={14} /> Share</button>
             </div>
           </div>
 
           {view === 'course' ? (
             <div className="course-view">
-              <section className={`recording-card ${isRecording ? 'recording' : ''}`} aria-label="Enregistrement du cours">
+              <section className={`recording-card ${isRecording ? 'recording' : ''}`} aria-label="Course recording">
                 <div className="recording-topline">
-                  <div className="recording-label"><span className="recording-pulse" /> {isRecording ? 'Enregistrement en cours' : 'Session prête'}</div>
-                  <span className="local-badge"><span className="status-dot" /> Sur cet appareil</span>
+                  <div className="recording-label"><span className="recording-pulse" /> {isRecording ? 'Recording in progress' : 'Session ready'}</div>
+                  <span className="local-badge"><span className="status-dot" /> On this device</span>
                 </div>
                 <div className="recording-core">
                   <div>
-                    <span className="muted-label">Durée de la session</span>
+                    <span className="muted-label">Session duration</span>
                     <strong className="recording-time">{isRecording ? formatElapsed(recordingSeconds) : activeLesson.duration}</strong>
                   </div>
                   <div className="signal-rail" aria-hidden="true">{Array.from({ length: 42 }, (_, index) => <span key={index} style={{ height: `${14 + ((index * 17) % 28)}%` }} />)}</div>
                   <div className="recording-actions">
-                    <button className={`record-button ${isRecording ? 'stop' : ''}`} onClick={toggleRecording} aria-label={isRecording ? 'Arrêter l’enregistrement' : 'Démarrer l’enregistrement'}>
+                    <button className={`record-button ${isRecording ? 'stop' : ''}`} onClick={toggleRecording} aria-label={isRecording ? 'Stop recording' : 'Start recording'}>
                       {isRecording ? <Square size={17} fill="currentColor" /> : <Mic size={18} />}
                     </button>
-                    <button className="bookmark-button" onClick={addBookmark} aria-label="Marquer ce passage"><Lightbulb size={16} /> Marquer</button>
+                    <button className="bookmark-button" onClick={addBookmark} aria-label="Bookmark this passage"><Lightbulb size={16} /> Bookmark</button>
                   </div>
                 </div>
                 {recordingError && <p className="inline-error">{recordingError}</p>}
                 <div className="recording-progress"><span style={{ width: `${activeLesson.progress}%` }} /></div>
-                <div className="recording-meta"><span><Clock3 size={13} /> {activeLesson.progress}% parcouru</span><span><Upload size={13} /> Autosauvegarde segmentée</span><span><Pause size={13} /> ASR prioritaire</span></div>
+                <div className="recording-meta"><span><Clock3 size={13} /> {activeLesson.progress}% complete</span><span><Upload size={13} /> Chunked autosave</span><span><Pause size={13} /> ASR priority</span></div>
               </section>
 
               <section className="transcript-section">
-                <div className="section-toolbar"><div><span className="section-kicker">Live transcript</span><h2>Le cours, au fil de la source</h2></div><button className="text-action" onClick={() => notify('Tous les segments sont déjà disponibles hors ligne.')}>Voir tout <ArrowUpRight size={13} /></button></div>
+                <div className="section-toolbar"><div><span className="section-kicker">Live transcript</span><h2>The course, source by source</h2></div><button className="text-action" onClick={() => notify('All segments are already available offline.')}>View all <ArrowUpRight size={13} /></button></div>
                 <div className="transcript-list">
                   {transcript.map((segment) => (
                     <article className={`transcript-item ${segment.status === 'review' ? 'needs-review' : ''}`} key={segment.id}>
                       <div className="transcript-time">{segment.timestamp}</div>
-                      <div className="transcript-body"><div className="speaker-line"><strong>{segment.speaker}</strong>{segment.status === 'review' ? <span className="review-badge">À vérifier</span> : <span className="verified-badge"><Check size={11} /> vérifié</span>}</div><p>{segment.text}</p></div>
-                      <button className="transcript-more" aria-label={`Actions pour le segment ${segment.timestamp}`} onClick={() => notify(`Segment ${segment.timestamp} sélectionné.`)}>•••</button>
+                      <div className="transcript-body"><div className="speaker-line"><strong>{segment.speaker}</strong>{segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><p>{segment.text}</p></div>
+                      <button className="transcript-more" aria-label={`Actions for segment ${segment.timestamp}`} onClick={() => notify(`Segment ${segment.timestamp} selected.`)}>•••</button>
                     </article>
                   ))}
                 </div>
               </section>
 
               <form className="composer" onSubmit={submitComposer}>
-                <div className="composer-input"><MessageCircle size={16} /><input aria-label="Poser une question sur le cours" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Posez une question sur ce cours…" /><kbd>@</kbd></div>
-                <div className="composer-tools"><button type="button" aria-label="Joindre un fichier" onClick={() => notify('Ajoutez un fichier depuis le Studio.') }><Plus size={17} /></button><button type="button" aria-label="Joindre une image" onClick={() => notify('Ajoutez une photo du tableau depuis le Studio.') }><FileImage size={16} /></button><button type="button" aria-label="Dictée vocale" onClick={toggleRecording}><Mic size={16} /></button><button className="send-button" type="submit" aria-label="Envoyer la question"><Send size={15} /></button></div>
-                <small>Les réponses restent reliées aux sources. Vérifiez les formules importantes avec vos notes.</small>
+                <div className="composer-input"><MessageCircle size={16} /><input aria-label="Ask a course question" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about this course…" /><kbd>@</kbd></div>
+                <div className="composer-tools"><button type="button" aria-label="Attach a file" onClick={() => notify('Add a file from Studio.') }><Plus size={17} /></button><button type="button" aria-label="Attach an image" onClick={() => notify('Add a board photo from Studio.') }><FileImage size={16} /></button><button type="button" aria-label="Voice dictation" onClick={toggleRecording}><Mic size={16} /></button><button className="send-button" type="submit" aria-label="Send question"><Send size={15} /></button></div>
+                <small>Answers stay linked to sources. Check important formulas against your notes.</small>
               </form>
             </div>
           ) : (
             <div className="chat-view">
-              <div className="chat-intro"><span className="ai-orb"><Sparkles size={18} /></span><div><span className="section-kicker">Assistant du cours</span><h2>Comprendre, avec preuves à l’appui.</h2><p>Les réponses s’appuient d’abord sur la session active et indiquent les passages consultés.</p></div></div>
+              <div className="chat-intro"><span className="ai-orb"><Sparkles size={18} /></span><div><span className="section-kicker">Course assistant</span><h2>Understand with evidence.</h2><p>Answers start with the active session and show the passages consulted.</p></div></div>
               <div className="chat-list">
                 {chat.map((message) => (
-                  <article className={`chat-message ${message.role}`} key={message.id}><div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={14} /> : 'SO'}</div><div className="message-content"><span className="message-role">{message.role === 'assistant' ? 'StudentLLM AI' : 'Vous'}</span><p>{message.content}</p>{message.citations && <div className="citation-list">{message.citations.map((citation) => <button key={citation} onClick={() => notify(`Source ouverte: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</div></article>
+                  <article className={`chat-message ${message.role}`} key={message.id}><div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={14} /> : 'SO'}</div><div className="message-content"><span className="message-role">{message.role === 'assistant' ? 'StudentLLM AI' : 'You'}</span><p>{message.content}</p>{message.citations && <div className="citation-list">{message.citations.map((citation) => <button key={citation} onClick={() => notify(`Source opened: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</div></article>
                 ))}
               </div>
-              <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Poser une question au chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Demandez une explication, un exemple ou une synthèse…" /><button type="submit" aria-label="Envoyer"><Send size={16} /></button></form>
+              <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask for an explanation, example, or summary…" /><button type="submit" aria-label="Send"><Send size={16} /></button></form>
             </div>
           )}
         </main>
 
         {showRightSidebar && (
-          <aside className="right-sidebar" aria-label="Studio du cours">
-            <div className="studio-heading"><div><span className="section-kicker">Studio</span><h2>Fabriquer pour réviser</h2></div><button className="icon-button" aria-label="Fermer le Studio" onClick={() => setShowRightSidebar(false)}><X size={16} /></button></div>
-            <section className="context-card"><div className="context-card-top"><span className="context-icon"><BookOpen size={15} /></span><span className="local-badge"><span className="status-dot" /> local</span></div><h3>{activeLesson.title}</h3><dl><div><dt>Sources</dt><dd>{activeResources.length + 2}</dd></div><div><dt>Durée</dt><dd>{activeLesson.duration}</dd></div><div><dt>État</dt><dd className="success-text">Indexé</dd></div></dl></section>
-            <section className="resources-section"><div className="sidebar-section-header"><span>Sources du cours</span><button className="mini-action" onClick={() => notify('Sélecteur de fichiers disponible dans le shell desktop.') }><Plus size={13} /> ajouter</button></div><div className="resource-list">{activeResources.map((resource) => <button className="resource-item" key={resource.id} onClick={() => notify(`Source sélectionnée: ${resource.name}`)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button>)}</div>{initialResources.length > 3 && activeLesson.id === initialLessons[0].id && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Afficher moins' : `Afficher les ${initialResources.length - 3} autres sources`} <ChevronDown size={13} /></button>}</section>
-            <section className="studio-actions"><div className="sidebar-section-header"><span>Créer un artefact</span><span className="eyebrow-count">sourcé</span></div><div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div></section>
-            {artifacts.length > 0 && <section className="recent-section"><div className="sidebar-section-header"><span>Récemment créé</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <div className="recent-artifact" key={artifact.id}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></div>)}</section>}
-            <button className="studio-link" onClick={() => notify('L’éditeur de Studio sera ouvert dans une prochaine étape.')}>Ouvrir le Studio complet <ArrowUpRight size={14} /></button>
+          <aside className="right-sidebar" aria-label="Course Studio">
+            <div className="studio-heading"><div><span className="section-kicker">Studio</span><h2>Build for review</h2></div><button className="icon-button" aria-label="Close Studio" onClick={() => setShowRightSidebar(false)}><X size={16} /></button></div>
+            <section className="context-card"><div className="context-card-top"><span className="context-icon"><BookOpen size={15} /></span><span className="local-badge"><span className="status-dot" /> local</span></div><h3>{activeLesson.title}</h3><dl><div><dt>Sources</dt><dd>{activeResources.length + 2}</dd></div><div><dt>Duration</dt><dd>{activeLesson.duration}</dd></div><div><dt>State</dt><dd className="success-text">Indexed</dd></div></dl></section>
+            <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><button className="mini-action" onClick={() => notify('The file picker is available in the desktop shell.') }><Plus size={13} /> add</button></div><div className="resource-list">{activeResources.map((resource) => <button className="resource-item" key={resource.id} onClick={() => notify(`Source selected: ${resource.name}`)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button>)}</div>{initialResources.length > 3 && activeLesson.id === initialLessons[0].id && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${initialResources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
+            <section className="studio-actions"><div className="sidebar-section-header"><span>Create an artifact</span><span className="eyebrow-count">source-linked</span></div><div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div></section>
+            {artifacts.length > 0 && <section className="recent-section"><div className="sidebar-section-header"><span>Recently created</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <div className="recent-artifact" key={artifact.id}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></div>)}</section>}
+            <button className="studio-link" onClick={() => notify('The full Studio editor will open in a future update.')}>Open full Studio <ArrowUpRight size={14} /></button>
           </aside>
         )}
       </div>
 
-      {showNewCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="new-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Nouvelle session</span><h2 id="new-course-title">Commencer un cours</h2></div><button className="icon-button" aria-label="Fermer" onClick={() => setShowNewCourse(false)}><X size={17} /></button></div><p className="modal-description">Créez la session persistante maintenant. Vous pourrez ajouter l’audio, les images et les documents au fil du cours.</p><form onSubmit={createCourse}><label>Titre du cours<input autoFocus value={newCourseTitle} onChange={(event) => setNewCourseTitle(event.target.value)} placeholder="Ex. Introduction aux probabilités" /></label><label>Matière<select value={newCourseSubject} onChange={(event) => setNewCourseSubject(event.target.value)}><option>Machine Learning</option><option>Mathematics</option><option>Electronics</option></select></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowNewCourse(false)}>Annuler</button><button className="primary-submit" type="submit" disabled={!newCourseTitle.trim()}><Mic size={15} /> Créer et préparer l’enregistrement</button></div></form></section></div>}
+      {showNewCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="new-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">New session</span><h2 id="new-course-title">Start a course</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowNewCourse(false)}><X size={17} /></button></div><p className="modal-description">Create a persistent session now. Add audio, images, and documents as the course progresses.</p><form onSubmit={createCourse}><label>Course title<input autoFocus value={newCourseTitle} onChange={(event) => setNewCourseTitle(event.target.value)} placeholder="e.g. Introduction to probability" /></label><label>Subject<select value={newCourseSubject} onChange={(event) => setNewCourseSubject(event.target.value)}><option>Machine Learning</option><option>Mathematics</option><option>Electronics</option></select></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowNewCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!newCourseTitle.trim()}><Mic size={15} /> Create and prepare recording</button></div></form></section></div>}
       {toast && <div className="toast" role="status"><Check size={15} /> {toast}</div>}
     </div>
   );

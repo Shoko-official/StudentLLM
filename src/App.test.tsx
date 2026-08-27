@@ -10,19 +10,19 @@ describe('StudentLLM workspace', () => {
     render(<App />);
 
     expect(screen.getAllByText('Attention & Scaled Dot-Product').length).toBeGreaterThan(0);
-    expect(screen.getByRole('complementary', { name: 'Navigation des cours' })).toBeInTheDocument();
-    expect(screen.getByRole('complementary', { name: 'Studio du cours' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /QCM ciblé/ })).toBeInTheDocument();
-    expect(screen.getByText('transcription.txt')).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Course navigation' })).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'Course Studio' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Targeted quiz/ })).toBeInTheDocument();
+    expect(screen.getByText('transcript.txt')).toBeInTheDocument();
   });
 
   it('changes the active course from the navigation tree', async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole('button', { name: /Matrices et applications linéaires/ }));
+    await user.click(screen.getByRole('button', { name: /Matrices and Linear Maps/ }));
 
-    expect(screen.getAllByRole('heading', { name: 'Matrices et applications linéaires' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('heading', { name: 'Matrices and Linear Maps' }).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Camille Roux/).length).toBeGreaterThan(0);
   });
 
@@ -30,25 +30,25 @@ describe('StudentLLM workspace', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole('button', { name: /Nouveau cours/ }));
+    await user.click(screen.getByRole('button', { name: /New course/ }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
-    await user.type(screen.getByLabelText('Titre du cours'), 'Systèmes distribués');
-    await user.click(screen.getByRole('button', { name: /Créer et préparer/ }));
+    await user.type(screen.getByLabelText('Course title'), 'Distributed Systems');
+    await user.click(screen.getByRole('button', { name: /Create and prepare/ }));
 
-    expect(screen.getAllByRole('heading', { name: 'Systèmes distribués' }).length).toBeGreaterThan(0);
-    expect(screen.getByText('Nouveau cours créé. Prêt à enregistrer.')).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { name: 'Distributed Systems' }).length).toBeGreaterThan(0);
+    expect(screen.getByText('New course created. Ready to record.')).toBeInTheDocument();
   });
 
   it('adds a generated artifact to the Studio', async () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getByRole('button', { name: /Fiche de révision/ }));
+    await user.click(screen.getByRole('button', { name: /Study guide/ }));
 
-    const recent = screen.getByText('Récemment créé').parentElement?.parentElement;
+    const recent = screen.getByText('Recently created').parentElement?.parentElement;
     expect(recent).toBeTruthy();
-    expect(within(recent as HTMLElement).getByText('Fiche de révision')).toBeInTheDocument();
+    expect(within(recent as HTMLElement).getByText('Study guide')).toBeInTheDocument();
   });
 
   it('switches to chat and sends a grounded question', async () => {
@@ -56,35 +56,35 @@ describe('StudentLLM workspace', () => {
     render(<App />);
 
     await user.click(screen.getByRole('tab', { name: /Chat/ }));
-    const input = screen.getByLabelText('Poser une question au chat');
-    await user.type(input, 'Peux-tu donner un exemple ?');
-    await user.click(screen.getByRole('button', { name: 'Envoyer' }));
+    const input = screen.getByLabelText('Ask the course chat');
+    await user.type(input, 'Can you give me an example?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(screen.getByText('Peux-tu donner un exemple ?')).toBeInTheDocument();
-    expect(screen.getByText('Je vais chercher dans les sources du cours et afficher les passages utilisés pour répondre.')).toBeInTheDocument();
+    expect(screen.getByText('Can you give me an example?')).toBeInTheDocument();
+    expect(screen.getByText('I will search the course sources and show the passages used for the answer.')).toBeInTheDocument();
   });
 
   it('records a bookmark and exposes a review segment', async () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Marquer ce passage' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Bookmark this passage' }));
 
-    expect(screen.getByText('Point marqué par l’étudiant: à revoir dans le cours.')).toBeInTheDocument();
-    expect(screen.getByText(/Point marqué à/)).toBeInTheDocument();
+    expect(screen.getByText('Student bookmark: review this point in the course.')).toBeInTheDocument();
+    expect(screen.getByText(/Bookmark added at/)).toBeInTheDocument();
   });
 
   it('restores a created course after remounting the workspace', async () => {
     const user = userEvent.setup();
     const firstRender = render(<App />);
 
-    await user.click(screen.getByRole('button', { name: /Nouveau cours/ }));
-    await user.type(screen.getByLabelText('Titre du cours'), 'Cours persistant');
-    await user.click(screen.getByRole('button', { name: /Créer et préparer/ }));
+    await user.click(screen.getByRole('button', { name: /New course/ }));
+    await user.type(screen.getByLabelText('Course title'), 'Persistent course');
+    await user.click(screen.getByRole('button', { name: /Create and prepare/ }));
     firstRender.unmount();
 
     render(<App />);
 
-    expect(screen.getAllByRole('heading', { name: 'Cours persistant' }).length).toBeGreaterThan(0);
-    expect(screen.queryByText('Nouveau cours créé. Prêt à enregistrer.')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { name: 'Persistent course' }).length).toBeGreaterThan(0);
+    expect(screen.queryByText('New course created. Ready to record.')).not.toBeInTheDocument();
   });
 });

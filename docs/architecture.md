@@ -1,60 +1,62 @@
-# Architecture StudentLLM
+# StudentLLM architecture
 
-## Décision centrale
+## Core boundary
 
-StudentLLM est organisé autour de trois couches qui ne doivent pas être confondues:
+StudentLLM keeps three kinds of information separate:
 
 ```text
-Sources immuables
+Immutable sources
   audio, images, PDF, documents
           |
           v
-Contenu dérivé traçable
+Traceable derived content
   transcript, OCR, segments, embeddings
           |
           v
-Contenu généré versionné
-  cours, réponses, QCM, fiches, cartes
+Versioned generated content
+  answers, quizzes, guides, cards, maps
 ```
 
-Une sortie générée peut être régénérée ou supprimée. Une source originale doit rester récupérable et son hash doit être vérifiable.
+Generated content can be regenerated or removed. Original sources remain recoverable and their checksums remain verifiable.
 
-## Vertical slice actuelle
+## Current web implementation
 
-Le dépôt actuel expose une UI React + TypeScript qui sert de contrat d'expérience:
+The React and TypeScript application defines the product interaction contract:
 
-- navigation par matière et cours;
-- création d'une session persistante au niveau UX;
-- capture microphone navigateur facultative;
-- transcript avec états `verified` et `review`;
-- Studio d'artefacts;
-- chat avec citations de contexte;
-- provider smoke test indépendant de l'UI.
+- navigation by subject and course;
+- persistent course creation at the user experience layer;
+- optional browser microphone capture;
+- chunked `MediaRecorder` capture with an IndexedDB store when available;
+- versioned local workspace persistence for lessons, transcript segments, and artifacts;
+- `verified` and `review` transcript states;
+- Studio artifact actions;
+- chat with visible context citations;
+- provider smoke checks kept independent from the UI.
 
-Les données sont encore en mémoire dans `src/App.tsx`. C'est intentionnel pour cette première tranche: le contrat d'interface peut être testé avant de figer le stockage natif.
+The browser layer deliberately keeps its provider and retrieval adapters separate from the domain model. The current chat response is a deterministic UI placeholder until the runtime gateway is added.
 
-## Cible technique
+## Target runtime
 
 ```text
 React + TypeScript
   |-- Library / Course / Chat / Studio
   v
 Tauri 2 + Rust
-  |-- capture audio par chunks
+  |-- chunked audio capture
   |-- SQLite WAL + migrations
-  |-- file de jobs persistante
-  |-- workers sidecar
+  |-- durable job queue
+  |-- sidecar workers
         |-- SpeechEngine (whisper.cpp, NeMo, faster-whisper)
         |-- DocumentEngine (PDF, OCR, vision)
         |-- LLMProvider (LM Studio, NIM, vLLM)
   v
 Knowledge store
-  |-- SQLite + FTS5 pour la source de vérité
-  |-- index vectoriel reconstructible
-  |-- blobs filesystem avec checksum
+  |-- SQLite + FTS5 for source-of-truth records
+  |-- rebuildable vector index
+  |-- filesystem blobs with checksums
 ```
 
-## Contrats à préserver
+## Stable contracts
 
 ### SpeechEngine
 
@@ -66,7 +68,7 @@ interface SpeechEngine {
 }
 ```
 
-Le modèle ne doit pas être codé en dur dans le domaine. Un moteur peut être CPU, Metal, CUDA ou distant selon le profil matériel et la préférence de confidentialité.
+The domain must not hard-code a model. A speech engine may run on CPU, Metal, CUDA, or a remote service depending on hardware and privacy preferences.
 
 ### LLMProvider
 
@@ -77,17 +79,17 @@ interface LLMProvider {
 }
 ```
 
-L'agent loop reste possédée par l'application afin de contrôler scope, permissions, citations, logs et reproductibilité.
+The application owns the agent loop so it can control scope, permissions, citations, logs, and reproducibility.
 
-## Fiabilité et confidentialité
+## Reliability and privacy
 
-- écriture audio append-only par chunks;
-- checksum sur les sources;
-- SQLite WAL et migrations testées;
-- reprise des jobs après arrêt;
-- aucun appel réseau implicite en mode local;
-- secrets dans le gestionnaire de credentials de l'OS ou dans l'environnement, jamais dans SQLite/logs;
-- partage sans audio par défaut;
-- suppression d'un cours propagée à la DB, aux blobs, index et caches.
+- the web application writes `MediaRecorder` chunks to IndexedDB; the memory fallback is explicitly non-durable;
+- the desktop target uses append-only audio chunks, SQLite WAL, and checksummed blobs;
+- source files carry checksums;
+- migrations and job recovery are tested;
+- local mode makes no implicit network request;
+- credentials stay in the OS credential manager or process environment, never in SQLite or logs;
+- sharing excludes audio by default;
+- deleting a course propagates to the database, blobs, indexes, and caches.
 
-Les points non implémentés ne sont pas présentés comme production-ready. Ils sont suivis par la feuille de route et les benchmarks.
+The target runtime is implemented incrementally behind the contracts above. Claims about runtime quality require evidence from the packaged runtime and the public benchmark suite, not only from the UI.
