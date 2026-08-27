@@ -25,6 +25,54 @@ function createStore(chunks: AudioChunkRecord[], append = vi.fn(async (chunk: Au
 }
 
 describe('recorder sessions', () => {
+  it('returns an explicit unavailable session when microphone APIs are missing', async () => {
+    const session = await requestRecorderSession({
+      mediaDevices: {} as Pick<MediaDevices, 'getUserMedia'>,
+      recordingId: 'recording-unavailable',
+    });
+
+    expect(session.stream).toBeNull();
+    expect(session.durability).toBe('unavailable');
+    await expect(session.stop()).resolves.toEqual({
+      recordingId: 'recording-unavailable',
+      chunksPersisted: 0,
+      persistenceError: false,
+    });
+  });
+
+  it('stops acquired tracks when MediaRecorder is unavailable', async () => {
+    const track = { stop: vi.fn() };
+    const stream = { getTracks: () => [track] } as unknown as MediaStream;
+
+    await expect(requestRecorderSession({
+      mediaDevices: { getUserMedia: vi.fn(async () => stream) },
+      mediaRecorderFactory: () => undefined as unknown as MediaRecorderLike,
+    })).rejects.toThrow('MediaRecorder is unavailable in this browser.');
+
+    expect(track.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops acquired tracks when recorder construction fails', async () => {
+    const track = { stop: vi.fn() };
+    const stream = { getTracks: () => [track] } as unknown as MediaStream;
+    const constructionError = new Error('Unsupported audio format.');
+
+    await expect(requestRecorderSession({
+      mediaDevices: { getUserMedia: vi.fn(async () => stream) },
+      mediaRecorderFactory: () => { throw constructionError; },
+    })).rejects.toThrow('Unsupported audio format.');
+
+    expect(track.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates microphone permission failures to the caller', async () => {
+    const permissionError = new Error('Permission denied.');
+
+    await expect(requestRecorderSession({
+      mediaDevices: { getUserMedia: vi.fn(async () => { throw permissionError; }) },
+    })).rejects.toThrow('Permission denied.');
+  });
+
   it('persists non-empty MediaRecorder chunks in order and stops tracks once', async () => {
     const track = { stop: vi.fn() };
     const stream = { getTracks: () => [track] } as unknown as MediaStream;
