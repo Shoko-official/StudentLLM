@@ -16,6 +16,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | Production artifact | Vite | `npm run build` | PASS |
 | Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 20 tests |
 | FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
+| MLS French ASR | 100 public test examples from `facebook/multilingual_librispeech`, faster-whisper small on CPU | `benchmarks/run_asr_hf.py --dataset facebook/multilingual_librispeech --config french --split test --reference-field transcript --language fr --limit 100 --device cpu --compute-type int8` | WER 0.1508, CER 0.0632, RTF 0.2019; partial public sample |
 | Local ASR sidecar | Python service plus public FLEURS request | `npm run asr:server` with `POST /transcribe` | PASS observed on 2026-08-27; public sample returned timestamped output |
 | Local ASR browser recording | Playwright browser, durable recording, public FLEURS audio, and running faster-whisper sidecar | Manual live UI check | PASS observed on 2026-08-27; one French review segment rendered, 0 page errors |
 | Local document sidecar | PyMuPDF and RapidOCR service plus public arXiv source | `npm run document:server` with `POST /extract` | PASS observed on 2026-08-27; PDF 15/15 pages, rasterized page 69 OCR blocks |
@@ -123,6 +124,16 @@ The ASR adapter ran the complete public `google/fleurs` `fr_fr` test split with 
 | 2026-08-27 | `small` / faster-whisper, CPU | 676 examples, 17,151 reference words, 7,024.08 seconds of public audio | WER `13.5677%`, CER `4.9086%`, RTF `0.1840`, elapsed `1,292.36s` | Windows, Intel Core Ultra 7 270K Plus, 63.4 GB RAM, RTX 5080 host; full public split, reproducible CPU baseline |
 
 This is an ASR baseline for the public French split. It is not a lecture-domain score, not a diarization result, and not evidence that the product meets the stricter V1 targets.
+
+## Observed public result: MLS French ASR
+
+The generic Hugging Face ASR adapter evaluated the first 100 examples of the public `facebook/multilingual_librispeech` French test split with `faster-whisper small`, CPU `int8` execution, beam size 5, and VAD filtering. The receipt is stored locally at `artifacts/benchmarks/asr/mls-fr-small-cpu-100.json` and is ignored by Git.
+
+| Run | Model and backend | Evaluation set | Result | Hardware and validity |
+| --- | --- | --- | --- | --- |
+| 2026-08-27 | `small` / faster-whisper, CPU | 100 examples, 3,620 reference words, 1,458.37 seconds of public audio | WER `15.0829%`, CER `6.3214%`, RTF `0.2019`, elapsed `294.41s` | Windows 11, 24 logical CPUs, 63.4 GB RAM, RTX 5080 host; partial public test sample, reproducible CPU baseline |
+
+This is a partial MLS French ASR baseline. It is not a full MLS test-set result, not a lecture-domain score, and not evidence that the product meets the stricter V1 targets.
 
 ## Observed public results: BEIR retrieval
 
