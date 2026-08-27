@@ -6,11 +6,17 @@ lm-evaluation-harness task and scoring intact while adding the documented
 ``/no_think`` control token to the final user message.
 """
 
+import os
+
 from lm_eval.models.openai_completions import LocalChatCompletion
 from lm_eval.__main__ import cli_evaluate
 
 
 _original_create_payload = LocalChatCompletion._create_payload
+
+
+def _api_key(self):
+    return os.environ.get("OPENAI_API_KEY") or os.environ.get("NVIDIA_API_KEY", "")
 
 
 def _create_payload_without_thinking(self, messages, *args, **kwargs):
@@ -29,6 +35,7 @@ def _create_payload_without_thinking(self, messages, *args, **kwargs):
 
 
 LocalChatCompletion._create_payload = _create_payload_without_thinking
+LocalChatCompletion.api_key = property(_api_key)
 
 
 if __name__ == "__main__":
