@@ -20,6 +20,7 @@ StudentLLM is built around three principles:
 - Versioned local workspace persistence for courses, sources, transcript segments, chat history, and artifacts.
 - Chunked `MediaRecorder` capture with IndexedDB persistence when supported by the browser.
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.
+- Original imported source blobs are stored in IndexedDB when available, alongside their fingerprints.
 - OpenAI-compatible smoke checks for NVIDIA NIM and LM Studio.
 - Optional live LM Studio chat through a browser-safe OpenAI-compatible provider adapter; no remote API key is bundled in the client.
 - Local lexical retrieval selects transcript excerpts and preserves timestamp citations before a live provider request.
@@ -75,6 +76,7 @@ src/
   lib/recorder.ts            microphone and MediaRecorder capture
   lib/recording-storage.ts   IndexedDB audio chunk storage
   lib/source-ingest.ts        local source classification and fingerprinting
+  lib/source-storage.ts       IndexedDB source blob storage
   lib/workspace-storage.ts   versioned workspace persistence
   *.test.tsx                 UI and storage tests
 scripts/
