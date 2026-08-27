@@ -76,11 +76,13 @@ src/
   App.test.tsx         tests UI Vitest
 scripts/
   provider-smoke.mjs   vérification NVIDIA + LM Studio
+benchmarks/
+  run_mmlu_pro.py      adaptateur lm-evaluation-harness pour MMLU-Pro
 tests/e2e/
   workspace.spec.ts    parcours navigateur réel
 docs/
   architecture.md     modèle cible et limites actuelles
-  benchmarks.md       benchmarks publics et release gates
+  benchmarks.md       résultats observés, benchmarks publics et gates
   providers.md        configuration sans secret dans le repo
 ```
 

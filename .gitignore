@@ -1,10 +1,14 @@
 node_modules/
+.venv-bench/
+.venv-bench-sys/
 dist/
 .env
 .env.*
 !.env.example
 coverage/
+artifacts/
+__pycache__/
+*.py[cod]
 playwright-report/
 test-results/
 *.local
-
