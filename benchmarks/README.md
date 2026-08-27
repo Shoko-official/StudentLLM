@@ -23,7 +23,7 @@ The command above evaluates all 676 examples in the public French test split. A 
 
 `run_asr_hf.py` evaluates a public Hugging Face audio dataset with the same `faster-whisper` scoring path. The dataset must expose an `audio` column and a text reference field. The adapter uses decoded audio bytes when available, records the public split scope, and writes WER, CER, real-time factor, elapsed time, and hardware metadata.
 
-The observed MLS French sample used the first 100 examples of the public `facebook/multilingual_librispeech` test split:
+The observed MLS French run evaluated the complete public `facebook/multilingual_librispeech` test split:
 
 ```powershell
 $env:PYTHONUTF8 = '1'
@@ -34,13 +34,12 @@ $env:PYTHONUTF8 = '1'
   --reference-field transcript `
   --language fr `
   --model small `
-  --limit 100 `
   --device cpu `
   --compute-type int8 `
-  --output artifacts\benchmarks\asr\mls-fr-small-cpu-100.json
+  --output artifacts\benchmarks\asr\mls-fr-small-cpu-full.json
 ```
 
-The run returned WER `0.150829`, CER `0.063214`, and RTF `0.201880` over 1,458.37 seconds of public audio. It is a partial public baseline and must not be presented as a full MLS score.
+The run returned WER `0.130395`, CER `0.056910`, and RTF `0.164801` over 36,241.89 seconds of public audio and 2,426 examples. This is a reproducible public MLS baseline, not a lecture-domain score or a product-level quality claim.
 
 ## Local ASR sidecar
 

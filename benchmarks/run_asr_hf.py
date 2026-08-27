@@ -43,7 +43,7 @@ def main() -> None:
     word_errors = word_count = character_errors = character_count = 0
     audio_seconds = 0.0
     started_at = time.perf_counter()
-    for example in examples:
+    for index, example in enumerate(examples, start=1):
         audio = example["audio"]
         audio_source = io.BytesIO(audio["bytes"]) if audio["bytes"] else audio["path"]
         segments, info = model.transcribe(audio_source, language=arguments.language, beam_size=5, vad_filter=True)
@@ -54,6 +54,13 @@ def main() -> None:
         character_errors += character_error
         character_count += characters
         audio_seconds += info.duration
+        if index % 100 == 0 or index == len(examples):
+            elapsed_seconds = time.perf_counter() - started_at
+            print(
+                f"processed={index}/{len(examples)} audio_seconds={audio_seconds:.2f} "
+                f"elapsed_seconds={elapsed_seconds:.2f}",
+                flush=True,
+            )
 
     elapsed_seconds = time.perf_counter() - started_at
     result = {
