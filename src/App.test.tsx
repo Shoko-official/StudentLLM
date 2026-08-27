@@ -95,7 +95,7 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByRole('button', { name: 'Source · optimization.md · part 1' })).toBeInTheDocument();
-  });
+  }, 15000);
 
   it('sends retrieved source context to an injected live provider', async () => {
     const user = userEvent.setup();

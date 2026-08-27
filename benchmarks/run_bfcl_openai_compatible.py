@@ -22,6 +22,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--num-threads", type=int, default=1)
+    parser.add_argument(
+        "--request-timeout",
+        type=float,
+        default=120.0,
+        help="Maximum seconds for each provider request.",
+    )
     parser.add_argument("--allow-overwrite", action="store_true")
     parser.add_argument("--include-input-log", action="store_true")
     parser.add_argument("--exclude-state-log", action="store_true")
@@ -39,11 +45,17 @@ def configure_environment(args: argparse.Namespace, project_root: Path) -> None:
     os.environ["PYTHONUTF8"] = "1"
 
 
-def register_endpoint_model(model: str) -> None:
+def register_endpoint_model(model: str, request_timeout: float) -> None:
     from bfcl_eval.constants.model_config import MODEL_CONFIG_MAPPING, ModelConfig
     from bfcl_eval.model_handler.api_inference.openai_completion import (
         OpenAICompletionsHandler,
     )
+
+    class EndpointOpenAICompletionsHandler(OpenAICompletionsHandler):
+        def _build_client_kwargs(self):
+            kwargs = super()._build_client_kwargs()
+            kwargs["timeout"] = request_timeout
+            return kwargs
 
     MODEL_CONFIG_MAPPING[model] = ModelConfig(
         model_name=model,
@@ -51,7 +63,7 @@ def register_endpoint_model(model: str) -> None:
         url=os.environ["OPENAI_BASE_URL"],
         org="OpenAI-compatible endpoint",
         license="Provider model license",
-        model_handler=OpenAICompletionsHandler,
+        model_handler=EndpointOpenAICompletionsHandler,
         is_fc_model=True,
         underscore_to_dot=False,
     )
@@ -64,6 +76,8 @@ def run(args: argparse.Namespace) -> None:
         raise SystemExit("--limit must be positive.")
     if args.num_threads <= 0:
         raise SystemExit("--num-threads must be positive.")
+    if args.request_timeout <= 0:
+        raise SystemExit("--request-timeout must be positive.")
 
     project_root = args.project_root.resolve()
     project_root.mkdir(parents=True, exist_ok=True)
@@ -73,7 +87,7 @@ def run(args: argparse.Namespace) -> None:
         json.dumps({args.category: test_ids}, indent=2) + "\n",
         encoding="utf-8",
     )
-    register_endpoint_model(args.model)
+    register_endpoint_model(args.model, args.request_timeout)
 
     from bfcl_eval._llm_response_generation import main as generation_main
 
@@ -111,6 +125,7 @@ def run(args: argparse.Namespace) -> None:
                 "case_count": len(test_ids),
                 "first_case": test_ids[0],
                 "last_case": test_ids[-1],
+                "request_timeout_seconds": args.request_timeout,
                 "project_root": str(project_root),
                 "result_dir": str(project_root / "result"),
                 "score_dir": str(project_root / "score"),

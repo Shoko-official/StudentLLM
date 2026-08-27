@@ -36,7 +36,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | MTEB STSBenchmark v2 | Official public test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STSBenchmark.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | Spearman main score 0.857289 |
 | MTEB STS22 v2 | Official public multilingual test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | 18 subsets, unweighted descriptive macro-average 0.469262; language spread 0.181685-0.740204 |
 | BFCL V4 through LM Studio | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | `simple_python`: 1.0000 (20/20); `multiple`: 0.9500 (19/20); `parallel_multiple`: 0.8500 (17/20); `irrelevance`: 1.0000 (20/20); `multi_turn_base`: 0.3000 (6/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1500 (3/20); partial category samples |
-| BFCL V4 through NVIDIA NIM | Official generator and evaluator through the OpenAI-compatible NVIDIA endpoint | `benchmarks/run_bfcl_openai_compatible.py --category <category> --model openai/gpt-oss-20b --base-url https://integrate.api.nvidia.com/v1` | `simple_python`: 0.4500 (9/20); `multiple`: 0.0500 (1/20); `parallel_multiple`: 0.0000 (0/20); `multi_turn_base`: 0.2500 (5/20); partial category samples |
+| BFCL V4 through NVIDIA NIM | Official generator and evaluator through the OpenAI-compatible NVIDIA endpoint | `benchmarks/run_bfcl_openai_compatible.py --category <category> --model openai/gpt-oss-20b --base-url https://integrate.api.nvidia.com/v1` | `simple_python`: 0.4500 (9/20); `multiple`: 0.0500 (1/20); `parallel_multiple`: 0.0000 (0/20); `multi_turn_base`: 0.2500 (5/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1000 (2/20); partial category samples |
 
 The provider latencies are point observations on the development machine, not production SLOs.
 
@@ -73,7 +73,7 @@ These are real public benchmark results for seven BFCL categories. They are not 
 
 ### NVIDIA NIM results
 
-The official BFCL generator and evaluator also ran through the OpenAI-compatible NVIDIA NIM endpoint using `openai/gpt-oss-20b`. The API key came from the Windows User environment variable `NVIDIA_API_KEY`; no key file is used. The wrapper and exact reproduction command are in [`benchmarks/README.md`](../benchmarks/README.md).
+The official BFCL generator and evaluator also ran through the OpenAI-compatible NVIDIA NIM endpoint using `openai/gpt-oss-20b`. The API key came from the Windows User environment variable `NVIDIA_API_KEY`; no key file is used. The wrapper bounds each provider request to 120 seconds by default, and the exact reproduction command is in [`benchmarks/README.md`](../benchmarks/README.md).
 
 | Category and sample | Official result | Latency | Validity |
 | --- | --- | --- | --- |
@@ -81,8 +81,10 @@ The official BFCL generator and evaluator also ran through the OpenAI-compatible
 | `multiple`, 20 public cases | Accuracy `0.0500` (1/20) | Mean `2.175 s`, approximate p95 `11.156 s`, max `16.268 s` | Official category scorer, partial evaluation |
 | `parallel_multiple`, 20 public cases | Accuracy `0.0000` (0/20) | Mean `1.352 s`, approximate p95 `2.370 s`, max `2.569 s` | Official category scorer, partial evaluation |
 | `multi_turn_base`, 20 public cases | Accuracy `0.2500` (5/20) | 366 requests, mean `2.042 s`, approximate p95 `3.769 s`, max `81.768 s` | Official category scorer; empty responses and malformed tool calls observed |
+| `multi_turn_miss_func`, 20 public cases | Accuracy `0.1500` (3/20) | 389 requests, mean `3.055 s`, approximate p95 `5.703 s`, max `173.977 s` | Official category scorer; empty responses and malformed tool calls observed |
+| `multi_turn_miss_param`, 20 public cases | Accuracy `0.1000` (2/20) | 325 requests, mean `2.000 s`, approximate p95 `4.392 s`, max `123.501 s` | Official category scorer; empty responses and non-exploitable provider responses observed |
 
-These are public category samples, not a global BFCL leaderboard result. The legacy NVIDIA handler path produced an HTTP 404 before scoring in an earlier attempt; that failed transport attempt has no score and is not mixed into the table above. Raw NVIDIA result and score directories are local ignored artifacts under `artifacts/benchmarks/bfcl-nvidia-gpt-oss-*`.
+These are six public category samples, not a global BFCL leaderboard result. The legacy NVIDIA handler path produced an HTTP 404 before scoring in an earlier attempt; that failed transport attempt has no score and is not mixed into the table above. A first unbounded `multi_turn_miss_func` attempt was stopped after the provider request stalled; the corrected 120-second wrapper run completed all 20 cases. Raw NVIDIA result and score directories are local ignored artifacts under `artifacts/benchmarks/bfcl-nvidia-gpt-oss-*`.
 
 ## Observed public result: MTEB STS22 v2
 

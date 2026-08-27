@@ -318,10 +318,13 @@ $env:PYTHONUTF8 = '1'
   --base-url https://integrate.api.nvidia.com/v1 `
   --limit 20 `
   --num-threads 1 `
+  --request-timeout 120 `
   --allow-overwrite
 ```
 
 `--limit 20` selects public IDs `0` through `19` for the requested category. It is a reproducible category sample, not a full BFCL leaderboard run. Use a separate `--project-root` for each category so raw generations and scorer output remain isolated.
+
+The wrapper bounds each provider request to 120 seconds by default. This keeps a stalled OpenAI-compatible request from holding a multi-turn run indefinitely; the value can be changed with `--request-timeout` when a provider needs a different limit.
 
 The observed NVIDIA NIM runs on 2026-08-28 used `openai/gpt-oss-20b`, `temperature=0`, one request thread, and the Windows User `NVIDIA_API_KEY` value:
 
@@ -331,5 +334,7 @@ The observed NVIDIA NIM runs on 2026-08-28 used `openai/gpt-oss-20b`, `temperatu
 | `multiple` | 20 | `5.00%` (1/20) | Mean `2.175 s`, p95 `11.156 s`, max `16.268 s` |
 | `parallel_multiple` | 20 | `0.00%` (0/20) | Mean `1.352 s`, p95 `2.370 s`, max `2.569 s` |
 | `multi_turn_base` | 20 | `25.00%` (5/20) | 366 requests, mean `2.042 s`, p95 `3.769 s`, max `81.768 s` |
+| `multi_turn_miss_func` | 20 | `15.00%` (3/20) | 389 requests, mean `3.055 s`, p95 `5.703 s`, max `173.977 s` |
+| `multi_turn_miss_param` | 20 | `10.00%` (2/20) | 325 requests, mean `2.000 s`, p95 `4.392 s`, max `123.501 s` |
 
-These are official category scores on public samples, not global BFCL scores. The multi-turn run produced empty responses and malformed tool calls during generation; the failures remain in the local ignored result and score directories. An initial legacy NVIDIA handler attempt returned an HTTP 404 before scoring and is not counted as a benchmark result.
+These are official category scores on public samples, not global BFCL scores. The multi-turn runs produced empty responses, malformed tool calls, and non-exploitable provider responses during generation; the failures remain in the local ignored result and score directories. An initial legacy NVIDIA handler attempt returned an HTTP 404 before scoring and is not counted as a benchmark result.

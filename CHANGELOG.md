@@ -52,7 +52,8 @@
 - official BFCL V4 `multi_turn_base` partial evaluation through the existing LM Studio endpoint, with 6/20 official category accuracy and recorded format failures;
 - official BFCL V4 `multi_turn_miss_func` and `multi_turn_miss_param` partial evaluations, both 3/20, with long-sequence and empty-response compatibility findings;
 - official BFCL V4 OpenAI-compatible NVIDIA NIM runner using the Windows User `NVIDIA_API_KEY` environment variable;
-- four official BFCL V4 NVIDIA NIM category samples for `openai/gpt-oss-20b`: `simple_python` 9/20, `multiple` 1/20, `parallel_multiple` 0/20, and `multi_turn_base` 5/20;
+- configurable 120-second default request timeout for the OpenAI-compatible BFCL runner, preventing stalled multi-turn requests from holding a run indefinitely;
+- six official BFCL V4 NVIDIA NIM category samples for `openai/gpt-oss-20b`: `simple_python` 9/20, `multiple` 1/20, `parallel_multiple` 0/20, `multi_turn_base` 5/20, `multi_turn_miss_func` 3/20, and `multi_turn_miss_param` 2/20;
 - deterministic single-worker local Playwright mode to prevent Windows browser-test contention while keeping CI parallel;
 - 70-item public MMLU-Pro LM Studio receipt covering all 14 categories with explicit partial-sample validity;
 - 140-item public MMLU-Pro LM Studio receipt covering all 14 categories, plus UTF-8 output handling for Windows benchmark runs;
