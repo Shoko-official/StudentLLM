@@ -15,6 +15,7 @@
 - provider failures are rendered as actionable chat messages and covered by UI tests;
 - recorder failure contracts cover missing browser APIs, unavailable recorder construction, construction errors, and microphone permission rejection;
 - durable recording sessions now appear as course audio resources after successful finalization;
+- transcript review controls can now promote a segment to verified or send it back for review;
 - browser reload persistence and microphone-unavailable fallback covered by Playwright;
 - local lexical retrieval with timestamp-aware context selection for provider chat;
 - reproducible full-split BEIR BM25 benchmark adapter with SciFact, NFCorpus, ArguAna, FiQA, and SCIDOCS receipts;

@@ -301,6 +301,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
     notify(`Bookmark added at ${nextSegment.timestamp}.`);
   };
 
+  const toggleTranscriptReview = (segmentId: string) => {
+    const segment = transcript.find((item) => item.id === segmentId);
+    if (!segment) return;
+    const nextStatus: TranscriptSegment['status'] = segment.status === 'review' ? 'verified' : 'review';
+    setTranscript((segments) => segments.map((item) => item.id === segmentId ? { ...item, status: nextStatus } : item));
+    notify(nextStatus === 'verified' ? 'Transcript segment verified.' : 'Transcript segment marked for review.');
+  };
+
   const submitComposer = async (event: FormEvent) => {
     event.preventDefault();
     const message = composerValue.trim();
@@ -576,7 +584,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
                     <article className={`transcript-item ${segment.status === 'review' ? 'needs-review' : ''}`} key={segment.id}>
                       <div className="transcript-time">{segment.timestamp}</div>
                       <div className="transcript-body"><div className="speaker-line"><strong>{segment.speaker}</strong>{segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><p>{segment.text}</p></div>
-                      <button className="transcript-more" aria-label={`Actions for segment ${segment.timestamp}`} onClick={() => notify(`Segment ${segment.timestamp} selected.`)}>•••</button>
+                      <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => toggleTranscriptReview(segment.id)}>•••</button>
                     </article>
                   ))}
                 </div>
