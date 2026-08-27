@@ -9,7 +9,7 @@ StudentLLM is a local-first learning studio that turns lectures into searchable,
 StudentLLM is built around three principles:
 
 - Original audio, documents, and images remain recoverable and traceable.
-- Digital PDFs can be indexed locally with page-level provenance through the optional PyMuPDF sidecar.
+- PDFs and images can be indexed locally with page-level provenance through the optional PyMuPDF and RapidOCR sidecar.
 - Generated answers and study artifacts link back to a source, page, or timestamp.
 - Local processing is the default; remote providers are explicit integrations.
 
@@ -21,6 +21,7 @@ StudentLLM is built around three principles:
 - Versioned local workspace persistence with course-isolated sources, transcript segments, chat history, and artifacts.
 - Chunked `MediaRecorder` capture with IndexedDB persistence when supported by the browser.
 - Optional local faster-whisper sidecar transcription after durable recording, with timestamped review segments.
+- Optional local PDF text extraction and RapidOCR for images or scanned PDF pages, with page-level review segments.
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.
 - Original imported source blobs are stored in IndexedDB when available, alongside their fingerprints.
 - Course deletion clears the lesson workspace and its locally stored source and recording blobs before switching sessions.
@@ -81,7 +82,7 @@ src/
   lib/recorder.ts            microphone and MediaRecorder capture
   lib/recording-storage.ts   IndexedDB audio chunk storage
   lib/speech-engine.ts       local faster-whisper HTTP adapter
-  lib/document-engine.ts    local digital-PDF extraction adapter
+  lib/document-engine.ts     local PDF and image extraction adapter
   lib/source-ingest.ts        local source classification and fingerprinting
   lib/source-storage.ts       IndexedDB source blob storage
   lib/source-chunking.ts      bounded text passages for retrieval
@@ -90,7 +91,8 @@ src/
 scripts/
   provider-smoke.mjs         NVIDIA and LM Studio smoke check
   local_asr_server.py        local faster-whisper transcription sidecar
-  local_document_server.py  local PyMuPDF PDF text sidecar
+  local_document_server.py   local PyMuPDF and RapidOCR document sidecar
+  requirements-local-documents.txt  Python sidecar dependencies
 benchmarks/
   run_asr_fleurs.py         full public FLEURS French ASR baseline
   run_mmlu_pro.py            lm-evaluation-harness adapter for MMLU-Pro
@@ -102,14 +104,14 @@ docs/
   benchmarks.md              public benchmark evidence and gates
   providers.md               provider setup and runtime configuration
   local-asr.md               local transcription sidecar setup
-  local-documents.md         local digital-PDF extraction setup
+  local-documents.md         local PDF and image extraction setup
 ```
 
 ## Roadmap
 
 - Move browser persistence to SQLite WAL in the Tauri desktop runtime, with crash recovery and tested migrations.
 - Extend the `SpeechEngine` contract to streaming partials, diarization, and crash-resumable jobs.
-- Extend source import with scanned-image OCR, page or region provenance, and formula-aware extraction.
+- Extend OCR with structured tables, formulas, diagrams, handwriting, and richer page or region provenance.
 - Add hybrid BM25 plus dense retrieval, reranking, and a permissioned citation-first agent loop.
 - Extend the current lexical retriever with dense retrieval and reranking after the native knowledge store is available.
 - Validate the desktop shell on Windows, macOS, and Linux.

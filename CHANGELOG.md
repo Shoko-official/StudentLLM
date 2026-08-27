@@ -24,7 +24,7 @@
 - course deletion clears the active lesson workspace and its local source and recording blobs;
 - active courses can be exported and imported as versioned JSON packages with source and audio fidelity;
 - unsupported chat questions now return an evidence refusal without calling a provider on empty context;
-- optional local PyMuPDF extraction indexes digital PDF pages as reviewable, page-cited transcript segments;
+- optional local PyMuPDF and RapidOCR extraction indexes PDF pages and images as reviewable, page-cited transcript segments;
 - browser reload persistence and microphone-unavailable fallback covered by Playwright;
 - local lexical retrieval with timestamp-aware context selection for provider chat;
 - reproducible full-split BEIR BM25 benchmark adapter with SciFact, NFCorpus, ArguAna, FiQA, and SCIDOCS receipts;
