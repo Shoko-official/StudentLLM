@@ -15,6 +15,7 @@
 - provider failures are rendered as actionable chat messages and covered by UI tests;
 - recorder failure contracts cover missing browser APIs, unavailable recorder construction, construction errors, and microphone permission rejection;
 - durable recording sessions now appear as course audio resources after successful finalization;
+- interrupted durable recordings are recovered from their local manifest on the next launch;
 - transcript review controls can now promote a segment to verified or send it back for review;
 - Studio artifacts now expose an offline draft preview and can be replaced with source-grounded local-provider content;
 - course sources, transcripts, chats, and artifacts are isolated per lesson with legacy workspace migration;

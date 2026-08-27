@@ -12,9 +12,9 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | --- | --- | --- | --- |
 | TypeScript | TypeScript project check | `npm run check` | PASS |
 | Benchmark adapters | Python bytecode compilation | `npm run benchmarks:check` | PASS |
-| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 54 tests |
+| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 56 tests |
 | Production artifact | Vite | `npm run build` | PASS |
-| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 15 tests |
+| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 20 tests |
 | FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
 | Local ASR sidecar | Python service plus public FLEURS request | `npm run asr:server` with `POST /transcribe` | PASS observed on 2026-08-27; public sample returned timestamped output |
 | Local document sidecar | PyMuPDF and RapidOCR service plus public arXiv source | `npm run document:server` with `POST /extract` | PASS observed on 2026-08-27; PDF 15/15 pages, rasterized page 69 OCR blocks |
