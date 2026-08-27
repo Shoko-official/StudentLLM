@@ -68,8 +68,9 @@ Provider credentials are read at runtime and are never loaded from a repository 
 
 - NVIDIA NIM reads `NVIDIA_API_KEY` from the Windows User environment or the current process.
 - NVIDIA defaults to `https://integrate.api.nvidia.com/v1` and `openai/gpt-oss-20b`.
-- LM Studio defaults to `http://127.0.0.1:1234/v1` and `qwen/qwen3-4b`.
-- Set `VITE_LM_STUDIO_BASE_URL` before `npm run dev` to enable live chat against the local server; the browser integration never accepts an NVIDIA credential.
+- LM Studio smoke checks default to `http://127.0.0.1:1234/v1` and `qwen/qwen3-4b`.
+- For browser chat, set `VITE_LM_STUDIO_BASE_URL=/lm-studio/v1` before `npm run dev`; the built-in Vite proxy keeps the request same-origin when LM Studio CORS is disabled.
+- An absolute browser endpoint remains supported when it allows the Vite origin through CORS; the browser integration never accepts an NVIDIA credential.
 - Optional endpoint and model overrides are listed in [.env.example](./.env.example); it contains no secret values.
 
 See [docs/providers.md](./docs/providers.md) for provider-specific commands.
