@@ -53,6 +53,7 @@
 - NVIDIA NIM and LM Studio OpenAI-compatible smoke checks with runtime credentials;
 - browser OpenAI-compatible provider requests now bind the default fetch context correctly;
 - live LM Studio browser chat path verified through the built-in Vite same-origin proxy without restarting the model process;
+- live browser recording to the faster-whisper sidecar verified with a public FLEURS sample and a rendered review segment;
 - live browser PDF import verified against the local PyMuPDF sidecar with a public 15-page source;
 - live NVIDIA NIM and LM Studio smoke checks reverified on 2026-08-27 without restarting the local model process;
 - latest provider smoke receipt confirms NVIDIA NIM at 1,260 ms and LM Studio at 310 ms on the development machine;
