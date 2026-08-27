@@ -26,6 +26,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | BEIR NFCorpus retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset nfcorpus` | nDCG@10 0.3037, Recall@10 0.1423, MRR@10 0.5137 |
 | BEIR ArguAna dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset arguana --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.4287, Recall@10 0.8414, MRR@10 0.2956 |
 | BEIR SCIDOCS dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset scidocs --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.1973, Recall@10 0.2091, MRR@10 0.3344 |
+| BEIR FiQA dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset fiqa --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.3848, Recall@10 0.4396, MRR@10 0.4650 |
 
 The provider latencies are point observations on the development machine, not production SLOs.
 
@@ -95,8 +96,9 @@ Observed dense results on 2026-08-27 use `BAAI/bge-small-en-v1.5`, CPU, batch si
 | NFCorpus | 3,633 documents | 323 evaluated test queries | nDCG@10 `0.3391`, Recall@10 `0.1580`, MRR@10 `0.5299` | `0.3037`, `0.1423`, `0.5137` | Dense higher on all three metrics |
 | ArguAna | 8,674 documents | 1,406 evaluated test queries | nDCG@10 `0.4287`, Recall@10 `0.8414`, MRR@10 `0.2956` | `0.3132`, `0.6636`, `0.2030` | Dense higher on all three metrics |
 | SCIDOCS | 25,657 documents | 1,000 evaluated test queries | nDCG@10 `0.1973`, Recall@10 `0.2091`, MRR@10 `0.3344` | `0.1528`, `0.1584`, `0.2736` | Dense higher on all three metrics |
+| FiQA | 57,638 documents | 648 evaluated test queries | nDCG@10 `0.3848`, Recall@10 `0.4396`, MRR@10 `0.4650` | `0.2347`, `0.2962`, `0.2919` | Dense higher on all three metrics |
 
-These are complete public test splits, not a sampled benchmark. The receipts are `artifacts/benchmarks/beir/scifact-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/nfcorpus-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/arguana-bge-small-en-v1.5.json`, and `artifacts/benchmarks/beir/scidocs-bge-small-en-v1.5.json`; they are ignored by Git.
+These are complete public test splits, not a sampled benchmark. The receipts are `artifacts/benchmarks/beir/scifact-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/nfcorpus-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/arguana-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/scidocs-bge-small-en-v1.5.json`, and `artifacts/benchmarks/beir/fiqa-bge-small-en-v1.5.json`; they are ignored by Git.
 
 ## Public benchmarks to integrate
 
