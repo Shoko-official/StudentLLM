@@ -32,7 +32,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   constructor(options: OpenAICompatibleProviderOptions) {
     this.baseUrl = options.baseUrl;
     this.model = options.model;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
