@@ -101,4 +101,20 @@ describe('StudentLLM workspace', () => {
 
     expect(screen.getByText('week-1.md')).toBeInTheDocument();
   });
+
+  it('restores chat history after remounting the workspace', async () => {
+    const user = userEvent.setup();
+    const firstRender = render(<App />);
+
+    await user.click(screen.getByRole('tab', { name: /Chat/ }));
+    await user.type(screen.getByLabelText('Ask the course chat'), 'Persist this question');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    firstRender.unmount();
+
+    render(<App />);
+
+    expect(screen.getByRole('tab', { name: /Chat/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: /Chat/ }));
+    expect(screen.getByText('Persist this question')).toBeInTheDocument();
+  });
 });

@@ -15,6 +15,7 @@ const fallback: WorkspaceSnapshot = {
   }],
   resources: [],
   transcript: [],
+  chat: [],
   artifacts: [],
 };
 
@@ -26,6 +27,7 @@ describe('workspace storage', () => {
       ...fallback,
       activeLessonId: 'new-lesson',
       lessons: [{ ...fallback.lessons[0], id: 'new-lesson', title: 'Persistent course' }],
+      chat: [{ id: 'message-1', role: 'user', content: 'Question' }],
       artifacts: [{ id: 'artifact-1', kind: 'summary', label: 'Summary', createdAt: 'just now' }],
     };
 
@@ -45,12 +47,14 @@ describe('workspace storage', () => {
       activeLessonId: 'valid',
       lessons: [{ ...fallback.lessons[0], id: 'valid' }, { id: 42 }],
       transcript: [{ id: 'ok', timestamp: '00:01', speaker: 'Professor', text: 'Text' }, { id: 7 }],
+      chat: [{ id: 'ok', role: 'assistant', content: 'Answer', citations: ['Source'] }, { id: 8 }],
       artifacts: [{ id: 'ok', kind: 'summary', label: 'Summary', createdAt: 'now' }, { id: 'bad', kind: 'unknown' }],
     }));
 
     const loaded = loadWorkspace(fallback);
     expect(loaded.lessons).toHaveLength(1);
     expect(loaded.transcript).toHaveLength(1);
+    expect(loaded.chat).toHaveLength(1);
     expect(loaded.artifacts).toHaveLength(1);
   });
 });
