@@ -16,7 +16,8 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 4 tests |
 | NVIDIA generation | Live API, runtime credential | `npm run providers:smoke` | PASS observed, 1,288 ms |
 | LM Studio generation | Live local server | `npm run providers:smoke` | PASS observed, 351 ms |
-| BEIR SciFact retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_scifact.py` | nDCG@10 0.6593, Recall@10 0.7809, MRR@10 0.6252 |
+| BEIR SciFact retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset scifact` | nDCG@10 0.6593, Recall@10 0.7809, MRR@10 0.6252 |
+| BEIR NFCorpus retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset nfcorpus` | nDCG@10 0.3037, Recall@10 0.1423, MRR@10 0.5137 |
 
 The provider latencies are point observations on the development machine, not production SLOs.
 
@@ -56,6 +57,7 @@ The retrieval baseline runs the complete public [BeIR SciFact corpus and query d
 | Run | Corpus | Evaluation set | Result | Validity |
 | --- | --- | --- | --- | --- |
 | 2026-08-27 | 5,183 documents | 300 evaluated test queries, 339 qrel rows | nDCG@10 `0.6593`, Recall@10 `0.7809`, MRR@10 `0.6252` | Full public split, reproducible baseline |
+| 2026-08-27 | 3,633 documents | 323 evaluated test queries, 12,334 qrel rows | nDCG@10 `0.3037`, Recall@10 `0.1423`, MRR@10 `0.5137` | Full public split, reproducible baseline |
 
 The receipt was written to `artifacts/benchmarks/beir/scifact-bm25.json`. This measures lexical retrieval on SciFact; it is not a claim about StudentLLM's future dense retrieval or answer faithfulness.
 

@@ -81,7 +81,7 @@ scripts/
   provider-smoke.mjs         NVIDIA and LM Studio smoke check
 benchmarks/
   run_mmlu_pro.py            lm-evaluation-harness adapter for MMLU-Pro
-  run_beir_scifact.py        full public BEIR SciFact BM25 baseline
+  run_beir_bm25.py           full public BEIR BM25 baselines
 tests/e2e/
   workspace.spec.ts          real browser workflows
 docs/

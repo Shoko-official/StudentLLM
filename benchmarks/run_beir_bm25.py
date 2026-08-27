@@ -18,6 +18,10 @@ from pathlib import Path
 
 
 TOKEN_PATTERN = re.compile(r"[^\w]+", re.UNICODE)
+DATASETS = {
+    "scifact": {"dataset": "BeIR/scifact", "qrels": "BeIR/scifact-qrels", "label": "BEIR SciFact"},
+    "nfcorpus": {"dataset": "BeIR/nfcorpus", "qrels": "BeIR/nfcorpus-qrels", "label": "BEIR NFCorpus"},
+}
 
 
 def tokenize(value: str) -> list[str]:
@@ -77,13 +81,14 @@ def reciprocal_rank_at_k(retrieved: list[str], relevant: dict[str, int], k: int)
     return 0.0
 
 
-def run(output_path: Path | None) -> dict[str, object]:
+def run(dataset_name: str, output_path: Path | None) -> dict[str, object]:
     from datasets import load_dataset
 
+    dataset_info = DATASETS[dataset_name]
     started_at = time.perf_counter()
-    corpus = load_dataset("BeIR/scifact", "corpus", split="corpus")
-    queries = load_dataset("BeIR/scifact", "queries", split="queries")
-    qrels = load_dataset("BeIR/scifact-qrels", "default", split="test")
+    corpus = load_dataset(dataset_info["dataset"], "corpus", split="corpus")
+    queries = load_dataset(dataset_info["dataset"], "queries", split="queries")
+    qrels = load_dataset(dataset_info["qrels"], "default", split="test")
     documents = [(str(row["_id"]), f"{row['title']} {row['text']}") for row in corpus]
     query_text = {str(row["_id"]): row["text"] for row in queries}
     relevance: dict[str, dict[str, int]] = defaultdict(dict)
@@ -104,9 +109,9 @@ def run(output_path: Path | None) -> dict[str, object]:
         evaluated_queries += 1
 
     result = {
-        "benchmark": "BEIR SciFact",
-        "dataset": "BeIR/scifact",
-        "qrels_dataset": "BeIR/scifact-qrels",
+        "benchmark": dataset_info["label"],
+        "dataset": dataset_info["dataset"],
+        "qrels_dataset": dataset_info["qrels"],
         "split": "test",
         "retriever": "BM25",
         "parameters": {"k1": 1.2, "b": 0.75, "top_k": 10},
@@ -124,10 +129,11 @@ def run(output_path: Path | None) -> dict[str, object]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the full BEIR SciFact BM25 baseline.")
+    parser = argparse.ArgumentParser(description="Run a full BEIR BM25 baseline.")
+    parser.add_argument("--dataset", choices=sorted(DATASETS), default="scifact")
     parser.add_argument("--output_path", type=Path)
     args = parser.parse_args()
-    result = run(args.output_path)
+    result = run(args.dataset, args.output_path)
     print(json.dumps(result, indent=2))
 
 
