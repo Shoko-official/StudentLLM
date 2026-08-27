@@ -22,6 +22,7 @@ StudentLLM is built around three principles:
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.
 - OpenAI-compatible smoke checks for NVIDIA NIM and LM Studio.
 - Optional live LM Studio chat through a browser-safe OpenAI-compatible provider adapter; no remote API key is bundled in the client.
+- Local lexical retrieval selects transcript excerpts and preserves timestamp citations before a live provider request.
 - Vitest unit and integration coverage, Playwright browser coverage, axe accessibility checks, and GitHub Actions CI.
 
 ## Quick start
@@ -94,6 +95,7 @@ docs/
 - Add `SpeechEngine` and `LLMProvider` implementations behind stable application contracts.
 - Extend source import with PDF and image parsing, OCR, page or region provenance, and formula-aware extraction.
 - Add hybrid BM25 plus dense retrieval, reranking, and a permissioned citation-first agent loop.
+- Extend the current lexical retriever with dense retrieval and reranking after the native knowledge store is available.
 - Validate the desktop shell on Windows, macOS, and Linux.
 - Expand public benchmark coverage and the versioned LectureBench described in [docs/benchmarks.md](./docs/benchmarks.md).
 
