@@ -9,6 +9,7 @@ StudentLLM is a local-first learning studio that turns lectures into searchable,
 StudentLLM is built around three principles:
 
 - Original audio, documents, and images remain recoverable and traceable.
+- Digital PDFs can be indexed locally with page-level provenance through the optional PyMuPDF sidecar.
 - Generated answers and study artifacts link back to a source, page, or timestamp.
 - Local processing is the default; remote providers are explicit integrations.
 
@@ -80,6 +81,7 @@ src/
   lib/recorder.ts            microphone and MediaRecorder capture
   lib/recording-storage.ts   IndexedDB audio chunk storage
   lib/speech-engine.ts       local faster-whisper HTTP adapter
+  lib/document-engine.ts    local digital-PDF extraction adapter
   lib/source-ingest.ts        local source classification and fingerprinting
   lib/source-storage.ts       IndexedDB source blob storage
   lib/source-chunking.ts      bounded text passages for retrieval
@@ -88,6 +90,7 @@ src/
 scripts/
   provider-smoke.mjs         NVIDIA and LM Studio smoke check
   local_asr_server.py        local faster-whisper transcription sidecar
+  local_document_server.py  local PyMuPDF PDF text sidecar
 benchmarks/
   run_asr_fleurs.py         full public FLEURS French ASR baseline
   run_mmlu_pro.py            lm-evaluation-harness adapter for MMLU-Pro
@@ -99,13 +102,14 @@ docs/
   benchmarks.md              public benchmark evidence and gates
   providers.md               provider setup and runtime configuration
   local-asr.md               local transcription sidecar setup
+  local-documents.md         local digital-PDF extraction setup
 ```
 
 ## Roadmap
 
 - Move browser persistence to SQLite WAL in the Tauri desktop runtime, with crash recovery and tested migrations.
 - Extend the `SpeechEngine` contract to streaming partials, diarization, and crash-resumable jobs.
-- Extend source import with PDF and image parsing, OCR, page or region provenance, and formula-aware extraction.
+- Extend source import with scanned-image OCR, page or region provenance, and formula-aware extraction.
 - Add hybrid BM25 plus dense retrieval, reranking, and a permissioned citation-first agent loop.
 - Extend the current lexical retriever with dense retrieval and reranking after the native knowledge store is available.
 - Validate the desktop shell on Windows, macOS, and Linux.

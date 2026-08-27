@@ -42,6 +42,8 @@ import { createLocalLLMProvider } from './lib/llm-provider';
 import type { LLMProvider } from './lib/llm-provider';
 import { createLocalSpeechEngine } from './lib/speech-engine';
 import type { SpeechEngine } from './lib/speech-engine';
+import { createLocalDocumentEngine } from './lib/document-engine';
+import type { DocumentEngine } from './lib/document-engine';
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore } from './lib/source-storage';
 import { createRecordingChunkStore } from './lib/recording-storage';
@@ -167,9 +169,10 @@ export interface AppProps {
   provider?: LLMProvider | null;
   recorderSessionFactory?: () => Promise<RecorderSession>;
   speechEngine?: SpeechEngine | null;
+  documentEngine?: DocumentEngine | null;
 }
 
-function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine }: AppProps) {
+function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine }: AppProps) {
   const [workspace] = useState(() => loadWorkspace({
     activeLessonId: initialLessons[0].id,
     lessons: initialLessons,
@@ -212,6 +215,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const recorderRef = useRef<RecorderSession | null>(null);
   const localProvider = useMemo(() => provider === undefined ? createLocalLLMProvider() : provider, [provider]);
   const localSpeechEngine = useMemo(() => speechEngine === undefined ? createLocalSpeechEngine() : speechEngine, [speechEngine]);
+  const localDocumentEngine = useMemo(() => documentEngine === undefined ? createLocalDocumentEngine() : documentEngine, [documentEngine]);
   const sourceBlobStore = useMemo(() => createSourceBlobStore(), []);
   const recordingChunkStore = useMemo(() => createRecordingChunkStore(), []);
 
@@ -530,11 +534,32 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
+    const lessonId = activeLesson.id;
     try {
       const resource = await createSourceResource(file);
       await sourceBlobStore.save(resource.id, file);
-      updateActiveWorkspace((current) => ({ ...current, resources: [resource, ...current.resources] }));
+      updateLessonWorkspace(lessonId, (current) => ({ ...current, resources: [resource, ...current.resources] }));
       notify(`${resource.name} added to course sources${sourceBlobStore.durability === 'durable' ? ' and saved locally.' : ' in memory only.'}`);
+      if (localDocumentEngine && resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name))) {
+        try {
+          const extraction = await localDocumentEngine.extract(file);
+          const pageSegments = extraction.pages
+            .filter((page) => page.text.trim())
+            .map((page) => ({
+              id: `${resource.id}:page-${page.pageNumber}`,
+              timestamp: `Page ${page.pageNumber}`,
+              speaker: resource.name,
+              text: page.text.trim(),
+              status: 'review' as const,
+            }));
+          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: [...current.transcript, ...pageSegments] }));
+          notify(pageSegments.length > 0
+            ? `${resource.name} indexed ${pageSegments.length} page${pageSegments.length === 1 ? '' : 's'} locally.`
+            : `${resource.name} contains no extractable text; image OCR is not enabled.`);
+        } catch {
+          notify(`${resource.name} was saved, but local PDF text extraction is unavailable.`);
+        }
+      }
     } catch {
       notify('The source could not be fingerprinted or stored locally.');
     }

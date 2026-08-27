@@ -12,11 +12,12 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | --- | --- | --- | --- |
 | TypeScript | TypeScript project check | `npm run check` | PASS |
 | Benchmark adapters | Python bytecode compilation | `npm run benchmarks:check` | PASS |
-| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 48 tests |
+| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 52 tests |
 | Production artifact | Vite | `npm run build` | PASS |
 | Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 12 tests |
 | FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
 | Local ASR sidecar | Python service plus public FLEURS request | `npm run asr:server` with `POST /transcribe` | PASS observed on 2026-08-27; public sample returned timestamped output |
+| Local document sidecar | PyMuPDF service plus public arXiv PDF | `npm run document:server` with `POST /extract` | PASS observed on 2026-08-27; 15/15 pages returned non-empty text |
 | RAG unanswerable guard | Provider call suppression with no retrieved passage | App integration test | PASS; unsupported questions return a refusal without a provider request |
 | NVIDIA generation | Live API, runtime credential | `npm run providers:smoke` | PASS observed, 1,288 ms |
 | LM Studio generation | Live local server | `npm run providers:smoke` | PASS observed, 351 ms |
