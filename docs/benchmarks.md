@@ -22,7 +22,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | RAG unanswerable guard | Provider call suppression with no retrieved passage | App integration test | PASS; unsupported questions return a refusal without a provider request |
 | NVIDIA generation | Live API, runtime credential from the Windows User environment | `npm run providers:smoke` | PASS observed on 2026-08-27, 2,558 ms |
 | LM Studio generation | Live local server, existing process | `npm run providers:smoke` | PASS observed on 2026-08-27, 585 ms |
-| LM Studio browser chat | Playwright UI path through a temporary local CORS proxy to the existing process | Manual live UI check | PASS observed on 2026-08-27; 4 chat messages, 423-character model answer, transcript citations, 0 page errors |
+| LM Studio browser chat | Playwright UI path through the built-in Vite same-origin proxy to the existing process | Manual live UI check | PASS observed on 2026-08-27; 4 chat messages, 423-character model answer, transcript citations, 0 page errors |
 | BEIR SciFact retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset scifact` | nDCG@10 0.6593, Recall@10 0.7809, MRR@10 0.6252 |
 | BEIR NFCorpus retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset nfcorpus` | nDCG@10 0.3037, Recall@10 0.1423, MRR@10 0.5137 |
 | BEIR ArguAna dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset arguana --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.4287, Recall@10 0.8414, MRR@10 0.2956 |
@@ -34,7 +34,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 
 The provider latencies are point observations on the development machine, not production SLOs.
 
-The browser chat result uses a temporary local CORS proxy because the unchanged LM Studio endpoint did not return CORS headers. It validates the application request, response, citation, and rendering path without restarting LM Studio; it is not evidence that the endpoint is directly browser-callable without CORS configuration.
+The browser chat result uses the built-in Vite same-origin proxy because the unchanged LM Studio endpoint did not return CORS headers. It validates the application request, response, citation, and rendering path without restarting LM Studio; it is not evidence that the endpoint is directly browser-callable without CORS configuration.
 
 ## Observed public result: MMLU-Pro
 
