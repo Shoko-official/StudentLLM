@@ -201,8 +201,12 @@ kbd { color: var(--faint); font-family: var(--mono); font-size: 9px; }
 .artifact-icon.mindmap { color: #89b6ed; background: rgba(137, 182, 237, .1); }
 .artifact-icon.glossary { color: #e6a2bd; background: rgba(230, 162, 189, .1); }
 .recent-section { padding-top: 3px; }
-.recent-artifact { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.recent-artifact { width: 100%; display: flex; align-items: center; gap: 8px; padding: 6px 0; color: inherit; background: transparent; text-align: left; }
+.recent-artifact:hover { background: var(--surface-2); }
 .recent-artifact > span:last-child { display: grid; gap: 2px; }
+.artifact-preview { display: grid; gap: 7px; padding: 10px; margin-top: 8px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; }
+.artifact-preview h3 { margin: 0; color: var(--text); font-size: 11px; }
+.artifact-preview p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.55; white-space: pre-wrap; }
 .studio-link { justify-content: center; width: 100%; padding: 11px; color: var(--accent); background: rgba(142, 208, 193, .06); border: 1px solid rgba(142, 208, 193, .12); border-radius: 9px; font-size: 10px; font-weight: 700; }
 
 .chat-view { max-width: 720px; display: grid; gap: 25px; }

@@ -44,4 +44,6 @@ export interface Artifact {
   kind: ArtifactKind;
   label: string;
   createdAt: string;
+  content?: string;
+  citations?: string[];
 }
