@@ -1,4 +1,4 @@
-import { Artifact, Lesson, Resource, TranscriptSegment } from '../types';
+import { Artifact, ChatMessage, Lesson, Resource, TranscriptSegment } from '../types';
 
 export const WORKSPACE_STORAGE_KEY = 'studentllm.workspace.v1';
 
@@ -7,6 +7,7 @@ export interface WorkspaceSnapshot {
   lessons: Lesson[];
   resources: Resource[];
   transcript: TranscriptSegment[];
+  chat: ChatMessage[];
   artifacts: Artifact[];
 }
 
@@ -60,6 +61,14 @@ function isArtifact(value: unknown): value is Artifact {
     && typeof value.createdAt === 'string';
 }
 
+function isChatMessage(value: unknown): value is ChatMessage {
+  if (!isRecord(value)) return false;
+  return typeof value.id === 'string'
+    && (value.role === 'user' || value.role === 'assistant')
+    && typeof value.content === 'string'
+    && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every((citation) => typeof citation === 'string')));
+}
+
 function getStorage(): Storage | undefined {
   if (typeof window === 'undefined') return undefined;
   return window.localStorage;
@@ -83,9 +92,10 @@ export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | un
       : lessons[0].id;
     const resources = Array.isArray(parsed.resources) ? parsed.resources.filter(isResource) : fallback.resources;
     const transcript = Array.isArray(parsed.transcript) ? parsed.transcript.filter(isTranscriptSegment) : fallback.transcript;
+    const chat = Array.isArray(parsed.chat) ? parsed.chat.filter(isChatMessage) : fallback.chat;
     const artifacts = Array.isArray(parsed.artifacts) ? parsed.artifacts.filter(isArtifact) : [];
 
-    return { activeLessonId, lessons, resources, transcript, artifacts };
+    return { activeLessonId, lessons, resources, transcript, chat, artifacts };
   } catch {
     return fallback;
   }

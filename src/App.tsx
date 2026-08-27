@@ -149,6 +149,7 @@ function App() {
     lessons: initialLessons,
     resources: initialResources,
     transcript: initialTranscript,
+    chat: initialChat,
     artifacts: [],
   }));
   const [lessons, setLessons] = useState(workspace.lessons);
@@ -168,7 +169,7 @@ function App() {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordingError, setRecordingError] = useState('');
   const [transcript, setTranscript] = useState(workspace.transcript);
-  const [chat, setChat] = useState(initialChat);
+  const [chat, setChat] = useState(workspace.chat);
   const [composerValue, setComposerValue] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [artifacts, setArtifacts] = useState<Artifact[]>(workspace.artifacts);
@@ -217,8 +218,8 @@ function App() {
   }, [toast]);
 
   useEffect(() => {
-    saveWorkspace({ activeLessonId, lessons, resources, transcript, artifacts });
-  }, [activeLessonId, lessons, resources, transcript, artifacts]);
+    saveWorkspace({ activeLessonId, lessons, resources, transcript, chat, artifacts });
+  }, [activeLessonId, lessons, resources, transcript, chat, artifacts]);
 
   useEffect(() => () => {
     void recorderRef.current?.stop();
