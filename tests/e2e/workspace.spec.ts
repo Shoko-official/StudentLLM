@@ -49,6 +49,17 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByRole('button', { name: 'Mark segment 01:15:02 for review' })).toBeVisible();
   });
 
+  test('persists a Studio artifact preview after a browser reload', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /Targeted quiz/ }).click();
+    await expect(page.getByRole('button', { name: 'Open artifact Targeted quiz' })).toBeVisible();
+    await expect(page.getByText(/Draft targeted quiz for Attention & Scaled Dot-Product/)).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Open artifact Targeted quiz' })).toBeVisible();
+    await expect(page.getByText(/Draft targeted quiz for Attention & Scaled Dot-Product/)).toBeVisible();
+  });
+
   test('isolates new-course transcript content', async ({ page }) => {
     await page.goto('/');
 
