@@ -82,6 +82,17 @@ The receipts are written to `artifacts/benchmarks/beir/`. These are lexical base
 
 The rows above correspond, in order, to the public [SciFact](https://huggingface.co/datasets/BeIR/scifact), [NFCorpus](https://huggingface.co/datasets/BeIR/nfcorpus), [ArguAna](https://huggingface.co/datasets/BeIR/arguana), [FiQA](https://huggingface.co/datasets/BeIR/fiqa), and [SCIDOCS](https://huggingface.co/datasets/BeIR/scidocs) datasets. These are lexical baselines on public BEIR datasets; they are not claims about StudentLLM's future dense retrieval or answer faithfulness.
 
+The dense adapter uses the same complete public splits and qrels with a selectable SentenceTransformers model, normalized embeddings, cosine similarity, and `top_k=10`. Dense results are added only after the command completes and writes a receipt.
+
+Observed dense results on 2026-08-27 use `BAAI/bge-small-en-v1.5`, CPU, batch size 32, normalized embeddings, cosine similarity, and `top_k=10`:
+
+| Dataset | Corpus | Evaluation set | Dense result | BM25 result | Comparison |
+| --- | ---: | --- | --- | --- | --- |
+| SciFact | 5,183 documents | 300 evaluated test queries | nDCG@10 `0.7200`, Recall@10 `0.8452`, MRR@10 `0.6845` | `0.6593`, `0.7809`, `0.6252` | Dense higher on all three metrics |
+| NFCorpus | 3,633 documents | 323 evaluated test queries | nDCG@10 `0.3391`, Recall@10 `0.1580`, MRR@10 `0.5299` | `0.3037`, `0.1423`, `0.5137` | Dense higher on all three metrics |
+
+These are complete public test splits, not a sampled benchmark. The receipts are `artifacts/benchmarks/beir/scifact-bge-small-en-v1.5.json` and `artifacts/benchmarks/beir/nfcorpus-bge-small-en-v1.5.json`; they are ignored by Git.
+
 ## Public benchmarks to integrate
 
 | Domain | Public benchmark | Primary measurements |
