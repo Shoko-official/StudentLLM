@@ -27,6 +27,7 @@ The React and TypeScript application defines the product interaction contract:
 - persistent course creation at the user experience layer;
 - optional browser microphone capture;
 - chunked `MediaRecorder` capture with an IndexedDB store when available;
+- interrupted durable recordings are reattached to their course from a local recovery manifest on the next launch;
 - optional local faster-whisper transcription of persisted recordings through `SpeechEngine`;
 - optional local PDF and image extraction through `DocumentEngine`, with page-level transcript provenance;
 - versioned local workspace persistence with per-lesson sources, transcript segments, chat history, and artifacts;
@@ -112,7 +113,7 @@ The current browser adapter sends PDF or image bytes to a local PyMuPDF and Rapi
 - the web application writes `MediaRecorder` chunks to IndexedDB; the memory fallback is explicitly non-durable;
 - the desktop target uses append-only audio chunks, SQLite WAL, and checksummed blobs;
 - source files carry checksums;
-- migrations and job recovery are tested;
+- browser recording recovery is covered by Playwright; desktop migrations and job recovery remain target-runtime work;
 - local mode makes no implicit network request;
 - credentials stay in the OS credential manager or process environment, never in SQLite or logs;
 - sharing excludes audio by default;

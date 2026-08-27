@@ -20,6 +20,7 @@ StudentLLM is built around three principles:
 - Browser microphone access with a demonstration fallback.
 - Versioned local workspace persistence with course-isolated sources, transcript segments, chat history, and artifacts.
 - Chunked `MediaRecorder` capture with IndexedDB persistence when supported by the browser.
+- Interrupted durable recordings are recovered into the owning course on the next launch.
 - Optional local faster-whisper sidecar transcription after durable recording, with timestamped review segments.
 - Optional local PDF text extraction and RapidOCR for images or scanned PDF pages, with page-level review segments.
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.
@@ -82,6 +83,7 @@ src/
   types.ts                   frontend data contracts
   lib/recorder.ts            microphone and MediaRecorder capture
   lib/recording-storage.ts   IndexedDB audio chunk storage
+  lib/recording-recovery.ts  interrupted-session recovery manifest
   lib/speech-engine.ts       local faster-whisper HTTP adapter
   lib/document-engine.ts     local PDF and image extraction adapter
   lib/source-ingest.ts        local source classification and fingerprinting
