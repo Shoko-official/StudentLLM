@@ -1,8 +1,11 @@
+import { beforeEach } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 
 describe('StudentLLM workspace', () => {
+  beforeEach(() => localStorage.clear());
+
   it('renders the course workspace with sources and Studio actions', () => {
     render(<App />);
 
@@ -68,5 +71,20 @@ describe('StudentLLM workspace', () => {
 
     expect(screen.getByText('Point marqué par l’étudiant: à revoir dans le cours.')).toBeInTheDocument();
     expect(screen.getByText(/Point marqué à/)).toBeInTheDocument();
+  });
+
+  it('restores a created course after remounting the workspace', async () => {
+    const user = userEvent.setup();
+    const firstRender = render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Nouveau cours/ }));
+    await user.type(screen.getByLabelText('Titre du cours'), 'Cours persistant');
+    await user.click(screen.getByRole('button', { name: /Créer et préparer/ }));
+    firstRender.unmount();
+
+    render(<App />);
+
+    expect(screen.getAllByRole('heading', { name: 'Cours persistant' }).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Nouveau cours créé. Prêt à enregistrer.')).not.toBeInTheDocument();
   });
 });
