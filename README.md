@@ -22,6 +22,7 @@ StudentLLM is built around three principles:
 - Optional local faster-whisper sidecar transcription after durable recording, with timestamped review segments.
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.
 - Original imported source blobs are stored in IndexedDB when available, alongside their fingerprints.
+- Course deletion clears the lesson workspace and its locally stored source and recording blobs before switching sessions.
 - OpenAI-compatible smoke checks for NVIDIA NIM and LM Studio.
 - Full public French FLEURS ASR baseline with WER, CER, RTF, and reproducibility receipt.
 - Optional live LM Studio chat through a browser-safe OpenAI-compatible provider adapter; no remote API key is bundled in the client.

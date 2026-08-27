@@ -281,6 +281,24 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('remove-me.md removed from this course.')).toBeInTheDocument();
   });
 
+  it('deletes the active course and switches to the next workspace', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['course data'],
+      'course-data.md',
+      { type: 'text/markdown' },
+    ));
+    await user.click(screen.getByRole('button', { name: 'Delete course' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent('Delete Attention & Scaled Dot-Product?');
+    await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
+
+    expect((await screen.findAllByRole('heading', { name: 'Self-attention and Context' })).length).toBeGreaterThan(0);
+    expect(screen.queryByText('course-data.md')).not.toBeInTheDocument();
+    expect(await screen.findByText('Attention & Scaled Dot-Product deleted.')).toBeInTheDocument();
+  });
+
   it('restores chat history after remounting the workspace', async () => {
     const user = userEvent.setup();
     const firstRender = render(<App />);

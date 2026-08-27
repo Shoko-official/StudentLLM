@@ -189,4 +189,70 @@ test.describe('StudentLLM workspace', () => {
 
     expect(storedSourceCount).toBe(0);
   });
+
+  test('deletes a course and clears its source blob', async ({ page }) => {
+    await page.addInitScript(() => {
+      const track = { stop: () => undefined };
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => ({ getTracks: () => [track] }) },
+      });
+
+      class BrowserRecorderMock {
+        static isTypeSupported = () => false;
+        ondataavailable: ((event: { data: Blob }) => void) | null = null;
+        onstop: (() => void) | null = null;
+
+        start() {
+          queueMicrotask(() => this.ondataavailable?.({ data: new Blob(['course audio'], { type: 'audio/webm' }) }));
+        }
+
+        stop() {
+          this.onstop?.();
+        }
+      }
+
+      Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: BrowserRecorderMock });
+    });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Start recording' }).click();
+    await page.getByRole('button', { name: 'Stop recording' }).click();
+    await expect(page.getByText('Attention & Scaled Dot-Product audio.webm')).toBeVisible();
+    await page.setInputFiles('input[aria-label="Select course source"]', {
+      name: 'course-data.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('course data'),
+    });
+
+    await page.getByRole('button', { name: 'Delete course' }).click();
+    await expect(page.getByRole('dialog')).toContainText('Delete Attention & Scaled Dot-Product?');
+    await page.getByRole('button', { name: 'Delete course permanently' }).click();
+    await expect(page.getByRole('heading', { name: 'Self-attention and Context' }).first()).toBeVisible();
+    await expect(page.getByText('course-data.md')).toBeHidden();
+    await expect(page.getByText('Attention & Scaled Dot-Product deleted.')).toBeVisible();
+
+    const storedSourceCount = await page.evaluate(() => new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open('studentllm-sources', 1);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const countRequest = request.result.transaction('source-blobs', 'readonly').objectStore('source-blobs').count();
+        countRequest.onsuccess = () => resolve(countRequest.result);
+        countRequest.onerror = () => reject(countRequest.error);
+      };
+    }));
+
+    expect(storedSourceCount).toBe(0);
+
+    const storedAudioCount = await page.evaluate(() => new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open('studentllm-recordings', 1);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const countRequest = request.result.transaction('audio-chunks', 'readonly').objectStore('audio-chunks').count();
+        countRequest.onsuccess = () => resolve(countRequest.result);
+        countRequest.onerror = () => reject(countRequest.error);
+      };
+    }));
+
+    expect(storedAudioCount).toBe(0);
+  });
 });
