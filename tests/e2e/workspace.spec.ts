@@ -120,7 +120,7 @@ test.describe('StudentLLM workspace', () => {
     await page.getByRole('tab', { name: 'Chat' }).click();
     await page.getByRole('textbox', { name: 'Ask the course chat' }).fill('What is in week one?');
     await page.getByRole('button', { name: 'Send' }).click();
-    await expect(page.getByRole('button', { name: 'Source · lecture-notes.md' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Source · lecture-notes.md · part 1' })).toBeVisible();
 
     const storedSource = await page.evaluate(() => new Promise<{ count: number; text: string }>((resolve, reject) => {
       const request = indexedDB.open('studentllm-sources', 1);
