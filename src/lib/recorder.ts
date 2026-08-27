@@ -22,7 +22,7 @@ export interface MediaRecorderLike {
 
 export interface RecorderOptions {
   mediaDevices?: Pick<MediaDevices, 'getUserMedia'>;
-  mediaRecorderFactory?: (stream: MediaStream, mimeType?: string) => MediaRecorderLike;
+  mediaRecorderFactory?: (stream: MediaStream, mimeType?: string) => MediaRecorderLike | undefined;
   chunkStore?: AudioChunkStore;
   chunkIntervalMs?: number;
   recordingId?: string;
@@ -68,7 +68,17 @@ export async function requestRecorderSession(options: RecorderOptions = {}): Pro
 
   const chunkStore = options.chunkStore ?? createRecordingChunkStore();
   const now = options.now ?? Date.now;
-  const recorder = mediaRecorderFactory(stream, preferredMimeType());
+  let recorder: MediaRecorderLike | undefined;
+  try {
+    recorder = mediaRecorderFactory(stream, preferredMimeType());
+  } catch (error) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw error;
+  }
+  if (!recorder) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw new Error('MediaRecorder is unavailable in this browser.');
+  }
   let sequence = 0;
   let chunksPersisted = 0;
   let persistenceError = false;

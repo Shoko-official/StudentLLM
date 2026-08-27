@@ -13,6 +13,7 @@
 - imported text is chunked into bounded passages with source-part citations before provider calls;
 - injected live-provider coverage verifies source context and provider citations;
 - provider failures are rendered as actionable chat messages and covered by UI tests;
+- recorder failure contracts cover missing browser APIs, unavailable recorder construction, construction errors, and microphone permission rejection;
 - browser reload persistence and microphone-unavailable fallback covered by Playwright;
 - local lexical retrieval with timestamp-aware context selection for provider chat;
 - reproducible full-split BEIR BM25 benchmark adapter with SciFact, NFCorpus, ArguAna, FiQA, and SCIDOCS receipts;
