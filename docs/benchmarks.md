@@ -35,7 +35,8 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | BEIR TREC-COVID retrieval | Full public test split, deterministic BM25 and BGE-small dense retrieval | `benchmarks/run_beir_bm25.py --dataset trec-covid` and `benchmarks/run_beir_dense.py --dataset trec-covid --model BAAI/bge-small-en-v1.5 --device cpu` | BM25 nDCG@10 0.5537, Recall@10 0.0157, MRR@10 0.7906; dense nDCG@10 0.6438, Recall@10 0.0184, MRR@10 0.8779 |
 | MTEB STSBenchmark v2 | Official public test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STSBenchmark.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | Spearman main score 0.857289 |
 | MTEB STS22 v2 | Official public multilingual test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | 18 subsets, unweighted descriptive macro-average 0.469262; language spread 0.181685-0.740204 |
-| BFCL V4 `simple_python`, `multiple`, `parallel_multiple`, `irrelevance`, and multi-turn categories | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | `simple_python`: 1.0000 (20/20); `multiple`: 0.9500 (19/20); `parallel_multiple`: 0.8500 (17/20); `irrelevance`: 1.0000 (20/20); `multi_turn_base`: 0.3000 (6/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1500 (3/20); partial category samples |
+| BFCL V4 through LM Studio | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | `simple_python`: 1.0000 (20/20); `multiple`: 0.9500 (19/20); `parallel_multiple`: 0.8500 (17/20); `irrelevance`: 1.0000 (20/20); `multi_turn_base`: 0.3000 (6/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1500 (3/20); partial category samples |
+| BFCL V4 through NVIDIA NIM | Official generator and evaluator through the OpenAI-compatible NVIDIA endpoint | `benchmarks/run_bfcl_openai_compatible.py --category <category> --model openai/gpt-oss-20b --base-url https://integrate.api.nvidia.com/v1` | `simple_python`: 0.4500 (9/20); `multiple`: 0.0500 (1/20); `parallel_multiple`: 0.0000 (0/20); `multi_turn_base`: 0.2500 (5/20); partial category samples |
 
 The provider latencies are point observations on the development machine, not production SLOs.
 
@@ -69,6 +70,19 @@ The official [BFCL evaluator](https://github.com/ShishirPatil/gorilla/tree/main/
 | 2026-08-27 | BFCL V4 `multi_turn_miss_param`, 20 public cases, `temperature=0`, one request thread | Accuracy `0.1500` (3/20) | 285 requests, mean `5.597 s`, approximate p95 `17.944 s`, max `72.238 s` | Official category scorer, partial evaluation; empty responses and long tool sequences observed |
 
 These are real public benchmark results for seven BFCL categories. They are not global BFCL leaderboard scores, and they do not cover every multi-turn, agentic, or tool schema. The `multi_turn_base`, `multi_turn_miss_func`, and `multi_turn_miss_param` runs are evidence of a weak model-output compatibility path: BFCL reported empty responses, malformed tool calls, and long sequences during generation. Raw generations and scorer output are retained locally under `artifacts/benchmarks/bfcl/`, `artifacts/benchmarks/bfcl-multiple/`, `artifacts/benchmarks/bfcl-parallel-multiple/`, `artifacts/benchmarks/bfcl-irrelevance/`, `artifacts/benchmarks/bfcl-multi-turn/`, `artifacts/benchmarks/bfcl-multi-turn-miss-func/`, and `artifacts/benchmarks/bfcl-multi-turn-miss-param/`, all ignored by Git. Reproduction commands are in `benchmarks/README.md`.
+
+### NVIDIA NIM results
+
+The official BFCL generator and evaluator also ran through the OpenAI-compatible NVIDIA NIM endpoint using `openai/gpt-oss-20b`. The API key came from the Windows User environment variable `NVIDIA_API_KEY`; no key file is used. The wrapper and exact reproduction command are in [`benchmarks/README.md`](../benchmarks/README.md).
+
+| Category and sample | Official result | Latency | Validity |
+| --- | --- | --- | --- |
+| `simple_python`, 20 public cases | Accuracy `0.4500` (9/20) | Mean `0.929 s`, approximate p95 `1.648 s`, max `1.792 s` | Official category scorer, partial evaluation |
+| `multiple`, 20 public cases | Accuracy `0.0500` (1/20) | Mean `2.175 s`, approximate p95 `11.156 s`, max `16.268 s` | Official category scorer, partial evaluation |
+| `parallel_multiple`, 20 public cases | Accuracy `0.0000` (0/20) | Mean `1.352 s`, approximate p95 `2.370 s`, max `2.569 s` | Official category scorer, partial evaluation |
+| `multi_turn_base`, 20 public cases | Accuracy `0.2500` (5/20) | 366 requests, mean `2.042 s`, approximate p95 `3.769 s`, max `81.768 s` | Official category scorer; empty responses and malformed tool calls observed |
+
+These are public category samples, not a global BFCL leaderboard result. The legacy NVIDIA handler path produced an HTTP 404 before scoring in an earlier attempt; that failed transport attempt has no score and is not mixed into the table above. Raw NVIDIA result and score directories are local ignored artifacts under `artifacts/benchmarks/bfcl-nvidia-gpt-oss-*`.
 
 ## Observed public result: MTEB STS22 v2
 
