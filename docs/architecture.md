@@ -27,7 +27,8 @@ The React and TypeScript application defines the product interaction contract:
 - persistent course creation at the user experience layer;
 - optional browser microphone capture;
 - chunked `MediaRecorder` capture with an IndexedDB store when available;
-- versioned local workspace persistence for lessons, sources, transcript segments, chat history, and artifacts;
+- versioned local workspace persistence with per-lesson sources, transcript segments, chat history, and artifacts;
+- legacy flat workspace data migrates into the active lesson without exposing it to newly created lessons;
 - local source import with MIME classification and SHA-256 provenance fingerprints;
 - original imported source blobs stored in IndexedDB when the browser supports it;
 - `verified` and `review` transcript states;

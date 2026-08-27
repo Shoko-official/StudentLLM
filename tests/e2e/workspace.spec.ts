@@ -31,6 +31,22 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByRole('button', { name: 'Mark segment 01:15:02 for review' })).toBeVisible();
   });
 
+  test('isolates new-course transcript content', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByRole('button', { name: /New course/ }).click();
+    await page.getByLabel('Course title').fill('Isolated course');
+    await page.getByRole('button', { name: /Create and prepare/ }).click();
+    await page.getByRole('button', { name: 'Bookmark this passage' }).click();
+    await expect(page.getByText('Student bookmark: review this point in the course.')).toBeVisible();
+
+    await page.getByRole('button', { name: /Attention & Scaled Dot-Product/ }).last().click();
+    await expect(page.getByText('Student bookmark: review this point in the course.')).toBeHidden();
+
+    await page.getByRole('button', { name: /Isolated course/ }).last().click();
+    await expect(page.getByText('Student bookmark: review this point in the course.')).toBeVisible();
+  });
+
   test('supports chat questions and responsive navigation', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('tab', { name: 'Chat' }).click();

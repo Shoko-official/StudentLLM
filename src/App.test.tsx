@@ -194,6 +194,23 @@ describe('StudentLLM workspace', () => {
     expect(screen.queryByText('New course created. Ready to record.')).not.toBeInTheDocument();
   });
 
+  it('keeps new-course transcript changes isolated from the existing course', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /New course/ }));
+    await user.type(screen.getByLabelText('Course title'), 'Isolated course');
+    await user.click(screen.getByRole('button', { name: /Create and prepare/ }));
+    await user.click(screen.getByRole('button', { name: 'Bookmark this passage' }));
+    expect(screen.getByText('Student bookmark: review this point in the course.')).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole('button', { name: /Attention & Scaled Dot-Product/ }).at(-1)!);
+    expect(screen.queryByText('Student bookmark: review this point in the course.')).not.toBeInTheDocument();
+
+    await user.click(screen.getAllByRole('button', { name: /Isolated course/ }).at(-1)!);
+    expect(screen.getByText('Student bookmark: review this point in the course.')).toBeInTheDocument();
+  });
+
   it('imports a local source and restores its fingerprint after remounting', async () => {
     const user = userEvent.setup();
     const firstRender = render(<App />);

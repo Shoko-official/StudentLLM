@@ -39,6 +39,13 @@ export interface ChatMessage {
   citations?: string[];
 }
 
+export interface LessonWorkspace {
+  resources: Resource[];
+  transcript: TranscriptSegment[];
+  chat: ChatMessage[];
+  artifacts: Artifact[];
+}
+
 export interface Artifact {
   id: string;
   kind: ArtifactKind;
