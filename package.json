@@ -31,7 +31,7 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
-    "jsdom": "^29.1.1",
+    "jsdom": "^30.0.1",
     "typescript": "latest",
     "vite": "latest",
     "vitest": "latest"
