@@ -185,6 +185,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
   const [composerValue, setComposerValue] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [artifacts, setArtifacts] = useState<Artifact[]>(workspace.artifacts);
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(workspace.artifacts[0]?.id ?? null);
   const [toast, setToast] = useState('');
   const [showNewCourse, setShowNewCourse] = useState(false);
   const [newCourseTitle, setNewCourseTitle] = useState('');
@@ -244,6 +245,31 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
     setActiveLessonId(lessonId);
     setView('course');
     setShowAllResources(false);
+  };
+
+  const loadRetrievalDocuments = async () => {
+    const retrievalDocuments: RetrievalDocument[] = transcript.map((segment) => ({
+      id: segment.id,
+      text: segment.text,
+      metadata: { timestamp: segment.timestamp, speaker: segment.speaker },
+    }));
+    for (const resource of resources) {
+      if (!resource.sha256 || !isTextResource(resource)) continue;
+      try {
+        const blob = await sourceBlobStore.load(resource.id);
+        const text = await blob?.text();
+        if (text?.trim()) {
+          chunkSourceText(text).forEach((chunk) => retrievalDocuments.push({
+            id: `${resource.id}:${chunk.index}`,
+            text: chunk.text,
+            metadata: { resourceName: resource.name, part: String(chunk.index + 1), startLine: String(chunk.startLine) },
+          }));
+        }
+      } catch {
+        // A missing source blob should not prevent transcript retrieval.
+      }
+    }
+    return retrievalDocuments;
   };
 
   const toggleRecording = async () => {
@@ -320,27 +346,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
 
     setIsSending(true);
     try {
-      const retrievalDocuments: RetrievalDocument[] = transcript.map((segment) => ({
-        id: segment.id,
-        text: segment.text,
-        metadata: { timestamp: segment.timestamp, speaker: segment.speaker },
-      }));
-      for (const resource of resources) {
-        if (!resource.sha256 || !isTextResource(resource)) continue;
-        try {
-          const blob = await sourceBlobStore.load(resource.id);
-          const text = await blob?.text();
-          if (text?.trim()) {
-            chunkSourceText(text).forEach((chunk) => retrievalDocuments.push({
-              id: `${resource.id}:${chunk.index}`,
-              text: chunk.text,
-              metadata: { resourceName: resource.name, part: String(chunk.index + 1), startLine: String(chunk.startLine) },
-            }));
-          }
-        } catch {
-          // A missing source blob should not prevent transcript retrieval.
-        }
-      }
+      const retrievalDocuments = await loadRetrievalDocuments();
       const retrievalHits = searchDocuments(retrievalDocuments, message, 4);
       const retrievedCitations = retrievalHits.slice(0, 2).map((hit) => hit.document.metadata.resourceName
         ? `Source · ${hit.document.metadata.resourceName} · part ${hit.document.metadata.part}`
@@ -389,14 +395,44 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
   const createArtifact = (kind: ArtifactKind) => {
     const definition = artifactCatalog.find((artifact) => artifact.kind === kind);
     if (!definition) return;
+    const artifactId = `${kind}-${Date.now()}`;
     const artifact: Artifact = {
-      id: `${kind}-${Date.now()}`,
+      id: artifactId,
       kind,
       label: definition.label,
       createdAt: 'just now',
+      content: `Draft ${definition.label.toLowerCase()} for ${activeLesson.title}. Add a local provider to generate a source-grounded version.`,
     };
     setArtifacts((current) => [artifact, ...current].slice(0, 4));
+    setSelectedArtifactId(artifactId);
     notify(`${definition.label} added to Studio.`);
+
+    if (!localProvider) return;
+    void (async () => {
+      try {
+        const retrievalDocuments = await loadRetrievalDocuments();
+        const retrievalHits = searchDocuments(retrievalDocuments, activeLesson.title, 6);
+        const contextDocuments = retrievalHits.length ? retrievalHits.map((hit) => hit.document) : retrievalDocuments.slice(0, 6);
+        const context = contextDocuments.map((document) => document.metadata.resourceName
+          ? `[Source: ${document.metadata.resourceName}, part ${document.metadata.part}] ${document.text}`
+          : `[${document.metadata.timestamp}] ${document.metadata.speaker}: ${document.text}`).join('\n');
+        const result = await localProvider.generate([
+          {
+            role: 'system',
+            content: `Create a concise ${definition.label.toLowerCase()} for ${activeLesson.title} using only these course excerpts. Do not invent facts.\n${context}`,
+          },
+          { role: 'user', content: `Generate the ${definition.label.toLowerCase()}.` },
+        ]);
+        const citations = [...new Set(contextDocuments.slice(0, 3).map((document) => document.metadata.resourceName
+          ? `Source · ${document.metadata.resourceName} · part ${document.metadata.part}`
+          : `Transcript · ${document.metadata.timestamp}`))];
+        setArtifacts((current) => current.map((item) => item.id === artifactId
+          ? { ...item, content: result.content, citations }
+          : item));
+      } catch {
+        notify(`${definition.label} draft kept; the local provider could not generate a replacement.`);
+      }
+    })();
   };
 
   const importSource = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -615,7 +651,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
             <section className="context-card"><div className="context-card-top"><span className="context-icon"><BookOpen size={15} /></span><span className="local-badge"><span className="status-dot" /> local</span></div><h3>{activeLesson.title}</h3><dl><div><dt>Sources</dt><dd>{activeResources.length + 2}</dd></div><div><dt>Duration</dt><dd>{activeLesson.duration}</dd></div><div><dt>State</dt><dd className="success-text">Indexed</dd></div></dl></section>
             <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><label className="mini-action"><input className="visually-hidden" type="file" aria-label="Select course source" accept="audio/*,image/*,.pdf,.txt,.md" onChange={importSource} /><Plus size={13} /> add</label></div><div className="resource-list">{activeResources.map((resource) => <button className="resource-item" key={resource.id} onClick={() => notify(`Source selected: ${resource.name}`)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button>)}</div>{resources.length > 3 && activeLesson.id === initialLessons[0].id && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
             <section className="studio-actions"><div className="sidebar-section-header"><span>Create an artifact</span><span className="eyebrow-count">source-linked</span></div><div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div></section>
-            {artifacts.length > 0 && <section className="recent-section"><div className="sidebar-section-header"><span>Recently created</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <div className="recent-artifact" key={artifact.id}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></div>)}</section>}
+            {artifacts.length > 0 && <section className="recent-section"><div className="sidebar-section-header"><span>Recently created</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} type="button" aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></button>)}{selectedArtifactId && (() => { const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId); if (!selectedArtifact) return null; return <article className="artifact-preview"><span className="section-kicker">Artifact preview</span><h3>{selectedArtifact.label}</h3><p>{selectedArtifact.content ?? 'This artifact has no stored content.'}</p>{selectedArtifact.citations && <div className="citation-list">{selectedArtifact.citations.map((citation) => <button key={citation} onClick={() => notify(`Source opened: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</article>; })()}</section>}
             <button className="studio-link" onClick={() => notify('The full Studio editor will open in a future update.')}>Open full Studio <ArrowUpRight size={14} /></button>
           </aside>
         )}
