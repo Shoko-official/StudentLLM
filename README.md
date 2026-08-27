@@ -22,6 +22,7 @@ StudentLLM is built around three principles:
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.
 - Original imported source blobs are stored in IndexedDB when available, alongside their fingerprints.
 - OpenAI-compatible smoke checks for NVIDIA NIM and LM Studio.
+- Full public French FLEURS ASR baseline with WER, CER, RTF, and reproducibility receipt.
 - Optional live LM Studio chat through a browser-safe OpenAI-compatible provider adapter; no remote API key is bundled in the client.
 - Local lexical retrieval selects transcript or bounded imported text passages and preserves source-part citations before a live provider request.
 - Vitest unit and integration coverage, Playwright browser coverage, axe accessibility checks, and GitHub Actions CI.
@@ -83,6 +84,7 @@ src/
 scripts/
   provider-smoke.mjs         NVIDIA and LM Studio smoke check
 benchmarks/
+  run_asr_fleurs.py         full public FLEURS French ASR baseline
   run_mmlu_pro.py            lm-evaluation-harness adapter for MMLU-Pro
   run_beir_bm25.py           full public BEIR BM25 baselines
 tests/e2e/

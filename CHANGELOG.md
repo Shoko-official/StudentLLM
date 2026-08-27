@@ -18,6 +18,7 @@
 - transcript review controls can now promote a segment to verified or send it back for review;
 - Studio artifacts now expose an offline draft preview and can be replaced with source-grounded local-provider content;
 - course sources, transcripts, chats, and artifacts are isolated per lesson with legacy workspace migration;
+- full public French FLEURS ASR benchmarking is available through a faster-whisper adapter with WER, CER, RTF, and hardware receipts;
 - browser reload persistence and microphone-unavailable fallback covered by Playwright;
 - local lexical retrieval with timestamp-aware context selection for provider chat;
 - reproducible full-split BEIR BM25 benchmark adapter with SciFact, NFCorpus, ArguAna, FiQA, and SCIDOCS receipts;

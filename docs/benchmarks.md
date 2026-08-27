@@ -15,6 +15,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 39 tests |
 | Production artifact | Vite | `npm run build` | PASS |
 | Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 9 tests |
+| FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
 | NVIDIA generation | Live API, runtime credential | `npm run providers:smoke` | PASS observed, 1,288 ms |
 | LM Studio generation | Live local server | `npm run providers:smoke` | PASS observed, 351 ms |
 | BEIR SciFact retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset scifact` | nDCG@10 0.6593, Recall@10 0.7809, MRR@10 0.6252 |
@@ -50,6 +51,16 @@ python benchmarks/run_mmlu_pro.py run `
 ```
 
 Raw outputs are local and ignored by Git. A partial or full run is not promoted without its command, commit, dataset, hardware, and validity record.
+
+## Observed public result: FLEURS French ASR
+
+The ASR adapter ran the complete public `google/fleurs` `fr_fr` test split with `faster-whisper small`, CPU `int8` execution, beam size 5, and VAD filtering. The receipt is stored locally at `artifacts/benchmarks/asr/fleurs-fr-small-cpu-full.json` and is ignored by Git.
+
+| Run | Model and backend | Evaluation set | Result | Hardware and validity |
+| --- | --- | --- | --- | --- |
+| 2026-08-27 | `small` / faster-whisper, CPU | 676 examples, 17,151 reference words, 7,024.08 seconds of public audio | WER `13.5677%`, CER `4.9086%`, RTF `0.1840`, elapsed `1,292.36s` | Windows, Intel Core Ultra 7 270K Plus, 63.4 GB RAM, RTX 5080 host; full public split, reproducible CPU baseline |
+
+This is an ASR baseline for the public French split. It is not a lecture-domain score, not a diarization result, and not evidence that the product meets the stricter V1 targets.
 
 ## Observed public results: BEIR retrieval
 
