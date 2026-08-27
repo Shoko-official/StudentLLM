@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { readFile } from 'node:fs/promises';
 
 test.describe('StudentLLM workspace', () => {
   test('has no serious or critical automated accessibility violations', async ({ page }) => {
@@ -161,6 +162,37 @@ test.describe('StudentLLM workspace', () => {
     }));
 
     expect(storedSource).toEqual({ count: 1, text: '# Week one' });
+  });
+
+  test('exports and imports a course with source fidelity', async ({ page }) => {
+    await page.goto('/');
+    await page.setInputFiles('input[aria-label="Select course source"]', {
+      name: 'transfer.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('Gradient descent updates parameters.'),
+    });
+    await expect(page.getByRole('button', { name: /^transfer\.md/ })).toBeVisible();
+
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Export course' }).click();
+    const download = await downloadPromise;
+    const exportPath = await download.path();
+    expect(exportPath).not.toBeNull();
+    const exported = await readFile(exportPath as string, 'utf8');
+    expect(JSON.parse(exported)).toMatchObject({ format: 'studentllm-course', version: 1 });
+
+    await page.setInputFiles('input[aria-label="Import course export"]', {
+      name: download.suggestedFilename(),
+      mimeType: 'application/json',
+      buffer: Buffer.from(exported),
+    });
+    await expect(page.getByText('Attention & Scaled Dot-Product imported.')).toBeVisible();
+    await expect(page.getByRole('button', { name: /^transfer\.md/ })).toBeVisible();
+
+    await page.getByRole('tab', { name: 'Chat' }).click();
+    await page.getByRole('textbox', { name: 'Ask the course chat' }).fill('What updates parameters?');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.getByRole('button', { name: /Source .*transfer\.md/ })).toBeVisible();
   });
 
   test('removes an imported source and its local blob', async ({ page }) => {

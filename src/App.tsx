@@ -10,6 +10,7 @@ import {
   CircleHelp,
   Clock3,
   Copy,
+  Download,
   FileAudio,
   FileImage,
   FileText,
@@ -44,6 +45,7 @@ import type { SpeechEngine } from './lib/speech-engine';
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore } from './lib/source-storage';
 import { createRecordingChunkStore } from './lib/recording-storage';
+import { buildCourseExport, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { Artifact, ArtifactKind, ChatMessage, Lesson, LessonWorkspace, Resource, TranscriptSegment, ViewMode } from './types';
@@ -571,6 +573,65 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
   };
 
+  const exportCourse = async () => {
+    try {
+      const exportBlob = await buildCourseExport(activeLesson, activeWorkspace, {
+        loadSourceBlob: (resourceId) => sourceBlobStore.load(resourceId),
+        listAudioChunks: (recordingId) => recordingChunkStore.list(recordingId),
+      });
+      if (typeof URL.createObjectURL !== 'function') throw new Error('Downloads are unavailable in this browser.');
+      const url = URL.createObjectURL(exportBlob);
+      const link = window.document.createElement('a');
+      link.href = url;
+      link.download = `${activeLesson.title.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'course'}.studentllm.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      notify(`${activeLesson.title} exported.`);
+    } catch {
+      notify('The course export could not be created.');
+    }
+  };
+
+  const importCourse = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    const savedSourceIds: string[] = [];
+    const savedAudioIds: string[] = [];
+    try {
+      const imported = await readCourseExport(file);
+      try {
+        for (const asset of imported.assets) {
+          if (asset.storage === 'source') {
+            const blob = new Blob(asset.chunks.map((chunk) => chunk.blob), { type: asset.chunks[0].blob.type || 'application/octet-stream' });
+            await sourceBlobStore.save(asset.resourceId, blob);
+            savedSourceIds.push(asset.resourceId);
+          } else {
+            for (const [sequence, chunk] of asset.chunks.entries()) {
+              await recordingChunkStore.append({ recordingId: asset.resourceId, sequence, blob: chunk.blob, recordedAt: chunk.recordedAt });
+            }
+            savedAudioIds.push(asset.resourceId);
+          }
+        }
+      } catch {
+        await Promise.all(savedSourceIds.map((resourceId) => sourceBlobStore.remove(resourceId)));
+        await Promise.all(savedAudioIds.map((resourceId) => recordingChunkStore.clear(resourceId)));
+        throw new Error('Unable to restore course assets.');
+      }
+      setLessons((current) => [...current, imported.lesson]);
+      setLessonWorkspaces((current) => ({ ...current, [imported.lesson.id]: imported.workspace }));
+      setActiveLessonId(imported.lesson.id);
+      setSelectedArtifactId(imported.workspace.artifacts[0]?.id ?? null);
+      setView('course');
+      setShowAllResources(false);
+      notify(`${imported.lesson.title} imported.`);
+    } catch {
+      notify('The course import could not be completed.');
+    } finally {
+      input.value = '';
+    }
+  };
+
   const createCourse = (event: FormEvent) => {
     event.preventDefault();
     const title = newCourseTitle.trim();
@@ -773,6 +834,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           <aside className="right-sidebar" aria-label="Course Studio">
             <div className="studio-heading"><div><span className="section-kicker">Studio</span><h2>Build for review</h2></div><button className="icon-button" aria-label="Close Studio" onClick={() => setShowRightSidebar(false)}><X size={16} /></button></div>
             <section className="context-card"><div className="context-card-top"><span className="context-icon"><BookOpen size={15} /></span><span className="local-badge"><span className="status-dot" /> local</span></div><h3>{activeLesson.title}</h3><dl><div><dt>Sources</dt><dd>{activeResources.length + 2}</dd></div><div><dt>Duration</dt><dd>{activeLesson.duration}</dd></div><div><dt>State</dt><dd className="success-text">Indexed</dd></div></dl></section>
+            <div className="transfer-actions" aria-label="Course transfer"><button className="transfer-action" type="button" onClick={() => void exportCourse()}><Download size={13} /> Export course</button><label className="transfer-action"><input className="visually-hidden" type="file" accept="application/json,.json" aria-label="Import course export" onChange={(event) => void importCourse(event)} /><Upload size={13} /> Import course</label></div>
             <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><label className="mini-action"><input className="visually-hidden" type="file" aria-label="Select course source" accept="audio/*,image/*,.pdf,.txt,.md" onChange={importSource} /><Plus size={13} /> add</label></div><div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}><button className="resource-open" type="button" onClick={() => notify(`Source selected: ${resource.name}`)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button><button className="resource-remove" type="button" aria-label={`Remove source ${resource.name}`} onClick={() => void removeSource(resource)}><X size={13} /></button></div>)}</div>{resources.length > 3 && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
             <section className="studio-actions"><div className="sidebar-section-header"><span>Create an artifact</span><span className="eyebrow-count">source-linked</span></div><div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div></section>
             {artifacts.length > 0 && <section className="recent-section"><div className="sidebar-section-header"><span>Recently created</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} type="button" aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></button>)}{selectedArtifactId && (() => { const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId); if (!selectedArtifact) return null; return <article className="artifact-preview"><span className="section-kicker">Artifact preview</span><h3>{selectedArtifact.label}</h3><p>{selectedArtifact.content ?? 'This artifact has no stored content.'}</p>{selectedArtifact.citations && <div className="citation-list">{selectedArtifact.citations.map((citation) => <button key={citation} onClick={() => notify(`Source opened: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</article>; })()}</section>}
