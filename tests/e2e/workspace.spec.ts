@@ -14,6 +14,23 @@ test.describe('StudentLLM workspace', () => {
     expect(blockingViolations).toEqual([]);
   });
 
+  test('keeps the mobile layout accessible and within the viewport', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+
+    const results = await new AxeBuilder({ page }).analyze();
+    const blockingViolations = results.violations.filter((violation) =>
+      violation.impact === 'serious' || violation.impact === 'critical',
+    );
+
+    expect(blockingViolations).toEqual([]);
+    const dimensions = await page.evaluate(() => ({
+      width: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.width);
+  });
+
   test('supports the core course to Studio workflow', async ({ page }) => {
     await page.goto('/');
 
