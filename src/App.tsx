@@ -144,6 +144,10 @@ function resourceIcon(kind: Resource['kind']) {
   return <Archive size={15} />;
 }
 
+function isTextResource(resource: Resource) {
+  return resource.kind === 'transcript' || resource.mimeType?.startsWith('text/') === true;
+}
+
 function App() {
   const [workspace] = useState(() => loadWorkspace({
     activeLessonId: initialLessons[0].id,
@@ -290,16 +294,6 @@ function App() {
     setChat((messages) => [...messages, { id: userMessageId, role: 'user', content: message }]);
     setComposerValue('');
 
-    if (!localProvider) {
-      setChat((messages) => [...messages, {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: 'Connect LM Studio to ask the local model. The current workspace keeps this interaction offline.',
-        citations: ['Active course context · local workspace'],
-      }]);
-      return;
-    }
-
     setIsSending(true);
     try {
       const retrievalDocuments: RetrievalDocument[] = transcript.map((segment) => ({
@@ -307,10 +301,34 @@ function App() {
         text: segment.text,
         metadata: { timestamp: segment.timestamp, speaker: segment.speaker },
       }));
+      for (const resource of resources) {
+        if (!resource.sha256 || !isTextResource(resource)) continue;
+        try {
+          const blob = await sourceBlobStore.load(resource.id);
+          const text = await blob?.text();
+          if (text?.trim()) retrievalDocuments.push({ id: resource.id, text, metadata: { resourceName: resource.name } });
+        } catch {
+          // A missing source blob should not prevent transcript retrieval.
+        }
+      }
       const retrievalHits = searchDocuments(retrievalDocuments, message, 4);
+      const retrievedCitations = retrievalHits.slice(0, 2).map((hit) => hit.document.metadata.resourceName
+        ? `Source · ${hit.document.metadata.resourceName}`
+        : `Transcript · ${hit.document.metadata.timestamp}`);
+      if (!localProvider) {
+        setChat((messages) => [...messages, {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: 'Connect LM Studio to ask the local model. The current workspace keeps this interaction offline.',
+          citations: retrievedCitations.length ? retrievedCitations : ['Active course context · local workspace'],
+        }]);
+        return;
+      }
       const context = retrievalHits.length
-        ? retrievalHits.map((hit) => `[${hit.document.metadata.timestamp}] ${hit.document.metadata.speaker}: ${hit.document.text}`).join('\n')
-        : 'No transcript excerpt matched the question.';
+        ? retrievalHits.map((hit) => hit.document.metadata.resourceName
+          ? `[Source: ${hit.document.metadata.resourceName}] ${hit.document.text}`
+          : `[${hit.document.metadata.timestamp}] ${hit.document.metadata.speaker}: ${hit.document.text}`).join('\n')
+        : 'No course excerpt matched the question.';
       const result = await localProvider.generate([
         {
           role: 'system',
@@ -323,7 +341,7 @@ function App() {
         role: 'assistant',
         content: result.content,
         citations: [
-          ...retrievalHits.slice(0, 2).map((hit) => `Transcript · ${hit.document.metadata.timestamp}`),
+          ...retrievedCitations,
           `LM Studio · ${result.model}`,
         ],
       }]);
