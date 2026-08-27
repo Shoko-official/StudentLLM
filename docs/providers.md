@@ -46,17 +46,17 @@ $env:LM_STUDIO_MODEL = 'qwen/qwen3-4b'
 
 The smoke script appends `/no_think` for Qwen models so the measured response uses the final content channel.
 
-To enable the optional browser chat adapter, set the non-secret Vite endpoint before starting the development server:
+To enable the optional browser chat adapter, use the built-in same-origin Vite proxy before starting the development server:
 
 ```powershell
-$env:VITE_LM_STUDIO_BASE_URL = 'http://127.0.0.1:1234/v1'
+$env:VITE_LM_STUDIO_BASE_URL = '/lm-studio/v1'
 $env:VITE_LM_STUDIO_MODEL = 'qwen/qwen3-4b'
 npm run dev
 ```
 
 The frontend sends only course context and the user question to the configured local endpoint. NVIDIA credentials are never accepted by this browser path.
 
-Browser requests require the configured local endpoint to allow the development server origin through CORS. The LM Studio process used during local validation exposed the OpenAI-compatible API but did not return CORS headers, so the end-to-end browser validation used a temporary same-origin CORS proxy forwarding to the unchanged LM Studio process. A direct browser run must be treated as unavailable until the local server enables CORS or an approved same-origin proxy is configured.
+The Vite development server proxies `/lm-studio/*` to `http://127.0.0.1:1234/*`, keeping browser requests same-origin when the local LM Studio server does not emit CORS headers. An absolute `VITE_LM_STUDIO_BASE_URL` remains supported, but then the target must allow the development server origin through CORS.
 
 ## Run the live check
 
