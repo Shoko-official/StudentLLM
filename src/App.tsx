@@ -152,9 +152,10 @@ function isTextResource(resource: Resource) {
 
 export interface AppProps {
   provider?: LLMProvider | null;
+  recorderSessionFactory?: () => Promise<RecorderSession>;
 }
 
-function App({ provider }: AppProps) {
+function App({ provider, recorderSessionFactory = requestRecorderSession }: AppProps) {
   const [workspace] = useState(() => loadWorkspace({
     activeLessonId: initialLessons[0].id,
     lessons: initialLessons,
@@ -256,6 +257,15 @@ function App({ provider }: AppProps) {
         return;
       }
       void session.stop().then(({ chunksPersisted, persistenceError }) => {
+        if (session.stream && session.durability === 'durable' && chunksPersisted > 0) {
+          setResources((current) => [{
+            id: session.recordingId,
+            name: `${activeLesson.title} audio.webm`,
+            meta: `Audio · ${chunksPersisted} chunk${chunksPersisted === 1 ? '' : 's'}`,
+            kind: 'audio',
+            mimeType: 'audio/webm',
+          }, ...current]);
+        }
         if (!session.stream) {
           notify('Demo session ended.');
         } else if (persistenceError) {
@@ -270,7 +280,7 @@ function App({ provider }: AppProps) {
     }
 
     try {
-      recorderRef.current = await requestRecorderSession();
+      recorderRef.current = await recorderSessionFactory();
       setIsRecording(true);
       setRecordingSeconds(0);
       notify(recorderRef.current.stream ? 'Microphone active, live transcription ready.' : 'Demo mode active: microphone unavailable.');
