@@ -22,10 +22,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - name: Install dependencies
         run: npm ci
       - name: Typecheck
         run: npm run check
+      - name: Benchmark adapter checks
+        run: npm run benchmarks:check
       - name: Unit and integration tests
         run: npm run test:run
       - name: Production build
