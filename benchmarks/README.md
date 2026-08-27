@@ -115,3 +115,18 @@ Run the additional multi-domain splits with the same protocol:
 ```
 
 These are retrieval baselines on public information-retrieval datasets. They are independent of the LM Studio process and do not require model inference.
+
+## BEIR dense baseline
+
+`run_beir_dense.py` evaluates the same complete public BEIR splits with normalized SentenceTransformers embeddings and cosine similarity. The default model is `BAAI/bge-small-en-v1.5`, which is practical on CPU. `BAAI/bge-m3` can be selected explicitly for a larger multilingual run; use `--device cpu` when another local service is using the GPU.
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe -m pip install sentence-transformers datasets
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_dense.py `
+  --dataset scifact `
+  --model BAAI/bge-small-en-v1.5 `
+  --device cpu `
+  --output-path artifacts\benchmarks\beir\scifact-bge-m3.json
+```
+
+Dense and BM25 results share the same public corpus, queries, test qrels, metrics, and `top_k=10`, which makes the comparison reproducible. Observed full-split results are recorded in `docs/benchmarks.md`. A dense retrieval result is still a retrieval metric; it does not establish answer faithfulness or citation correctness.
