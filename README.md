@@ -102,6 +102,7 @@ benchmarks/
   run_beir_bm25.py           full public BEIR BM25 baselines
   run_docvqa_ocr.py          public DocVQA OCR extractability diagnostic
   run_beir_dense.py          full public BEIR dense baseline
+  run_mteb.py                official MTEB task wrapper
 tests/e2e/
   workspace.spec.ts          real browser workflows
 docs/
