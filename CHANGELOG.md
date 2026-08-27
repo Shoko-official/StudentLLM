@@ -42,6 +42,7 @@
 - full ArguAna dense receipt using `BAAI/bge-small-en-v1.5`, with the shared BM25 comparison;
 - full SCIDOCS dense receipt using `BAAI/bge-small-en-v1.5`, with the shared BM25 comparison;
 - full FiQA dense receipt using `BAAI/bge-small-en-v1.5`, with the shared BM25 comparison;
+- TREC-COVID support in the BEIR BM25 and dense adapters, with complete public receipts and comparison metrics;
 - official MTEB task wrapper and public STSBenchmark v2 CPU receipt with a Spearman main score of `0.857289`;
 - official MTEB `STS22.v2` multilingual public test receipt covering 18 language and cross-language subsets;
 - official BFCL V4 `simple_python` partial evaluation through the existing LM Studio endpoint, with 20/20 official category accuracy;

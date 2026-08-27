@@ -24,6 +24,7 @@ DATASETS = {
     "arguana": {"dataset": "BeIR/arguana", "qrels": "BeIR/arguana-qrels", "label": "BEIR ArguAna"},
     "fiqa": {"dataset": "BeIR/fiqa", "qrels": "BeIR/fiqa-qrels", "label": "BEIR FiQA"},
     "scidocs": {"dataset": "BeIR/scidocs", "qrels": "BeIR/scidocs-qrels", "label": "BEIR SCIDOCS"},
+    "trec-covid": {"dataset": "BeIR/trec-covid", "qrels": "BeIR/trec-covid-qrels", "label": "BEIR TREC-COVID"},
 }
 
 
