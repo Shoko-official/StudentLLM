@@ -34,9 +34,10 @@ The first generation benchmark uses the official [EleutherAI lm-evaluation-harne
 | Run | Model and backend | Protocol | Result | Validity |
 | --- | --- | --- | --- | --- |
 | 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test split, 14 categories, 1 item per category, seed 42, `temperature=0`, `/no_think` | exact match `0.2143` (3/14) | Technical pipeline pass, partial sample |
+| 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test split, 14 categories, 5 items per category, seed 42, `temperature=0`, `/no_think` | exact match `0.3000` (21/70), stderr `0.0484` | Partial public sample; per-category results retained in the local receipt |
 | 2026-08-27 | `openai/gpt-oss-20b` / NVIDIA NIM | same protocol, credential from `NVIDIA_API_KEY` | network timeout before the first response, no aggregate | Transport failure, no score |
 
-The 0.2143 value is not a leaderboard score. The harness documents that `--limit` is not suitable for a final metric; this run validates dataset loading, prompt construction, API routing, answer extraction, and metric calculation. Model strength remains unverified.
+The 0.2143 and 0.3000 values are not leaderboard scores. The harness documents that `--limit` is not suitable for a final metric; these runs validate dataset loading, prompt construction, API routing, answer extraction, and metric calculation on partial public samples. Model strength remains unverified.
 
 An expanded LM Studio run with 20 items per category was interrupted by the transport at 132/280 before aggregation. It is rejected and contributes no score.
 
