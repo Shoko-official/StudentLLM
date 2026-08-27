@@ -35,6 +35,7 @@ import {
   X,
 } from 'lucide-react';
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
+import { loadWorkspace, saveWorkspace } from './lib/workspace-storage';
 import { Artifact, ArtifactKind, ChatMessage, Lesson, Resource, TranscriptSegment, ViewMode } from './types';
 
 const initialLessons: Lesson[] = [
@@ -140,8 +141,14 @@ function resourceIcon(kind: Resource['kind']) {
 }
 
 function App() {
-  const [lessons, setLessons] = useState(initialLessons);
-  const [activeLessonId, setActiveLessonId] = useState(initialLessons[0].id);
+  const [workspace] = useState(() => loadWorkspace({
+    activeLessonId: initialLessons[0].id,
+    lessons: initialLessons,
+    transcript: initialTranscript,
+    artifacts: [],
+  }));
+  const [lessons, setLessons] = useState(workspace.lessons);
+  const [activeLessonId, setActiveLessonId] = useState(workspace.activeLessonId);
   const [view, setView] = useState<ViewMode>('course');
   const [showLeftSidebar, setShowLeftSidebar] = useState(true);
   const [showRightSidebar, setShowRightSidebar] = useState(true);
@@ -155,10 +162,10 @@ function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordingError, setRecordingError] = useState('');
-  const [transcript, setTranscript] = useState(initialTranscript);
+  const [transcript, setTranscript] = useState(workspace.transcript);
   const [chat, setChat] = useState(initialChat);
   const [composerValue, setComposerValue] = useState('');
-  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [artifacts, setArtifacts] = useState<Artifact[]>(workspace.artifacts);
   const [toast, setToast] = useState('');
   const [showNewCourse, setShowNewCourse] = useState(false);
   const [newCourseTitle, setNewCourseTitle] = useState('');
@@ -201,6 +208,10 @@ function App() {
     const timeout = window.setTimeout(() => setToast(''), 2600);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    saveWorkspace({ activeLessonId, lessons, transcript, artifacts });
+  }, [activeLessonId, lessons, transcript, artifacts]);
 
   const notify = (message: string) => setToast(message);
 
