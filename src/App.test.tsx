@@ -318,6 +318,27 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('remove-me.md removed from this course.')).toBeInTheDocument();
   });
 
+  it('removes transcript segments derived from an imported PDF', async () => {
+    const user = userEvent.setup();
+    const extract = vi.fn().mockResolvedValue({
+      model: 'pymupdf',
+      pages: [{ pageNumber: 1, text: 'Derived page content.', blocks: [] }],
+    });
+    render(<App documentEngine={{ extract }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['%PDF-1.7'],
+      'derived.pdf',
+      { type: 'application/pdf' },
+    ));
+    expect(await screen.findByText('Derived page content.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove source derived.pdf' }));
+
+    expect(screen.queryByText('Derived page content.')).not.toBeInTheDocument();
+    expect(screen.getByText('derived.pdf removed from this course.')).toBeInTheDocument();
+  });
+
   it('deletes the active course and switches to the next workspace', async () => {
     const user = userEvent.setup();
     render(<App />);
