@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
 import { loadWorkspace, saveWorkspace } from './lib/workspace-storage';
+import { createLocalLLMProvider } from './lib/llm-provider';
 import { Artifact, ArtifactKind, ChatMessage, Lesson, Resource, TranscriptSegment, ViewMode } from './types';
 
 const initialLessons: Lesson[] = [
@@ -165,12 +166,14 @@ function App() {
   const [transcript, setTranscript] = useState(workspace.transcript);
   const [chat, setChat] = useState(initialChat);
   const [composerValue, setComposerValue] = useState('');
+  const [isSending, setIsSending] = useState(false);
   const [artifacts, setArtifacts] = useState<Artifact[]>(workspace.artifacts);
   const [toast, setToast] = useState('');
   const [showNewCourse, setShowNewCourse] = useState(false);
   const [newCourseTitle, setNewCourseTitle] = useState('');
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
   const recorderRef = useRef<RecorderSession | null>(null);
+  const localProvider = useMemo(() => createLocalLLMProvider(), []);
 
   const activeLesson = lessons.find((lesson) => lesson.id === activeLessonId) ?? lessons[0];
 
@@ -271,21 +274,50 @@ function App() {
     notify(`Bookmark added at ${nextSegment.timestamp}.`);
   };
 
-  const submitComposer = (event: FormEvent) => {
+  const submitComposer = async (event: FormEvent) => {
     event.preventDefault();
     const message = composerValue.trim();
     if (!message) return;
-    setChat((messages) => [
-      ...messages,
-      { id: `user-${Date.now()}`, role: 'user', content: message },
-      {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: 'I will search the course sources and show the passages used for the answer.',
-        citations: ['Course context · local search'],
-      },
-    ]);
+    const userMessageId = `user-${Date.now()}`;
+    const assistantMessageId = `assistant-${Date.now() + 1}`;
+    setChat((messages) => [...messages, { id: userMessageId, role: 'user', content: message }]);
     setComposerValue('');
+
+    if (!localProvider) {
+      setChat((messages) => [...messages, {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: 'Connect LM Studio to ask the local model. The current workspace keeps this interaction offline.',
+        citations: ['Active course context · local workspace'],
+      }]);
+      return;
+    }
+
+    setIsSending(true);
+    try {
+      const context = transcript.map((segment) => `[${segment.timestamp}] ${segment.speaker}: ${segment.text}`).join('\n');
+      const result = await localProvider.generate([
+        {
+          role: 'system',
+          content: `Answer using only the active course context. If the context is insufficient, say so. Course: ${activeLesson.title}.\n${context}`,
+        },
+        { role: 'user', content: message },
+      ]);
+      setChat((messages) => [...messages, {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: result.content,
+        citations: [`Active course context · ${result.model}`],
+      }]);
+    } catch (error) {
+      setChat((messages) => [...messages, {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: error instanceof Error ? error.message : 'The local provider could not answer this question.',
+      }]);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const createArtifact = (kind: ArtifactKind) => {
@@ -492,7 +524,7 @@ function App() {
                   <article className={`chat-message ${message.role}`} key={message.id}><div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={14} /> : 'SO'}</div><div className="message-content"><span className="message-role">{message.role === 'assistant' ? 'StudentLLM AI' : 'You'}</span><p>{message.content}</p>{message.citations && <div className="citation-list">{message.citations.map((citation) => <button key={citation} onClick={() => notify(`Source opened: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</div></article>
                 ))}
               </div>
-              <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask for an explanation, example, or summary…" /><button type="submit" aria-label="Send"><Send size={16} /></button></form>
+              <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask for an explanation, example, or summary…" disabled={isSending} /><button type="submit" aria-label="Send" disabled={isSending}><Send size={16} /></button></form>
             </div>
           )}
         </main>
