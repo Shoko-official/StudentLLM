@@ -62,6 +62,8 @@ npm run verify
 npm run providers:smoke
 ```
 
+See [docs/status.md](./docs/status.md) for the current verified application and benchmark coverage.
+
 ## Provider configuration
 
 Provider credentials are read at runtime and are never loaded from a repository file.
@@ -109,6 +111,7 @@ tests/e2e/
   workspace.spec.ts          real browser workflows
 docs/
   architecture.md            system boundaries and target runtime
+  status.md                  current verified coverage and remaining work
   benchmarks.md              public benchmark evidence and gates
   providers.md               provider setup and runtime configuration
   local-asr.md               local transcription sidecar setup
