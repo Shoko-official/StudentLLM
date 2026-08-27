@@ -10,6 +10,7 @@ export type RecordingDurability = 'durable' | 'memory-only';
 export interface AudioChunkStore {
   readonly durability: RecordingDurability;
   append: (chunk: AudioChunkRecord) => Promise<void>;
+  list: (recordingId: string) => Promise<AudioChunkRecord[]>;
   count: (recordingId: string) => Promise<number>;
   clear: (recordingId: string) => Promise<void>;
 }
@@ -45,6 +46,10 @@ class MemoryAudioChunkStore implements AudioChunkStore {
     const current = this.chunks.get(chunk.recordingId) ?? [];
     current.push(chunk);
     this.chunks.set(chunk.recordingId, current);
+  }
+
+  async list(recordingId: string) {
+    return [...(this.chunks.get(recordingId) ?? [])].sort((left, right) => left.sequence - right.sequence);
   }
 
   async count(recordingId: string) {
@@ -83,6 +88,14 @@ class IndexedDbAudioChunkStore implements AudioChunkStore {
       ...chunk,
     });
     await transactionResult(transaction);
+  }
+
+  async list(recordingId: string) {
+    const database = await this.database;
+    const transaction = database.transaction(STORE_NAME, 'readonly');
+    const request = transaction.objectStore(STORE_NAME).index('recordingId').getAll(IDBKeyRange.only(recordingId));
+    const records = await requestResult(request) as Array<AudioChunkRecord & { key: string }>;
+    return records.sort((left, right) => left.sequence - right.sequence).map(({ key: _key, ...chunk }) => chunk);
   }
 
   async count(recordingId: string) {

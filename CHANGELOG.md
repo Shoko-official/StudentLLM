@@ -20,6 +20,7 @@
 - course sources, transcripts, chats, and artifacts are isolated per lesson with legacy workspace migration;
 - full public French FLEURS ASR benchmarking is available through a faster-whisper adapter with WER, CER, RTF, and hardware receipts;
 - imported course sources can be removed from the active workspace and their IndexedDB blobs are deleted;
+- durable recordings can be sent to an optional local faster-whisper service and added back as reviewable transcript segments;
 - browser reload persistence and microphone-unavailable fallback covered by Playwright;
 - local lexical retrieval with timestamp-aware context selection for provider chat;
 - reproducible full-split BEIR BM25 benchmark adapter with SciFact, NFCorpus, ArguAna, FiQA, and SCIDOCS receipts;
