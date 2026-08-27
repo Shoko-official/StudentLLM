@@ -19,6 +19,7 @@ function createStore(chunks: AudioChunkRecord[], append = vi.fn(async (chunk: Au
   return {
     durability: 'durable',
     append,
+    list: vi.fn(async (recordingId: string) => chunks.filter((chunk) => chunk.recordingId === recordingId)),
     count: vi.fn(async (recordingId: string) => chunks.filter((chunk) => chunk.recordingId === recordingId).length),
     clear: vi.fn(async () => undefined),
   };
@@ -99,6 +100,7 @@ describe('recorder sessions', () => {
     expect(recorder.stop).toHaveBeenCalledTimes(1);
     expect(track.stop).toHaveBeenCalledTimes(1);
     expect(chunks.map((chunk) => chunk.sequence)).toEqual([0, 1]);
+    await expect(session.readChunks()).resolves.toEqual(chunks);
     expect(chunks.every((chunk) => chunk.recordingId === 'recording-1' && chunk.recordedAt === 123)).toBe(true);
     expect(summary).toEqual({ recordingId: 'recording-1', chunksPersisted: 2, persistenceError: false });
     expect(secondSummary).toEqual(summary);

@@ -99,7 +99,7 @@ test.describe('StudentLLM workspace', () => {
     await page.goto('/');
 
     await page.getByRole('button', { name: 'Start recording' }).click();
-    await expect(page.getByText('Microphone active, live transcription ready.')).toBeVisible();
+    await expect(page.getByText('Microphone active, audio autosave ready.')).toBeVisible();
     await page.getByRole('button', { name: 'Stop recording' }).click();
     await expect(page.getByText('1 audio chunks saved locally.')).toBeVisible();
     await expect(page.getByText('Attention & Scaled Dot-Product audio.webm')).toBeVisible();

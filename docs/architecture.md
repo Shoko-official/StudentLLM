@@ -27,6 +27,7 @@ The React and TypeScript application defines the product interaction contract:
 - persistent course creation at the user experience layer;
 - optional browser microphone capture;
 - chunked `MediaRecorder` capture with an IndexedDB store when available;
+- optional local faster-whisper transcription of persisted recordings through `SpeechEngine`;
 - versioned local workspace persistence with per-lesson sources, transcript segments, chat history, and artifacts;
 - legacy flat workspace data migrates into the active lesson without exposing it to newly created lessons;
 - local source import with MIME classification and SHA-256 provenance fingerprints;
@@ -67,13 +68,15 @@ Knowledge store
 
 ```ts
 interface SpeechEngine {
-  transcribeStream(input: AudioChunk): AsyncIterable<TranscriptEvent>;
-  transcribeFile(input: AudioAsset): Promise<Transcript>;
-  capabilities(): SpeechCapabilities;
+  transcribe: (audio: Blob) => Promise<{
+    segments: TranscriptSegment[];
+    model: string;
+    language?: string;
+  }>;
 }
 ```
 
-The domain must not hard-code a model. A speech engine may run on CPU, Metal, CUDA, or a remote service depending on hardware and privacy preferences.
+The domain does not hard-code a model. The current browser adapter targets a local `faster-whisper` HTTP sidecar; future desktop workers can run on CPU, Metal, or CUDA depending on hardware and privacy preferences.
 
 ### LLMProvider
 
