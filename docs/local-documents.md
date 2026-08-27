@@ -1,24 +1,24 @@
-# Local PDF extraction
+# Local document extraction
 
-StudentLLM can send imported digital PDFs to a local PyMuPDF sidecar. Each page with extracted text becomes a reviewable transcript segment, with the source filename and page number preserved for retrieval and citations.
+StudentLLM can send imported PDFs and images to a local PyMuPDF and RapidOCR sidecar. Each page with extracted text becomes a reviewable transcript segment, with the source filename and page number preserved for retrieval and citations.
 
-This adapter handles PDFs with a text layer. It does not perform OCR on scanned pages, handwriting, formulas, tables, or images. Those paths require a dedicated document-vision engine and remain explicit follow-up work.
+Digital PDFs use PyMuPDF text extraction. Scanned PDF pages and images use RapidOCR when the local OCR dependencies are installed. OCR output is text with bounding boxes; handwriting, formulas, table structure, diagram understanding, and document-level layout semantics still require specialized engines.
 
 ## Start the sidecar
 
-Install PyMuPDF in an isolated Python environment:
+Install the local document dependencies in an isolated Python environment:
 
 ```powershell
-.\.venv-bench-sys\Scripts\python.exe -m pip install PyMuPDF
+.\.venv-bench-sys\Scripts\python.exe -m pip install -r requirements-local-documents.txt
 .\.venv-bench-sys\Scripts\python.exe scripts/local_document_server.py --port 8766
 ```
 
 The service listens on `http://127.0.0.1:8766` and exposes:
 
 - `GET /health` for readiness;
-- `POST /extract` with an `application/pdf` body.
+- `POST /extract` with an `application/pdf` or `image/*` body.
 
-The server is local-only by default and does not overwrite the original source blob.
+The server is local-only by default and does not overwrite the original source blob. Its readiness response identifies the combined `pymupdf+rapidocr` service.
 
 ## Connect the web app
 
@@ -29,7 +29,7 @@ $env:VITE_LOCAL_DOCUMENT_BASE_URL = 'http://127.0.0.1:8766'
 npm run dev
 ```
 
-Importing a PDF saves the original file first. If extraction succeeds, the UI adds one reviewable segment per non-empty page. If the sidecar is unavailable, the PDF remains saved and the transcript is unchanged.
+Importing a PDF or image saves the original file first. If extraction succeeds, the UI adds one reviewable segment per non-empty page. If the sidecar is unavailable, the source remains saved and the transcript is unchanged.
 
 ## Contract
 
@@ -49,6 +49,8 @@ The browser adapter is implemented in `src/lib/document-engine.ts` and expects a
   ]
 }
 ```
+
+For an image, the response model is `rapidocr`. For a scanned PDF with no text layer, it is `pymupdf+rapidocr`.
 
 Run the contract and UI tests with:
 

@@ -28,7 +28,7 @@ The React and TypeScript application defines the product interaction contract:
 - optional browser microphone capture;
 - chunked `MediaRecorder` capture with an IndexedDB store when available;
 - optional local faster-whisper transcription of persisted recordings through `SpeechEngine`;
-- optional local digital-PDF text extraction through `DocumentEngine`, with page-level transcript provenance;
+- optional local PDF and image extraction through `DocumentEngine`, with page-level transcript provenance;
 - versioned local workspace persistence with per-lesson sources, transcript segments, chat history, and artifacts;
 - legacy flat workspace data migrates into the active lesson without exposing it to newly created lessons;
 - local source import with MIME classification and SHA-256 provenance fingerprints;
@@ -54,7 +54,7 @@ Tauri 2 + Rust
   |-- durable job queue
   |-- sidecar workers
         |-- SpeechEngine (whisper.cpp, NeMo, faster-whisper)
-        |-- DocumentEngine (digital PDF now; OCR and vision planned)
+        |-- DocumentEngine (PDF text and RapidOCR now; structured vision planned)
         |-- LLMProvider (LM Studio, NIM, vLLM)
   v
 Knowledge store
@@ -105,7 +105,7 @@ interface DocumentEngine {
 }
 ```
 
-The current browser adapter sends PDF bytes to a local PyMuPDF sidecar. Extracted pages are added as reviewable transcript segments with the source filename and page number. Scanned PDFs and image OCR are deliberately outside this adapter until a dedicated OCR engine is integrated.
+The current browser adapter sends PDF or image bytes to a local PyMuPDF and RapidOCR sidecar. Extracted pages are added as reviewable transcript segments with the source filename and page number. OCR returns text and bounding boxes; structured table, formula, diagram, and handwriting understanding remain separate engine requirements.
 
 ## Reliability and privacy
 
