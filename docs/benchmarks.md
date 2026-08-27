@@ -13,11 +13,39 @@ Les benchmarks faciles ou auto-construits ne sont pas utilisés seuls pour décl
 | TypeScript | gate locale | `npm run check` | PASS observé |
 | UI integration | Vitest + Testing Library | `npm run test:run` | PASS observé, 6 tests |
 | Production build | Vite | `npm run build` | PASS observé |
-| Browser workflow | Playwright Chromium | `npm run test:e2e` | à exécuter dans CI/local |
+| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS observé, 3 tests |
 | NVIDIA generation | API réelle, clé runtime | `npm run providers:smoke` | PASS observé, 1,288 ms |
 | LM Studio generation | serveur local réel | `npm run providers:smoke` | PASS observé, 351 ms |
 
 Les latences ci-dessus sont des observations ponctuelles de la machine de développement, pas des SLO de production.
+
+## Résultat public observé: MMLU-Pro
+
+Le premier benchmark de génération utilise le harness officiel [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) et le dataset public [TIGER-Lab/MMLU-Pro](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro). Il passe par l'API OpenAI-compatible de LM Studio, sans clé distante.
+
+| Run | Modèle / backend | Protocole | Résultat | Statut |
+| --- | --- | --- | --- | --- |
+| 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test, 14 catégories, 1 item par catégorie, seed 42, `temperature=0`, `/no_think` | exact-match `0.2143` (3/14) | PASS technique, échantillon partiel |
+
+Ce score n'est pas un score leaderboard: le harness avertit lui-même que `--limit` ne doit pas servir à calculer une métrique finale. Il sert à vérifier la chaîne dataset -> prompt -> API -> extraction -> métrique. La force du modèle reste `strength-unverified`.
+
+La passe élargie à 20 items par catégorie a été interrompue par le transport à 132/280 avant agrégation; elle est rejetée et aucun score n'en est déduit.
+
+Reproduction:
+
+```powershell
+python -m venv .venv-bench
+.\.venv-bench\Scripts\python.exe -m pip install "lm-eval[api]"
+$env:PYTHONUTF8 = '1'
+python benchmarks/run_mmlu_pro.py run `
+  --model local-chat-completions `
+  --model_args "model=qwen/qwen3-4b,base_url=http://127.0.0.1:1234/v1/chat/completions,tokenizer_backend=None,num_concurrent=1,max_retries=3" `
+  --tasks mmlu_pro --limit 1 --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=256" --seed 42 `
+  --output_path artifacts/benchmarks/mmlu-pro/qwen3-4b.json --log_samples
+```
+
+Les sorties brutes sont locales et ignorées par Git. Une exécution complète ou un run limité ne peut être promu sans conserver la commande, le commit, le dataset, le matériel et le statut de validité.
 
 ## Benchmarks publics à intégrer progressivement
 
@@ -36,6 +64,7 @@ Les latences ci-dessus sont des observations ponctuelles de la machine de dével
 | retrieval | [BEIR](https://github.com/beir-cellar/beir) | nDCG, Recall, MRR |
 | embeddings | [MTEB](https://github.com/embeddings-benchmark/mteb) | scores par tâche/langue |
 | tool calling | [BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html) | tool accuracy, AST |
+| génération multi-domaine | [MMLU-Pro](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro) | exact-match par domaine |
 
 ## LectureBench
 
