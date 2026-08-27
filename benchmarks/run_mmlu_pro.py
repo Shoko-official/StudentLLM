@@ -7,6 +7,10 @@ lm-evaluation-harness task and scoring intact while adding the documented
 """
 
 import os
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from lm_eval.models.openai_completions import LocalChatCompletion
 from lm_eval.__main__ import cli_evaluate
