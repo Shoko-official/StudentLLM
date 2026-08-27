@@ -57,4 +57,22 @@ describe('workspace storage', () => {
     expect(loaded.chat).toHaveLength(1);
     expect(loaded.artifacts).toHaveLength(1);
   });
+
+  it('round-trips isolated lesson workspaces', () => {
+    const snapshot: WorkspaceSnapshot = {
+      ...fallback,
+      activeLessonId: 'lesson-one',
+      lessons: [
+        { ...fallback.lessons[0], id: 'lesson-one', title: 'Course one' },
+        { ...fallback.lessons[0], id: 'lesson-two', title: 'Course two' },
+      ],
+      lessonWorkspaces: {
+        'lesson-one': { resources: [], transcript: [{ id: 'one', timestamp: '00:01', speaker: 'Professor', text: 'First course' }], chat: [], artifacts: [] },
+        'lesson-two': { resources: [], transcript: [{ id: 'two', timestamp: '00:02', speaker: 'Professor', text: 'Second course' }], chat: [], artifacts: [] },
+      },
+    };
+
+    expect(saveWorkspace(snapshot)).toBe(true);
+    expect(loadWorkspace(fallback)).toEqual(snapshot);
+  });
 });

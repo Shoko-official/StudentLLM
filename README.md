@@ -17,7 +17,7 @@ StudentLLM is built around three principles:
 - Responsive three-panel workspace: Library, Course or Chat, and Studio.
 - Course creation, navigation, search, bookmarks, transcript review states, and artifact creation.
 - Browser microphone access with a demonstration fallback.
-- Versioned local workspace persistence for courses, sources, transcript segments, chat history, and artifacts.
+- Versioned local workspace persistence with course-isolated sources, transcript segments, chat history, and artifacts.
 - Chunked `MediaRecorder` capture with IndexedDB persistence when supported by the browser.
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.
 - Original imported source blobs are stored in IndexedDB when available, alongside their fingerprints.

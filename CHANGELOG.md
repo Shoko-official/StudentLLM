@@ -17,6 +17,7 @@
 - durable recording sessions now appear as course audio resources after successful finalization;
 - transcript review controls can now promote a segment to verified or send it back for review;
 - Studio artifacts now expose an offline draft preview and can be replaced with source-grounded local-provider content;
+- course sources, transcripts, chats, and artifacts are isolated per lesson with legacy workspace migration;
 - browser reload persistence and microphone-unavailable fallback covered by Playwright;
 - local lexical retrieval with timestamp-aware context selection for provider chat;
 - reproducible full-split BEIR BM25 benchmark adapter with SciFact, NFCorpus, ArguAna, FiQA, and SCIDOCS receipts;

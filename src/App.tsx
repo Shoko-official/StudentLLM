@@ -42,7 +42,7 @@ import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore } from './lib/source-storage';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
-import { Artifact, ArtifactKind, ChatMessage, Lesson, Resource, TranscriptSegment, ViewMode } from './types';
+import { Artifact, ArtifactKind, ChatMessage, Lesson, LessonWorkspace, Resource, TranscriptSegment, ViewMode } from './types';
 
 const initialLessons: Lesson[] = [
   {
@@ -132,6 +132,13 @@ const artifactCatalog: { kind: ArtifactKind; label: string; description: string 
   { kind: 'glossary', label: 'Glossary', description: 'Definitions for the course vocabulary.' },
 ];
 
+const emptyLessonWorkspace: LessonWorkspace = {
+  resources: [],
+  transcript: [],
+  chat: [],
+  artifacts: [],
+};
+
 function formatElapsed(totalSeconds: number) {
   const hours = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
   const minutes = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
@@ -165,7 +172,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
     artifacts: [],
   }));
   const [lessons, setLessons] = useState(workspace.lessons);
-  const [resources, setResources] = useState(workspace.resources);
   const [activeLessonId, setActiveLessonId] = useState(workspace.activeLessonId);
   const [view, setView] = useState<ViewMode>('course');
   const [showLeftSidebar, setShowLeftSidebar] = useState(true);
@@ -180,12 +186,17 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordingError, setRecordingError] = useState('');
-  const [transcript, setTranscript] = useState(workspace.transcript);
-  const [chat, setChat] = useState(workspace.chat);
+  const [lessonWorkspaces, setLessonWorkspaces] = useState<Record<string, LessonWorkspace>>(() => workspace.lessonWorkspaces ?? {
+    [workspace.activeLessonId]: {
+      resources: workspace.resources,
+      transcript: workspace.transcript,
+      chat: workspace.chat,
+      artifacts: workspace.artifacts,
+    },
+  });
   const [composerValue, setComposerValue] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const [artifacts, setArtifacts] = useState<Artifact[]>(workspace.artifacts);
-  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(workspace.artifacts[0]?.id ?? null);
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(workspace.lessonWorkspaces?.[workspace.activeLessonId]?.artifacts[0]?.id ?? workspace.artifacts[0]?.id ?? null);
   const [toast, setToast] = useState('');
   const [showNewCourse, setShowNewCourse] = useState(false);
   const [newCourseTitle, setNewCourseTitle] = useState('');
@@ -195,6 +206,15 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
   const sourceBlobStore = useMemo(() => createSourceBlobStore(), []);
 
   const activeLesson = lessons.find((lesson) => lesson.id === activeLessonId) ?? lessons[0];
+  const activeWorkspace = lessonWorkspaces[activeLessonId] ?? emptyLessonWorkspace;
+  const { resources, transcript, chat, artifacts } = activeWorkspace;
+
+  const updateActiveWorkspace = (update: (current: LessonWorkspace) => LessonWorkspace) => {
+    setLessonWorkspaces((current) => ({
+      ...current,
+      [activeLessonId]: update(current[activeLessonId] ?? emptyLessonWorkspace),
+    }));
+  };
 
   const visibleLessons = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
@@ -203,8 +223,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
   }, [lessons, searchQuery]);
 
   const activeResources = useMemo(() => {
-    const lessonResources = activeLesson.id === initialLessons[0].id ? resources : resources.slice(0, 2);
-    return showAllResources ? lessonResources : lessonResources.slice(0, 3);
+    return showAllResources ? resources : resources.slice(0, 3);
   }, [activeLesson.id, resources, showAllResources]);
 
   useEffect(() => {
@@ -232,8 +251,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
   }, [toast]);
 
   useEffect(() => {
-    saveWorkspace({ activeLessonId, lessons, resources, transcript, chat, artifacts });
-  }, [activeLessonId, lessons, resources, transcript, chat, artifacts]);
+    saveWorkspace({ activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces });
+  }, [activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces]);
 
   useEffect(() => () => {
     void recorderRef.current?.stop();
@@ -245,6 +264,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
     setActiveLessonId(lessonId);
     setView('course');
     setShowAllResources(false);
+    setSelectedArtifactId(lessonWorkspaces[lessonId]?.artifacts[0]?.id ?? null);
   };
 
   const loadRetrievalDocuments = async () => {
@@ -284,13 +304,16 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
       }
       void session.stop().then(({ chunksPersisted, persistenceError }) => {
         if (session.stream && session.durability === 'durable' && chunksPersisted > 0) {
-          setResources((current) => [{
-            id: session.recordingId,
-            name: `${activeLesson.title} audio.webm`,
-            meta: `Audio · ${chunksPersisted} chunk${chunksPersisted === 1 ? '' : 's'}`,
-            kind: 'audio',
-            mimeType: 'audio/webm',
-          }, ...current]);
+          updateActiveWorkspace((current) => ({
+            ...current,
+            resources: [{
+              id: session.recordingId,
+              name: `${activeLesson.title} audio.webm`,
+              meta: `Audio · ${chunksPersisted} chunk${chunksPersisted === 1 ? '' : 's'}`,
+              kind: 'audio',
+              mimeType: 'audio/webm',
+            }, ...current.resources],
+          }));
         }
         if (!session.stream) {
           notify('Demo session ended.');
@@ -323,7 +346,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
       text: 'Student bookmark: review this point in the course.',
       status: 'review',
     };
-    setTranscript((segments) => [...segments, nextSegment]);
+    updateActiveWorkspace((current) => ({ ...current, transcript: [...current.transcript, nextSegment] }));
     notify(`Bookmark added at ${nextSegment.timestamp}.`);
   };
 
@@ -331,7 +354,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
     const segment = transcript.find((item) => item.id === segmentId);
     if (!segment) return;
     const nextStatus: TranscriptSegment['status'] = segment.status === 'review' ? 'verified' : 'review';
-    setTranscript((segments) => segments.map((item) => item.id === segmentId ? { ...item, status: nextStatus } : item));
+    updateActiveWorkspace((current) => ({
+      ...current,
+      transcript: current.transcript.map((item) => item.id === segmentId ? { ...item, status: nextStatus } : item),
+    }));
     notify(nextStatus === 'verified' ? 'Transcript segment verified.' : 'Transcript segment marked for review.');
   };
 
@@ -341,7 +367,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
     if (!message) return;
     const userMessageId = `user-${Date.now()}`;
     const assistantMessageId = `assistant-${Date.now() + 1}`;
-    setChat((messages) => [...messages, { id: userMessageId, role: 'user', content: message }]);
+    updateActiveWorkspace((current) => ({
+      ...current,
+      chat: [...current.chat, { id: userMessageId, role: 'user', content: message }],
+    }));
     setComposerValue('');
 
     setIsSending(true);
@@ -352,12 +381,15 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
         ? `Source · ${hit.document.metadata.resourceName} · part ${hit.document.metadata.part}`
         : `Transcript · ${hit.document.metadata.timestamp}`);
       if (!localProvider) {
-        setChat((messages) => [...messages, {
-          id: assistantMessageId,
-          role: 'assistant',
-          content: 'Connect LM Studio to ask the local model. The current workspace keeps this interaction offline.',
-          citations: retrievedCitations.length ? retrievedCitations : ['Active course context · local workspace'],
-        }]);
+        updateActiveWorkspace((current) => ({
+          ...current,
+          chat: [...current.chat, {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: 'Connect LM Studio to ask the local model. The current workspace keeps this interaction offline.',
+            citations: retrievedCitations.length ? retrievedCitations : ['Active course context · local workspace'],
+          }],
+        }));
         return;
       }
       const context = retrievalHits.length
@@ -372,21 +404,27 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
         },
         { role: 'user', content: message },
       ]);
-      setChat((messages) => [...messages, {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: result.content,
-        citations: [
-          ...retrievedCitations,
-          `LM Studio · ${result.model}`,
-        ],
-      }]);
+      updateActiveWorkspace((current) => ({
+        ...current,
+        chat: [...current.chat, {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: result.content,
+          citations: [
+            ...retrievedCitations,
+            `LM Studio · ${result.model}`,
+          ],
+        }],
+      }));
     } catch (error) {
-      setChat((messages) => [...messages, {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: error instanceof Error ? error.message : 'The local provider could not answer this question.',
-      }]);
+      updateActiveWorkspace((current) => ({
+        ...current,
+        chat: [...current.chat, {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: error instanceof Error ? error.message : 'The local provider could not answer this question.',
+        }],
+      }));
     } finally {
       setIsSending(false);
     }
@@ -403,7 +441,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
       createdAt: 'just now',
       content: `Draft ${definition.label.toLowerCase()} for ${activeLesson.title}. Add a local provider to generate a source-grounded version.`,
     };
-    setArtifacts((current) => [artifact, ...current].slice(0, 4));
+    updateActiveWorkspace((current) => ({ ...current, artifacts: [artifact, ...current.artifacts].slice(0, 4) }));
     setSelectedArtifactId(artifactId);
     notify(`${definition.label} added to Studio.`);
 
@@ -426,9 +464,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
         const citations = [...new Set(contextDocuments.slice(0, 3).map((document) => document.metadata.resourceName
           ? `Source · ${document.metadata.resourceName} · part ${document.metadata.part}`
           : `Transcript · ${document.metadata.timestamp}`))];
-        setArtifacts((current) => current.map((item) => item.id === artifactId
-          ? { ...item, content: result.content, citations }
-          : item));
+        updateActiveWorkspace((current) => ({
+          ...current,
+          artifacts: current.artifacts.map((item) => item.id === artifactId
+            ? { ...item, content: result.content, citations }
+            : item),
+        }));
       } catch {
         notify(`${definition.label} draft kept; the local provider could not generate a replacement.`);
       }
@@ -442,7 +483,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
     try {
       const resource = await createSourceResource(file);
       await sourceBlobStore.save(resource.id, file);
-      setResources((current) => [resource, ...current]);
+      updateActiveWorkspace((current) => ({ ...current, resources: [resource, ...current.resources] }));
       notify(`${resource.name} added to course sources${sourceBlobStore.durability === 'durable' ? ' and saved locally.' : ' in memory only.'}`);
     } catch {
       notify('The source could not be fingerprinted or stored locally.');
@@ -465,7 +506,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
       progress: 0,
     };
     setLessons((current) => [lesson, ...current]);
+    setLessonWorkspaces((current) => ({ ...current, [id]: emptyLessonWorkspace }));
     setActiveLessonId(id);
+    setSelectedArtifactId(null);
     setNewCourseTitle('');
     setShowNewCourse(false);
     notify('New course created. Ready to record.');
@@ -649,7 +692,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
           <aside className="right-sidebar" aria-label="Course Studio">
             <div className="studio-heading"><div><span className="section-kicker">Studio</span><h2>Build for review</h2></div><button className="icon-button" aria-label="Close Studio" onClick={() => setShowRightSidebar(false)}><X size={16} /></button></div>
             <section className="context-card"><div className="context-card-top"><span className="context-icon"><BookOpen size={15} /></span><span className="local-badge"><span className="status-dot" /> local</span></div><h3>{activeLesson.title}</h3><dl><div><dt>Sources</dt><dd>{activeResources.length + 2}</dd></div><div><dt>Duration</dt><dd>{activeLesson.duration}</dd></div><div><dt>State</dt><dd className="success-text">Indexed</dd></div></dl></section>
-            <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><label className="mini-action"><input className="visually-hidden" type="file" aria-label="Select course source" accept="audio/*,image/*,.pdf,.txt,.md" onChange={importSource} /><Plus size={13} /> add</label></div><div className="resource-list">{activeResources.map((resource) => <button className="resource-item" key={resource.id} onClick={() => notify(`Source selected: ${resource.name}`)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button>)}</div>{resources.length > 3 && activeLesson.id === initialLessons[0].id && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
+            <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><label className="mini-action"><input className="visually-hidden" type="file" aria-label="Select course source" accept="audio/*,image/*,.pdf,.txt,.md" onChange={importSource} /><Plus size={13} /> add</label></div><div className="resource-list">{activeResources.map((resource) => <button className="resource-item" key={resource.id} onClick={() => notify(`Source selected: ${resource.name}`)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button>)}</div>{resources.length > 3 && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
             <section className="studio-actions"><div className="sidebar-section-header"><span>Create an artifact</span><span className="eyebrow-count">source-linked</span></div><div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div></section>
             {artifacts.length > 0 && <section className="recent-section"><div className="sidebar-section-header"><span>Recently created</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} type="button" aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></button>)}{selectedArtifactId && (() => { const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId); if (!selectedArtifact) return null; return <article className="artifact-preview"><span className="section-kicker">Artifact preview</span><h3>{selectedArtifact.label}</h3><p>{selectedArtifact.content ?? 'This artifact has no stored content.'}</p>{selectedArtifact.citations && <div className="citation-list">{selectedArtifact.citations.map((citation) => <button key={citation} onClick={() => notify(`Source opened: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</article>; })()}</section>}
             <button className="studio-link" onClick={() => notify('The full Studio editor will open in a future update.')}>Open full Studio <ArrowUpRight size={14} /></button>

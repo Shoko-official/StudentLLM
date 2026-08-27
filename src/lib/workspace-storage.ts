@@ -1,4 +1,4 @@
-import { Artifact, ChatMessage, Lesson, Resource, TranscriptSegment } from '../types';
+import { Artifact, ChatMessage, Lesson, LessonWorkspace, Resource, TranscriptSegment } from '../types';
 
 export const WORKSPACE_STORAGE_KEY = 'studentllm.workspace.v1';
 
@@ -9,6 +9,7 @@ export interface WorkspaceSnapshot {
   transcript: TranscriptSegment[];
   chat: ChatMessage[];
   artifacts: Artifact[];
+  lessonWorkspaces?: Record<string, LessonWorkspace>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -71,6 +72,25 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every((citation) => typeof citation === 'string')));
 }
 
+function parseLessonWorkspace(value: unknown): LessonWorkspace | undefined {
+  if (!isRecord(value)) return undefined;
+  return {
+    resources: Array.isArray(value.resources) ? value.resources.filter(isResource) : [],
+    transcript: Array.isArray(value.transcript) ? value.transcript.filter(isTranscriptSegment) : [],
+    chat: Array.isArray(value.chat) ? value.chat.filter(isChatMessage) : [],
+    artifacts: Array.isArray(value.artifacts) ? value.artifacts.filter(isArtifact) : [],
+  };
+}
+
+function parseLessonWorkspaces(value: unknown, lessons: Lesson[]): Record<string, LessonWorkspace> | undefined {
+  if (!isRecord(value)) return undefined;
+  const workspaces = Object.fromEntries(lessons.flatMap((lesson) => {
+    const workspace = parseLessonWorkspace(value[lesson.id]);
+    return workspace ? [[lesson.id, workspace]] : [];
+  }));
+  return Object.keys(workspaces).length ? workspaces : undefined;
+}
+
 function getStorage(): Storage | undefined {
   if (typeof window === 'undefined') return undefined;
   return window.localStorage;
@@ -96,8 +116,9 @@ export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | un
     const transcript = Array.isArray(parsed.transcript) ? parsed.transcript.filter(isTranscriptSegment) : fallback.transcript;
     const chat = Array.isArray(parsed.chat) ? parsed.chat.filter(isChatMessage) : fallback.chat;
     const artifacts = Array.isArray(parsed.artifacts) ? parsed.artifacts.filter(isArtifact) : [];
+    const lessonWorkspaces = parseLessonWorkspaces(parsed.lessonWorkspaces, lessons);
 
-    return { activeLessonId, lessons, resources, transcript, chat, artifacts };
+    return { activeLessonId, lessons, resources, transcript, chat, artifacts, ...(lessonWorkspaces ? { lessonWorkspaces } : {}) };
   } catch {
     return fallback;
   }
