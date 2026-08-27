@@ -87,4 +87,18 @@ describe('StudentLLM workspace', () => {
     expect(screen.getAllByRole('heading', { name: 'Persistent course' }).length).toBeGreaterThan(0);
     expect(screen.queryByText('New course created. Ready to record.')).not.toBeInTheDocument();
   });
+
+  it('imports a local source and restores its fingerprint after remounting', async () => {
+    const user = userEvent.setup();
+    const firstRender = render(<App />);
+    const file = new File(['course notes'], 'week-1.md', { type: 'text/markdown', lastModified: 123 });
+
+    await user.upload(screen.getByLabelText('Select course source'), file);
+    expect(await screen.findByText('week-1.md')).toBeInTheDocument();
+    firstRender.unmount();
+
+    render(<App />);
+
+    expect(screen.getByText('week-1.md')).toBeInTheDocument();
+  });
 });
