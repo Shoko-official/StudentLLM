@@ -36,6 +36,18 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByRole('complementary', { name: 'Course navigation' })).toBeHidden();
   });
 
+  test('restores chat history after a browser reload', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('tab', { name: 'Chat' }).click();
+    await page.getByRole('textbox', { name: 'Ask the course chat' }).fill('What is the key normalization idea?');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.getByText('What is the key normalization idea?')).toBeVisible();
+
+    await page.reload();
+    await page.getByRole('tab', { name: 'Chat' }).click();
+    await expect(page.getByText('What is the key normalization idea?')).toBeVisible();
+  });
+
   test('captures a browser audio chunk and reports local persistence', async ({ page }) => {
     await page.addInitScript(() => {
       const track = { stop: () => undefined };
@@ -81,6 +93,18 @@ test.describe('StudentLLM workspace', () => {
     expect(storedChunkCount).toBe(1);
   });
 
+  test('reports a clear recording fallback when microphone APIs are unavailable', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
+    });
+    await page.goto('/');
+
+    await page.getByRole('button', { name: 'Start recording' }).click();
+    await expect(page.getByText('Demo mode active: microphone unavailable.')).toBeVisible();
+    await page.getByRole('button', { name: 'Stop recording' }).click();
+    await expect(page.getByText('Demo session ended.')).toBeVisible();
+  });
+
   test('imports and stores the original source blob locally', async ({ page }) => {
     await page.goto('/');
     await page.setInputFiles('input[aria-label="Select course source"]', {
@@ -91,6 +115,8 @@ test.describe('StudentLLM workspace', () => {
 
     await expect(page.getByRole('button', { name: 'lecture-notes.md Text · 10 B' })).toBeVisible();
     await expect(page.getByText(/lecture-notes\.md added to course sources and saved locally\./)).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'lecture-notes.md Text · 10 B' })).toBeVisible();
 
     const storedSource = await page.evaluate(() => new Promise<{ count: number; text: string }>((resolve, reject) => {
       const request = indexedDB.open('studentllm-sources', 1);
