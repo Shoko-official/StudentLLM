@@ -9,9 +9,10 @@
     "check": "tsc -b --pretty false",
     "test": "vitest",
     "test:run": "vitest run",
+    "benchmarks:check": "python -m py_compile benchmarks/run_beir_bm25.py benchmarks/run_mmlu_pro.py",
     "providers:smoke": "node scripts/provider-smoke.mjs",
     "test:e2e": "playwright test",
-    "verify": "npm run check && npm run test:run && npm run build && npm run test:e2e",
+    "verify": "npm run check && npm run benchmarks:check && npm run test:run && npm run build && npm run test:e2e",
     "preview": "vite preview"
   },
   "engines": {

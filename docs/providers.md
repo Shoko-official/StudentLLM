@@ -30,7 +30,7 @@ lms server status
 lms ls
 ```
 
-The server must already be running with the intended model loaded. The project does not start, stop, or reload the local compute process as part of the frontend test suite.
+The server must already be running with the intended model loaded.
 
 Defaults:
 
