@@ -50,16 +50,21 @@ python benchmarks/run_mmlu_pro.py run `
 
 Raw outputs are local and ignored by Git. A partial or full run is not promoted without its command, commit, dataset, hardware, and validity record.
 
-## Observed public result: BEIR SciFact
+## Observed public results: BEIR retrieval
 
-The retrieval baseline runs the complete public [BeIR SciFact corpus and query dataset](https://huggingface.co/datasets/BeIR/scifact) with the public test relevance judgments from [BeIR/scifact-qrels](https://huggingface.co/datasets/BeIR/scifact-qrels). The implementation is deterministic BM25 with `k1=1.2`, `b=0.75`, and `top_k=10`.
+The retrieval baseline runs complete public BEIR corpus and query datasets with their public test relevance judgments. The implementation is deterministic BM25 with `k1=1.2`, `b=0.75`, and `top_k=10`.
 
-| Run | Corpus | Evaluation set | Result | Validity |
-| --- | --- | --- | --- | --- |
-| 2026-08-27 | 5,183 documents | 300 evaluated test queries, 339 qrel rows | nDCG@10 `0.6593`, Recall@10 `0.7809`, MRR@10 `0.6252` | Full public split, reproducible baseline |
-| 2026-08-27 | 3,633 documents | 323 evaluated test queries, 12,334 qrel rows | nDCG@10 `0.3037`, Recall@10 `0.1423`, MRR@10 `0.5137` | Full public split, reproducible baseline |
+| Dataset | Run | Corpus | Evaluation set | Result | Validity |
+| --- | --- | --- | --- | --- | --- |
+| SciFact | 2026-08-27 | 5,183 documents | 300 evaluated test queries, 339 qrel rows | nDCG@10 `0.6593`, Recall@10 `0.7809`, MRR@10 `0.6252` | Full public split, reproducible baseline |
+| NFCorpus | 2026-08-27 | 3,633 documents | 323 evaluated test queries, 12,334 qrel rows | nDCG@10 `0.3037`, Recall@10 `0.1423`, MRR@10 `0.5137` | Full public split, reproducible baseline |
+| ArguAna | 2026-08-27 | 8,674 documents | 1,406 evaluated test queries, 1,406 qrel rows | nDCG@10 `0.3132`, Recall@10 `0.6636`, MRR@10 `0.2030` | Full public split, reproducible baseline |
+| FiQA | 2026-08-27 | 57,638 documents | 648 evaluated test queries, 1,706 qrel rows | nDCG@10 `0.2347`, Recall@10 `0.2962`, MRR@10 `0.2919` | Full public split, reproducible baseline |
+| SCIDOCS | 2026-08-27 | 25,657 documents | 1,000 evaluated test queries, 29,928 qrel rows | nDCG@10 `0.1528`, Recall@10 `0.1584`, MRR@10 `0.2736` | Full public split, reproducible baseline |
 
-The receipt was written to `artifacts/benchmarks/beir/scifact-bm25.json`. This measures lexical retrieval on SciFact; it is not a claim about StudentLLM's future dense retrieval or answer faithfulness.
+The receipts are written to `artifacts/benchmarks/beir/`. These are lexical baselines on public BEIR datasets; they are not claims about StudentLLM's future dense retrieval or answer faithfulness.
+
+The rows above correspond, in order, to the public [SciFact](https://huggingface.co/datasets/BeIR/scifact), [NFCorpus](https://huggingface.co/datasets/BeIR/nfcorpus), [ArguAna](https://huggingface.co/datasets/BeIR/arguana), [FiQA](https://huggingface.co/datasets/BeIR/fiqa), and [SCIDOCS](https://huggingface.co/datasets/BeIR/scidocs) datasets. These are lexical baselines on public BEIR datasets; they are not claims about StudentLLM's future dense retrieval or answer faithfulness.
 
 ## Public benchmarks to integrate
 

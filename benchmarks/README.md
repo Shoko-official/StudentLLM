@@ -45,7 +45,7 @@ The August 27, 2026 NVIDIA run timed out after retries before producing a respon
 
 ## BEIR BM25 baselines
 
-`run_beir_bm25.py` evaluates complete public SciFact or NFCorpus test splits with a deterministic BM25 baseline. It loads the corpus, queries, and test relevance judgments from the [BeIR SciFact dataset](https://huggingface.co/datasets/BeIR/scifact) or [BeIR NFCorpus dataset](https://huggingface.co/datasets/BeIR/nfcorpus) and reports nDCG@10, Recall@10, and MRR@10.
+`run_beir_bm25.py` evaluates complete public SciFact, NFCorpus, ArguAna, FiQA, or SCIDOCS test splits with a deterministic BM25 baseline. It loads the corpus, queries, and test relevance judgments from the corresponding [BEIR datasets](https://github.com/beir-cellar/beir/wiki/Datasets-available) and reports nDCG@10, Recall@10, and MRR@10.
 
 Install the optional benchmark dependency and run SciFact:
 
@@ -62,6 +62,14 @@ Run NFCorpus with the same protocol:
 .\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_bm25.py `
   --dataset nfcorpus `
   --output_path artifacts/benchmarks/beir/nfcorpus-bm25.json
+```
+
+Run the additional multi-domain splits with the same protocol:
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_bm25.py --dataset arguana --output_path artifacts\benchmarks\beir\arguana-bm25.json
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_bm25.py --dataset fiqa --output_path artifacts\benchmarks\beir\fiqa-bm25.json
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_bm25.py --dataset scidocs --output_path artifacts\benchmarks\beir\scidocs-bm25.json
 ```
 
 These are retrieval baselines on public information-retrieval datasets. They are independent of the LM Studio process and do not require model inference.
