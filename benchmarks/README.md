@@ -71,6 +71,8 @@ Every published result declares its split and sample size, keeps raw outputs loc
 
 An observed 70-item run on 2026-08-27 covered all 14 MMLU-Pro categories with 5 items per category and returned exact match `0.3000` (21/70, stderr `0.0484`). This remains a partial public sample, not a leaderboard score or a model-strength claim.
 
+An observed 140-item run covered all 14 categories with 10 items per category and returned exact match `0.2143` (30/140, stderr `0.0347`). All requests and aggregate receipts were written; the initial process exit was affected only by Windows CP1252 terminal output after scoring, and the adapter now forces UTF-8 stdout.
+
 ## NVIDIA NIM
 
 The same adapter can target NVIDIA NIM without placing the credential on the command line:
