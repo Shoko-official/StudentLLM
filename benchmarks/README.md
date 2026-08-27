@@ -19,6 +19,17 @@ python benchmarks\run_asr_fleurs.py `
 
 The command above evaluates all 676 examples in the public French test split. A partial run can be requested with `--limit`, but it must be labeled partial in the resulting receipt.
 
+## Local ASR sidecar
+
+The app-side speech contract can be exercised with the local `faster-whisper` service:
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe -m pip install faster-whisper
+.\.venv-bench-sys\Scripts\python.exe scripts\local_asr_server.py --model small --language fr --device cpu --compute-type int8
+```
+
+The service exposes `GET /health` and accepts an audio body at `POST /transcribe`. It is intentionally separate from the public score adapter so service integration evidence and benchmark quality remain distinct.
+
 ## MMLU-Pro through LM Studio
 
 `run_mmlu_pro.py` uses the public MMLU-Pro task from the [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) project. The adapter appends `/no_think` to the final user message for Qwen3 models so scoring evaluates the final answer channel.
