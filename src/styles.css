@@ -180,14 +180,17 @@ kbd { color: var(--faint); font-family: var(--mono); font-size: 9px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .resources-section .sidebar-section-header, .studio-actions .sidebar-section-header, .recent-section .sidebar-section-header { margin: 0 0 9px; }
 .resource-list { display: grid; gap: 4px; }
-.resource-item { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px; color: var(--muted); background: transparent; border-radius: 8px; text-align: left; }
+.resource-item { width: 100%; display: flex; align-items: center; gap: 4px; color: var(--muted); background: transparent; border-radius: 8px; text-align: left; }
 .resource-item:hover { background: var(--surface-2); }
+.resource-open { min-width: 0; flex: 1; display: flex; align-items: center; gap: 9px; padding: 8px; color: inherit; background: transparent; text-align: left; }
+.resource-remove { display: grid; flex: 0 0 auto; place-items: center; padding: 7px; color: var(--faint); background: transparent; border-radius: 6px; }
+.resource-remove:hover { color: var(--text); background: var(--surface-3); }
 .resource-icon { width: 26px; height: 26px; display: grid; flex: 0 0 auto; place-items: center; color: var(--muted); background: var(--surface-3); border-radius: 7px; }
-.resource-item > span:nth-child(2) { display: grid; flex: 1; min-width: 0; gap: 3px; }
-.resource-item strong, .resource-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.resource-item strong { color: #c3ccd2; font-size: 10px; font-weight: 600; }
-.resource-item small { color: var(--faint); font-size: 8px; }
-.resource-item > svg { color: var(--faint); }
+.resource-open > span:nth-child(2) { display: grid; flex: 1; min-width: 0; gap: 3px; }
+.resource-open strong, .resource-open small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resource-open strong { color: #c3ccd2; font-size: 10px; font-weight: 600; }
+.resource-open small { color: var(--faint); font-size: 8px; }
+.resource-open > svg { color: var(--faint); }
 .show-more { justify-content: center; width: 100%; padding: 7px; margin-top: 4px; border-top: 1px solid var(--line); font-size: 9px; }
 .artifact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
 .artifact-button { min-height: 83px; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; padding: 9px; color: var(--muted); background: var(--surface-2); border: 1px solid transparent; border-radius: 9px; text-align: left; }
