@@ -216,7 +216,17 @@ New-Item -ItemType Directory -Force artifacts\benchmarks\bfcl | Out-Null
   --partial-eval
 ```
 
-The observed run used the existing LM Studio process and completed 20 public `simple_python` cases with the official scorer: accuracy `1.0000` (20/20), mean latency `1.747 s`, and approximate p95 latency `3.112 s`. A second run completed 20 public `parallel_multiple` cases: accuracy `0.8500` (17/20), mean latency `2.420 s`, and approximate p95 latency `3.991 s`.
+The observed run used the existing LM Studio process and completed 20 public `simple_python` cases with the official scorer: accuracy `1.0000` (20/20), mean latency `1.747 s`, and approximate p95 latency `3.112 s`. A second run completed 20 public `parallel_multiple` cases: accuracy `0.8500` (17/20), mean latency `2.420 s`, and approximate p95 latency `3.991 s`. A third run completed 20 public `multiple` cases: accuracy `0.9500` (19/20), mean latency `1.563 s`, and approximate p95 latency `2.407 s`.
+
+To reproduce the `multiple` category, use a separate ignored root and public IDs `multiple_0` through `multiple_19`:
+
+```powershell
+$env:BFCL_PROJECT_ROOT = (Resolve-Path artifacts\benchmarks\bfcl-multiple).Path
+New-Item -ItemType Directory -Force artifacts\benchmarks\bfcl-multiple | Out-Null
+@{ multiple = 0..19 | ForEach-Object { "multiple_$($_)" } } | ConvertTo-Json | Set-Content -Encoding utf8 artifacts\benchmarks\bfcl-multiple\test_case_ids_to_generate.json
+```
+
+Run the same official `generate` and `evaluate` commands above with `--test-category multiple` and `--result-dir result`.
 
 The multi-turn run uses a separate ignored root so its files do not overwrite the single-turn receipts:
 

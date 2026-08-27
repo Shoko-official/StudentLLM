@@ -42,6 +42,7 @@
 - official MTEB task wrapper and public STSBenchmark v2 CPU receipt with a Spearman main score of `0.857289`;
 - official MTEB `STS22.v2` multilingual public test receipt covering 18 language and cross-language subsets;
 - official BFCL V4 `simple_python` partial evaluation through the existing LM Studio endpoint, with 20/20 official category accuracy;
+- official BFCL V4 `multiple` partial evaluation through the existing LM Studio endpoint, with 19/20 official category accuracy;
 - official BFCL V4 `parallel_multiple` partial evaluation through the existing LM Studio endpoint, with 17/20 official category accuracy;
 - official BFCL V4 `multi_turn_base` partial evaluation through the existing LM Studio endpoint, with 6/20 official category accuracy and recorded format failures;
 - deterministic single-worker local Playwright mode to prevent Windows browser-test contention while keeping CI parallel;
