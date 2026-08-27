@@ -37,6 +37,7 @@ import {
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
 import { loadWorkspace, saveWorkspace } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
+import type { LLMProvider } from './lib/llm-provider';
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore } from './lib/source-storage';
 import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
@@ -148,7 +149,11 @@ function isTextResource(resource: Resource) {
   return resource.kind === 'transcript' || resource.mimeType?.startsWith('text/') === true;
 }
 
-function App() {
+export interface AppProps {
+  provider?: LLMProvider | null;
+}
+
+function App({ provider }: AppProps) {
   const [workspace] = useState(() => loadWorkspace({
     activeLessonId: initialLessons[0].id,
     lessons: initialLessons,
@@ -183,7 +188,7 @@ function App() {
   const [newCourseTitle, setNewCourseTitle] = useState('');
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
   const recorderRef = useRef<RecorderSession | null>(null);
-  const localProvider = useMemo(() => createLocalLLMProvider(), []);
+  const localProvider = useMemo(() => provider === undefined ? createLocalLLMProvider() : provider, [provider]);
   const sourceBlobStore = useMemo(() => createSourceBlobStore(), []);
 
   const activeLesson = lessons.find((lesson) => lesson.id === activeLessonId) ?? lessons[0];
