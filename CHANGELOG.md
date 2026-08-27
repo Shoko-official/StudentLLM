@@ -39,5 +39,6 @@
 - 70-item public MMLU-Pro LM Studio receipt covering all 14 categories with explicit partial-sample validity;
 - benchmark adapter syntax checks included in the local and GitHub verification gates;
 - NVIDIA NIM and LM Studio OpenAI-compatible smoke checks with runtime credentials;
+- live NVIDIA NIM and LM Studio smoke checks reverified on 2026-08-27 without restarting the local model process;
 - Vitest, Playwright, axe, TypeScript, Vite, and GitHub Actions verification;
 - architecture, provider, benchmark, and contribution documentation.
