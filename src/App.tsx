@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   Archive,
@@ -37,6 +37,7 @@ import {
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
 import { loadWorkspace, saveWorkspace } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
+import { createSourceResource } from './lib/source-ingest';
 import { Artifact, ArtifactKind, ChatMessage, Lesson, Resource, TranscriptSegment, ViewMode } from './types';
 
 const initialLessons: Lesson[] = [
@@ -145,10 +146,12 @@ function App() {
   const [workspace] = useState(() => loadWorkspace({
     activeLessonId: initialLessons[0].id,
     lessons: initialLessons,
+    resources: initialResources,
     transcript: initialTranscript,
     artifacts: [],
   }));
   const [lessons, setLessons] = useState(workspace.lessons);
+  const [resources, setResources] = useState(workspace.resources);
   const [activeLessonId, setActiveLessonId] = useState(workspace.activeLessonId);
   const [view, setView] = useState<ViewMode>('course');
   const [showLeftSidebar, setShowLeftSidebar] = useState(true);
@@ -184,9 +187,9 @@ function App() {
   }, [lessons, searchQuery]);
 
   const activeResources = useMemo(() => {
-    const resources = activeLesson.id === initialLessons[0].id ? initialResources : initialResources.slice(0, 2);
-    return showAllResources ? resources : resources.slice(0, 3);
-  }, [activeLesson.id, showAllResources]);
+    const lessonResources = activeLesson.id === initialLessons[0].id ? resources : resources.slice(0, 2);
+    return showAllResources ? lessonResources : lessonResources.slice(0, 3);
+  }, [activeLesson.id, resources, showAllResources]);
 
   useEffect(() => {
     if (!isRecording) return undefined;
@@ -213,8 +216,8 @@ function App() {
   }, [toast]);
 
   useEffect(() => {
-    saveWorkspace({ activeLessonId, lessons, transcript, artifacts });
-  }, [activeLessonId, lessons, transcript, artifacts]);
+    saveWorkspace({ activeLessonId, lessons, resources, transcript, artifacts });
+  }, [activeLessonId, lessons, resources, transcript, artifacts]);
 
   useEffect(() => () => {
     void recorderRef.current?.stop();
@@ -331,6 +334,19 @@ function App() {
     };
     setArtifacts((current) => [artifact, ...current].slice(0, 4));
     notify(`${definition.label} added to Studio.`);
+  };
+
+  const importSource = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const resource = await createSourceResource(file);
+      setResources((current) => [resource, ...current]);
+      notify(`${resource.name} added to course sources.`);
+    } catch {
+      notify('The source could not be fingerprinted locally.');
+    }
   };
 
   const createCourse = (event: FormEvent) => {
@@ -533,7 +549,7 @@ function App() {
           <aside className="right-sidebar" aria-label="Course Studio">
             <div className="studio-heading"><div><span className="section-kicker">Studio</span><h2>Build for review</h2></div><button className="icon-button" aria-label="Close Studio" onClick={() => setShowRightSidebar(false)}><X size={16} /></button></div>
             <section className="context-card"><div className="context-card-top"><span className="context-icon"><BookOpen size={15} /></span><span className="local-badge"><span className="status-dot" /> local</span></div><h3>{activeLesson.title}</h3><dl><div><dt>Sources</dt><dd>{activeResources.length + 2}</dd></div><div><dt>Duration</dt><dd>{activeLesson.duration}</dd></div><div><dt>State</dt><dd className="success-text">Indexed</dd></div></dl></section>
-            <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><button className="mini-action" onClick={() => notify('The file picker is available in the desktop shell.') }><Plus size={13} /> add</button></div><div className="resource-list">{activeResources.map((resource) => <button className="resource-item" key={resource.id} onClick={() => notify(`Source selected: ${resource.name}`)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button>)}</div>{initialResources.length > 3 && activeLesson.id === initialLessons[0].id && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${initialResources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
+            <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><label className="mini-action"><input className="visually-hidden" type="file" aria-label="Select course source" accept="audio/*,image/*,.pdf,.txt,.md" onChange={importSource} /><Plus size={13} /> add</label></div><div className="resource-list">{activeResources.map((resource) => <button className="resource-item" key={resource.id} onClick={() => notify(`Source selected: ${resource.name}`)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button>)}</div>{resources.length > 3 && activeLesson.id === initialLessons[0].id && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
             <section className="studio-actions"><div className="sidebar-section-header"><span>Create an artifact</span><span className="eyebrow-count">source-linked</span></div><div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div></section>
             {artifacts.length > 0 && <section className="recent-section"><div className="sidebar-section-header"><span>Recently created</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <div className="recent-artifact" key={artifact.id}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></div>)}</section>}
             <button className="studio-link" onClick={() => notify('The full Studio editor will open in a future update.')}>Open full Studio <ArrowUpRight size={14} /></button>

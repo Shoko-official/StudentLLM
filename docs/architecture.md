@@ -28,6 +28,7 @@ The React and TypeScript application defines the product interaction contract:
 - optional browser microphone capture;
 - chunked `MediaRecorder` capture with an IndexedDB store when available;
 - versioned local workspace persistence for lessons, transcript segments, and artifacts;
+- local source import with MIME classification and SHA-256 provenance fingerprints;
 - `verified` and `review` transcript states;
 - Studio artifact actions;
 - chat with visible context citations;

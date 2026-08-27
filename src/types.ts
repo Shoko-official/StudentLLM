@@ -18,6 +18,10 @@ export interface Resource {
   name: string;
   meta: string;
   kind: ResourceKind;
+  mimeType?: string;
+  sizeBytes?: number;
+  sha256?: string;
+  lastModified?: number;
 }
 
 export interface TranscriptSegment {
