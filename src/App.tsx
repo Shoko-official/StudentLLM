@@ -40,6 +40,7 @@ import { createLocalLLMProvider } from './lib/llm-provider';
 import type { LLMProvider } from './lib/llm-provider';
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore } from './lib/source-storage';
+import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { Artifact, ArtifactKind, ChatMessage, Lesson, Resource, TranscriptSegment, ViewMode } from './types';
 
@@ -311,14 +312,20 @@ function App({ provider }: AppProps) {
         try {
           const blob = await sourceBlobStore.load(resource.id);
           const text = await blob?.text();
-          if (text?.trim()) retrievalDocuments.push({ id: resource.id, text, metadata: { resourceName: resource.name } });
+          if (text?.trim()) {
+            chunkSourceText(text).forEach((chunk) => retrievalDocuments.push({
+              id: `${resource.id}:${chunk.index}`,
+              text: chunk.text,
+              metadata: { resourceName: resource.name, part: String(chunk.index + 1), startLine: String(chunk.startLine) },
+            }));
+          }
         } catch {
           // A missing source blob should not prevent transcript retrieval.
         }
       }
       const retrievalHits = searchDocuments(retrievalDocuments, message, 4);
       const retrievedCitations = retrievalHits.slice(0, 2).map((hit) => hit.document.metadata.resourceName
-        ? `Source · ${hit.document.metadata.resourceName}`
+        ? `Source · ${hit.document.metadata.resourceName} · part ${hit.document.metadata.part}`
         : `Transcript · ${hit.document.metadata.timestamp}`);
       if (!localProvider) {
         setChat((messages) => [...messages, {
@@ -331,7 +338,7 @@ function App({ provider }: AppProps) {
       }
       const context = retrievalHits.length
         ? retrievalHits.map((hit) => hit.document.metadata.resourceName
-          ? `[Source: ${hit.document.metadata.resourceName}] ${hit.document.text}`
+          ? `[Source: ${hit.document.metadata.resourceName}, part ${hit.document.metadata.part}] ${hit.document.text}`
           : `[${hit.document.metadata.timestamp}] ${hit.document.metadata.speaker}: ${hit.document.text}`).join('\n')
         : 'No course excerpt matched the question.';
       const result = await localProvider.generate([
