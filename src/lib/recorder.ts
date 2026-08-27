@@ -1,4 +1,4 @@
-import { AudioChunkStore, createRecordingChunkStore, RecordingDurability } from './recording-storage';
+import { AudioChunkRecord, AudioChunkStore, createRecordingChunkStore, RecordingDurability } from './recording-storage';
 
 export interface RecorderStopSummary {
   recordingId: string;
@@ -8,6 +8,7 @@ export interface RecorderStopSummary {
 
 export interface RecorderSession {
   stop: () => Promise<RecorderStopSummary>;
+  readChunks: () => Promise<AudioChunkRecord[]>;
   stream: MediaStream | null;
   recordingId: string;
   durability: RecordingDurability | 'unavailable';
@@ -53,6 +54,7 @@ export async function requestRecorderSession(options: RecorderOptions = {}): Pro
   if (!mediaDevices?.getUserMedia) {
     return {
       stop: async () => ({ recordingId, chunksPersisted: 0, persistenceError: false }),
+      readChunks: async () => [],
       stream: null,
       recordingId,
       durability: 'unavailable',
@@ -125,6 +127,7 @@ export async function requestRecorderSession(options: RecorderOptions = {}): Pro
   return {
     stream,
     stop,
+    readChunks: () => chunkStore.list(recordingId),
     recordingId,
     durability: chunkStore.durability,
   };

@@ -13,6 +13,7 @@ describe('recording chunk storage', () => {
 
     expect(store.durability).toBe('memory-only');
     await store.append(chunk);
+    expect(await store.list('recording-1')).toEqual([chunk]);
     expect(await store.count('recording-1')).toBe(1);
     await store.clear('recording-1');
     expect(await store.count('recording-1')).toBe(0);

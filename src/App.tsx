@@ -38,6 +38,8 @@ import { requestRecorderSession, RecorderSession } from './lib/recorder';
 import { loadWorkspace, saveWorkspace } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import type { LLMProvider } from './lib/llm-provider';
+import { createLocalSpeechEngine } from './lib/speech-engine';
+import type { SpeechEngine } from './lib/speech-engine';
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore } from './lib/source-storage';
 import { chunkSourceText } from './lib/source-chunking';
@@ -160,9 +162,10 @@ function isTextResource(resource: Resource) {
 export interface AppProps {
   provider?: LLMProvider | null;
   recorderSessionFactory?: () => Promise<RecorderSession>;
+  speechEngine?: SpeechEngine | null;
 }
 
-function App({ provider, recorderSessionFactory = requestRecorderSession }: AppProps) {
+function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine }: AppProps) {
   const [workspace] = useState(() => loadWorkspace({
     activeLessonId: initialLessons[0].id,
     lessons: initialLessons,
@@ -203,18 +206,21 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
   const recorderRef = useRef<RecorderSession | null>(null);
   const localProvider = useMemo(() => provider === undefined ? createLocalLLMProvider() : provider, [provider]);
+  const localSpeechEngine = useMemo(() => speechEngine === undefined ? createLocalSpeechEngine() : speechEngine, [speechEngine]);
   const sourceBlobStore = useMemo(() => createSourceBlobStore(), []);
 
   const activeLesson = lessons.find((lesson) => lesson.id === activeLessonId) ?? lessons[0];
   const activeWorkspace = lessonWorkspaces[activeLessonId] ?? emptyLessonWorkspace;
   const { resources, transcript, chat, artifacts } = activeWorkspace;
 
-  const updateActiveWorkspace = (update: (current: LessonWorkspace) => LessonWorkspace) => {
+  const updateLessonWorkspace = (lessonId: string, update: (current: LessonWorkspace) => LessonWorkspace) => {
     setLessonWorkspaces((current) => ({
       ...current,
-      [activeLessonId]: update(current[activeLessonId] ?? emptyLessonWorkspace),
+      [lessonId]: update(current[lessonId] ?? emptyLessonWorkspace),
     }));
   };
+
+  const updateActiveWorkspace = (update: (current: LessonWorkspace) => LessonWorkspace) => updateLessonWorkspace(activeLessonId, update);
 
   const visibleLessons = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
@@ -296,15 +302,16 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
     setRecordingError('');
     if (isRecording) {
       const session = recorderRef.current;
+      const recordingLessonId = activeLesson.id;
       recorderRef.current = null;
       setIsRecording(false);
       if (!session) {
         notify('Session stopped.');
         return;
       }
-      void session.stop().then(({ chunksPersisted, persistenceError }) => {
+      void session.stop().then(async ({ chunksPersisted, persistenceError }) => {
         if (session.stream && session.durability === 'durable' && chunksPersisted > 0) {
-          updateActiveWorkspace((current) => ({
+          updateLessonWorkspace(recordingLessonId, (current) => ({
             ...current,
             resources: [{
               id: session.recordingId,
@@ -324,6 +331,26 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
         } else {
           notify(`${chunksPersisted} audio chunks kept in memory only.`);
         }
+
+        if (!localSpeechEngine || !session.stream || session.durability !== 'durable' || chunksPersisted === 0) return;
+        notify('Audio saved locally. Transcribing with local ASR...');
+        try {
+          const chunks = await session.readChunks();
+          if (!chunks.length) throw new Error('No persisted audio chunks available.');
+          const audio = new Blob(chunks.map((chunk) => chunk.blob), { type: chunks[0].blob.type || 'audio/webm' });
+          const transcription = await localSpeechEngine.transcribe(audio);
+          if (!transcription.segments.length) {
+            notify('Audio saved locally; local ASR returned no speech.');
+            return;
+          }
+          updateLessonWorkspace(recordingLessonId, (current) => ({
+            ...current,
+            transcript: [...current.transcript, ...transcription.segments],
+          }));
+          notify(`Local transcription added ${transcription.segments.length} segments.`);
+        } catch {
+          notify('Audio saved locally; local transcription needs review.');
+        }
       }).catch(() => setRecordingError('The audio session could not be finalized correctly.'));
       return;
     }
@@ -332,7 +359,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession }: AppP
       recorderRef.current = await recorderSessionFactory();
       setIsRecording(true);
       setRecordingSeconds(0);
-      notify(recorderRef.current.stream ? 'Microphone active, live transcription ready.' : 'Demo mode active: microphone unavailable.');
+      notify(recorderRef.current.stream
+        ? localSpeechEngine ? 'Microphone active, local transcription ready.' : 'Microphone active, audio autosave ready.'
+        : 'Demo mode active: microphone unavailable.');
     } catch {
       setRecordingError('The microphone is unavailable. Check permission and try again.');
     }
