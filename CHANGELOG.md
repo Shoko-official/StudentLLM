@@ -54,5 +54,6 @@
 - live browser PDF import verified against the local PyMuPDF sidecar with a public 15-page source;
 - live NVIDIA NIM and LM Studio smoke checks reverified on 2026-08-27 without restarting the local model process;
 - latest provider smoke receipt confirms NVIDIA NIM at 1,260 ms and LM Studio at 310 ms on the development machine;
+- the environment example now makes the Windows User source of `NVIDIA_API_KEY` explicit without declaring a file variable;
 - Vitest, Playwright, axe, TypeScript, Vite, and GitHub Actions verification;
 - architecture, provider, benchmark, and contribution documentation.
