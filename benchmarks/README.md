@@ -42,3 +42,17 @@ $env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
 ```
 
 The August 27, 2026 NVIDIA run timed out after retries before producing a response aggregate. It is recorded as a transport failure with no score. The credential remains runtime-only through the Windows User environment.
+
+## BEIR SciFact lexical baseline
+
+`run_beir_scifact.py` evaluates the complete public SciFact test split with a deterministic BM25 baseline. It loads the corpus, queries, and test relevance judgments from the [BeIR SciFact dataset](https://huggingface.co/datasets/BeIR/scifact) and reports nDCG@10, Recall@10, and MRR@10.
+
+Install the optional benchmark dependency and run the full test split:
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe -m pip install datasets
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_scifact.py `
+  --output_path artifacts/benchmarks/beir/scifact-bm25.json
+```
+
+This is a retrieval baseline on a public information-retrieval dataset. It is independent of the LM Studio process and does not require model inference.
