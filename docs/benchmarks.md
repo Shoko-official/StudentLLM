@@ -49,9 +49,9 @@ The first generation benchmark uses the official [EleutherAI lm-evaluation-harne
 | 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test split, 14 categories, 1 item per category, seed 42, `temperature=0`, `/no_think` | exact match `0.2143` (3/14) | Technical pipeline pass, partial sample |
 | 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test split, 14 categories, 5 items per category, seed 42, `temperature=0`, `/no_think` | exact match `0.3000` (21/70), stderr `0.0484` | Partial public sample; per-category results retained in the local receipt |
 | 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test split, 14 categories, 10 items per category, seed 42, `temperature=0`, `/no_think` | exact match `0.2143` (30/140), stderr `0.0347` | Complete 140-item public sample; aggregate and per-task receipts written |
-| 2026-08-27 | `openai/gpt-oss-20b` / NVIDIA NIM | same protocol, credential from `NVIDIA_API_KEY` | network timeout before the first response, no aggregate | Transport failure, no score |
+| 2026-08-27 | `openai/gpt-oss-20b` / NVIDIA NIM | same protocol, credential from the Windows User `NVIDIA_API_KEY`, `max_gen_toks=512`, `reasoning_effort=low` | exact match `0.2857` (40/140), stderr `0.0387` | Complete 140-item public sample across all 14 categories; partial benchmark evidence |
 
-The 0.2143 and 0.3000 values are not leaderboard scores. The harness documents that `--limit` is not suitable for a final metric; these runs validate dataset loading, prompt construction, API routing, answer extraction, and metric calculation on public samples. Model strength remains unverified.
+The earlier NVIDIA timeout is retained as a failed transport attempt with no score. The 0.2143, 0.3000, and 0.2857 values are public samples, not leaderboard scores. The harness documents that `--limit` is not suitable for a final metric; these runs validate dataset loading, prompt construction, API routing, answer extraction, and metric calculation on public samples. Model strength remains unverified.
 
 ## Observed public result: BFCL tool calling
 

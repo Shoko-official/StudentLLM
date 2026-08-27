@@ -26,7 +26,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | BEIR dense retrieval | Complete public test splits for SciFact, NFCorpus, ArguAna, SCIDOCS, and FiQA | Receipts and BM25 comparisons recorded in [`benchmarks.md`](./benchmarks.md) |
 | MTEB | Complete public STSBenchmark v2 and STS22 v2 tasks | Spearman and per-subset results recorded in [`benchmarks.md`](./benchmarks.md) |
 | BFCL V4 | Seven public categories, 20 cases per category | Official category scores recorded; multi-turn negative cases expose format compatibility failures |
-| MMLU-Pro | Public 140-item sample across all 14 categories | Exact match 21.43%; partial sample, not a leaderboard score |
+| MMLU-Pro | Public 140-item samples across all 14 categories through LM Studio and NVIDIA NIM | LM Studio `21.43%`; NVIDIA `28.57%`; partial samples, not leaderboard scores |
 | DocVQA | Public 100-image OCR extractability diagnostic | Normalized answer visibility 86.00%; not official ANLS |
 
 Detailed commands, model versions, hardware, validity labels, and local receipt paths are maintained in [`benchmarks.md`](./benchmarks.md). Raw receipts stay local and ignored by Git.
