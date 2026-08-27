@@ -28,7 +28,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | BEIR SCIDOCS dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset scidocs --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.1973, Recall@10 0.2091, MRR@10 0.3344 |
 | BEIR FiQA dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset fiqa --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.3848, Recall@10 0.4396, MRR@10 0.4650 |
 | MTEB STSBenchmark v2 | Official public test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STSBenchmark.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | Spearman main score 0.857289 |
-| BFCL V4 `simple_python` | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | Accuracy 1.0000 (20/20), mean 1.747 s, p95 3.112 s; partial category sample |
+| BFCL V4 `simple_python` and `parallel_multiple` | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | `simple_python`: 1.0000 (20/20); `parallel_multiple`: 0.8500 (17/20); partial category samples |
 
 The provider latencies are point observations on the development machine, not production SLOs.
 
@@ -52,8 +52,9 @@ The official [BFCL evaluator](https://github.com/ShishirPatil/gorilla/tree/main/
 | Run | Category and sample | Official result | Latency | Validity |
 | --- | --- | --- | --- | --- |
 | 2026-08-27 | BFCL V4 `simple_python`, 20 public cases, `temperature=0`, one request thread | Accuracy `1.0000` (20/20) | Mean `1.747 s`, approximate p95 `3.112 s` | Official category scorer, partial evaluation |
+| 2026-08-27 | BFCL V4 `parallel_multiple`, 20 public cases, `temperature=0`, one request thread | Accuracy `0.8500` (17/20) | Mean `2.420 s`, approximate p95 `3.991 s`, max `7.240 s` | Official category scorer, partial evaluation |
 
-This is a real public benchmark result for one BFCL category. It is not a global BFCL leaderboard score, and it does not cover multi-turn, agentic, parallel, or all tool schemas. Raw generations and scorer output are retained locally under `artifacts/benchmarks/bfcl/` and ignored by Git. Reproduction commands are in `benchmarks/README.md`.
+These are real public benchmark results for two BFCL categories. They are not global BFCL leaderboard scores, and they do not cover multi-turn, agentic, or all tool schemas. Raw generations and scorer output are retained locally under `artifacts/benchmarks/bfcl/` and `artifacts/benchmarks/bfcl-parallel-multiple/`, both ignored by Git. Reproduction commands are in `benchmarks/README.md`.
 
 The 140-item run completed all API requests and saved the aggregate receipt `artifacts/benchmarks/mmlu-pro/qwen3-4b-limit10_2026-08-27T15-43-26.008905.json` before the first invocation failed while printing a Unicode arrow to a CP1252 terminal. The adapter now configures UTF-8 stdout so future runs report a clean exit status; the saved metrics are valid for the stated public sample and the presentation failure is recorded separately.
 
