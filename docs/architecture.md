@@ -33,6 +33,7 @@ The React and TypeScript application defines the product interaction contract:
 - Studio artifact actions;
 - chat with visible context citations;
 - optional local LM Studio chat through an OpenAI-compatible provider adapter;
+- local lexical retrieval over transcript excerpts with timestamp citations;
 - provider smoke checks kept independent from the UI.
 
 The browser layer deliberately keeps its provider and retrieval adapters separate from the domain model. LM Studio is opt-in through a non-secret Vite endpoint; remote credentials remain outside the browser bundle.
