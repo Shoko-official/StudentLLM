@@ -100,6 +100,56 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByText('What is the key normalization idea?')).toBeVisible();
   });
 
+  test('keeps source retrieval usable after the browser goes offline', async ({ page, context }) => {
+    const unexpectedNetworkRequests: string[] = [];
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.protocol === 'http:' || url.protocol === 'https:') {
+        const isLocal = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
+        if (!isLocal) unexpectedNetworkRequests.push(request.url());
+      }
+    });
+
+    await page.goto('/');
+    await context.setOffline(true);
+    await page.setInputFiles('input[aria-label="Select course source"]', {
+      name: 'offline-notes.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('Offline notes explain gradient clipping.'),
+    });
+    await expect(page.getByText(/offline-notes\.md added to course sources/)).toBeVisible();
+
+    await page.getByRole('tab', { name: 'Chat' }).click();
+    await page.getByRole('textbox', { name: 'Ask the course chat' }).fill('What do the offline notes explain?');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.getByRole('button', { name: /Source .*offline-notes\.md/ })).toBeVisible();
+    expect(unexpectedNetworkRequests).toEqual([]);
+  });
+
+  test('recovers the default workspace when persisted JSON is corrupted', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.localStorage.setItem('studentllm.workspace.v1', '{corrupted workspace');
+    });
+    await page.goto('/');
+
+    await expect(page.getByRole('heading', { name: 'Attention & Scaled Dot-Product' }).first()).toBeVisible();
+    await expect(page.getByRole('complementary', { name: 'Course navigation' })).toBeVisible();
+    await expect(page.getByText('corrupted workspace')).toBeHidden();
+  });
+
+  test('rejects a malformed course export without changing the active workspace', async ({ page }) => {
+    await page.goto('/');
+    await page.setInputFiles('input[aria-label="Import course export"]', {
+      name: 'broken.studentllm.json',
+      mimeType: 'application/json',
+      buffer: Buffer.from('{"format":"studentllm-course","version":1}'),
+    });
+
+    await expect(page.getByText('The course import could not be completed.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Attention & Scaled Dot-Product' }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Self-attention and Context' })).toBeVisible();
+  });
+
   test('captures a browser audio chunk and reports local persistence', async ({ page }) => {
     await page.addInitScript(() => {
       const track = { stop: () => undefined };
