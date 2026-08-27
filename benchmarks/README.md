@@ -41,6 +41,39 @@ $env:PYTHONUTF8 = '1'
 
 The run returned WER `0.130395`, CER `0.056910`, and RTF `0.164801` over 36,241.89 seconds of public audio and 2,426 examples. This is a reproducible public MLS baseline, not a lecture-domain score or a product-level quality claim.
 
+## FLEURS plus MUSAN robustness
+
+`run_asr_musan.py` evaluates a public FLEURS French sample in clean form and after deterministic mixing with public [MUSAN](https://www.openslr.org/17/) noise, music, and speech sources. It reports WER, CER, RTF, condition, seed, source paths, and hardware. The protocol is a composite public-data robustness check, not an official MUSAN leaderboard metric.
+
+MUSAN is a 10.32 GB archive. Download and extract only the four files used by the recorded run:
+
+```powershell
+New-Item -ItemType Directory -Force artifacts\benchmarks\musan | Out-Null
+curl.exe -L --fail --retry 3 -o artifacts\benchmarks\musan\musan.tar.gz https://www.openslr.org/resources/17/musan.tar.gz
+tar -xzf artifacts\benchmarks\musan\musan.tar.gz -C artifacts\benchmarks\musan `
+  musan/noise/free-sound/noise-free-sound-0001.wav `
+  musan/noise/sound-bible/noise-sound-bible-0001.wav `
+  musan/music/hd-classical/music-hd-0022.wav `
+  musan/speech/librivox/speech-librivox-0001.wav
+```
+
+Run the 100-example public sample:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_asr_musan.py `
+  --musan-root artifacts\benchmarks\musan `
+  --model small `
+  --limit 100 `
+  --snrs 10,0 `
+  --device cpu `
+  --compute-type int8 `
+  --seed 42 `
+  --output artifacts\benchmarks\musan\fleurs-fr-musan-100.json
+```
+
+The observed run evaluated 100 public FLEURS examples across clean, 10 dB, and 0 dB conditions for four MUSAN source categories. Clean WER was `0.157592`; noisy WER ranged from `0.173696` to `0.844709` at 10/0 dB depending on the source category. The full condition table is recorded in [`docs/benchmarks.md`](../docs/benchmarks.md).
+
 ## Local ASR sidecar
 
 The app-side speech contract can be exercised with the local `faster-whisper` service:

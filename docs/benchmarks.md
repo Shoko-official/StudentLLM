@@ -17,6 +17,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 20 tests |
 | FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
 | MLS French ASR | Full public test split from `facebook/multilingual_librispeech`, faster-whisper small on CPU | `benchmarks/run_asr_hf.py --dataset facebook/multilingual_librispeech --config french --split test --reference-field transcript --language fr --device cpu --compute-type int8` | WER 0.1304, CER 0.0569, RTF 0.1648 |
+| FLEURS plus MUSAN robustness | 100 public FLEURS test examples mixed with four public MUSAN sources at 10 dB and 0 dB | `benchmarks/run_asr_musan.py --musan-root artifacts\\benchmarks\\musan --limit 100 --snrs 10,0` | Clean WER 0.1576; noisy WER 0.1737-0.8447 at 10/0 dB across public MUSAN categories |
 | Local ASR sidecar | Python service plus public FLEURS request | `npm run asr:server` with `POST /transcribe` | PASS observed on 2026-08-27; public sample returned timestamped output |
 | Local ASR browser recording | Playwright browser, durable recording, public FLEURS audio, and running faster-whisper sidecar | Manual live UI check | PASS observed on 2026-08-27; one French review segment rendered, 0 page errors |
 | Local document sidecar | PyMuPDF and RapidOCR service plus public arXiv source | `npm run document:server` with `POST /extract` | PASS observed on 2026-08-27; PDF 15/15 pages, rasterized page 69 OCR blocks |
@@ -134,6 +135,33 @@ The generic Hugging Face ASR adapter evaluated the complete public `facebook/mul
 | 2026-08-27 | `small` / faster-whisper, CPU | 2,426 examples, 94,283 reference words, 36,241.89 seconds of public audio | WER `13.0395%`, CER `5.6910%`, RTF `0.1648`, elapsed `5,972.70s` | Windows 11, 24 logical CPUs, 63.4 GB RAM, RTX 5080 host; complete public test split, reproducible CPU baseline |
 
 This is a public MLS French ASR baseline. It is not a lecture-domain score, not a diarization result, and not evidence that the product meets the stricter V1 targets.
+
+## Observed public result: FLEURS plus MUSAN robustness
+
+The robustness adapter combines public `google/fleurs` French test speech with four public files from the [MUSAN corpus](https://www.openslr.org/17/). It evaluates clean audio and deterministic mixtures at 10 dB and 0 dB SNR with `faster-whisper small`, CPU `int8` execution, beam size 5, VAD filtering, and seed 42. This is a reproducible composite robustness protocol built from public corpora, not an official MUSAN leaderboard score.
+
+The run used the first 100 FLEURS test examples and these extracted MUSAN files:
+
+- `noise/free-sound/noise-free-sound-0001.wav`;
+- `noise/sound-bible/noise-sound-bible-0001.wav`;
+- `music/hd-classical/music-hd-0022.wav`;
+- `speech/librivox/speech-librivox-0001.wav`.
+
+The local receipt is `artifacts/benchmarks/musan/fleurs-fr-musan-100.json` and is ignored by Git.
+
+| Condition | Reference words | WER | CER | RTF |
+| --- | ---: | ---: | ---: | ---: |
+| Clean | 2,608 | `15.7592%` | `6.0743%` | `0.1563` |
+| MUSAN noise, 10 dB | 2,608 | `34.1641%` | `17.7633%` | `0.1761` |
+| MUSAN noise, 0 dB | 2,608 | `84.4709%` | `56.8288%` | `0.3456` |
+| MUSAN ambient, 10 dB | 2,608 | `17.3696%` | `7.0548%` | `0.1570` |
+| MUSAN ambient, 0 dB | 2,608 | `17.8681%` | `7.2922%` | `0.1977` |
+| MUSAN music, 10 dB | 2,608 | `20.7439%` | `8.8089%` | `0.1548` |
+| MUSAN music, 0 dB | 2,608 | `34.1258%` | `18.2765%` | `0.1597` |
+| MUSAN speech, 10 dB | 2,608 | `24.8466%` | `11.8728%` | `0.1597` |
+| MUSAN speech, 0 dB | 2,608 | `56.9785%` | `37.5948%` | `0.2422` |
+
+This result is a public-data robustness baseline for the current ASR engine. It is not evidence of diarization quality, classroom far-field performance, or the stricter V1 target.
 
 ## Observed public results: BEIR retrieval
 

@@ -102,6 +102,7 @@ scripts/
 benchmarks/
   run_asr_fleurs.py         full public FLEURS French ASR baseline
   run_asr_hf.py             configurable public Hugging Face ASR evaluation
+  run_asr_musan.py          public FLEURS plus MUSAN SNR robustness evaluation
   run_mmlu_pro.py            lm-evaluation-harness adapter for MMLU-Pro
   run_beir_bm25.py           full public BEIR BM25 baselines
   run_docvqa_ocr.py          public DocVQA OCR extractability diagnostic
