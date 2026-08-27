@@ -24,5 +24,6 @@ describe('local lexical retrieval', () => {
   it('returns no unrelated documents and respects the limit', () => {
     expect(searchDocuments(documents, 'convolution', 5)).toEqual([]);
     expect(searchDocuments(documents, 'logits', 1)).toHaveLength(1);
+    expect(searchDocuments(documents, 'What is the boiling point of mercury on Mars?')).toEqual([]);
   });
 });
