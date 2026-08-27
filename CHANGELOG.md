@@ -43,6 +43,7 @@
 - official MTEB `STS22.v2` multilingual public test receipt covering 18 language and cross-language subsets;
 - official BFCL V4 `simple_python` partial evaluation through the existing LM Studio endpoint, with 20/20 official category accuracy;
 - official BFCL V4 `parallel_multiple` partial evaluation through the existing LM Studio endpoint, with 17/20 official category accuracy;
+- official BFCL V4 `multi_turn_base` partial evaluation through the existing LM Studio endpoint, with 6/20 official category accuracy and recorded format failures;
 - deterministic single-worker local Playwright mode to prevent Windows browser-test contention while keeping CI parallel;
 - 70-item public MMLU-Pro LM Studio receipt covering all 14 categories with explicit partial-sample validity;
 - 140-item public MMLU-Pro LM Studio receipt covering all 14 categories, plus UTF-8 output handling for Windows benchmark runs;
