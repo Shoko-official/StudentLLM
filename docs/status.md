@@ -52,4 +52,4 @@ The current Hugging Face `mozilla-foundation/common_voice_17_0` repository probe
 
 ## Delivery state
 
-Changes are delivered through short-lived branches and pull requests into `main`. Recent verified deliveries include PR [#76](https://github.com/Shoko-official/StudentLLM/pull/76) for the public MUSAN benchmark, PR [#77](https://github.com/Shoko-official/StudentLLM/pull/77) for the status page, and PR [#78](https://github.com/Shoko-official/StudentLLM/pull/78) for runtime status accuracy. Their PR checks and post-merge GitHub Actions runs passed, and the temporary branches were deleted.
+Changes are delivered through short-lived branches and pull requests into `main`. Recent verified deliveries include PR [#80](https://github.com/Shoko-official/StudentLLM/pull/80) for the NVIDIA MMLU-Pro evaluation, PR [#81](https://github.com/Shoko-official/StudentLLM/pull/81) for TREC-COVID retrieval coverage, and PR [#82](https://github.com/Shoko-official/StudentLLM/pull/82) for NVIDIA BFCL coverage. Their PR checks and post-merge GitHub Actions runs passed, and the temporary branches were deleted.
