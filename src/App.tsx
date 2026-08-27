@@ -31,6 +31,7 @@ import {
   Settings2,
   Sparkles,
   Square,
+  Trash2,
   Upload,
   X,
 } from 'lucide-react';
@@ -42,6 +43,7 @@ import { createLocalSpeechEngine } from './lib/speech-engine';
 import type { SpeechEngine } from './lib/speech-engine';
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore } from './lib/source-storage';
+import { createRecordingChunkStore } from './lib/recording-storage';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { Artifact, ArtifactKind, ChatMessage, Lesson, LessonWorkspace, Resource, TranscriptSegment, ViewMode } from './types';
@@ -202,12 +204,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(workspace.lessonWorkspaces?.[workspace.activeLessonId]?.artifacts[0]?.id ?? workspace.artifacts[0]?.id ?? null);
   const [toast, setToast] = useState('');
   const [showNewCourse, setShowNewCourse] = useState(false);
+  const [showDeleteCourse, setShowDeleteCourse] = useState(false);
   const [newCourseTitle, setNewCourseTitle] = useState('');
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
   const recorderRef = useRef<RecorderSession | null>(null);
   const localProvider = useMemo(() => provider === undefined ? createLocalLLMProvider() : provider, [provider]);
   const localSpeechEngine = useMemo(() => speechEngine === undefined ? createLocalSpeechEngine() : speechEngine, [speechEngine]);
   const sourceBlobStore = useMemo(() => createSourceBlobStore(), []);
+  const recordingChunkStore = useMemo(() => createRecordingChunkStore(), []);
 
   const activeLesson = lessons.find((lesson) => lesson.id === activeLessonId) ?? lessons[0];
   const activeWorkspace = lessonWorkspaces[activeLessonId] ?? emptyLessonWorkspace;
@@ -529,6 +533,44 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
   };
 
+  const deleteActiveCourse = async () => {
+    if (lessons.length <= 1) {
+      notify('Keep at least one course in the workspace.');
+      setShowDeleteCourse(false);
+      return;
+    }
+    if (isRecording) {
+      notify('Stop the recording before deleting this course.');
+      setShowDeleteCourse(false);
+      return;
+    }
+
+    const lessonId = activeLesson.id;
+    const lessonTitle = activeLesson.title;
+    try {
+      for (const resource of resources) {
+        await sourceBlobStore.remove(resource.id);
+        await recordingChunkStore.clear(resource.id);
+      }
+      const nextLessons = lessons.filter((lesson) => lesson.id !== lessonId);
+      const nextLesson = nextLessons[0];
+      if (!nextLesson) throw new Error('No replacement course available.');
+      setLessons(nextLessons);
+      setLessonWorkspaces((current) => {
+        const next = { ...current };
+        delete next[lessonId];
+        return next;
+      });
+      setActiveLessonId(nextLesson.id);
+      setSelectedArtifactId(lessonWorkspaces[nextLesson.id]?.artifacts[0]?.id ?? null);
+      setShowAllResources(false);
+      setShowDeleteCourse(false);
+      notify(`${lessonTitle} deleted.`);
+    } catch {
+      notify(`${lessonTitle} could not be deleted.`);
+    }
+  };
+
   const createCourse = (event: FormEvent) => {
     event.preventDefault();
     const title = newCourseTitle.trim();
@@ -735,11 +777,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             <section className="studio-actions"><div className="sidebar-section-header"><span>Create an artifact</span><span className="eyebrow-count">source-linked</span></div><div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div></section>
             {artifacts.length > 0 && <section className="recent-section"><div className="sidebar-section-header"><span>Recently created</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} type="button" aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></button>)}{selectedArtifactId && (() => { const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId); if (!selectedArtifact) return null; return <article className="artifact-preview"><span className="section-kicker">Artifact preview</span><h3>{selectedArtifact.label}</h3><p>{selectedArtifact.content ?? 'This artifact has no stored content.'}</p>{selectedArtifact.citations && <div className="citation-list">{selectedArtifact.citations.map((citation) => <button key={citation} onClick={() => notify(`Source opened: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</article>; })()}</section>}
             <button className="studio-link" onClick={() => notify('The full Studio editor will open in a future update.')}>Open full Studio <ArrowUpRight size={14} /></button>
+            <button className="danger-link" onClick={() => lessons.length <= 1 ? notify('Keep at least one course in the workspace.') : isRecording ? notify('Stop the recording before deleting this course.') : setShowDeleteCourse(true)}><Trash2 size={13} /> Delete course</button>
           </aside>
         )}
       </div>
 
       {showNewCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="new-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">New session</span><h2 id="new-course-title">Start a course</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowNewCourse(false)}><X size={17} /></button></div><p className="modal-description">Create a persistent session now. Add audio, images, and documents as the course progresses.</p><form onSubmit={createCourse}><label>Course title<input autoFocus value={newCourseTitle} onChange={(event) => setNewCourseTitle(event.target.value)} placeholder="e.g. Introduction to probability" /></label><label>Subject<select value={newCourseSubject} onChange={(event) => setNewCourseSubject(event.target.value)}><option>Machine Learning</option><option>Mathematics</option><option>Electronics</option></select></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowNewCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!newCourseTitle.trim()}><Mic size={15} /> Create and prepare recording</button></div></form></section></div>}
+      {showDeleteCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowDeleteCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Delete session</span><h2 id="delete-course-title">Delete {activeLesson.title}?</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowDeleteCourse(false)}><X size={17} /></button></div><p className="modal-description">This removes the course workspace and its locally stored source and recording data. This action cannot be undone from the app.</p><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowDeleteCourse(false)}>Cancel</button><button className="danger-submit" type="button" onClick={() => void deleteActiveCourse()}><Trash2 size={14} /> Delete course permanently</button></div></section></div>}
       {toast && <div className="toast" role="status"><Check size={15} /> {toast}</div>}
     </div>
   );
