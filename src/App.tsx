@@ -540,7 +540,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       await sourceBlobStore.save(resource.id, file);
       updateLessonWorkspace(lessonId, (current) => ({ ...current, resources: [resource, ...current.resources] }));
       notify(`${resource.name} added to course sources${sourceBlobStore.durability === 'durable' ? ' and saved locally.' : ' in memory only.'}`);
-      if (localDocumentEngine && resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name))) {
+      const isPdf = resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name));
+      if (localDocumentEngine && (isPdf || resource.kind === 'image')) {
         try {
           const extraction = await localDocumentEngine.extract(file);
           const pageSegments = extraction.pages
@@ -555,9 +556,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: [...current.transcript, ...pageSegments] }));
           notify(pageSegments.length > 0
             ? `${resource.name} indexed ${pageSegments.length} page${pageSegments.length === 1 ? '' : 's'} locally.`
-            : `${resource.name} contains no extractable text; image OCR is not enabled.`);
+            : `${resource.name} contains no extractable text.`);
         } catch {
-          notify(`${resource.name} was saved, but local PDF text extraction is unavailable.`);
+          notify(`${resource.name} was saved, but local document extraction is unavailable.`);
         }
       }
     } catch {
