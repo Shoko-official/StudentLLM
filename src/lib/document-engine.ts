@@ -38,7 +38,7 @@ export class LocalDocumentEngine implements DocumentEngine {
 
   constructor(options: LocalDocumentEngineOptions) {
     this.baseUrl = options.baseUrl;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? 60_000;
   }
 

@@ -38,7 +38,7 @@ export class LocalSpeechEngine implements SpeechEngine {
   constructor(options: LocalSpeechEngineOptions) {
     this.baseUrl = options.baseUrl;
     this.language = options.language;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? 120_000;
   }
 
