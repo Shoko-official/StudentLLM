@@ -48,7 +48,7 @@ npm run preview
 npm run verify
 ```
 
-`verify` runs the TypeScript project check, Vitest, the Vite production build, and Playwright Chromium tests. Provider checks are run separately because they depend on a local server or a remote API:
+`verify` runs the TypeScript project check, Python benchmark adapter checks, Vitest, the Vite production build, and Playwright Chromium tests. Provider checks are run separately because they depend on a local server or a remote API:
 
 ```bash
 npm run providers:smoke

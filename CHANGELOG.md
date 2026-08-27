@@ -13,6 +13,7 @@
 - browser reload persistence and microphone-unavailable fallback covered by Playwright;
 - local lexical retrieval with timestamp-aware context selection for provider chat;
 - reproducible full-split BEIR BM25 benchmark adapter with SciFact, NFCorpus, ArguAna, FiQA, and SCIDOCS receipts;
+- benchmark adapter syntax checks included in the local and GitHub verification gates;
 - NVIDIA NIM and LM Studio OpenAI-compatible smoke checks with runtime credentials;
 - Vitest, Playwright, axe, TypeScript, Vite, and GitHub Actions verification;
-- architecture, provider, benchmark, contribution, and security documentation.
+- architecture, provider, benchmark, and contribution documentation.
