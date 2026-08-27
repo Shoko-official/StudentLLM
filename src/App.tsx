@@ -38,6 +38,7 @@ import { requestRecorderSession, RecorderSession } from './lib/recorder';
 import { loadWorkspace, saveWorkspace } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import { createSourceResource } from './lib/source-ingest';
+import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { Artifact, ArtifactKind, ChatMessage, Lesson, Resource, TranscriptSegment, ViewMode } from './types';
 
 const initialLessons: Lesson[] = [
@@ -298,11 +299,19 @@ function App() {
 
     setIsSending(true);
     try {
-      const context = transcript.map((segment) => `[${segment.timestamp}] ${segment.speaker}: ${segment.text}`).join('\n');
+      const retrievalDocuments: RetrievalDocument[] = transcript.map((segment) => ({
+        id: segment.id,
+        text: segment.text,
+        metadata: { timestamp: segment.timestamp, speaker: segment.speaker },
+      }));
+      const retrievalHits = searchDocuments(retrievalDocuments, message, 4);
+      const context = retrievalHits.length
+        ? retrievalHits.map((hit) => `[${hit.document.metadata.timestamp}] ${hit.document.metadata.speaker}: ${hit.document.text}`).join('\n')
+        : 'No transcript excerpt matched the question.';
       const result = await localProvider.generate([
         {
           role: 'system',
-          content: `Answer using only the active course context. If the context is insufficient, say so. Course: ${activeLesson.title}.\n${context}`,
+          content: `Answer using only the retrieved excerpts from the active course. If they are insufficient, say so. Course: ${activeLesson.title}.\n${context}`,
         },
         { role: 'user', content: message },
       ]);
@@ -310,7 +319,10 @@ function App() {
         id: assistantMessageId,
         role: 'assistant',
         content: result.content,
-        citations: [`Active course context · ${result.model}`],
+        citations: [
+          ...retrievalHits.slice(0, 2).map((hit) => `Transcript · ${hit.document.metadata.timestamp}`),
+          `LM Studio · ${result.model}`,
+        ],
       }]);
     } catch (error) {
       setChat((messages) => [...messages, {
