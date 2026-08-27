@@ -38,6 +38,7 @@
 - full SCIDOCS dense receipt using `BAAI/bge-small-en-v1.5`, with the shared BM25 comparison;
 - full FiQA dense receipt using `BAAI/bge-small-en-v1.5`, with the shared BM25 comparison;
 - official MTEB task wrapper and public STSBenchmark v2 CPU receipt with a Spearman main score of `0.857289`;
+- official BFCL V4 `simple_python` partial evaluation through the existing LM Studio endpoint, with 20/20 official category accuracy;
 - deterministic single-worker local Playwright mode to prevent Windows browser-test contention while keeping CI parallel;
 - 70-item public MMLU-Pro LM Studio receipt covering all 14 categories with explicit partial-sample validity;
 - 140-item public MMLU-Pro LM Studio receipt covering all 14 categories, plus UTF-8 output handling for Windows benchmark runs;
