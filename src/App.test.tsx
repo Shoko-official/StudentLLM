@@ -48,7 +48,24 @@ describe('StudentLLM workspace', () => {
 
     const recent = screen.getByText('Recently created').parentElement?.parentElement;
     expect(recent).toBeTruthy();
-    expect(within(recent as HTMLElement).getByText('Study guide')).toBeInTheDocument();
+    expect(within(recent as HTMLElement).getByRole('button', { name: 'Open artifact Study guide' })).toBeInTheDocument();
+    expect(await screen.findByText(/Draft study guide for Attention & Scaled Dot-Product/)).toBeInTheDocument();
+  });
+
+  it('replaces an offline artifact draft with provider content and citations', async () => {
+    const user = userEvent.setup();
+    const generate = vi.fn().mockResolvedValue({ content: 'A source-grounded quiz.', model: 'mock-local-model' });
+
+    render(<App provider={{ generate }} />);
+
+    await user.click(screen.getByRole('button', { name: /Targeted quiz/ }));
+
+    expect(await screen.findByText('A source-grounded quiz.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Transcript · 01:13:42' })).toBeInTheDocument();
+    expect(generate).toHaveBeenCalledWith([
+      { role: 'system', content: expect.stringContaining('Create a concise targeted quiz') },
+      { role: 'user', content: 'Generate the targeted quiz.' },
+    ]);
   });
 
   it('switches to chat and sends a grounded question', async () => {

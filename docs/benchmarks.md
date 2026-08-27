@@ -12,7 +12,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | --- | --- | --- | --- |
 | TypeScript | TypeScript project check | `npm run check` | PASS |
 | Benchmark adapters | Python bytecode compilation | `npm run benchmarks:check` | PASS |
-| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 36 tests |
+| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 37 tests |
 | Production artifact | Vite | `npm run build` | PASS |
 | Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 8 tests |
 | NVIDIA generation | Live API, runtime credential | `npm run providers:smoke` | PASS observed, 1,288 ms |

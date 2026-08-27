@@ -58,7 +58,9 @@ function isArtifact(value: unknown): value is Artifact {
       || value.kind === 'mindmap'
       || value.kind === 'glossary')
     && typeof value.label === 'string'
-    && typeof value.createdAt === 'string';
+    && typeof value.createdAt === 'string'
+    && (value.content === undefined || typeof value.content === 'string')
+    && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every((citation) => typeof citation === 'string')));
 }
 
 function isChatMessage(value: unknown): value is ChatMessage {
