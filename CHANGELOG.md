@@ -29,6 +29,7 @@
 - browser reload persistence and microphone-unavailable fallback covered by Playwright;
 - mobile navigation now starts closed on narrow viewports and opens on demand;
 - mobile axe and viewport-overflow regression coverage;
+- browser local ASR and document adapters now bind their default fetch implementation correctly;
 - local lexical retrieval with timestamp-aware context selection for provider chat;
 - reproducible full-split BEIR BM25 benchmark adapter with SciFact, NFCorpus, ArguAna, FiQA, and SCIDOCS receipts;
 - public DocVQA OCR extractability adapter with explicit partial-split validity and receipts;

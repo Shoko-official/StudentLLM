@@ -34,6 +34,29 @@ describe('local document engine', () => {
       .rejects.toThrow('Local document extraction failed (422): PyMuPDF is not installed.');
   });
 
+  it('binds the default fetch implementation to its global context', async () => {
+    const fetchMock = vi.fn(function (this: unknown) {
+      if (this !== globalThis) throw new Error('fetch context was lost');
+      return Promise.resolve(new Response(JSON.stringify({
+        model: 'pymupdf',
+        pages: [{ pageNumber: 1, text: 'Bound fetch works.', blocks: [] }],
+      }), { status: 200 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const engine = new LocalDocumentEngine({ baseUrl: 'http://127.0.0.1:8766', timeoutMs: 1_000 });
+
+      await expect(engine.extract(new Blob(['pdf']))).resolves.toMatchObject({
+        model: 'pymupdf',
+        pages: [{ text: 'Bound fetch works.' }],
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('only creates the adapter when configured', () => {
     expect(createLocalDocumentEngine({})).toBeNull();
     expect(createLocalDocumentEngine({ VITE_LOCAL_DOCUMENT_BASE_URL: 'http://127.0.0.1:8766' })).toBeInstanceOf(LocalDocumentEngine);
