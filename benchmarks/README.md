@@ -43,16 +43,25 @@ $env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
 
 The August 27, 2026 NVIDIA run timed out after retries before producing a response aggregate. It is recorded as a transport failure with no score. The credential remains runtime-only through the Windows User environment.
 
-## BEIR SciFact lexical baseline
+## BEIR BM25 baselines
 
-`run_beir_scifact.py` evaluates the complete public SciFact test split with a deterministic BM25 baseline. It loads the corpus, queries, and test relevance judgments from the [BeIR SciFact dataset](https://huggingface.co/datasets/BeIR/scifact) and reports nDCG@10, Recall@10, and MRR@10.
+`run_beir_bm25.py` evaluates complete public SciFact or NFCorpus test splits with a deterministic BM25 baseline. It loads the corpus, queries, and test relevance judgments from the [BeIR SciFact dataset](https://huggingface.co/datasets/BeIR/scifact) or [BeIR NFCorpus dataset](https://huggingface.co/datasets/BeIR/nfcorpus) and reports nDCG@10, Recall@10, and MRR@10.
 
-Install the optional benchmark dependency and run the full test split:
+Install the optional benchmark dependency and run SciFact:
 
 ```powershell
 .\.venv-bench-sys\Scripts\python.exe -m pip install datasets
-.\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_scifact.py `
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_bm25.py `
+  --dataset scifact `
   --output_path artifacts/benchmarks/beir/scifact-bm25.json
 ```
 
-This is a retrieval baseline on a public information-retrieval dataset. It is independent of the LM Studio process and does not require model inference.
+Run NFCorpus with the same protocol:
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_bm25.py `
+  --dataset nfcorpus `
+  --output_path artifacts/benchmarks/beir/nfcorpus-bm25.json
+```
+
+These are retrieval baselines on public information-retrieval datasets. They are independent of the LM Studio process and do not require model inference.
