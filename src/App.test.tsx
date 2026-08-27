@@ -103,6 +103,19 @@ describe('StudentLLM workspace', () => {
     ]);
   });
 
+  it('renders an injected provider failure in the chat', async () => {
+    const user = userEvent.setup();
+    const generate = vi.fn().mockRejectedValue(new Error('Provider request timed out.'));
+    render(<App provider={{ generate }} />);
+
+    await user.click(screen.getByRole('tab', { name: /Chat/ }));
+    await user.type(screen.getByLabelText('Ask the course chat'), 'Ask the local provider to answer.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('Provider request timed out.')).toBeInTheDocument();
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
   it('records a bookmark and exposes a review segment', async () => {
     render(<App />);
 
