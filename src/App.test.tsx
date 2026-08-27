@@ -61,7 +61,7 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(screen.getByText('Can you give me an example?')).toBeInTheDocument();
-    expect(screen.getByText('I will search the course sources and show the passages used for the answer.')).toBeInTheDocument();
+    expect(screen.getByText('Connect LM Studio to ask the local model. The current workspace keeps this interaction offline.')).toBeInTheDocument();
   });
 
   it('records a bookmark and exposes a review segment', async () => {
