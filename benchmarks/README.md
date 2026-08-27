@@ -216,4 +216,13 @@ New-Item -ItemType Directory -Force artifacts\benchmarks\bfcl | Out-Null
   --partial-eval
 ```
 
-The observed run used the existing LM Studio process and completed 20 public `simple_python` cases with the official scorer: accuracy `1.0000` (20/20), mean latency `1.747 s`, and approximate p95 latency `3.112 s`. A second run completed 20 public `parallel_multiple` cases: accuracy `0.8500` (17/20), mean latency `2.420 s`, and approximate p95 latency `3.991 s`. These are partial BFCL V4 category results, not a global BFCL score or a multi-turn/tool-use claim. The result and score directories are local ignored artifacts.
+The observed run used the existing LM Studio process and completed 20 public `simple_python` cases with the official scorer: accuracy `1.0000` (20/20), mean latency `1.747 s`, and approximate p95 latency `3.112 s`. A second run completed 20 public `parallel_multiple` cases: accuracy `0.8500` (17/20), mean latency `2.420 s`, and approximate p95 latency `3.991 s`.
+
+The multi-turn run uses a separate ignored root so its files do not overwrite the single-turn receipts:
+
+```powershell
+$env:BFCL_PROJECT_ROOT = (Resolve-Path artifacts\benchmarks\bfcl-multi-turn).Path
+New-Item -ItemType Directory -Force artifacts\benchmarks\bfcl-multi-turn | Out-Null
+```
+
+Create `artifacts\benchmarks\bfcl-multi-turn\test_case_ids_to_generate.json` with the public IDs `multi_turn_base_0` through `multi_turn_base_19`, then run the same `generate` and `evaluate` commands above with `--test-category multi_turn_base` and `--result-dir result`. The official scorer returned accuracy `0.3000` (6/20). Generation produced many empty responses and malformed tool calls, so this is a partial category result and a compatibility finding, not a global BFCL score or a general multi-turn capability claim. The result and score directories are local ignored artifacts.
