@@ -66,5 +66,18 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByText('Microphone active, live transcription ready.')).toBeVisible();
     await page.getByRole('button', { name: 'Stop recording' }).click();
     await expect(page.getByText('1 audio chunks saved locally.')).toBeVisible();
+
+    const storedChunkCount = await page.evaluate(() => new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open('studentllm-recordings', 1);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const transaction = request.result.transaction('audio-chunks', 'readonly');
+        const countRequest = transaction.objectStore('audio-chunks').count();
+        countRequest.onsuccess = () => resolve(countRequest.result);
+        countRequest.onerror = () => reject(countRequest.error);
+      };
+    }));
+
+    expect(storedChunkCount).toBe(1);
   });
 });
