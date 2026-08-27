@@ -46,6 +46,16 @@ $env:LM_STUDIO_MODEL = 'qwen/qwen3-4b'
 
 The smoke script appends `/no_think` for Qwen models so the measured response uses the final content channel.
 
+To enable the optional browser chat adapter, set the non-secret Vite endpoint before starting the development server:
+
+```powershell
+$env:VITE_LM_STUDIO_BASE_URL = 'http://127.0.0.1:1234/v1'
+$env:VITE_LM_STUDIO_MODEL = 'qwen/qwen3-4b'
+npm run dev
+```
+
+The frontend sends only course context and the user question to the configured local endpoint. NVIDIA credentials are never accepted by this browser path.
+
 ## Run the live check
 
 ```bash
