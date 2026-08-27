@@ -51,4 +51,4 @@ The current Hugging Face `mozilla-foundation/common_voice_17_0` repository probe
 
 ## Delivery state
 
-Changes are delivered through short-lived branches and pull requests into `main`. The latest documentation delivery is PR [#77](https://github.com/Shoko-official/StudentLLM/pull/77), and the latest benchmark delivery is PR [#76](https://github.com/Shoko-official/StudentLLM/pull/76). Both PR checks and post-merge GitHub Actions runs passed, and the temporary branches were deleted.
+Changes are delivered through short-lived branches and pull requests into `main`. Recent verified deliveries include PR [#76](https://github.com/Shoko-official/StudentLLM/pull/76) for the public MUSAN benchmark, PR [#77](https://github.com/Shoko-official/StudentLLM/pull/77) for the status page, and PR [#78](https://github.com/Shoko-official/StudentLLM/pull/78) for runtime status accuracy. Their PR checks and post-merge GitHub Actions runs passed, and the temporary branches were deleted.
