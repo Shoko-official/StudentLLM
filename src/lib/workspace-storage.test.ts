@@ -13,6 +13,7 @@ const fallback: WorkspaceSnapshot = {
     date: 'today',
     progress: 0,
   }],
+  resources: [],
   transcript: [],
   artifacts: [],
 };
