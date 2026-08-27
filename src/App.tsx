@@ -38,6 +38,7 @@ import { requestRecorderSession, RecorderSession } from './lib/recorder';
 import { loadWorkspace, saveWorkspace } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import { createSourceResource } from './lib/source-ingest';
+import { createSourceBlobStore } from './lib/source-storage';
 import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { Artifact, ArtifactKind, ChatMessage, Lesson, Resource, TranscriptSegment, ViewMode } from './types';
 
@@ -179,6 +180,7 @@ function App() {
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
   const recorderRef = useRef<RecorderSession | null>(null);
   const localProvider = useMemo(() => createLocalLLMProvider(), []);
+  const sourceBlobStore = useMemo(() => createSourceBlobStore(), []);
 
   const activeLesson = lessons.find((lesson) => lesson.id === activeLessonId) ?? lessons[0];
 
@@ -355,10 +357,11 @@ function App() {
     if (!file) return;
     try {
       const resource = await createSourceResource(file);
+      await sourceBlobStore.save(resource.id, file);
       setResources((current) => [resource, ...current]);
-      notify(`${resource.name} added to course sources.`);
+      notify(`${resource.name} added to course sources${sourceBlobStore.durability === 'durable' ? ' and saved locally.' : ' in memory only.'}`);
     } catch {
-      notify('The source could not be fingerprinted locally.');
+      notify('The source could not be fingerprinted or stored locally.');
     }
   };
 
