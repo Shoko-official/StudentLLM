@@ -117,6 +117,10 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByText(/lecture-notes\.md added to course sources and saved locally\./)).toBeVisible();
     await page.reload();
     await expect(page.getByRole('button', { name: 'lecture-notes.md Text · 10 B' })).toBeVisible();
+    await page.getByRole('tab', { name: 'Chat' }).click();
+    await page.getByRole('textbox', { name: 'Ask the course chat' }).fill('What is in week one?');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.getByRole('button', { name: 'Source · lecture-notes.md' })).toBeVisible();
 
     const storedSource = await page.evaluate(() => new Promise<{ count: number; text: string }>((resolve, reject) => {
       const request = indexedDB.open('studentllm-sources', 1);
