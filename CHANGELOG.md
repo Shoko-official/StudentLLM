@@ -29,6 +29,7 @@
 - local lexical retrieval with timestamp-aware context selection for provider chat;
 - reproducible full-split BEIR BM25 benchmark adapter with SciFact, NFCorpus, ArguAna, FiQA, and SCIDOCS receipts;
 - public DocVQA OCR extractability adapter with explicit partial-split validity and receipts;
+- Playwright coverage for PDF source import and browser persistence;
 - reproducible public BEIR dense-retrieval adapter using selectable SentenceTransformers models with shared BM25 metrics;
 - full SciFact and NFCorpus dense receipts using `BAAI/bge-small-en-v1.5` and shared BM25 comparison;
 - benchmark adapter syntax checks included in the local and GitHub verification gates;
