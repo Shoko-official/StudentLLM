@@ -11,7 +11,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | Application verification | `npm run verify` | TypeScript, benchmark adapter checks, 59 Vitest tests, Vite production build, and 20 Playwright tests pass |
 | Browser accessibility | Playwright plus axe | No serious or critical violations observed; mobile overflow and navigation regressions pass |
 | Local persistence | Vitest and Playwright | Course isolation, reload recovery, corrupted export rejection, source blob fidelity, audio recovery, and deletion flows pass |
-| LM Studio integration | Live provider smoke and browser chat | Existing local process responds through the OpenAI-compatible endpoint and browser proxy; live chat flow passes |
+| LM Studio integration | Historical live provider smoke and browser chat | Last live check passed on 2026-08-27; latest audit found no listener on `127.0.0.1:1234`, so no new local benchmark is recorded |
 | NVIDIA integration | Live provider smoke | NIM request passes using the Windows User `NVIDIA_API_KEY` environment variable |
 | Local speech pipeline | Public FLEURS sample, sidecar, and browser recording | Timestamped transcription and review-segment rendering pass |
 | Local document pipeline | Public arXiv PDF, sidecar, and browser import | 15/15 pages indexed and page-level review content rendered |
@@ -51,4 +51,4 @@ The current Hugging Face `mozilla-foundation/common_voice_17_0` repository probe
 
 ## Delivery state
 
-Changes are delivered through short-lived branches and pull requests into `main`. The latest validated delivery is PR [#76](https://github.com/Shoko-official/StudentLLM/pull/76), which adds the public FLEURS plus MUSAN SNR robustness benchmark. Its PR checks and post-merge GitHub Actions run passed, and the temporary branch was deleted.
+Changes are delivered through short-lived branches and pull requests into `main`. The latest documentation delivery is PR [#77](https://github.com/Shoko-official/StudentLLM/pull/77), and the latest benchmark delivery is PR [#76](https://github.com/Shoko-official/StudentLLM/pull/76). Both PR checks and post-merge GitHub Actions runs passed, and the temporary branches were deleted.
