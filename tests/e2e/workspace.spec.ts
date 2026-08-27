@@ -61,6 +61,16 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByRole('complementary', { name: 'Course navigation' })).toBeHidden();
   });
 
+  test('keeps mobile navigation closed until requested', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await expect(page.getByRole('complementary', { name: 'Course navigation' })).toBeHidden();
+    await page.getByRole('button', { name: 'Open menu' }).click();
+    await expect(page.getByRole('complementary', { name: 'Course navigation' })).toBeVisible();
+    await page.getByRole('button', { name: 'Open menu' }).click();
+    await expect(page.getByRole('complementary', { name: 'Course navigation' })).toBeHidden();
+  });
+
   test('restores chat history after a browser reload', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('tab', { name: 'Chat' }).click();
