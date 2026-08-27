@@ -140,3 +140,22 @@ The observed ArguAna run evaluated 8,674 documents and 1,406 public test queries
 The observed SCIDOCS run evaluated 25,657 documents and 1,000 public test queries with the same model and settings. It returned nDCG@10 `0.1973`, Recall@10 `0.2091`, and MRR@10 `0.3344`, compared with the BM25 baseline of `0.1528`, `0.1584`, and `0.2736`.
 
 The observed FiQA run evaluated 57,638 documents and 648 public test queries with the same model and settings. It returned nDCG@10 `0.3848`, Recall@10 `0.4396`, and MRR@10 `0.4650`, compared with the BM25 baseline of `0.2347`, `0.2962`, and `0.2919`.
+
+## MTEB embedding task
+
+`run_mteb.py` wraps the official MTEB Python API and writes a compact receipt while MTEB keeps its native task output in its cache. It is intended for one explicit public task at a time so the model, split, device, and batch size remain visible:
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe -m pip install -r requirements-embeddings.txt
+$env:CUDA_VISIBLE_DEVICES = ''
+$env:PYTHONUTF8 = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_mteb.py `
+  --model BAAI/bge-small-en-v1.5 `
+  --task STSBenchmark.v2 `
+  --split test `
+  --device cpu `
+  --batch-size 32 `
+  --output artifacts\benchmarks\mteb\stsbenchmark-v2-bge-small-en-v1.5.json
+```
+
+The observed public STSBenchmark v2 test run returned Spearman main score `0.857289` with `BAAI/bge-small-en-v1.5` on CPU. This is a sentence-similarity embedding result, not a product-level retrieval, answer-faithfulness, or generation score.
