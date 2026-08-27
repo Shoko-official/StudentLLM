@@ -2,6 +2,23 @@
 
 This directory contains benchmark adapters and commands, not raw outputs. Local artifacts are written under `artifacts/` and ignored by Git so prompts and private data are not published accidentally.
 
+## FLEURS French ASR
+
+`run_asr_fleurs.py` evaluates the public `google/fleurs` French test split with `faster-whisper`. It reports WER, CER, real-time factor, scope, model settings, and a hardware snapshot. Use CPU execution when a local inference server is already using the GPU:
+
+```powershell
+python -m pip install datasets faster-whisper psutil
+python benchmarks\run_asr_fleurs.py `
+  --model small `
+  --config fr_fr `
+  --split test `
+  --device cpu `
+  --compute-type int8 `
+  --output artifacts\benchmarks\asr\fleurs-fr-small-cpu-full.json
+```
+
+The command above evaluates all 676 examples in the public French test split. A partial run can be requested with `--limit`, but it must be labeled partial in the resulting receipt.
+
 ## MMLU-Pro through LM Studio
 
 `run_mmlu_pro.py` uses the public MMLU-Pro task from the [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) project. The adapter appends `/no_think` to the final user message for Qwen3 models so scoring evaluates the final answer channel.
