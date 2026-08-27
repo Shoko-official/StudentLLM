@@ -277,6 +277,30 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('week-1.md')).toBeInTheDocument();
   });
 
+  it('indexes extracted PDF pages as reviewable transcript segments', async () => {
+    const user = userEvent.setup();
+    const extract = vi.fn().mockResolvedValue({
+      model: 'pymupdf',
+      pages: [
+        { pageNumber: 1, text: 'Gradient descent updates parameters.', blocks: [] },
+        { pageNumber: 2, text: 'The learning rate controls the step size.', blocks: [] },
+      ],
+    });
+
+    render(<App documentEngine={{ extract }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['%PDF-1.7'],
+      'optimization.pdf',
+      { type: 'application/pdf' },
+    ));
+
+    expect(await screen.findByText('Gradient descent updates parameters.')).toBeInTheDocument();
+    expect(screen.getByText('The learning rate controls the step size.')).toBeInTheDocument();
+    expect(screen.getByText('optimization.pdf indexed 2 pages locally.')).toBeInTheDocument();
+    expect(extract).toHaveBeenCalledWith(expect.any(Blob));
+  });
+
   it('removes an imported source from the active course', async () => {
     const user = userEvent.setup();
     render(<App />);
