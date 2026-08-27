@@ -1,0 +1,2 @@
+mteb>=2.20,<3
+sentence-transformers>=5,<6
