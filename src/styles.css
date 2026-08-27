@@ -1,9 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
-
 :root {
   color: #e8edf1;
   background: #0c1015;
-  font-family: 'Manrope', 'Segoe UI', sans-serif;
+  font-family: 'Segoe UI Variable', 'Segoe UI', sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --bg: #0c1015;
@@ -13,8 +11,8 @@
   --line: rgba(220, 235, 246, 0.09);
   --line-strong: rgba(220, 235, 246, 0.16);
   --text: #e8edf1;
-  --muted: #8795a4;
-  --faint: #5d6a77;
+  --muted: #9aa8b5;
+  --faint: #8795a4;
   --accent: #8ed0c1;
   --accent-strong: #afe7da;
   --amber: #f0b979;
@@ -62,7 +60,7 @@ kbd { color: var(--faint); font-family: var(--mono); font-size: 9px; }
 .primary-action { width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 11px 12px; color: #122229; background: var(--accent); border-radius: 10px; font-size: 11px; font-weight: 800; transition: 140ms ease; }
 .primary-action:hover { background: var(--accent-strong); transform: translateY(-1px); }
 .primary-action span { display: flex; align-items: center; gap: 8px; }
-.primary-action kbd { color: #3d6663; }
+.primary-action kbd { color: #122229; }
 .sidebar-section-header { display: flex; align-items: center; justify-content: space-between; margin: 25px 4px 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.13em; font-size: 9px; font-weight: 800; }
 .eyebrow-count { color: var(--faint); text-transform: none; letter-spacing: 0; font-weight: 500; }
 .course-tree { display: grid; gap: 7px; }

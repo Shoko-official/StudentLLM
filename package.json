@@ -10,7 +10,12 @@
     "test": "vitest",
     "test:run": "vitest run",
     "providers:smoke": "node scripts/provider-smoke.mjs",
+    "test:e2e": "playwright test",
+    "verify": "npm run check && npm run test:run && npm run build && npm run test:e2e",
     "preview": "vite preview"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   },
   "dependencies": {
     "lucide-react": "latest",
@@ -18,13 +23,15 @@
     "react-dom": "latest"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.62.1",
     "@testing-library/jest-dom": "latest",
     "@testing-library/react": "latest",
     "@testing-library/user-event": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
-    "jsdom": "latest",
+    "jsdom": "^29.1.1",
     "typescript": "latest",
     "vite": "latest",
     "vitest": "latest"
