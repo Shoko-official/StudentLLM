@@ -159,3 +159,45 @@ $env:PYTHONUTF8 = '1'
 ```
 
 The observed public STSBenchmark v2 test run returned Spearman main score `0.857289` with `BAAI/bge-small-en-v1.5` on CPU. This is a sentence-similarity embedding result, not a product-level retrieval, answer-faithfulness, or generation score.
+
+## BFCL tool-calling task
+
+`bfcl-eval` is the official evaluator for the [Berkeley Function-Calling Leaderboard](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-calling-leaderboard). It can target the OpenAI-compatible endpoint already exposed by LM Studio. Keep the benchmark environment separate from the application environment because the evaluator has a large optional dependency set:
+
+```powershell
+python -m venv .venv-bfcl
+.\.venv-bfcl\Scripts\python.exe -m pip install -r requirements-bfcl.txt
+$env:BFCL_PROJECT_ROOT = (Resolve-Path artifacts\benchmarks\bfcl).Path
+$env:LOCAL_SERVER_ENDPOINT = '127.0.0.1'
+$env:LOCAL_SERVER_PORT = '1234'
+$env:REMOTE_OPENAI_BASE_URL = 'http://127.0.0.1:1234/v1'
+$env:REMOTE_OPENAI_API_KEY = 'EMPTY'
+$env:PYTHONUTF8 = '1'
+```
+
+Create an ignored `test_case_ids_to_generate.json` below `artifacts\benchmarks\bfcl` with the public IDs to evaluate, then run the official generator and scorer. The following example uses the first 20 `simple_python` cases:
+
+```powershell
+New-Item -ItemType Directory -Force artifacts\benchmarks\bfcl | Out-Null
+@{
+  simple_python = 1..20 | ForEach-Object { "simple_python_$($_)" }
+} | ConvertTo-Json | Set-Content -Encoding utf8 artifacts\benchmarks\bfcl\test_case_ids_to_generate.json
+
+\.venv-bfcl\Scripts\python.exe -m bfcl_eval generate `
+  --model Qwen/Qwen3-4B-Instruct-2507-FC `
+  --test-category simple_python `
+  --skip-server-setup `
+  --num-threads 1 `
+  --temperature 0 `
+  --run-ids `
+  --result-dir result
+
+\.venv-bfcl\Scripts\python.exe -m bfcl_eval evaluate `
+  --model Qwen/Qwen3-4B-Instruct-2507-FC `
+  --test-category simple_python `
+  --result-dir result `
+  --score-dir score `
+  --partial-eval
+```
+
+The observed run used the existing LM Studio process and completed 20 public `simple_python` cases with the official scorer: accuracy `1.0000` (20/20), mean latency `1.747 s`, and approximate p95 latency `3.112 s`. This is a partial BFCL V4 category result, not a global BFCL score or a multi-turn/tool-use claim. The result and score directories are local ignored artifacts.

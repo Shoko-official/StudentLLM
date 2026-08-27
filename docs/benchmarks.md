@@ -28,6 +28,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | BEIR SCIDOCS dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset scidocs --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.1973, Recall@10 0.2091, MRR@10 0.3344 |
 | BEIR FiQA dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset fiqa --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.3848, Recall@10 0.4396, MRR@10 0.4650 |
 | MTEB STSBenchmark v2 | Official public test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STSBenchmark.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | Spearman main score 0.857289 |
+| BFCL V4 `simple_python` | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | Accuracy 1.0000 (20/20), mean 1.747 s, p95 3.112 s; partial category sample |
 
 The provider latencies are point observations on the development machine, not production SLOs.
 
@@ -43,6 +44,16 @@ The first generation benchmark uses the official [EleutherAI lm-evaluation-harne
 | 2026-08-27 | `openai/gpt-oss-20b` / NVIDIA NIM | same protocol, credential from `NVIDIA_API_KEY` | network timeout before the first response, no aggregate | Transport failure, no score |
 
 The 0.2143 and 0.3000 values are not leaderboard scores. The harness documents that `--limit` is not suitable for a final metric; these runs validate dataset loading, prompt construction, API routing, answer extraction, and metric calculation on public samples. Model strength remains unverified.
+
+## Observed public result: BFCL tool calling
+
+The official [BFCL evaluator](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-calling-leaderboard) was run against the OpenAI-compatible server that was already running in LM Studio. The BFCL model label was `Qwen/Qwen3-4B-Instruct-2507-FC`; the endpoint selected the existing local Qwen model. No local model process was restarted.
+
+| Run | Category and sample | Official result | Latency | Validity |
+| --- | --- | --- | --- | --- |
+| 2026-08-27 | BFCL V4 `simple_python`, 20 public cases, `temperature=0`, one request thread | Accuracy `1.0000` (20/20) | Mean `1.747 s`, approximate p95 `3.112 s` | Official category scorer, partial evaluation |
+
+This is a real public benchmark result for one BFCL category. It is not a global BFCL leaderboard score, and it does not cover multi-turn, agentic, parallel, or all tool schemas. Raw generations and scorer output are retained locally under `artifacts/benchmarks/bfcl/` and ignored by Git. Reproduction commands are in `benchmarks/README.md`.
 
 The 140-item run completed all API requests and saved the aggregate receipt `artifacts/benchmarks/mmlu-pro/qwen3-4b-limit10_2026-08-27T15-43-26.008905.json` before the first invocation failed while printing a Unicode arrow to a CP1252 terminal. The adapter now configures UTF-8 stdout so future runs report a clean exit status; the saved metrics are valid for the stated public sample and the presentation failure is recorded separately.
 
