@@ -23,6 +23,14 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByText('Targeted quiz').last()).toBeVisible();
   });
 
+  test('supports transcript review state changes', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByRole('button', { name: 'Mark segment 01:15:02 verified' }).click();
+    await expect(page.getByText('Transcript segment verified.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Mark segment 01:15:02 for review' })).toBeVisible();
+  });
+
   test('supports chat questions and responsive navigation', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('tab', { name: 'Chat' }).click();
