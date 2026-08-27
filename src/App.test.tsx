@@ -301,6 +301,26 @@ describe('StudentLLM workspace', () => {
     expect(extract).toHaveBeenCalledWith(expect.any(Blob));
   });
 
+  it('indexes an extracted image as a reviewable transcript segment', async () => {
+    const user = userEvent.setup();
+    const extract = vi.fn().mockResolvedValue({
+      model: 'rapidocr',
+      pages: [{ pageNumber: 1, text: 'A photographed formula.', blocks: [] }],
+    });
+
+    render(<App documentEngine={{ extract }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['not-an-image-injected-by-the-engine'],
+      'board.png',
+      { type: 'image/png' },
+    ));
+
+    expect(await screen.findByText('A photographed formula.')).toBeInTheDocument();
+    expect(screen.getByText('board.png indexed 1 page locally.')).toBeInTheDocument();
+    expect(extract).toHaveBeenCalledWith(expect.any(Blob));
+  });
+
   it('removes an imported source from the active course', async () => {
     const user = userEvent.setup();
     render(<App />);
