@@ -568,7 +568,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const removeSource = async (resource: Resource) => {
     try {
       await sourceBlobStore.remove(resource.id);
-      updateActiveWorkspace((current) => ({ ...current, resources: current.resources.filter((item) => item.id !== resource.id) }));
+      updateActiveWorkspace((current) => ({
+        ...current,
+        resources: current.resources.filter((item) => item.id !== resource.id),
+        transcript: current.transcript.filter((segment) => !segment.id.startsWith(`${resource.id}:`)),
+      }));
       notify(`${resource.name} removed from this course.`);
     } catch {
       notify(`${resource.name} could not be removed.`);
