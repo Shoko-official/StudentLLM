@@ -216,7 +216,7 @@ New-Item -ItemType Directory -Force artifacts\benchmarks\bfcl | Out-Null
   --partial-eval
 ```
 
-The observed run used the existing LM Studio process and completed 20 public `simple_python` cases with the official scorer: accuracy `1.0000` (20/20), mean latency `1.747 s`, and approximate p95 latency `3.112 s`. A second run completed 20 public `parallel_multiple` cases: accuracy `0.8500` (17/20), mean latency `2.420 s`, and approximate p95 latency `3.991 s`. A third run completed 20 public `multiple` cases: accuracy `0.9500` (19/20), mean latency `1.563 s`, and approximate p95 latency `2.407 s`.
+The observed run used the existing LM Studio process and completed 20 public `simple_python` cases with the official scorer: accuracy `1.0000` (20/20), mean latency `1.747 s`, and approximate p95 latency `3.112 s`. A second run completed 20 public `parallel_multiple` cases: accuracy `0.8500` (17/20), mean latency `2.420 s`, and approximate p95 latency `3.991 s`. A third run completed 20 public `multiple` cases: accuracy `0.9500` (19/20), mean latency `1.563 s`, and approximate p95 latency `2.407 s`. A fourth run completed 20 public `irrelevance` cases: accuracy `1.0000` (20/20), mean latency `2.593 s`, and approximate p95 latency `5.067 s`.
 
 To reproduce the `multiple` category, use a separate ignored root and public IDs `multiple_0` through `multiple_19`:
 
@@ -227,6 +227,8 @@ New-Item -ItemType Directory -Force artifacts\benchmarks\bfcl-multiple | Out-Nul
 ```
 
 Run the same official `generate` and `evaluate` commands above with `--test-category multiple` and `--result-dir result`.
+
+The `irrelevance` category uses the same process and official scorer. Reproduce it with an isolated `artifacts\benchmarks\bfcl-irrelevance` root and public IDs `irrelevance_0` through `irrelevance_19`, then run the commands above with `--test-category irrelevance`. The observed partial category score was `1.0000` (20/20); the result does not represent global BFCL performance.
 
 The multi-turn run uses a separate ignored root so its files do not overwrite the single-turn receipts:
 
