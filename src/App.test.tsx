@@ -162,6 +162,12 @@ describe('StudentLLM workspace', () => {
       recordingId: 'recording-resource-test',
       stream: {} as MediaStream,
       durability: 'durable' as const,
+      readChunks: vi.fn(async () => [{
+        recordingId: 'recording-resource-test',
+        sequence: 0,
+        blob: new Blob(['audio'], { type: 'audio/webm' }),
+        recordedAt: 123,
+      }]),
       stop: vi.fn(async () => ({
         recordingId: 'recording-resource-test',
         chunksPersisted: 2,
@@ -177,6 +183,39 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('Attention & Scaled Dot-Product audio.webm')).toBeInTheDocument();
     expect(screen.getByText('Audio · 2 chunks')).toBeInTheDocument();
     expect(session.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds local ASR segments after durable recording finalization', async () => {
+    const user = userEvent.setup();
+    const session = {
+      recordingId: 'recording-asr-test',
+      stream: {} as MediaStream,
+      durability: 'durable' as const,
+      readChunks: vi.fn(async () => [{
+        recordingId: 'recording-asr-test',
+        sequence: 0,
+        blob: new Blob(['audio'], { type: 'audio/webm' }),
+        recordedAt: 123,
+      }]),
+      stop: vi.fn(async () => ({
+        recordingId: 'recording-asr-test',
+        chunksPersisted: 1,
+        persistenceError: false,
+      })),
+    };
+    const transcribe = vi.fn(async () => ({
+      model: 'faster-whisper-small',
+      segments: [{ id: 'asr-1', timestamp: '00:00:01', speaker: 'Speaker', text: 'The local transcript.', status: 'review' as const }],
+    }));
+
+    render(<App recorderSessionFactory={async () => session} speechEngine={{ transcribe }} />);
+
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    await user.click(screen.getByRole('button', { name: 'Stop recording' }));
+
+    expect(await screen.findByText('The local transcript.')).toBeInTheDocument();
+    expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
+    expect(await screen.findByText('Local transcription added 1 segments.')).toBeInTheDocument();
   });
 
   it('restores a created course after remounting the workspace', async () => {

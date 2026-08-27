@@ -19,6 +19,7 @@ StudentLLM is built around three principles:
 - Browser microphone access with a demonstration fallback.
 - Versioned local workspace persistence with course-isolated sources, transcript segments, chat history, and artifacts.
 - Chunked `MediaRecorder` capture with IndexedDB persistence when supported by the browser.
+- Optional local faster-whisper sidecar transcription after durable recording, with timestamped review segments.
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.
 - Original imported source blobs are stored in IndexedDB when available, alongside their fingerprints.
 - OpenAI-compatible smoke checks for NVIDIA NIM and LM Studio.
@@ -76,6 +77,7 @@ src/
   types.ts                   frontend data contracts
   lib/recorder.ts            microphone and MediaRecorder capture
   lib/recording-storage.ts   IndexedDB audio chunk storage
+  lib/speech-engine.ts       local faster-whisper HTTP adapter
   lib/source-ingest.ts        local source classification and fingerprinting
   lib/source-storage.ts       IndexedDB source blob storage
   lib/source-chunking.ts      bounded text passages for retrieval
@@ -83,6 +85,7 @@ src/
   *.test.tsx                 UI and storage tests
 scripts/
   provider-smoke.mjs         NVIDIA and LM Studio smoke check
+  local_asr_server.py        local faster-whisper transcription sidecar
 benchmarks/
   run_asr_fleurs.py         full public FLEURS French ASR baseline
   run_mmlu_pro.py            lm-evaluation-harness adapter for MMLU-Pro
@@ -93,12 +96,13 @@ docs/
   architecture.md            system boundaries and target runtime
   benchmarks.md              public benchmark evidence and gates
   providers.md               provider setup and runtime configuration
+  local-asr.md               local transcription sidecar setup
 ```
 
 ## Roadmap
 
 - Move browser persistence to SQLite WAL in the Tauri desktop runtime, with crash recovery and tested migrations.
-- Add `SpeechEngine` and `LLMProvider` implementations behind stable application contracts.
+- Extend the `SpeechEngine` contract to streaming partials, diarization, and crash-resumable jobs.
 - Extend source import with PDF and image parsing, OCR, page or region provenance, and formula-aware extraction.
 - Add hybrid BM25 plus dense retrieval, reranking, and a permissioned citation-first agent loop.
 - Extend the current lexical retriever with dense retrieval and reranking after the native knowledge store is available.
