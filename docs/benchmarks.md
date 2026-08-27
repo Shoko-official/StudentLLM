@@ -18,6 +18,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
 | Local ASR sidecar | Python service plus public FLEURS request | `npm run asr:server` with `POST /transcribe` | PASS observed on 2026-08-27; public sample returned timestamped output |
 | Local document sidecar | PyMuPDF and RapidOCR service plus public arXiv source | `npm run document:server` with `POST /extract` | PASS observed on 2026-08-27; PDF 15/15 pages, rasterized page 69 OCR blocks |
+| DocVQA OCR diagnostic | Public DocVQA validation images plus RapidOCR | `benchmarks/run_docvqa_ocr.py --split validation --limit 100` | Normalized reference-answer visibility `0.8600` on 100 samples; partial diagnostic |
 | RAG unanswerable guard | Provider call suppression with no retrieved passage | App integration test | PASS; unsupported questions return a refusal without a provider request |
 | NVIDIA generation | Live API, runtime credential | `npm run providers:smoke` | PASS observed, 1,288 ms |
 | LM Studio generation | Live local server | `npm run providers:smoke` | PASS observed, 351 ms |
@@ -99,6 +100,10 @@ The rows above correspond, in order, to the public [SciFact](https://huggingface
 | Embeddings | [MTEB](https://github.com/embeddings-benchmark/mteb) | scores by task and language |
 | Tool calling | [BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html) | tool accuracy, AST validity |
 | General generation | [MMLU-Pro](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro) | exact match by domain |
+
+The DocVQA adapter reports normalized reference-answer visibility in OCR text. This is a real public-set extractability diagnostic, not the official DocVQA ANLS result, because no question-answering model is included in this baseline.
+
+Observed run on 2026-08-27: RapidOCR exposed at least one normalized reference answer in 86 of 100 public validation images. The sample included form, free-text, layout, table/list, image/photo, figure/diagram, handwritten, and other question types. The local receipt is `artifacts/benchmarks/docvqa/rapidocr-validation-100.json`; it is ignored by Git and is not a full validation-set score.
 
 ## LectureBench
 

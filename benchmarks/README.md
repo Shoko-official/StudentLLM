@@ -30,6 +30,20 @@ The app-side speech contract can be exercised with the local `faster-whisper` se
 
 The service exposes `GET /health` and accepts an audio body at `POST /transcribe`. It is intentionally separate from the public score adapter so service integration evidence and benchmark quality remain distinct.
 
+## DocVQA OCR diagnostic
+
+`run_docvqa_ocr.py` evaluates OCR answer visibility on public DocVQA validation images. It checks whether at least one normalized reference answer occurs in the OCR output. This is an extractability diagnostic, not the official DocVQA ANLS score, because it does not include a question-answering model.
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe -m pip install -r requirements-local-documents.txt datasets
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_docvqa_ocr.py `
+  --split validation `
+  --limit 100 `
+  --output artifacts\benchmarks\docvqa\rapidocr-validation-100.json
+```
+
+The observed 100-image run returned `0.8600` normalized answer visibility across multiple public question types. It is labeled partial and must not be presented as a full DocVQA result.
+
 ## MMLU-Pro through LM Studio
 
 `run_mmlu_pro.py` uses the public MMLU-Pro task from the [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) project. The adapter appends `/no_think` to the final user message for Qwen3 models so scoring evaluates the final answer channel.
