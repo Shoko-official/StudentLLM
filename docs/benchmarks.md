@@ -12,9 +12,9 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | --- | --- | --- | --- |
 | TypeScript | TypeScript project check | `npm run check` | PASS |
 | Benchmark adapters | Python bytecode compilation | `npm run benchmarks:check` | PASS |
-| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 39 tests |
+| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 40 tests |
 | Production artifact | Vite | `npm run build` | PASS |
-| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 9 tests |
+| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 10 tests |
 | FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
 | NVIDIA generation | Live API, runtime credential | `npm run providers:smoke` | PASS observed, 1,288 ms |
 | LM Studio generation | Live local server | `npm run providers:smoke` | PASS observed, 351 ms |

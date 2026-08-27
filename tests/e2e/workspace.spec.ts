@@ -162,4 +162,31 @@ test.describe('StudentLLM workspace', () => {
 
     expect(storedSource).toEqual({ count: 1, text: '# Week one' });
   });
+
+  test('removes an imported source and its local blob', async ({ page }) => {
+    await page.goto('/');
+    await page.setInputFiles('input[aria-label="Select course source"]', {
+      name: 'remove-me.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('temporary notes'),
+    });
+
+    const source = page.getByRole('button', { name: /^remove-me\.md/ });
+    await expect(source).toBeVisible();
+    await page.getByRole('button', { name: 'Remove source remove-me.md' }).click();
+    await expect(page.getByText('remove-me.md removed from this course.')).toBeVisible();
+    await expect(source).toBeHidden();
+
+    const storedSourceCount = await page.evaluate(() => new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open('studentllm-sources', 1);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const countRequest = request.result.transaction('source-blobs', 'readonly').objectStore('source-blobs').count();
+        countRequest.onsuccess = () => resolve(countRequest.result);
+        countRequest.onerror = () => reject(countRequest.error);
+      };
+    }));
+
+    expect(storedSourceCount).toBe(0);
+  });
 });
