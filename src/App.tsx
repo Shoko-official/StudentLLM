@@ -184,7 +184,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [lessons, setLessons] = useState(workspace.lessons);
   const [activeLessonId, setActiveLessonId] = useState(workspace.activeLessonId);
   const [view, setView] = useState<ViewMode>('course');
-  const [showLeftSidebar, setShowLeftSidebar] = useState(true);
+  const [showLeftSidebar, setShowLeftSidebar] = useState(() => typeof window === 'undefined' || window.innerWidth > 680);
   const [showRightSidebar, setShowRightSidebar] = useState(true);
   const [expandedSubjects, setExpandedSubjects] = useState<Record<string, boolean>>({
     'Machine Learning': true,
