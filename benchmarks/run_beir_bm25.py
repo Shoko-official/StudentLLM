@@ -1,4 +1,4 @@
-"""Run a full public BEIR SciFact lexical retrieval baseline.
+"""Run a full public BEIR lexical retrieval baseline.
 
 The corpus, queries, and test qrels are loaded from the public BeIR datasets on
 the Hugging Face Hub. This script evaluates the complete test split with a
@@ -21,6 +21,9 @@ TOKEN_PATTERN = re.compile(r"[^\w]+", re.UNICODE)
 DATASETS = {
     "scifact": {"dataset": "BeIR/scifact", "qrels": "BeIR/scifact-qrels", "label": "BEIR SciFact"},
     "nfcorpus": {"dataset": "BeIR/nfcorpus", "qrels": "BeIR/nfcorpus-qrels", "label": "BEIR NFCorpus"},
+    "arguana": {"dataset": "BeIR/arguana", "qrels": "BeIR/arguana-qrels", "label": "BEIR ArguAna"},
+    "fiqa": {"dataset": "BeIR/fiqa", "qrels": "BeIR/fiqa-qrels", "label": "BEIR FiQA"},
+    "scidocs": {"dataset": "BeIR/scidocs", "qrels": "BeIR/scidocs-qrels", "label": "BEIR SCIDOCS"},
 }
 
 
@@ -33,6 +36,7 @@ class BM25:
     def __init__(self, documents: list[tuple[str, str]], k1: float = 1.2, b: float = 0.75):
         self.document_ids = [document_id for document_id, _ in documents]
         self.tokens = [tokenize(text) for _, text in documents]
+        self.term_frequencies = [Counter(tokens) for tokens in self.tokens]
         self.k1 = k1
         self.b = b
         self.average_length = sum(len(tokens) for tokens in self.tokens) / max(len(self.tokens), 1)
@@ -53,7 +57,7 @@ class BM25:
                 continue
             inverse_document_frequency = math.log(1 + (document_count - frequency + 0.5) / (frequency + 0.5))
             for index in self.inverted_index[term]:
-                term_frequency = self.tokens[index].count(term)
+                term_frequency = self.term_frequencies[index][term]
                 length_normalization = 1 - self.b + self.b * (len(self.tokens[index]) / max(self.average_length, 1))
                 scores[index] += inverse_document_frequency * ((term_frequency * (self.k1 + 1)) / (term_frequency + self.k1 * length_normalization))
         ranked = sorted(scores, key=lambda index: (-scores[index], self.document_ids[index]))
