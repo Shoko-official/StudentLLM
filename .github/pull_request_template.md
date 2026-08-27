@@ -1,22 +1,22 @@
-## Résumé
+## Summary
 
-<!-- Quel problème cette PR résout-elle ? -->
+<!-- What problem does this PR solve? -->
 
-## Vérifications
+## Verification
 
 - [ ] `npm run check`
+- [ ] `npm run benchmarks:check`
 - [ ] `npm run test:run`
 - [ ] `npm run build`
-- [ ] `npm run test:e2e` si le parcours UI est concerné
-- [ ] smoke provider si l'intégration provider est concernée
+- [ ] `npm run test:e2e` when the UI path is affected
+- [ ] provider smoke check when provider integration is affected
 
-## Limites et risques
+## Limitations and risks
 
-<!-- Résultats non mesurés, migrations, secrets, données privées, limites connues. -->
+<!-- Unmeasured results, migrations, private data, or known limitations. -->
 
 ## Checklist
 
-- [ ] pas de secret ou donnée privée ajoutée
-- [ ] tests ajoutés ou raison documentée
-- [ ] documentation mise à jour si le comportement public change
-- [ ] diff relu pour éviter le bruit hors scope
+- [ ] tests added or the reason is documented
+- [ ] documentation updated when public behavior changes
+- [ ] diff reviewed for unrelated noise
