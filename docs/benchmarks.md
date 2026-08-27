@@ -26,6 +26,7 @@ Le premier benchmark de génération utilise le harness officiel [EleutherAI lm-
 | Run | Modèle / backend | Protocole | Résultat | Statut |
 | --- | --- | --- | --- | --- |
 | 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test, 14 catégories, 1 item par catégorie, seed 42, `temperature=0`, `/no_think` | exact-match `0.2143` (3/14) | PASS technique, échantillon partiel |
+| 2026-08-27 | `openai/gpt-oss-20b` / NVIDIA NIM | même protocole, clé issue de `NVIDIA_API_KEY` | timeout réseau avant la première réponse, aucun agrégat | network-failed, aucun score |
 
 Ce score n'est pas un score leaderboard: le harness avertit lui-même que `--limit` ne doit pas servir à calculer une métrique finale. Il sert à vérifier la chaîne dataset -> prompt -> API -> extraction -> métrique. La force du modèle reste `strength-unverified`.
 
