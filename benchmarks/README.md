@@ -19,6 +19,29 @@ python benchmarks\run_asr_fleurs.py `
 
 The command above evaluates all 676 examples in the public French test split. A partial run can be requested with `--limit`, but it must be labeled partial in the resulting receipt.
 
+## Generic Hugging Face ASR adapter
+
+`run_asr_hf.py` evaluates a public Hugging Face audio dataset with the same `faster-whisper` scoring path. The dataset must expose an `audio` column and a text reference field. The adapter uses decoded audio bytes when available, records the public split scope, and writes WER, CER, real-time factor, elapsed time, and hardware metadata.
+
+The observed MLS French sample used the first 100 examples of the public `facebook/multilingual_librispeech` test split:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_asr_hf.py `
+  --dataset facebook/multilingual_librispeech `
+  --config french `
+  --split test `
+  --reference-field transcript `
+  --language fr `
+  --model small `
+  --limit 100 `
+  --device cpu `
+  --compute-type int8 `
+  --output artifacts\benchmarks\asr\mls-fr-small-cpu-100.json
+```
+
+The run returned WER `0.150829`, CER `0.063214`, and RTF `0.201880` over 1,458.37 seconds of public audio. It is a partial public baseline and must not be presented as a full MLS score.
+
 ## Local ASR sidecar
 
 The app-side speech contract can be exercised with the local `faster-whisper` service:
