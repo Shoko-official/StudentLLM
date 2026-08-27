@@ -1,4 +1,4 @@
-import { beforeEach } from 'vitest';
+import { beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
@@ -78,6 +78,29 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByRole('button', { name: 'Source · optimization.md' })).toBeInTheDocument();
+  });
+
+  it('sends retrieved source context to an injected live provider', async () => {
+    const user = userEvent.setup();
+    const generate = vi.fn().mockResolvedValue({ content: 'The source explains gradient descent.', model: 'mock-local-model' });
+    render(<App provider={{ generate }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['Gradient descent updates parameters using the learning rate.'],
+      'optimization.md',
+      { type: 'text/markdown' },
+    ));
+    await user.click(screen.getByRole('tab', { name: /Chat/ }));
+    await user.type(screen.getByLabelText('Ask the course chat'), 'What updates parameters using the learning rate?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('The source explains gradient descent.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Source · optimization.md' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'LM Studio · mock-local-model' })).toBeInTheDocument();
+    expect(generate).toHaveBeenCalledWith([
+      { role: 'system', content: expect.stringContaining('Gradient descent updates parameters using the learning rate.') },
+      { role: 'user', content: 'What updates parameters using the learning rate?' },
+    ]);
   });
 
   it('records a bookmark and exposes a review segment', async () => {
