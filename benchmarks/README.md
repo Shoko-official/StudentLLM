@@ -69,6 +69,8 @@ $env:PYTHONUTF8 = '1'
 
 Every published result declares its split and sample size, keeps raw outputs locally, and identifies partial runs separately from aggregate benchmark results.
 
+An observed 70-item run on 2026-08-27 covered all 14 MMLU-Pro categories with 5 items per category and returned exact match `0.3000` (21/70, stderr `0.0484`). This remains a partial public sample, not a leaderboard score or a model-strength claim.
+
 ## NVIDIA NIM
 
 The same adapter can target NVIDIA NIM without placing the credential on the command line:
