@@ -33,6 +33,8 @@
 - reproducible public BEIR dense-retrieval adapter using selectable SentenceTransformers models with shared BM25 metrics;
 - full SciFact and NFCorpus dense receipts using `BAAI/bge-small-en-v1.5` and shared BM25 comparison;
 - full ArguAna dense receipt using `BAAI/bge-small-en-v1.5`, with the shared BM25 comparison;
+- full SCIDOCS dense receipt using `BAAI/bge-small-en-v1.5`, with the shared BM25 comparison;
+- deterministic single-worker local Playwright mode to prevent Windows browser-test contention while keeping CI parallel;
 - 70-item public MMLU-Pro LM Studio receipt covering all 14 categories with explicit partial-sample validity;
 - benchmark adapter syntax checks included in the local and GitHub verification gates;
 - NVIDIA NIM and LM Studio OpenAI-compatible smoke checks with runtime credentials;
