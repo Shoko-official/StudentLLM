@@ -225,6 +225,23 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('week-1.md')).toBeInTheDocument();
   });
 
+  it('removes an imported source from the active course', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['temporary notes'],
+      'remove-me.md',
+      { type: 'text/markdown' },
+    ));
+    expect(await screen.findByText('remove-me.md')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove source remove-me.md' }));
+
+    expect(screen.queryByText('remove-me.md')).not.toBeInTheDocument();
+    expect(screen.getByText('remove-me.md removed from this course.')).toBeInTheDocument();
+  });
+
   it('restores chat history after remounting the workspace', async () => {
     const user = userEvent.setup();
     const firstRender = render(<App />);
