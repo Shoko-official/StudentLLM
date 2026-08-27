@@ -164,6 +164,22 @@ test.describe('StudentLLM workspace', () => {
     expect(storedSource).toEqual({ count: 1, text: '# Week one' });
   });
 
+  test('imports and persists a PDF source in the browser workspace', async ({ page }) => {
+    await page.goto('/');
+    await page.setInputFiles('input[aria-label="Select course source"]', {
+      name: 'slides.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.7'),
+    });
+
+    const source = page.getByRole('button', { name: /^slides\.pdf/ });
+    await expect(source).toBeVisible();
+    await expect(page.getByText(/slides\.pdf added to course sources and saved locally\./)).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByRole('button', { name: /^slides\.pdf/ })).toBeVisible();
+  });
+
   test('exports and imports a course with source fidelity', async ({ page }) => {
     await page.goto('/');
     await page.setInputFiles('input[aria-label="Select course source"]', {
