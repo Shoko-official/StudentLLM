@@ -23,6 +23,7 @@
 - durable recordings can be sent to an optional local faster-whisper service and added back as reviewable transcript segments;
 - course deletion clears the active lesson workspace and its local source and recording blobs;
 - active courses can be exported and imported as versioned JSON packages with source and audio fidelity;
+- unsupported chat questions now return an evidence refusal without calling a provider on empty context;
 - browser reload persistence and microphone-unavailable fallback covered by Playwright;
 - local lexical retrieval with timestamp-aware context selection for provider chat;
 - reproducible full-split BEIR BM25 benchmark adapter with SciFact, NFCorpus, ArguAna, FiQA, and SCIDOCS receipts;

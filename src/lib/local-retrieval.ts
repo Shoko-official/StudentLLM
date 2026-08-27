@@ -10,13 +10,18 @@ export interface RetrievalHit {
   matchedTerms: string[];
 }
 
+const stopWords = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'did', 'do', 'does', 'for', 'from', 'how', 'i', 'in', 'is',
+  'it', 'of', 'on', 'or', 'that', 'the', 'this', 'to', 'was', 'what', 'when', 'where', 'which', 'who', 'why', 'with',
+]);
+
 function tokenize(value: string) {
   return value
     .toLocaleLowerCase()
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .split(/[^\p{L}\p{N}]+/u)
-    .filter((term) => term.length > 1);
+    .filter((term) => term.length > 1 && !stopWords.has(term));
 }
 
 export function searchDocuments(documents: RetrievalDocument[], query: string, limit = 5): RetrievalHit[] {

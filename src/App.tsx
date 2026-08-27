@@ -415,6 +415,17 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       const retrievedCitations = retrievalHits.slice(0, 2).map((hit) => hit.document.metadata.resourceName
         ? `Source · ${hit.document.metadata.resourceName} · part ${hit.document.metadata.part}`
         : `Transcript · ${hit.document.metadata.timestamp}`);
+      if (!retrievalHits.length) {
+        updateActiveWorkspace((current) => ({
+          ...current,
+          chat: [...current.chat, {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: 'I could not find a supporting passage in the active course. Add a source or rephrase the question.',
+          }],
+        }));
+        return;
+      }
       if (!localProvider) {
         updateActiveWorkspace((current) => ({
           ...current,
@@ -485,7 +496,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       try {
         const retrievalDocuments = await loadRetrievalDocuments();
         const retrievalHits = searchDocuments(retrievalDocuments, activeLesson.title, 6);
-        const contextDocuments = retrievalHits.length ? retrievalHits.map((hit) => hit.document) : retrievalDocuments.slice(0, 6);
+        const contextDocuments = retrievalHits.map((hit) => hit.document);
+        if (!contextDocuments.length) {
+          notify('Add a relevant indexed passage before generating this artifact.');
+          return;
+        }
         const context = contextDocuments.map((document) => document.metadata.resourceName
           ? `[Source: ${document.metadata.resourceName}, part ${document.metadata.part}] ${document.text}`
           : `[${document.metadata.timestamp}] ${document.metadata.speaker}: ${document.text}`).join('\n');
