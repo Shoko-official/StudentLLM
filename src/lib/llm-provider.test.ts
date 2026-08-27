@@ -35,6 +35,29 @@ describe('OpenAI-compatible LLM provider', () => {
     });
   });
 
+  it('binds the default fetch implementation to its global context', async () => {
+    const fetchMock = vi.fn(function (this: unknown) {
+      if (this !== globalThis) throw new Error('fetch context was lost');
+      return Promise.resolve(response({
+        model: 'qwen/qwen3-4b',
+        choices: [{ message: { content: 'Bound fetch works.' } }],
+      }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const provider = new OpenAICompatibleProvider({
+        baseUrl: 'http://127.0.0.1:1234/v1',
+        model: 'qwen/qwen3-4b',
+      });
+
+      await expect(provider.generate([{ role: 'user', content: 'Hello' }])).resolves.toMatchObject({ content: 'Bound fetch works.' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('returns no provider when no local endpoint is configured', () => {
     expect(createLocalLLMProvider({})).toBeNull();
   });
