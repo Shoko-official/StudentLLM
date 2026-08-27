@@ -32,6 +32,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | BEIR ArguAna dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset arguana --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.4287, Recall@10 0.8414, MRR@10 0.2956 |
 | BEIR SCIDOCS dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset scidocs --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.1973, Recall@10 0.2091, MRR@10 0.3344 |
 | BEIR FiQA dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset fiqa --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.3848, Recall@10 0.4396, MRR@10 0.4650 |
+| BEIR TREC-COVID retrieval | Full public test split, deterministic BM25 and BGE-small dense retrieval | `benchmarks/run_beir_bm25.py --dataset trec-covid` and `benchmarks/run_beir_dense.py --dataset trec-covid --model BAAI/bge-small-en-v1.5 --device cpu` | BM25 nDCG@10 0.5537, Recall@10 0.0157, MRR@10 0.7906; dense nDCG@10 0.6438, Recall@10 0.0184, MRR@10 0.8779 |
 | MTEB STSBenchmark v2 | Official public test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STSBenchmark.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | Spearman main score 0.857289 |
 | MTEB STS22 v2 | Official public multilingual test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | 18 subsets, unweighted descriptive macro-average 0.469262; language spread 0.181685-0.740204 |
 | BFCL V4 `simple_python`, `multiple`, `parallel_multiple`, `irrelevance`, and multi-turn categories | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | `simple_python`: 1.0000 (20/20); `multiple`: 0.9500 (19/20); `parallel_multiple`: 0.8500 (17/20); `irrelevance`: 1.0000 (20/20); `multi_turn_base`: 0.3000 (6/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1500 (3/20); partial category samples |
@@ -174,10 +175,11 @@ The retrieval baseline runs complete public BEIR corpus and query datasets with 
 | ArguAna | 2026-08-27 | 8,674 documents | 1,406 evaluated test queries, 1,406 qrel rows | nDCG@10 `0.3132`, Recall@10 `0.6636`, MRR@10 `0.2030` | Full public split, reproducible baseline |
 | FiQA | 2026-08-27 | 57,638 documents | 648 evaluated test queries, 1,706 qrel rows | nDCG@10 `0.2347`, Recall@10 `0.2962`, MRR@10 `0.2919` | Full public split, reproducible baseline |
 | SCIDOCS | 2026-08-27 | 25,657 documents | 1,000 evaluated test queries, 29,928 qrel rows | nDCG@10 `0.1528`, Recall@10 `0.1584`, MRR@10 `0.2736` | Full public split, reproducible baseline |
+| TREC-COVID | 2026-08-27 | 171,332 documents | 50 evaluated test queries, 66,336 qrel rows | nDCG@10 `0.5537`, Recall@10 `0.0157`, MRR@10 `0.7906` | Full public split, reproducible baseline |
 
 The receipts are written to `artifacts/benchmarks/beir/`. These are lexical baselines on public BEIR datasets; they are not claims about StudentLLM's future dense retrieval or answer faithfulness.
 
-The rows above correspond, in order, to the public [SciFact](https://huggingface.co/datasets/BeIR/scifact), [NFCorpus](https://huggingface.co/datasets/BeIR/nfcorpus), [ArguAna](https://huggingface.co/datasets/BeIR/arguana), [FiQA](https://huggingface.co/datasets/BeIR/fiqa), and [SCIDOCS](https://huggingface.co/datasets/BeIR/scidocs) datasets. These are lexical baselines on public BEIR datasets; they are not claims about StudentLLM's future dense retrieval or answer faithfulness.
+The rows above correspond, in order, to the public [SciFact](https://huggingface.co/datasets/BeIR/scifact), [NFCorpus](https://huggingface.co/datasets/BeIR/nfcorpus), [ArguAna](https://huggingface.co/datasets/BeIR/arguana), [FiQA](https://huggingface.co/datasets/BeIR/fiqa), [SCIDOCS](https://huggingface.co/datasets/BeIR/scidocs), and [TREC-COVID](https://huggingface.co/datasets/BeIR/trec-covid) datasets. These are lexical baselines on public BEIR datasets; they are not claims about StudentLLM's future dense retrieval or answer faithfulness.
 
 The dense adapter uses the same complete public splits and qrels with a selectable SentenceTransformers model, normalized embeddings, cosine similarity, and `top_k=10`. Dense results are added only after the command completes and writes a receipt.
 
@@ -190,8 +192,9 @@ Observed dense results on 2026-08-27 use `BAAI/bge-small-en-v1.5`, CPU, batch si
 | ArguAna | 8,674 documents | 1,406 evaluated test queries | nDCG@10 `0.4287`, Recall@10 `0.8414`, MRR@10 `0.2956` | `0.3132`, `0.6636`, `0.2030` | Dense higher on all three metrics |
 | SCIDOCS | 25,657 documents | 1,000 evaluated test queries | nDCG@10 `0.1973`, Recall@10 `0.2091`, MRR@10 `0.3344` | `0.1528`, `0.1584`, `0.2736` | Dense higher on all three metrics |
 | FiQA | 57,638 documents | 648 evaluated test queries | nDCG@10 `0.3848`, Recall@10 `0.4396`, MRR@10 `0.4650` | `0.2347`, `0.2962`, `0.2919` | Dense higher on all three metrics |
+| TREC-COVID | 171,332 documents | 50 evaluated test queries | nDCG@10 `0.6438`, Recall@10 `0.0184`, MRR@10 `0.8779` | `0.5537`, `0.0157`, `0.7906` | Dense higher on all three metrics |
 
-These are complete public test splits, not a sampled benchmark. The receipts are `artifacts/benchmarks/beir/scifact-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/nfcorpus-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/arguana-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/scidocs-bge-small-en-v1.5.json`, and `artifacts/benchmarks/beir/fiqa-bge-small-en-v1.5.json`; they are ignored by Git.
+These are complete public test splits, not sampled benchmarks. The receipts are `artifacts/benchmarks/beir/scifact-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/nfcorpus-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/arguana-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/scidocs-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/fiqa-bge-small-en-v1.5.json`, and `artifacts/benchmarks/beir/trec-covid-bge-small-en-v1.5.json`; they are ignored by Git. The TREC-COVID dense run took 3,002.23 seconds on CPU.
 
 ## Public benchmarks to integrate
 

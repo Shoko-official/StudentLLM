@@ -23,7 +23,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | FLEURS French ASR | Complete public `fr_fr` test split, 676 examples | WER 13.5677%, CER 4.9086%, RTF 0.1840 |
 | MLS French ASR | Complete public French test split, 2,426 examples | WER 13.0395%, CER 5.6910%, RTF 0.1648 |
 | FLEURS plus MUSAN robustness | 100 public FLEURS examples, clean plus four MUSAN source categories at 10 dB and 0 dB | Composite public-data check; WER 15.7592% clean and 17.3696%-84.4709% across noisy conditions |
-| BEIR dense retrieval | Complete public test splits for SciFact, NFCorpus, ArguAna, SCIDOCS, and FiQA | Receipts and BM25 comparisons recorded in [`benchmarks.md`](./benchmarks.md) |
+| BEIR retrieval | Complete public test splits for SciFact, NFCorpus, ArguAna, SCIDOCS, FiQA, and TREC-COVID | BM25 and dense receipts plus comparisons recorded in [`benchmarks.md`](./benchmarks.md) |
 | MTEB | Complete public STSBenchmark v2 and STS22 v2 tasks | Spearman and per-subset results recorded in [`benchmarks.md`](./benchmarks.md) |
 | BFCL V4 | Seven public categories, 20 cases per category | Official category scores recorded; multi-turn negative cases expose format compatibility failures |
 | MMLU-Pro | Public 140-item samples across all 14 categories through LM Studio and NVIDIA NIM | LM Studio `21.43%`; NVIDIA `28.57%`; partial samples, not leaderboard scores |

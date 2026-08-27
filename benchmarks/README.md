@@ -147,7 +147,7 @@ The first August 27, 2026 NVIDIA run timed out after retries before producing a 
 
 ## BEIR BM25 baselines
 
-`run_beir_bm25.py` evaluates complete public SciFact, NFCorpus, ArguAna, FiQA, or SCIDOCS test splits with a deterministic BM25 baseline. It loads the corpus, queries, and test relevance judgments from the corresponding [BEIR datasets](https://github.com/beir-cellar/beir/wiki/Datasets-available) and reports nDCG@10, Recall@10, and MRR@10.
+`run_beir_bm25.py` evaluates complete public SciFact, NFCorpus, ArguAna, FiQA, SCIDOCS, or TREC-COVID test splits with a deterministic BM25 baseline. It loads the corpus, queries, and test relevance judgments from the corresponding [BEIR datasets](https://github.com/beir-cellar/beir/wiki/Datasets-available) and reports nDCG@10, Recall@10, and MRR@10.
 
 Install the optional benchmark dependency and run SciFact:
 
@@ -172,9 +172,12 @@ Run the additional multi-domain splits with the same protocol:
 .\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_bm25.py --dataset arguana --output_path artifacts\benchmarks\beir\arguana-bm25.json
 .\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_bm25.py --dataset fiqa --output_path artifacts\benchmarks\beir\fiqa-bm25.json
 .\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_bm25.py --dataset scidocs --output_path artifacts\benchmarks\beir\scidocs-bm25.json
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_bm25.py --dataset trec-covid --output_path artifacts\benchmarks\beir\trec-covid-bm25.json
 ```
 
 These are retrieval baselines on public information-retrieval datasets. They are independent of the LM Studio process and do not require model inference.
+
+The observed TREC-COVID run evaluated 171,332 documents, 50 public test queries, and 66,336 qrel rows. BM25 returned nDCG@10 `0.5537`, Recall@10 `0.0157`, and MRR@10 `0.7906` in 46.10 seconds.
 
 ## BEIR dense baseline
 
@@ -196,6 +199,8 @@ The observed ArguAna run evaluated 8,674 documents and 1,406 public test queries
 The observed SCIDOCS run evaluated 25,657 documents and 1,000 public test queries with the same model and settings. It returned nDCG@10 `0.1973`, Recall@10 `0.2091`, and MRR@10 `0.3344`, compared with the BM25 baseline of `0.1528`, `0.1584`, and `0.2736`.
 
 The observed FiQA run evaluated 57,638 documents and 648 public test queries with the same model and settings. It returned nDCG@10 `0.3848`, Recall@10 `0.4396`, and MRR@10 `0.4650`, compared with the BM25 baseline of `0.2347`, `0.2962`, and `0.2919`.
+
+The observed TREC-COVID dense run evaluated 171,332 documents and 50 public test queries with the same model and settings. It returned nDCG@10 `0.6438`, Recall@10 `0.0184`, and MRR@10 `0.8779`, compared with the BM25 baseline of `0.5537`, `0.0157`, and `0.7906`. The CPU run completed in 3,002.23 seconds.
 
 ## MTEB embedding task
 
