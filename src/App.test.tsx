@@ -125,6 +125,29 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText(/Bookmark added at/)).toBeInTheDocument();
   });
 
+  it('adds a durable recording resource after a successful stop', async () => {
+    const user = userEvent.setup();
+    const session = {
+      recordingId: 'recording-resource-test',
+      stream: {} as MediaStream,
+      durability: 'durable' as const,
+      stop: vi.fn(async () => ({
+        recordingId: 'recording-resource-test',
+        chunksPersisted: 2,
+        persistenceError: false,
+      })),
+    };
+
+    render(<App recorderSessionFactory={async () => session} />);
+
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    await user.click(screen.getByRole('button', { name: 'Stop recording' }));
+
+    expect(await screen.findByText('Attention & Scaled Dot-Product audio.webm')).toBeInTheDocument();
+    expect(screen.getByText('Audio · 2 chunks')).toBeInTheDocument();
+    expect(session.stop).toHaveBeenCalledTimes(1);
+  });
+
   it('restores a created course after remounting the workspace', async () => {
     const user = userEvent.setup();
     const firstRender = render(<App />);
