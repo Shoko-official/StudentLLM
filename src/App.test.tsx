@@ -74,10 +74,10 @@ describe('StudentLLM workspace', () => {
 
     await user.click(screen.getByRole('tab', { name: /Chat/ }));
     const input = screen.getByLabelText('Ask the course chat');
-    await user.type(input, 'Can you give me an example?');
+    await user.type(input, 'Why do we divide by the square root of d?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(screen.getByText('Can you give me an example?')).toBeInTheDocument();
+    expect(screen.getByText('Why do we divide by the square root of d?')).toBeInTheDocument();
     expect(screen.getByText('Connect LM Studio to ask the local model. The current workspace keeps this interaction offline.')).toBeInTheDocument();
   });
 
@@ -126,11 +126,24 @@ describe('StudentLLM workspace', () => {
     render(<App provider={{ generate }} />);
 
     await user.click(screen.getByRole('tab', { name: /Chat/ }));
-    await user.type(screen.getByLabelText('Ask the course chat'), 'Ask the local provider to answer.');
+    await user.type(screen.getByLabelText('Ask the course chat'), 'Explain why normalization matters.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('Provider request timed out.')).toBeInTheDocument();
     expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses an unanswerable question without calling the provider', async () => {
+    const user = userEvent.setup();
+    const generate = vi.fn();
+    render(<App provider={{ generate }} />);
+
+    await user.click(screen.getByRole('tab', { name: /Chat/ }));
+    await user.type(screen.getByLabelText('Ask the course chat'), 'What is the boiling point of mercury on Mars?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('I could not find a supporting passage in the active course. Add a source or rephrase the question.')).toBeInTheDocument();
+    expect(generate).not.toHaveBeenCalled();
   });
 
   it('records a bookmark and exposes a review segment', async () => {
