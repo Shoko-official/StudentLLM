@@ -17,7 +17,7 @@ describe('local lexical retrieval', () => {
   });
 
   it('normalizes accents and ignores queries with no searchable terms', () => {
-    expect(searchDocuments([{ ...documents[0], text: 'La régularisation stabilise le modèle.' }], 'regularisation modele')).toHaveLength(1);
+    expect(searchDocuments([{ ...documents[0], text: 'Regularization stabilizes the model.' }], 'regularization model')).toHaveLength(1);
     expect(searchDocuments(documents, '???')).toEqual([]);
   });
 

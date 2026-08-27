@@ -80,4 +80,31 @@ test.describe('StudentLLM workspace', () => {
 
     expect(storedChunkCount).toBe(1);
   });
+
+  test('imports and stores the original source blob locally', async ({ page }) => {
+    await page.goto('/');
+    await page.setInputFiles('input[aria-label="Select course source"]', {
+      name: 'lecture-notes.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('# Week one'),
+    });
+
+    await expect(page.getByRole('button', { name: 'lecture-notes.md Text · 10 B' })).toBeVisible();
+    await expect(page.getByText(/lecture-notes\.md added to course sources and saved locally\./)).toBeVisible();
+
+    const storedSource = await page.evaluate(() => new Promise<{ count: number; text: string }>((resolve, reject) => {
+      const request = indexedDB.open('studentllm-sources', 1);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const getAllRequest = request.result.transaction('source-blobs', 'readonly').objectStore('source-blobs').getAll();
+        getAllRequest.onsuccess = async () => {
+          const records = getAllRequest.result as Array<{ blob?: Blob }>;
+          resolve({ count: records.length, text: records[0]?.blob ? await records[0].blob.text() : '' });
+        };
+        getAllRequest.onerror = () => reject(getAllRequest.error);
+      };
+    }));
+
+    expect(storedSource).toEqual({ count: 1, text: '# Week one' });
+  });
 });
