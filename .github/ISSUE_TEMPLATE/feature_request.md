@@ -1,14 +1,14 @@
 ---
 name: Feature request
-about: Proposer une évolution produit
+about: Propose a product improvement
 title: "feat: "
 labels: enhancement
 ---
 
-## Besoin utilisateur
+## User need
 
-## Résultat attendu
+## Expected result
 
-## Sources et provenance concernées
+## Relevant sources and provenance
 
-## Critères d'acceptation
+## Acceptance criteria

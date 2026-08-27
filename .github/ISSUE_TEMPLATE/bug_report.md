@@ -1,27 +1,25 @@
 ---
 name: Bug report
-about: Signaler un comportement reproductible
+about: Report a reproducible behavior
 title: "bug: "
 labels: bug
 ---
 
 ## Description
 
-## Étapes pour reproduire
+## Steps to reproduce
 
 1.
 2.
 3.
 
-## Résultat attendu
+## Expected result
 
-## Résultat observé
+## Observed result
 
-## Environnement
+## Environment
 
 - OS:
 - Node:
-- navigateur ou runtime:
+- browser or runtime:
 - commit:
-
-Ne joignez pas d'audio, de document étudiant ou de secret dans une issue publique.
