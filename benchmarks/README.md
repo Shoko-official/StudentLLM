@@ -303,3 +303,33 @@ Create `artifacts\benchmarks\bfcl-multi-turn\test_case_ids_to_generate.json` wit
 The same official path was run against 20 public `multi_turn_miss_func` cases and 20 public `multi_turn_miss_param` cases using separate ignored roots. `multi_turn_miss_func` returned `0.1500` (3/20) across 263 requests, with mean latency `4.135 s` and approximate p95 `11.188 s`. `multi_turn_miss_param` returned `0.1500` (3/20) across 285 requests, with mean latency `5.597 s`, approximate p95 `17.944 s`, and maximum `72.238 s`. Both runs produced empty responses and long tool sequences. These are partial category diagnostics, not global BFCL scores.
 
 Reproduce either negative multi-turn category by creating an ignored `test_case_ids_to_generate.json` containing the matching public IDs (`multi_turn_miss_func_0` through `multi_turn_miss_func_19` or `multi_turn_miss_param_0` through `multi_turn_miss_param_19`), setting `BFCL_PROJECT_ROOT` to the isolated root, and running the same official commands with the matching `--test-category`.
+
+### NVIDIA NIM through the OpenAI-compatible API
+
+`run_bfcl_openai_compatible.py` runs the same official BFCL generator and scorer against an OpenAI-compatible endpoint. It registers the selected provider model with the official evaluator in-process, so the result remains a BFCL result rather than a locally authored tool-calling check. The API key is read from the Windows User environment variable `NVIDIA_API_KEY`.
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:PYTHONUTF8 = '1'
+& .\.venv-bfcl\Scripts\python.exe benchmarks\run_bfcl_openai_compatible.py `
+  --project-root artifacts\benchmarks\bfcl-nvidia-gpt-oss-simple-python `
+  --category simple_python `
+  --model openai/gpt-oss-20b `
+  --base-url https://integrate.api.nvidia.com/v1 `
+  --limit 20 `
+  --num-threads 1 `
+  --allow-overwrite
+```
+
+`--limit 20` selects public IDs `0` through `19` for the requested category. It is a reproducible category sample, not a full BFCL leaderboard run. Use a separate `--project-root` for each category so raw generations and scorer output remain isolated.
+
+The observed NVIDIA NIM runs on 2026-08-28 used `openai/gpt-oss-20b`, `temperature=0`, one request thread, and the Windows User `NVIDIA_API_KEY` value:
+
+| Category | Public cases | Official category accuracy | Latency evidence |
+| --- | ---: | ---: | --- |
+| `simple_python` | 20 | `45.00%` (9/20) | Mean `0.929 s`, p95 `1.648 s`, max `1.792 s` |
+| `multiple` | 20 | `5.00%` (1/20) | Mean `2.175 s`, p95 `11.156 s`, max `16.268 s` |
+| `parallel_multiple` | 20 | `0.00%` (0/20) | Mean `1.352 s`, p95 `2.370 s`, max `2.569 s` |
+| `multi_turn_base` | 20 | `25.00%` (5/20) | 366 requests, mean `2.042 s`, p95 `3.769 s`, max `81.768 s` |
+
+These are official category scores on public samples, not global BFCL scores. The multi-turn run produced empty responses and malformed tool calls during generation; the failures remain in the local ignored result and score directories. An initial legacy NVIDIA handler attempt returned an HTTP 404 before scoring and is not counted as a benchmark result.
