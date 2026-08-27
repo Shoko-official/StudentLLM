@@ -160,6 +160,22 @@ $env:PYTHONUTF8 = '1'
 
 The observed public STSBenchmark v2 test run returned Spearman main score `0.857289` with `BAAI/bge-small-en-v1.5` on CPU. This is a sentence-similarity embedding result, not a product-level retrieval, answer-faithfulness, or generation score.
 
+The same official wrapper can run the multilingual `STS22.v2` task:
+
+```powershell
+$env:CUDA_VISIBLE_DEVICES = ''
+$env:PYTHONUTF8 = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_mteb.py `
+  --model BAAI/bge-small-en-v1.5 `
+  --task STS22.v2 `
+  --split test `
+  --device cpu `
+  --batch-size 32 `
+  --output artifacts\benchmarks\mteb\sts22-v2-bge-small-en-v1.5.json
+```
+
+The observed public test run evaluated 3,958 sentence pairs across 18 language or cross-language subsets in 208.23 seconds. The unweighted macro-average of the 18 reported MTEB main scores was `0.469262`; individual scores ranged from Arabic `0.188313` to French `0.740204`. This descriptive average is not an official leaderboard aggregate and should not hide the language-level spread.
+
 ## BFCL tool-calling task
 
 `bfcl-eval` is the official evaluator for the [Berkeley Function-Calling Leaderboard](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-calling-leaderboard). It can target the OpenAI-compatible endpoint already exposed by LM Studio. Keep the benchmark environment separate from the application environment because the evaluator has a large optional dependency set:
