@@ -38,6 +38,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | ARC-Challenge | Complete public ARC-Challenge test split through the official generation-compatible chat task | `benchmarks/run_arc.py` with `arc_challenge_chat` and NVIDIA NIM | Exact match 0.8473 (993/1,172), stderr 0.0105; no empty responses |
 | IFEval | Complete public instruction-following task through the official generation harness | `python -m lm_eval run` with `ifeval` and NVIDIA NIM | Prompt strict 0.7024; instruction strict 0.7878; prompt loose 0.7412; instruction loose 0.8177 |
 | TruthfulQA generation | Complete public `truthfulqa_gen` validation split, 817 questions through the official generation harness | `python -m lm_eval run` with `truthfulqa_gen` and NVIDIA NIM | BLEU accuracy 0.3513, ROUGE-1 accuracy 0.3856, ROUGE-2 accuracy 0.2778, ROUGE-L accuracy 0.3917; 289 null-content placeholders retained |
+| DROP reading comprehension | Public `EleutherAI/drop` validation split, 512 of 9,536 examples through NVIDIA NIM | `python -m lm_eval run` with `drop`, `--limit 512`, and the OpenAI-compatible NVIDIA endpoint | Exact match 0.0020, F1 0.1109, F1 stderr 0.0061; one empty provider response retained; partial public sample |
 | BIG-Bench Hard zero-shot suite | Official public `bbh_zeroshot` group, 27 task configurations, 6,511 cases through NVIDIA NIM | `python -m lm_eval run` with `bbh_zeroshot` and the OpenAI-compatible NVIDIA endpoint | Flexible-extract exact match 0.7474 (4,866/6,511), stderr 0.0047; 152 empty provider responses retained |
 | HumanEval | Complete public `openai/openai_humaneval` test split, 164 problems through NVIDIA NIM with the official Linux code evaluator | `benchmarks/run_humaneval_wsl.sh` with `humaneval` and `humaneval_instruct` | Official `pass@1` 0.0000 on both tasks; all 164 responses in each run were non-empty, but leading explanations and fenced code were incompatible with the official code-only filters |
 | HumanEval+ | Complete public 164-problem HumanEval+ evaluation through the official EvalPlus evaluator | `benchmarks/run_evalplus_wsl.sh` with a code-only prompt and NVIDIA NIM | Base `pass@1` 0.8963 (147/164); HumanEval+ `pass@1` 0.8232 (135/164); one sanitised sample was not compilable and remained a scored failure |
@@ -48,6 +49,27 @@ Regression checks complement the public benchmark results below. Each reported s
 The provider latencies are point observations on the development machine, not production SLOs.
 
 The browser chat result uses the built-in Vite same-origin proxy because the unchanged LM Studio endpoint did not return CORS headers. It validates the application request, response, citation, and rendering path without restarting LM Studio; it is not evidence that the endpoint is directly browser-callable without CORS configuration.
+
+## Observed public result: DROP
+
+The DROP run uses the official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) `drop` task and the public [EleutherAI/drop dataset](https://huggingface.co/datasets/EleutherAI/drop). It evaluates the public validation split with the NVIDIA NIM OpenAI-compatible endpoint and keeps the official exact-match and token-level F1 filters.
+
+| Field | Value |
+| --- | --- |
+| Model | `openai/gpt-oss-20b` through NVIDIA NIM |
+| Dataset and split | `EleutherAI/drop`, validation, 9,536 available examples |
+| Evaluated scope | 512 public examples selected by harness `--limit 512` |
+| Prompting | zero-shot, chat template enabled |
+| Generation | `temperature=0`, `max_gen_toks=512`, `reasoning_effort=low`, `until=None` |
+| Seeds | Python, NumPy, Torch, and few-shot seed 42 |
+| Concurrency | four API requests |
+| Result | exact match `0.0020` (1/512); F1 `0.1109`, stderr `0.0061` |
+| Integrity | 512 JSONL rows, 512 unique document IDs, no malformed rows or duplicates, one empty provider response retained |
+| Receipt | `artifacts/benchmarks/drop/gpt-oss-20b-nvidia-limit512_2026-08-28T23-21-27.029273.json` |
+| Samples | `artifacts/benchmarks/drop/samples_drop_2026-08-28T23-21-27.029273.jsonl` |
+| SHA-256 | receipt `58CF2E9CD43EFDB0A77721EB9027F9784B043AE5BCD45A91E42AE1F93D531195`; samples `822C8A72756C643D9EC8667C19DE2988B91853DB7DE319AE9532FF645E2D38A2` |
+
+This is a partial public sample, not a full DROP score or a leaderboard claim. An earlier attempt to run the complete validation split through the existing LM Studio process was interrupted before it produced an aggregate receipt; it is not counted as a result and the model process was left running.
 
 ## Observed public result: MMLU-Pro
 
