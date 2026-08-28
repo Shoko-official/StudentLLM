@@ -169,6 +169,44 @@ $env:PYTHONUTF8 = '1'
 
 The aggregate receipt is `artifacts/benchmarks/gsm8k/gpt-oss-20b-nvidia_2026-08-28T05-59-45.464108.json`. This is a complete public GSM8K test split for one model and configuration, not a full general-capability evaluation or a leaderboard ranking.
 
+## Observed public result: MATH-500
+
+The official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) ran the public [MATH-500](https://huggingface.co/datasets/HuggingFaceH4/MATH-500) test split through the OpenAI-compatible NVIDIA NIM endpoint with the official `minerva_math500` task. The run used `openai/gpt-oss-20b`, the Windows User `NVIDIA_API_KEY` environment variable, four-shot prompts, seed 42, `temperature=0`, `max_gen_toks=2048`, `reasoning_effort=low`, and one concurrent request. The harness version was `0.4.12`.
+
+The first direct run generated all 500 answers, but its default Windows `math_verify` timeout path emitted `WinError 6` during per-answer parsing and wrote zero aggregate metrics. That receipt is retained as diagnostic evidence and is not used as a score. The same 500 logged model outputs were re-scored with the official MATH task `process_results` through `benchmarks/rescore_math.py`, which disables only the nested Windows timeout subprocesses for the single-worker evaluation.
+
+| Run | Public scope | Result | Validity |
+| --- | --- | --- | --- |
+| 2026-08-28 | `HuggingFaceH4/MATH-500` test split, 500 public problems, four-shot | `math_verify` `0.8220` (411/500), stderr `0.0171`; official `exact_match` `0.0000` | Complete public test split; 2,572.14 s generation time; corrected official posthoc scoring |
+
+Run the corrected official evaluator with:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe benchmarks\run_math.py run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=1,max_retries=3" `
+  --tasks minerva_math500 `
+  --num_fewshot 4 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=2048,reasoning_effort=low" `
+  --seed 42 `
+  --output_path artifacts/benchmarks/math500/gpt-oss-20b-nvidia.json `
+  --log_samples
+```
+
+To reproduce the corrected receipt from the completed public generation without making new provider requests:
+
+```powershell
+& .\.venv-bench\Scripts\python.exe benchmarks\rescore_math.py `
+  artifacts/benchmarks/math500/samples_minerva_math500_2026-08-28T06-51-06.552685.jsonl `
+  artifacts/benchmarks/math500/gpt-oss-20b-nvidia_2026-08-28T06-51-06.552685.json `
+  artifacts/benchmarks/math500/gpt-oss-20b-nvidia-math-verify-rescored.json
+```
+
+The corrected receipt is `artifacts/benchmarks/math500/gpt-oss-20b-nvidia-math-verify-rescored.json`; the initial zero-metric diagnostic receipt is `artifacts/benchmarks/math500/gpt-oss-20b-nvidia_2026-08-28T06-51-06.552685.json`. The `math_verify` value is the usable official metric for this run because the model's boxed mathematical answers did not match the task's legacy `Final Answer: The final answer is ...` string extractor. This is a complete single-task result, not a general model ranking or a full benchmark suite result.
+
 ## Observed public result: BFCL tool calling
 
 The official [BFCL evaluator](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-calling-leaderboard) was run against the OpenAI-compatible server that was already running in LM Studio. The BFCL model label was `Qwen/Qwen3-4B-Instruct-2507-FC`; the endpoint selected the existing local Qwen model. No local model process was restarted.
@@ -345,6 +383,7 @@ These are complete public test splits, not sampled benchmarks. The receipts are 
 | Embeddings | [MTEB](https://github.com/embeddings-benchmark/mteb) | scores by task and language |
 | Tool calling | [BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html) | tool accuracy, AST validity |
 | General generation | [MMLU-Pro](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro) | exact match by domain |
+| Mathematical reasoning | [MATH-500](https://huggingface.co/datasets/HuggingFaceH4/MATH-500) | exact match, math_verify |
 
 The DocVQA adapter reports normalized reference-answer visibility in OCR text. This is a real public-set extractability diagnostic, not the official DocVQA ANLS result, because no question-answering model is included in this baseline.
 
