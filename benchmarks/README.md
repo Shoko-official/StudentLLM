@@ -250,6 +250,33 @@ $env:PYTHONUTF8 = '1'
 
 The full public run returned exact match `0.8473` (993/1,172, stderr `0.0105`) in `1,156.65 s`, with zero empty responses. Its aggregate receipt is `artifacts/benchmarks/arc-challenge/gpt-oss-20b-nvidia-full_2026-08-28T08-03-59.129683.json`. This is complete single-task evidence, not a global model ranking.
 
+## IFEval through NVIDIA NIM
+
+The official [IFEval](https://github.com/google-research/google-research/tree/master/ifeval) task in `lm-evaluation-harness` measures whether generated responses follow verifiable instructions. Install the pinned benchmark environment:
+
+```powershell
+& .\.venv-bench\Scripts\python.exe -m pip install -r requirements-ifeval.txt
+```
+
+Run the complete public 541-prompt task through NVIDIA NIM:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe -m lm_eval run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=4,max_retries=3" `
+  --tasks ifeval `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=1280,reasoning_effort=low,until=None" `
+  --seed 42 `
+  --output_path artifacts/benchmarks/ifeval/gpt-oss-20b-nvidia-full.json `
+  --log_samples
+```
+
+The observed run on 2026-08-28 evaluated all 541 public prompts with the official `lm-evaluation-harness 0.4.12` task. Prompt-level strict accuracy was `0.7024` (stderr `0.0197`), instruction-level strict accuracy was `0.7878`, prompt-level loose accuracy was `0.7412` (stderr `0.0188`), and instruction-level loose accuracy was `0.8177`. Four provider responses had empty content; the harness retained them as empty strings, so they remain part of the reported result. The aggregate receipt is `artifacts/benchmarks/ifeval/gpt-oss-20b-nvidia-full_2026-08-28T08-34-22.627222.json` and the 541 raw samples are in the matching `samples_ifeval_2026-08-28T08-34-22.627222.jsonl` file. This is complete public single-task evidence, not a general model ranking.
+
 ## BEIR BM25 baselines
 
 `run_beir_bm25.py` evaluates complete public SciFact, NFCorpus, ArguAna, FiQA, SCIDOCS, or TREC-COVID test splits with a deterministic BM25 baseline. It loads the corpus, queries, and test relevance judgments from the corresponding [BEIR datasets](https://github.com/beir-cellar/beir/wiki/Datasets-available) and reports nDCG@10, Recall@10, and MRR@10.

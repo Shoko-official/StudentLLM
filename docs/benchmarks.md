@@ -36,6 +36,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | MTEB STSBenchmark v2 | Official public test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STSBenchmark.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | Spearman main score 0.857289 |
 | MTEB STS22 v2 | Official public multilingual test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | 18 subsets, unweighted descriptive macro-average 0.469262; language spread 0.181685-0.740204 |
 | ARC-Challenge | Complete public ARC-Challenge test split through the official generation-compatible chat task | `benchmarks/run_arc.py` with `arc_challenge_chat` and NVIDIA NIM | Exact match 0.8473 (993/1,172), stderr 0.0105; no empty responses |
+| IFEval | Complete public instruction-following task through the official generation harness | `python -m lm_eval run` with `ifeval` and NVIDIA NIM | Prompt strict 0.7024; instruction strict 0.7878; prompt loose 0.7412; instruction loose 0.8177 |
 | BFCL V4 through LM Studio | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | `simple_python`: 1.0000 (20/20); `multiple`: 0.9500 (19/20); `parallel_multiple`: 0.8500 (17/20); `irrelevance`: 1.0000 (20/20); `multi_turn_base`: 0.3000 (6/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1500 (3/20); partial category samples |
 | BFCL V4 through NVIDIA NIM | Official generator and evaluator through the OpenAI-compatible NVIDIA endpoint | `benchmarks/run_bfcl_openai_compatible.py --category <category> --model openai/gpt-oss-20b --base-url https://integrate.api.nvidia.com/v1` | `simple_python`: 0.4500 (9/20); `multiple`: 0.0500 (1/20); `parallel_multiple`: 0.0000 (0/20); `multi_turn_base`: 0.2500 (5/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1000 (2/20); `multi_turn_long_context`: 0.1500 (3/20); partial category samples |
 
@@ -264,6 +265,39 @@ $env:PYTHONUTF8 = '1'
 ```
 
 The aggregate receipt is `artifacts/benchmarks/arc-challenge/gpt-oss-20b-nvidia-full_2026-08-28T08-03-59.129683.json`, with the 1,172 logged samples in the matching `samples_arc_challenge_chat_2026-08-28T08-03-59.129683.jsonl` file. This is a complete single-task public result, not a full general-reasoning evaluation or a global model ranking.
+
+## Observed public result: IFEval
+
+The official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) evaluated the public [Google IFEval](https://github.com/google-research/google-research/tree/master/ifeval) task through the OpenAI-compatible NVIDIA NIM endpoint. The run used `openai/gpt-oss-20b`, the Windows User `NVIDIA_API_KEY` environment variable, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=1280`, `reasoning_effort=low`, four concurrent requests, and the harness's official strict and loose instruction-following metrics. The harness version was `0.4.12` and the task version was `4`.
+
+Install the pinned IFEval environment:
+
+```powershell
+& .\.venv-bench\Scripts\python.exe -m pip install -r requirements-ifeval.txt
+```
+
+Reproduce the observed complete public task run with the official harness directly:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe -m lm_eval run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=4,max_retries=3" `
+  --tasks ifeval `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=1280,reasoning_effort=low,until=None" `
+  --seed 42 `
+  --output_path artifacts/benchmarks/ifeval/gpt-oss-20b-nvidia-full.json `
+  --log_samples
+```
+
+| Run | Public scope | Result | Validity |
+| --- | --- | --- | --- |
+| 2026-08-28 | Official `google/IFEval` task, 541 public prompts | Prompt strict `0.7024` (stderr `0.0197`); instruction strict `0.7878`; prompt loose `0.7412` (stderr `0.0188`); instruction loose `0.8177` | Complete public task; four empty provider responses were retained by the harness and included in the metrics |
+
+The aggregate receipt is `artifacts/benchmarks/ifeval/gpt-oss-20b-nvidia-full_2026-08-28T08-34-22.627222.json`, with 541 logged samples in the matching `samples_ifeval_2026-08-28T08-34-22.627222.jsonl` file. The receipt records `sample_len=541`; the terminal run completed in approximately 1,126 seconds. This is complete single-task instruction-following evidence, not a general model ranking.
 
 ## Observed public result: BFCL tool calling
 
