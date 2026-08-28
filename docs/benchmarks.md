@@ -38,6 +38,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | ARC-Challenge | Complete public ARC-Challenge test split through the official generation-compatible chat task | `benchmarks/run_arc.py` with `arc_challenge_chat` and NVIDIA NIM | Exact match 0.8473 (993/1,172), stderr 0.0105; no empty responses |
 | IFEval | Complete public instruction-following task through the official generation harness | `python -m lm_eval run` with `ifeval` and NVIDIA NIM | Prompt strict 0.7024; instruction strict 0.7878; prompt loose 0.7412; instruction loose 0.8177 |
 | BIG-Bench Hard zero-shot suite | Official public `bbh_zeroshot` group, 27 task configurations, 6,511 cases through NVIDIA NIM | `python -m lm_eval run` with `bbh_zeroshot` and the OpenAI-compatible NVIDIA endpoint | Flexible-extract exact match 0.7474 (4,866/6,511), stderr 0.0047; 152 empty provider responses retained |
+| HumanEval | Complete public `openai/openai_humaneval` test split, 164 problems through NVIDIA NIM with the official Linux code evaluator | `benchmarks/run_humaneval_wsl.sh` with `humaneval` and `humaneval_instruct` | Official `pass@1` 0.0000 on both tasks; all 164 responses in each run were non-empty, but leading explanations and fenced code were incompatible with the official code-only filters |
 | BFCL V4 through LM Studio | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | `simple_python`: 1.0000 (20/20); `multiple`: 0.9500 (19/20); `parallel_multiple`: 0.8500 (17/20); `irrelevance`: 1.0000 (20/20); `multi_turn_base`: 0.3000 (6/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1500 (3/20); partial category samples |
 | BFCL V4 through NVIDIA NIM | Official generator and evaluator through the OpenAI-compatible NVIDIA endpoint | `benchmarks/run_bfcl_openai_compatible.py --category <category> --model openai/gpt-oss-20b --base-url https://integrate.api.nvidia.com/v1` | `simple_python`: 0.4500 (9/20); `multiple`: 0.0500 (1/20); `parallel_multiple`: 0.0000 (0/20); `multi_turn_base`: 0.2500 (5/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1000 (2/20); `multi_turn_long_context`: 0.1500 (3/20); partial category samples |
 
@@ -355,6 +356,24 @@ $env:PYTHONUTF8 = '1'
 | 2026-08-28 | Official `google/IFEval` task, 541 public prompts | Prompt strict `0.7024` (stderr `0.0197`); instruction strict `0.7878`; prompt loose `0.7412` (stderr `0.0188`); instruction loose `0.8177` | Complete public task; four empty provider responses were retained by the harness and included in the metrics |
 
 The aggregate receipt is `artifacts/benchmarks/ifeval/gpt-oss-20b-nvidia-full_2026-08-28T08-34-22.627222.json`, with 541 logged samples in the matching `samples_ifeval_2026-08-28T08-34-22.627222.jsonl` file. The receipt records `sample_len=541`; the terminal run completed in approximately 1,126 seconds. This is complete single-task instruction-following evidence, not a general model ranking.
+
+## Observed public result: HumanEval
+
+The official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) evaluated the public [OpenAI HumanEval](https://huggingface.co/datasets/openai/openai_humaneval) test split through the OpenAI-compatible NVIDIA NIM endpoint. The runs used `openai/gpt-oss-20b`, the Windows User `NVIDIA_API_KEY` environment variable, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=1024`, `reasoning_effort=low`, four concurrent requests, and `until=None`. The harness version was `0.4.12`. Generation and the official `code_eval` scorer ran inside Ubuntu WSL because the evaluator requires Linux Python test-process support.
+
+The reproducible runner creates or reuses a dedicated WSL environment, retrieves the Windows User environment value at run time, enables the official code-execution evaluation flag, and writes timestamped receipts under `artifacts/benchmarks/humaneval/`:
+
+```powershell
+wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks/run_humaneval_wsl.sh
+wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks/run_humaneval_wsl.sh --task humaneval
+```
+
+| Task | Public scope | Official result | Validity and finding |
+| --- | --- | --- | --- |
+| `humaneval_instruct` | `openai/openai_humaneval` test split, 164 problems | `pass@1` `0.0000` (0/164) | Complete public task; `sample_len=164`; zero empty responses; the generated answer began with explanation text and a fenced Python block |
+| `humaneval` | `openai/openai_humaneval` test split, 164 problems | `pass@1` `0.0000` (0/164) | Complete public task; `sample_len=164`; zero empty responses; the standard continuation filter received the same explanation-first output format |
+
+The observed zero scores are an official benchmark result and a format-compatibility finding. The model returned non-empty answers, but the official HumanEval filters expect a code continuation and do not remove leading explanatory prose before executing the candidate. The receipts are `artifacts/benchmarks/humaneval/gpt-oss-20b-nvidia-full_2026-08-28T16-18-19.855155.json` and `artifacts/benchmarks/humaneval/gpt-oss-20b-nvidia-humaneval-full_2026-08-28T16-27-25.975587.json`, with matching per-sample JSONL files. These results do not establish Python algorithm quality under a code-normalizing protocol; the next code-generation pass should test an explicit code-only output contract with an independent public evaluator.
 
 ## Observed public result: BFCL tool calling
 
