@@ -12,7 +12,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | Browser accessibility | Playwright plus axe | No serious or critical violations observed; mobile overflow and navigation regressions pass |
 | Local persistence | Vitest and Playwright | Course isolation, reload recovery, corrupted export rejection, source blob fidelity, audio recovery, and deletion flows pass |
 | LM Studio integration | Historical live provider smoke and browser chat | Last live check passed on 2026-08-27; latest audit found no listener on `127.0.0.1:1234`, so no new local benchmark is recorded |
-| NVIDIA integration | Live provider smoke and official BFCL samples | NIM request passes using the Windows User `NVIDIA_API_KEY` environment variable; six BFCL public category samples completed |
+| NVIDIA integration | Live provider smoke and official BFCL samples | NIM request passes using the Windows User `NVIDIA_API_KEY` environment variable; seven BFCL public category samples completed |
 | Local speech pipeline | Public FLEURS sample, sidecar, and browser recording | Timestamped transcription and review-segment rendering pass |
 | Local document pipeline | Public arXiv PDF, sidecar, and browser import | 15/15 pages indexed and page-level review content rendered |
 
@@ -26,7 +26,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | BEIR retrieval | Complete public test splits for SciFact, NFCorpus, ArguAna, SCIDOCS, FiQA, and TREC-COVID | BM25 and dense receipts plus comparisons recorded in [`benchmarks.md`](./benchmarks.md) |
 | MTEB | Complete public STSBenchmark v2 and STS22 v2 tasks | Spearman and per-subset results recorded in [`benchmarks.md`](./benchmarks.md) |
 | BFCL V4 through LM Studio | Seven public categories, 20 cases per category | Official category scores recorded; multi-turn negative cases expose format compatibility failures |
-| BFCL V4 through NVIDIA NIM | Six public categories, 20 cases per category, `openai/gpt-oss-20b` | `simple_python` 45.00%; `multiple` 5.00%; `parallel_multiple` 0.00%; `multi_turn_base` 25.00%; `multi_turn_miss_func` 15.00%; `multi_turn_miss_param` 10.00%; partial samples |
+| BFCL V4 through NVIDIA NIM | Seven public categories, 20 cases per category, `openai/gpt-oss-20b` | `simple_python` 45.00%; `multiple` 5.00%; `parallel_multiple` 0.00%; `multi_turn_base` 25.00%; `multi_turn_miss_func` 15.00%; `multi_turn_miss_param` 10.00%; `multi_turn_long_context` 15.00%; partial samples |
 | MMLU-Pro | Public 140-item samples across all 14 categories through LM Studio and NVIDIA NIM | LM Studio `21.43%`; NVIDIA `28.57%`; partial samples, not leaderboard scores |
 | DocVQA | Public 100-image OCR extractability diagnostic | Normalized answer visibility 86.00%; not official ANLS |
 
@@ -52,4 +52,4 @@ The current Hugging Face `mozilla-foundation/common_voice_17_0` repository probe
 
 ## Delivery state
 
-Changes are delivered through short-lived branches and pull requests into `main`. Recent verified deliveries include PR [#80](https://github.com/Shoko-official/StudentLLM/pull/80) for the NVIDIA MMLU-Pro evaluation, PR [#81](https://github.com/Shoko-official/StudentLLM/pull/81) for TREC-COVID retrieval coverage, and PR [#82](https://github.com/Shoko-official/StudentLLM/pull/82) for NVIDIA BFCL coverage. Their PR checks and post-merge GitHub Actions runs passed, and the temporary branches were deleted.
+Changes are delivered through short-lived branches and pull requests into `main`. Recent verified deliveries include PR [#80](https://github.com/Shoko-official/StudentLLM/pull/80) for the NVIDIA MMLU-Pro evaluation, PR [#81](https://github.com/Shoko-official/StudentLLM/pull/81) for TREC-COVID retrieval coverage, PR [#82](https://github.com/Shoko-official/StudentLLM/pull/82) for NVIDIA BFCL coverage, PR [#83](https://github.com/Shoko-official/StudentLLM/pull/83) for status history, and PR [#84](https://github.com/Shoko-official/StudentLLM/pull/84) for bounded BFCL provider requests. Their PR checks and post-merge GitHub Actions runs passed, and the temporary branches were deleted.
