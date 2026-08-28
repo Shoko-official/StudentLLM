@@ -81,7 +81,8 @@ The official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm
 
 | Run | Public scope | Result | Validity |
 | --- | --- | --- | --- |
-| 2026-08-28 | One official BBH task, 250 public cases | Flexible-extract exact match `0.5920` (148/250), stderr `0.0311` | Complete task sample; 1,335.02 s evaluation time; partial BBH evidence |
+| 2026-08-28 | `bbh_zeroshot_logical_deduction_seven_objects`, 250 public cases | Flexible-extract exact match `0.5920` (148/250), stderr `0.0311` | Complete task sample; 1,335.02 s evaluation time; partial BBH evidence |
+| 2026-08-28 | `bbh_zeroshot_multistep_arithmetic_two`, 250 public cases | Flexible-extract exact match `0.9640` (241/250), stderr `0.0118`; strict-match `0.6480` (162/250), stderr `0.0303` | Complete task sample; 362.54 s evaluation time; partial BBH evidence |
 
 Reproduce the observed run with:
 
@@ -101,6 +102,15 @@ $env:PYTHONUTF8 = '1'
 ```
 
 The aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-logical-deduction-seven-objects_2026-08-28T04-09-12.159146.json`. The official flexible-extract metric is reported because the task's strict-match filter produced no matches under this harness configuration. This is one complete public BBH task, not a full BBH suite or a global model ranking.
+
+The arithmetic task uses the same environment, model arguments, and generation settings; change the task and output path to:
+
+```text
+--tasks bbh_zeroshot_multistep_arithmetic_two
+--output_path artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-multistep-arithmetic-two.json
+```
+
+Its aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-multistep-arithmetic-two_2026-08-28T04-24-52.265096.json`. Together these are two complete public task samples, not a full BBH suite or a global model ranking.
 
 ## Observed public result: BFCL tool calling
 
