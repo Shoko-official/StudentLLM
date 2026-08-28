@@ -536,6 +536,8 @@ $env:PYTHONUTF8 = '1'
   --allow-overwrite
 ```
 
+For the complete `live_irrelevance` category, use `--start 0 --limit 884 --num-threads 8` and an isolated project root. The 884-case NVIDIA run completed with official BFCL irrelevance detection accuracy `81.90%` (724/884); the result and score files are retained locally under `artifacts\benchmarks\bfcl-nvidia-live-irrelevance-full`.
+
 `--limit 20` selects the first 20 public entries for the requested category using the IDs stored in the official BFCL dataset. Live and multi-turn categories use compound IDs from that dataset rather than synthetic `category_index` IDs. It is a reproducible category sample, not a full BFCL leaderboard run. Use a separate `--project-root` for each category so raw generations and scorer output remain isolated.
 
 The wrapper bounds each provider request to 120 seconds by default. This keeps a stalled OpenAI-compatible request from holding a multi-turn run indefinitely; the value can be changed with `--request-timeout` when a provider needs a different limit.
