@@ -195,6 +195,16 @@ wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks
 
 The complete run evaluated 164 unique public tasks. Official EvalPlus returned base `pass@1` `0.8963` (147/164) and HumanEval+ `pass@1` `0.8232` (135/164). `evalplus.syncheck` found one non-compilable sanitised sample, which remained a scored failure. The result file is `artifacts/benchmarks/humaneval-plus-code-only/samples_humaneval_evalplus_eval_results.json`; sanitised and raw samples are stored beside it as `samples_humaneval_evalplus.jsonl` and `samples_humaneval_evalplus.raw.jsonl`.
 
+## MBPP+ through EvalPlus and NVIDIA NIM
+
+The same official [EvalPlus](https://github.com/evalplus/evalplus) evaluator supports the public MBPP+ task set. Pass `--dataset mbpp` to the WSL runner to select the 378-task MBPP+ dataset; the runner reuses the pinned EvalPlus `0.3.1` environment, the OpenAI-compatible NVIDIA endpoint, greedy decoding, and the code-only instruction prompt.
+
+```powershell
+wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks/run_evalplus_wsl.sh --dataset mbpp
+```
+
+The complete run evaluated 378 unique public tasks. Official EvalPlus returned MBPP base `pass@1` `0.8571` (324/378) and MBPP+ `pass@1` `0.6852` (259/378). `evalplus.syncheck` found three non-compilable sanitised samples (`Mbpp/430`, `Mbpp/462`, and `Mbpp/581`), which remained scored failures. The result file is `artifacts/benchmarks/mbpp-plus-code-only/samples_mbpp_evalplus_eval_results.json`; sanitised and raw samples are stored beside it as `samples_mbpp_evalplus.jsonl` and `samples_mbpp_evalplus.raw.jsonl`.
+
 ## HumanEval through NVIDIA NIM
 
 The official [HumanEval](https://huggingface.co/datasets/openai/openai_humaneval) task can be run through NVIDIA NIM with the official Linux `code_eval` scorer. Windows cannot provide the evaluator's Linux Python test-process runtime, so use the WSL runner from the repository root. It creates or reuses `/root/studentllm-human-eval`, retrieves `NVIDIA_API_KEY` from the Windows User environment at run time, and does not store the credential in the repository.

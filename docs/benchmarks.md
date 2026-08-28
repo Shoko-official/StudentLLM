@@ -40,6 +40,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | BIG-Bench Hard zero-shot suite | Official public `bbh_zeroshot` group, 27 task configurations, 6,511 cases through NVIDIA NIM | `python -m lm_eval run` with `bbh_zeroshot` and the OpenAI-compatible NVIDIA endpoint | Flexible-extract exact match 0.7474 (4,866/6,511), stderr 0.0047; 152 empty provider responses retained |
 | HumanEval | Complete public `openai/openai_humaneval` test split, 164 problems through NVIDIA NIM with the official Linux code evaluator | `benchmarks/run_humaneval_wsl.sh` with `humaneval` and `humaneval_instruct` | Official `pass@1` 0.0000 on both tasks; all 164 responses in each run were non-empty, but leading explanations and fenced code were incompatible with the official code-only filters |
 | HumanEval+ | Complete public 164-problem HumanEval+ evaluation through the official EvalPlus evaluator | `benchmarks/run_evalplus_wsl.sh` with a code-only prompt and NVIDIA NIM | Base `pass@1` 0.8963 (147/164); HumanEval+ `pass@1` 0.8232 (135/164); one sanitised sample was not compilable and remained a scored failure |
+| MBPP+ | Complete public 378-problem MBPP+ evaluation through the official EvalPlus evaluator | `benchmarks/run_evalplus_wsl.sh --dataset mbpp` with a code-only prompt and NVIDIA NIM | MBPP base `pass@1` 0.8571 (324/378); MBPP+ `pass@1` 0.6852 (259/378); three sanitised samples were not compilable and remained scored failures |
 | BFCL V4 through LM Studio | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | `simple_python`: 1.0000 (20/20); `multiple`: 0.9500 (19/20); `parallel_multiple`: 0.8500 (17/20); `irrelevance`: 1.0000 (20/20); `multi_turn_base`: 0.3000 (6/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1500 (3/20); partial category samples |
 | BFCL V4 through NVIDIA NIM | Official generator and evaluator through the OpenAI-compatible NVIDIA endpoint | `benchmarks/run_bfcl_openai_compatible.py --category <category> --model openai/gpt-oss-20b --base-url https://integrate.api.nvidia.com/v1` | `simple_python`: 0.4500 (9/20); `multiple`: 0.0500 (1/20); `parallel_multiple`: 0.0000 (0/20); `multi_turn_base`: 0.2500 (5/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1000 (2/20); `multi_turn_long_context`: 0.1500 (3/20); partial category samples |
 
@@ -392,6 +393,23 @@ wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks
 | HumanEval+ base plus extra tests | 164 HumanEval+ tasks, original plus extended public tests | `pass@1` `0.8232` (135/164) | Complete public extended evaluation; greedy one-sample evaluation |
 
 The EvalPlus sample file contains 164 unique task IDs and no empty solutions. The official `evalplus.syncheck` pass found one non-compilable sanitised sample, `HumanEval/118`; the official evaluator included it as a failure. The scorer receipt is `artifacts/benchmarks/humaneval-plus-code-only/samples_humaneval_evalplus_eval_results.json`, with the sanitised samples in `samples_humaneval_evalplus.jsonl` and raw provider captures in `samples_humaneval_evalplus.raw.jsonl`. These are complete public code-correctness results for this model and protocol, not a general coding leaderboard claim.
+
+## Observed public result: MBPP+ through EvalPlus
+
+The public [EvalPlus](https://github.com/evalplus/evalplus) framework evaluated the MBPP+ dataset through the OpenAI-compatible NVIDIA NIM endpoint. The run used EvalPlus `0.3.1`, `openai/gpt-oss-20b`, the Windows User `NVIDIA_API_KEY` environment variable, the official EvalPlus code-generation prompt, greedy decoding, `temperature=0`, `reasoning_effort=low`, and one solution per task. Generation and official evaluation ran inside Ubuntu WSL.
+
+The generalized runner selects the public dataset explicitly and resumes from the existing JSONL sample file:
+
+```powershell
+wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks/run_evalplus_wsl.sh --dataset mbpp
+```
+
+| Evaluation | Public scope | Official result | Validity |
+| --- | --- | --- | --- |
+| MBPP base tests | 378 MBPP+ tasks, original public tests | `pass@1` `0.8571` (324/378) | Complete public task; greedy one-sample evaluation |
+| MBPP+ base plus extra tests | 378 MBPP+ tasks, original plus extended public tests | `pass@1` `0.6852` (259/378) | Complete public extended evaluation; greedy one-sample evaluation |
+
+The sample and result files contain 378 unique task IDs, with no duplicates, empty solutions, or empty raw provider contents. The official `evalplus.syncheck` pass found three non-compilable sanitised samples: `Mbpp/430`, `Mbpp/462`, and `Mbpp/581`; the official evaluator included them as failures. The dataset hash was `ee43ecabebf20deef4bb776a405ac5b1`. The scorer receipt is `artifacts/benchmarks/mbpp-plus-code-only/samples_mbpp_evalplus_eval_results.json`, with sanitised samples in `samples_mbpp_evalplus.jsonl` and raw provider captures in `samples_mbpp_evalplus.raw.jsonl`. The recorded SHA-256 values are `C6F84EBC76211583E41C1834AE693F6D4752040942DC6D70364F9979A7F910AF` for the sanitised samples, `BDC0EFBCF6055394604AA6EF1B9F8B478DD2AA289C0EB54122D885A4E154342F` for the raw samples, and `5678713FD2DC9914CF98BFCC97467828219EC53BED51B67BF18E5D90481FD491` for the scorer receipt. This is complete public code-correctness evidence for the stated model and protocol, not a general coding leaderboard claim.
 
 ## Observed public result: BFCL tool calling
 

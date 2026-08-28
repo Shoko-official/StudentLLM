@@ -8,7 +8,7 @@ import os
 import time
 from pathlib import Path
 
-from evalplus.data import get_human_eval_plus
+from evalplus.data import get_human_eval_plus, get_mbpp_plus
 from evalplus.sanitize import sanitize
 from openai import APIConnectionError, APIError, OpenAI, RateLimitError
 
@@ -23,6 +23,7 @@ BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset", choices=("humaneval", "mbpp"), default="humaneval")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--raw-output", type=Path, required=True)
     parser.add_argument("--model", default=MODEL)
@@ -83,7 +84,10 @@ def main() -> None:
     if not api_key:
         raise SystemExit("OPENAI_API_KEY is not available in the environment.")
 
-    dataset = list(get_human_eval_plus().items())
+    if args.dataset == "humaneval":
+        dataset = list(get_human_eval_plus().items())
+    else:
+        dataset = list(get_mbpp_plus().items())
     if args.limit is not None:
         if args.limit < 1:
             raise SystemExit("--limit must be positive")
