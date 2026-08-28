@@ -24,8 +24,8 @@ Regression checks complement the public benchmark results below. Each reported s
 | Local document browser import | Playwright UI plus the running PyMuPDF sidecar and public arXiv PDF | Manual live UI check | PASS observed on 2026-08-27; source stored, 15 pages indexed, `Page 1` visible, 0 page errors |
 | DocVQA OCR diagnostic | Public DocVQA validation images plus RapidOCR | `benchmarks/run_docvqa_ocr.py --split validation --limit 100` | Normalized reference-answer visibility `0.8600` on 100 samples; partial diagnostic |
 | RAG unanswerable guard | Provider call suppression with no retrieved passage | App integration test | PASS; unsupported questions return a refusal without a provider request |
-| NVIDIA generation | Live API, runtime credential from the Windows User environment | `npm run providers:smoke` | PASS observed on 2026-08-27, 1,260 ms |
-| LM Studio generation | Live local server, existing process | `npm run providers:smoke` | PASS observed on 2026-08-27, 310 ms |
+| NVIDIA generation | Live API, runtime credential from the Windows User environment | `npm run providers:smoke` | PASS observed on 2026-08-29, 1,207 ms |
+| LM Studio generation | Live local server, existing process | `npm run providers:smoke` | PASS observed on 2026-08-29, 61,841 ms with `openai/gpt-oss-20b`; the existing model process was not restarted |
 | LM Studio browser chat | Playwright UI path through the built-in Vite same-origin proxy to the existing process | Manual live UI check | PASS observed on 2026-08-27; 4 chat messages, 423-character model answer, transcript citations, 0 page errors |
 | BEIR SciFact retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset scifact` | nDCG@10 0.6593, Recall@10 0.7809, MRR@10 0.6252 |
 | BEIR NFCorpus retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset nfcorpus` | nDCG@10 0.3037, Recall@10 0.1423, MRR@10 0.5137 |
