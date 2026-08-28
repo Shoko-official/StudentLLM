@@ -13,7 +13,7 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -26,6 +26,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: Install desktop build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies
         run: npm ci
       - name: Typecheck
@@ -36,6 +40,8 @@ jobs:
         run: npm run test:run
       - name: Production build
         run: npm run build
+      - name: Desktop shell check
+        run: npm run desktop:check
 
   e2e:
     runs-on: ubuntu-latest
