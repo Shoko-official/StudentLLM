@@ -536,7 +536,7 @@ $env:PYTHONUTF8 = '1'
   --allow-overwrite
 ```
 
-`--limit 20` selects public IDs `0` through `19` for the requested category. It is a reproducible category sample, not a full BFCL leaderboard run. Use a separate `--project-root` for each category so raw generations and scorer output remain isolated.
+`--limit 20` selects the first 20 public entries for the requested category using the IDs stored in the official BFCL dataset. Live and multi-turn categories use compound IDs from that dataset rather than synthetic `category_index` IDs. It is a reproducible category sample, not a full BFCL leaderboard run. Use a separate `--project-root` for each category so raw generations and scorer output remain isolated.
 
 The wrapper bounds each provider request to 120 seconds by default. This keeps a stalled OpenAI-compatible request from holding a multi-turn run indefinitely; the value can be changed with `--request-timeout` when a provider needs a different limit.
 
@@ -550,9 +550,10 @@ The observed NVIDIA NIM runs on 2026-08-28 used `openai/gpt-oss-20b`, `temperatu
 | `multiple` | 20 | `5.00%` (1/20) | Mean `2.175 s`, p95 `11.156 s`, max `16.268 s` |
 | `parallel` | 20 | `0.00%` (0/20) | Mean `3.212 s`, p95 `6.790 s` |
 | `parallel_multiple` | 20 | `0.00%` (0/20) | Mean `1.352 s`, p95 `2.370 s`, max `2.569 s` |
+| `live_simple` | 20 | `85.00%` (17/20) | Mean `0.813 s` |
 | `multi_turn_base` | 20 | `25.00%` (5/20) | 366 requests, mean `2.042 s`, p95 `3.769 s`, max `81.768 s` |
 | `multi_turn_miss_func` | 20 | `15.00%` (3/20) | 389 requests, mean `3.055 s`, p95 `5.703 s`, max `173.977 s` |
 | `multi_turn_miss_param` | 20 | `10.00%` (2/20) | 325 requests, mean `2.000 s`, p95 `4.392 s`, max `123.501 s` |
 | `multi_turn_long_context` | 20 | `15.00%` (3/20) | 345 requests, mean `1.852 s`, p95 `4.311 s`, max `33.633 s` |
 
-These are official category scores on public samples, not global BFCL scores. The `simple_java`, `simple_javascript`, and `parallel` runs used isolated ignored roots and produced 20 unique public result rows each; the JavaScript run retained three empty result arrays. The multi-turn runs produced empty responses, malformed tool calls, failed decodes, and non-exploitable provider responses during generation; the failures remain in the local ignored result and score directories. An initial legacy NVIDIA handler attempt returned an HTTP 404 before scoring and is not counted as a benchmark result.
+These are official category scores on public samples, not global BFCL scores. The `simple_java`, `simple_javascript`, and `parallel` runs used isolated ignored roots and produced 20 unique public result rows each; the JavaScript run retained three empty result arrays. The corrected `live_simple` run selected the official compound IDs and produced 20 unique rows with no empty result arrays. The multi-turn runs produced empty responses, malformed tool calls, failed decodes, and non-exploitable provider responses during generation; the failures remain in the local ignored result and score directories. An initial legacy NVIDIA handler attempt returned an HTTP 404 before scoring and is not counted as a benchmark result.
