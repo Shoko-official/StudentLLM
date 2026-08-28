@@ -255,7 +255,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         event.preventDefault();
         setShowNewCourse(true);
       }
-      if (event.key === 'Escape') setShowNewCourse(false);
+      if (event.key === 'Escape') {
+        setShowNewCourse(false);
+        setShowDeleteCourse(false);
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
