@@ -85,6 +85,7 @@ The official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm
 | 2026-08-28 | `bbh_zeroshot_multistep_arithmetic_two`, 250 public cases | Flexible-extract exact match `0.9640` (241/250), stderr `0.0118`; strict-match `0.6480` (162/250), stderr `0.0303` | Complete task sample; 362.54 s evaluation time; partial BBH evidence |
 | 2026-08-28 | `bbh_zeroshot_tracking_shuffled_objects_seven_objects`, 250 public cases | Flexible-extract exact match `0.8520` (213/250), stderr `0.0225`; strict-match `0.0000` (0/250) | Complete task sample; 884.61 s evaluation time; partial BBH evidence |
 | 2026-08-28 | `bbh_zeroshot_dyck_languages`, 250 public cases | Flexible-extract exact match `0.0360` (9/250), stderr `0.0118`; strict-match `0.0320` (8/250), stderr `0.0112` | Complete task sample; 776.45 s evaluation time; partial BBH evidence |
+| 2026-08-28 | `bbh_zeroshot_reasoning_about_colored_objects`, 250 public cases | Flexible-extract exact match `0.4880` (122/250), stderr `0.0317`; strict-match `0.0000` (0/250) | Complete task sample; 294.17 s evaluation time; partial BBH evidence |
 
 Reproduce the observed run with:
 
@@ -131,6 +132,15 @@ The Dyck-language task uses the same environment, model arguments, and generatio
 ```
 
 Its aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-dyck-languages_2026-08-28T05-02-55.787704.json`. Unlike the tracking task, both filters returned non-zero results, and both remain very low. The four task samples are not a full BBH suite or a global model ranking.
+
+The colored-objects task uses the same environment, model arguments, and generation settings; change the task and output path to:
+
+```text
+--tasks bbh_zeroshot_reasoning_about_colored_objects
+--output_path artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-reasoning-colored-objects.json
+```
+
+Its aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-reasoning-colored-objects_2026-08-28T05-12-54.724570.json`. The flexible-extract filter is the useful reported metric for this task; strict-match returned no matches under this harness configuration. The five task samples are not a full BBH suite or a global model ranking.
 
 ## Observed public result: BFCL tool calling
 
