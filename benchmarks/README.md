@@ -147,7 +147,7 @@ The first August 27, 2026 NVIDIA run timed out after retries before producing a 
 
 ## BIG-Bench Hard through NVIDIA NIM
 
-The same official `lm-evaluation-harness` adapter can run public [BIG-Bench Hard](https://github.com/suzgunmirac/BIG-Bench-Hard) tasks through NVIDIA NIM. The observed runs completed all 250 public cases for `bbh_zeroshot_logical_deduction_seven_objects`, `bbh_zeroshot_multistep_arithmetic_two`, `bbh_zeroshot_tracking_shuffled_objects_seven_objects`, `bbh_zeroshot_dyck_languages`, and `bbh_zeroshot_reasoning_about_colored_objects` with `openai/gpt-oss-20b`, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=512`, and `reasoning_effort=low`:
+The same official `lm-evaluation-harness` adapter can run public [BIG-Bench Hard](https://github.com/suzgunmirac/BIG-Bench-Hard) tasks through NVIDIA NIM. The observed partial runs completed all 250 public cases for five task configurations with `openai/gpt-oss-20b`, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=512`, and `reasoning_effort=low`:
 
 ```powershell
 $env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
@@ -165,6 +165,25 @@ $env:PYTHONUTF8 = '1'
 ```
 
 The observed logical-deduction score was flexible-extract exact match `0.5920` (148/250, stderr `0.0311`) in `1,335.02 s`. The arithmetic score was flexible-extract exact match `0.9640` (241/250, stderr `0.0118`) and strict-match `0.6480` (162/250, stderr `0.0303`) in `362.54 s`. The tracking score was flexible-extract exact match `0.8520` (213/250, stderr `0.0225`) in `884.61 s`; strict-match returned `0.0000`. The Dyck-language score was flexible-extract exact match `0.0360` (9/250, stderr `0.0118`) and strict-match `0.0320` (8/250, stderr `0.0112`) in `776.45 s`. The colored-objects score was flexible-extract exact match `0.4880` (122/250, stderr `0.0317`) in `294.17 s`; strict-match returned `0.0000`. The aggregate receipts are `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-logical-deduction-seven-objects_2026-08-28T04-09-12.159146.json`, `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-multistep-arithmetic-two_2026-08-28T04-24-52.265096.json`, `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-tracking-shuffled-objects-seven_2026-08-28T04-44-38.193434.json`, `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-dyck-languages_2026-08-28T05-02-55.787704.json`, and `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-reasoning-colored-objects_2026-08-28T05-12-54.724570.json`. These are complete public samples for five official BBH tasks, not a full BBH result or a leaderboard claim.
+
+The complete official `bbh_zeroshot` group was then evaluated through the same endpoint with four concurrent requests and `until=None`. The installed official harness enumerated 27 task configurations and 6,511 public cases. The aggregate flexible-extract exact match was `0.7474` (4,866/6,511, stderr `0.0047`). The receipt retained 152 empty provider responses and no malformed sample rows. The detailed per-task table, exact command, and timestamped receipt paths are maintained in [`docs/benchmarks.md`](../docs/benchmarks.md).
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe -m lm_eval run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=4,max_retries=3" `
+  --tasks bbh_zeroshot `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=512,reasoning_effort=low,until=None" `
+  --seed 42 `
+  --output_path artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-full.json `
+  --log_samples
+```
+
+The aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-full_2026-08-28T10-16-27.620727.json`. `lm-eval` writes one sample file per task and one row per metric filter, so the 13,022 raw filter rows represent 6,511 unique public cases.
 
 ## GSM8K through NVIDIA NIM
 

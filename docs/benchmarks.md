@@ -4,7 +4,7 @@
 
 A passing UI test demonstrates an interface workflow. It does not measure ASR, OCR, retrieval, or generation quality. StudentLLM records the dataset, model version, hardware, quantization, seed, command, raw output, and validity of every published result.
 
-Easy or self-authored checks are useful for regression coverage but are never the only evidence for a frontier claim.
+Regression checks complement the public benchmark results below. Each reported score identifies its dataset, split, model configuration, and evaluation scope.
 
 ## Available local checks
 
@@ -37,6 +37,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | MTEB STS22 v2 | Official public multilingual test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | 18 subsets, unweighted descriptive macro-average 0.469262; language spread 0.181685-0.740204 |
 | ARC-Challenge | Complete public ARC-Challenge test split through the official generation-compatible chat task | `benchmarks/run_arc.py` with `arc_challenge_chat` and NVIDIA NIM | Exact match 0.8473 (993/1,172), stderr 0.0105; no empty responses |
 | IFEval | Complete public instruction-following task through the official generation harness | `python -m lm_eval run` with `ifeval` and NVIDIA NIM | Prompt strict 0.7024; instruction strict 0.7878; prompt loose 0.7412; instruction loose 0.8177 |
+| BIG-Bench Hard zero-shot suite | Official public `bbh_zeroshot` group, 27 task configurations, 6,511 cases through NVIDIA NIM | `python -m lm_eval run` with `bbh_zeroshot` and the OpenAI-compatible NVIDIA endpoint | Flexible-extract exact match 0.7474 (4,866/6,511), stderr 0.0047; 152 empty provider responses retained |
 | BFCL V4 through LM Studio | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | `simple_python`: 1.0000 (20/20); `multiple`: 0.9500 (19/20); `parallel_multiple`: 0.8500 (17/20); `irrelevance`: 1.0000 (20/20); `multi_turn_base`: 0.3000 (6/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1500 (3/20); partial category samples |
 | BFCL V4 through NVIDIA NIM | Official generator and evaluator through the OpenAI-compatible NVIDIA endpoint | `benchmarks/run_bfcl_openai_compatible.py --category <category> --model openai/gpt-oss-20b --base-url https://integrate.api.nvidia.com/v1` | `simple_python`: 0.4500 (9/20); `multiple`: 0.0500 (1/20); `parallel_multiple`: 0.0000 (0/20); `multi_turn_base`: 0.2500 (5/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1000 (2/20); `multi_turn_long_context`: 0.1500 (3/20); partial category samples |
 
@@ -143,6 +144,62 @@ The colored-objects task uses the same environment, model arguments, and generat
 ```
 
 Its aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-reasoning-colored-objects_2026-08-28T05-12-54.724570.json`. The flexible-extract filter is the useful reported metric for this task; strict-match returned no matches under this harness configuration. The five task samples are not a full BBH suite or a global model ranking.
+
+## Observed public result: complete BIG-Bench Hard zero-shot suite
+
+The official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) evaluated the public [BIG-Bench Hard](https://github.com/suzgunmirac/BIG-Bench-Hard) `bbh_zeroshot` group through the OpenAI-compatible NVIDIA NIM endpoint. The installed official harness enumerated 27 task configurations and 6,511 public cases. The run used `openai/gpt-oss-20b`, the Windows User `NVIDIA_API_KEY` environment variable, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=512`, `reasoning_effort=low`, four concurrent requests, and `until=None`. The harness version was `0.4.12`.
+
+| Task | Cases | Flexible-extract exact match | Strict-match exact match |
+| --- | ---: | ---: | ---: |
+| `boolean_expressions` | 250 | 1.0000 (250/250) | 0.8960 (224/250) |
+| `causal_judgement` | 187 | 0.6257 (117/187) | 0.1604 (30/187) |
+| `date_understanding` | 250 | 0.8440 (211/250) | 0.0000 (0/250) |
+| `disambiguation_qa` | 250 | 0.5480 (137/250) | 0.0000 (0/250) |
+| `dyck_languages` | 250 | 0.0040 (1/250) | 0.0040 (1/250) |
+| `formal_fallacies` | 250 | 0.8640 (216/250) | 0.0000 (0/250) |
+| `geometric_shapes` | 250 | 0.6480 (162/250) | 0.0000 (0/250) |
+| `hyperbaton` | 250 | 0.9240 (231/250) | 0.0000 (0/250) |
+| `logical_deduction_five_objects` | 250 | 0.8160 (204/250) | 0.0000 (0/250) |
+| `logical_deduction_seven_objects` | 250 | 0.6000 (150/250) | 0.0000 (0/250) |
+| `logical_deduction_three_objects` | 250 | 0.9880 (247/250) | 0.0000 (0/250) |
+| `movie_recommendation` | 250 | 0.6400 (160/250) | 0.0000 (0/250) |
+| `multistep_arithmetic_two` | 250 | 0.6280 (157/250) | 0.2320 (58/250) |
+| `navigate` | 250 | 0.9720 (243/250) | 0.6280 (157/250) |
+| `object_counting` | 250 | 0.9680 (242/250) | 0.0000 (0/250) |
+| `penguins_in_a_table` | 146 | 0.9863 (144/146) | 0.0000 (0/146) |
+| `reasoning_about_colored_objects` | 250 | 0.8440 (211/250) | 0.0000 (0/250) |
+| `ruin_names` | 250 | 0.5600 (140/250) | 0.0000 (0/250) |
+| `salient_translation_error_detection` | 250 | 0.6840 (171/250) | 0.0000 (0/250) |
+| `snarks` | 178 | 0.7753 (138/178) | 0.0000 (0/178) |
+| `sports_understanding` | 250 | 0.7240 (181/250) | 0.0000 (0/250) |
+| `temporal_sequences` | 250 | 0.9200 (230/250) | 0.0000 (0/250) |
+| `tracking_shuffled_objects_five_objects` | 250 | 0.8480 (212/250) | 0.0000 (0/250) |
+| `tracking_shuffled_objects_seven_objects` | 250 | 0.6520 (163/250) | 0.0000 (0/250) |
+| `tracking_shuffled_objects_three_objects` | 250 | 0.9440 (236/250) | 0.0000 (0/250) |
+| `web_of_lies` | 250 | 0.8320 (208/250) | 0.0000 (0/250) |
+| `word_sorting` | 250 | 0.4160 (104/250) | 0.0280 (7/250) |
+| **Aggregate** | **6,511** | **0.7474 (4,866/6,511), stderr 0.0047** | - |
+
+The complete group result is a weighted aggregate over the 6,511 public cases. The receipt retained 152 empty provider responses and the official metrics included them as incorrect outputs; no sample rows were malformed. Because `--log_samples` writes one row for each metric filter, the 27 task files contain 13,022 filter rows representing 6,511 unique cases.
+
+Reproduce the observed full-suite run with:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe -m lm_eval run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=4,max_retries=3" `
+  --tasks bbh_zeroshot `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=512,reasoning_effort=low,until=None" `
+  --seed 42 `
+  --output_path artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-full.json `
+  --log_samples
+```
+
+The aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-full_2026-08-28T10-16-27.620727.json`. The matching per-task sample files use the same timestamp. This is complete public BBH evidence for the task group exposed by harness version `0.4.12`, not a global model ranking.
 
 ## Observed public result: GSM8K
 
