@@ -68,6 +68,8 @@
 - complete public GSM8K test split receipt through NVIDIA NIM: flexible-extract exact match `0.8544` (1,127/1,319, stderr `0.0097`) and strict-match `0.0000`;
 - Windows-compatible official MATH task runner and posthoc scorer for `math_verify`, preserving the public task and metrics without nested timeout subprocesses;
 - complete 500-case public MATH-500 receipt through NVIDIA NIM: `math_verify` `0.8220` (411/500, stderr `0.0171`) and legacy `exact_match` `0.0000`;
+- complete public AIME 2024 receipt through NVIDIA NIM: exact match `0.3667` (11/30, stderr `0.0895`);
+- complete public AIME 2025 receipt through NVIDIA NIM: exact match `0.3000` (9/30, stderr `0.0851`);
 - recorded the official GPQA Diamond dataset access finding: the gated `Idavidrein/gpqa` source stopped the task before generation without a configured Hugging Face token;
 - benchmark adapter syntax checks included in the local and GitHub verification gates;
 - NVIDIA NIM and LM Studio OpenAI-compatible smoke checks with runtime credentials;
