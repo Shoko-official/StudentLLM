@@ -210,6 +210,25 @@ $env:PYTHONUTF8 = '1'
 
 The observed full public run evaluated all 500 MATH-500 problems and returned official `math_verify` `0.8220` (411/500, stderr `0.0171`) and official `exact_match` `0.0000` in `2,572.14 s` of generation. The corrected receipt is `artifacts/benchmarks/math500/gpt-oss-20b-nvidia-math-verify-rescored.json`. The first direct harness receipt is retained separately because its Windows timeout path produced invalid zero metrics; it is not used for the reported score. The `math_verify` result is the usable metric for these boxed model answers, while the legacy string extractor returned no matches. This is a complete public single-task result, not a full math suite or a general model ranking.
 
+## AIME 2024 and AIME 2025 through NVIDIA NIM
+
+The official [AIME 2024](https://huggingface.co/datasets/Maxwell-Jia/AIME_2024) and [AIME 2025](https://huggingface.co/datasets/math-ai/aime25) tasks in `lm-evaluation-harness` provide compact, difficult public competition-mathematics evaluations. Each observed run covered all 30 public problems with `openai/gpt-oss-20b`, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=32768`, `reasoning_effort=low`, and one concurrent request through NVIDIA NIM:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe benchmarks\run_mmlu_pro.py run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=1,max_retries=3" `
+  --tasks aime24 `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=32768,reasoning_effort=low" --seed 42 `
+  --output_path artifacts/benchmarks/aime/gpt-oss-20b-nvidia-aime24.json --log_samples
+```
+
+The AIME 2024 receipt returned exact match `0.3667` (11/30, stderr `0.0895`) in `889.95 s`. The AIME 2025 receipt returned exact match `0.3000` (9/30, stderr `0.0851`) in `460.16 s`; change the task and output filename to `aime25` to reproduce it. The aggregate receipts are `artifacts/benchmarks/aime/gpt-oss-20b-nvidia-aime24_2026-08-28T07-20-06.666685.json` and `artifacts/benchmarks/aime/gpt-oss-20b-nvidia-aime25_2026-08-28T07-30-35.078582.json`. These are complete public samples for two years, not a combined leaderboard score or a general model ranking.
+
 ## BEIR BM25 baselines
 
 `run_beir_bm25.py` evaluates complete public SciFact, NFCorpus, ArguAna, FiQA, SCIDOCS, or TREC-COVID test splits with a deterministic BM25 baseline. It loads the corpus, queries, and test relevance judgments from the corresponding [BEIR datasets](https://github.com/beir-cellar/beir/wiki/Datasets-available) and reports nDCG@10, Recall@10, and MRR@10.

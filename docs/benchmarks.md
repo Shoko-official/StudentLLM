@@ -207,6 +207,34 @@ To reproduce the corrected receipt from the completed public generation without 
 
 The corrected receipt is `artifacts/benchmarks/math500/gpt-oss-20b-nvidia-math-verify-rescored.json`; the initial zero-metric diagnostic receipt is `artifacts/benchmarks/math500/gpt-oss-20b-nvidia_2026-08-28T06-51-06.552685.json`. The `math_verify` value is the usable official metric for this run because the model's boxed mathematical answers did not match the task's legacy `Final Answer: The final answer is ...` string extractor. This is a complete single-task result, not a general model ranking or a full benchmark suite result.
 
+## Observed public result: AIME 2024 and AIME 2025
+
+The official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) evaluated the public [AIME 2024](https://huggingface.co/datasets/Maxwell-Jia/AIME_2024) and [AIME 2025](https://huggingface.co/datasets/math-ai/aime25) problem sets through the OpenAI-compatible NVIDIA NIM endpoint. Both runs used `openai/gpt-oss-20b`, the Windows User `NVIDIA_API_KEY` environment variable, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=32768`, `reasoning_effort=low`, and one concurrent request. The harness version was `0.4.12`. Each set contained 30 public problems and had zero empty responses.
+
+| Run | Public scope | Result | Validity |
+| --- | --- | --- | --- |
+| 2026-08-28 | Official `aime24`, 30 public problems | Exact match `0.3667` (11/30), stderr `0.0895` | Complete public year sample; 889.95 s evaluation time |
+| 2026-08-28 | Official `aime25`, 30 public problems | Exact match `0.3000` (9/30), stderr `0.0851` | Complete public year sample; 460.16 s evaluation time |
+
+Reproduce the AIME 2024 run with:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe benchmarks\run_mmlu_pro.py run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=1,max_retries=3" `
+  --tasks aime24 `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=32768,reasoning_effort=low" `
+  --seed 42 `
+  --output_path artifacts/benchmarks/aime/gpt-oss-20b-nvidia-aime24.json `
+  --log_samples
+```
+
+For AIME 2025, change `--tasks aime24` to `--tasks aime25` and change the output filename to `gpt-oss-20b-nvidia-aime25.json`. The aggregate receipts are `artifacts/benchmarks/aime/gpt-oss-20b-nvidia-aime24_2026-08-28T07-20-06.666685.json` and `artifacts/benchmarks/aime/gpt-oss-20b-nvidia-aime25_2026-08-28T07-30-35.078582.json`. These are complete public samples for two AIME years, not a combined leaderboard result or a general model ranking.
+
 ## Observed public result: BFCL tool calling
 
 The official [BFCL evaluator](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-calling-leaderboard) was run against the OpenAI-compatible server that was already running in LM Studio. The BFCL model label was `Qwen/Qwen3-4B-Instruct-2507-FC`; the endpoint selected the existing local Qwen model. No local model process was restarted.
@@ -384,6 +412,7 @@ These are complete public test splits, not sampled benchmarks. The receipts are 
 | Tool calling | [BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html) | tool accuracy, AST validity |
 | General generation | [MMLU-Pro](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro) | exact match by domain |
 | Mathematical reasoning | [MATH-500](https://huggingface.co/datasets/HuggingFaceH4/MATH-500) | exact match, math_verify |
+| Competition mathematics | [AIME 2024 and AIME 2025](https://huggingface.co/datasets/math-ai/aime25) | exact match by year |
 
 The DocVQA adapter reports normalized reference-answer visibility in OCR text. This is a real public-set extractability diagnostic, not the official DocVQA ANLS result, because no question-answering model is included in this baseline.
 
