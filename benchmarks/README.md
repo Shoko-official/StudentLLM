@@ -19,6 +19,30 @@ python benchmarks\run_asr_fleurs.py `
 
 The command above evaluates all 676 examples in the public French test split. A partial run can be requested with `--limit`, but it must be labeled partial in the resulting receipt.
 
+## DROP reading comprehension through NVIDIA NIM
+
+The official `drop` task from `lm-evaluation-harness` evaluates discrete and passage-based reading comprehension with exact-match and token-level F1 scoring. The following run used the public validation split, the NVIDIA NIM OpenAI-compatible endpoint, four concurrent requests, and an explicit 512-example public sample:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+.\.venv-bench\Scripts\python.exe benchmarks\run_mmlu_pro.py run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=4,max_retries=3" `
+  --tasks drop `
+  --limit 512 `
+  --num_fewshot 0 `
+  --batch_size 1 `
+  --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=512,reasoning_effort=low,until=None" `
+  --seed 42 `
+  --output_path artifacts\benchmarks\drop\gpt-oss-20b-nvidia-limit512.json `
+  --log_samples
+```
+
+Observed on 2026-08-28: 512/512 requests completed in `205.12` seconds. Official harness metrics were exact match `0.0020` (1/512) and F1 `0.1109` with stderr `0.0061`. The sample contains 512 unique document IDs, no malformed rows or duplicates, and one empty provider response. This is a partial public sample; the harness warns that `--limit` must not be used to represent a full benchmark score. The receipt and sample JSONL are written under `artifacts\benchmarks\drop` and remain ignored by Git.
+
 ## Generic Hugging Face ASR adapter
 
 `run_asr_hf.py` evaluates a public Hugging Face audio dataset with the same `faster-whisper` scoring path. The dataset must expose an `audio` column and a text reference field. The adapter uses decoded audio bytes when available, records the public split scope, and writes WER, CER, real-time factor, elapsed time, and hardware metadata.
