@@ -39,6 +39,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | IFEval | Complete public instruction-following task through the official generation harness | `python -m lm_eval run` with `ifeval` and NVIDIA NIM | Prompt strict 0.7024; instruction strict 0.7878; prompt loose 0.7412; instruction loose 0.8177 |
 | BIG-Bench Hard zero-shot suite | Official public `bbh_zeroshot` group, 27 task configurations, 6,511 cases through NVIDIA NIM | `python -m lm_eval run` with `bbh_zeroshot` and the OpenAI-compatible NVIDIA endpoint | Flexible-extract exact match 0.7474 (4,866/6,511), stderr 0.0047; 152 empty provider responses retained |
 | HumanEval | Complete public `openai/openai_humaneval` test split, 164 problems through NVIDIA NIM with the official Linux code evaluator | `benchmarks/run_humaneval_wsl.sh` with `humaneval` and `humaneval_instruct` | Official `pass@1` 0.0000 on both tasks; all 164 responses in each run were non-empty, but leading explanations and fenced code were incompatible with the official code-only filters |
+| HumanEval+ | Complete public 164-problem HumanEval+ evaluation through the official EvalPlus evaluator | `benchmarks/run_evalplus_wsl.sh` with a code-only prompt and NVIDIA NIM | Base `pass@1` 0.8963 (147/164); HumanEval+ `pass@1` 0.8232 (135/164); one sanitised sample was not compilable and remained a scored failure |
 | BFCL V4 through LM Studio | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | `simple_python`: 1.0000 (20/20); `multiple`: 0.9500 (19/20); `parallel_multiple`: 0.8500 (17/20); `irrelevance`: 1.0000 (20/20); `multi_turn_base`: 0.3000 (6/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1500 (3/20); partial category samples |
 | BFCL V4 through NVIDIA NIM | Official generator and evaluator through the OpenAI-compatible NVIDIA endpoint | `benchmarks/run_bfcl_openai_compatible.py --category <category> --model openai/gpt-oss-20b --base-url https://integrate.api.nvidia.com/v1` | `simple_python`: 0.4500 (9/20); `multiple`: 0.0500 (1/20); `parallel_multiple`: 0.0000 (0/20); `multi_turn_base`: 0.2500 (5/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1000 (2/20); `multi_turn_long_context`: 0.1500 (3/20); partial category samples |
 
@@ -374,6 +375,23 @@ wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks
 | `humaneval` | `openai/openai_humaneval` test split, 164 problems | `pass@1` `0.0000` (0/164) | Complete public task; `sample_len=164`; zero empty responses; the standard continuation filter received the same explanation-first output format |
 
 The observed zero scores are an official benchmark result and a format-compatibility finding. The model returned non-empty answers, but the official HumanEval filters expect a code continuation and do not remove leading explanatory prose before executing the candidate. The receipts are `artifacts/benchmarks/humaneval/gpt-oss-20b-nvidia-full_2026-08-28T16-18-19.855155.json` and `artifacts/benchmarks/humaneval/gpt-oss-20b-nvidia-humaneval-full_2026-08-28T16-27-25.975587.json`, with matching per-sample JSONL files. These results do not establish Python algorithm quality under a code-normalizing protocol; the next code-generation pass should test an explicit code-only output contract with an independent public evaluator.
+
+## Observed public result: HumanEval+ through EvalPlus
+
+The public [EvalPlus](https://github.com/evalplus/evalplus) framework evaluated the HumanEval+ dataset through the OpenAI-compatible NVIDIA NIM endpoint. EvalPlus adds an independent extended test suite to the original HumanEval problems and runs the generated solutions against both the original and extended inputs. The run used EvalPlus `0.3.1`, `openai/gpt-oss-20b`, the Windows User `NVIDIA_API_KEY` environment variable, the official EvalPlus instruction prompt, greedy decoding, `temperature=0`, `reasoning_effort=low`, and one solution per task. The official evaluator ran inside Ubuntu WSL.
+
+The repository bridge handles provider responses whose `content` field is empty while preserving the reasoning field when present, applies the official EvalPlus sanitiser, and writes a resumable JSONL file before invoking the official evaluator:
+
+```powershell
+wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks/run_evalplus_wsl.sh
+```
+
+| Evaluation | Public scope | Official result | Validity |
+| --- | --- | --- | --- |
+| HumanEval base tests | 164 HumanEval+ tasks, original public tests | `pass@1` `0.8963` (147/164) | Complete public task; greedy one-sample evaluation |
+| HumanEval+ base plus extra tests | 164 HumanEval+ tasks, original plus extended public tests | `pass@1` `0.8232` (135/164) | Complete public extended evaluation; greedy one-sample evaluation |
+
+The EvalPlus sample file contains 164 unique task IDs and no empty solutions. The official `evalplus.syncheck` pass found one non-compilable sanitised sample, `HumanEval/118`; the official evaluator included it as a failure. The scorer receipt is `artifacts/benchmarks/humaneval-plus-code-only/samples_humaneval_evalplus_eval_results.json`, with the sanitised samples in `samples_humaneval_evalplus.jsonl` and raw provider captures in `samples_humaneval_evalplus.raw.jsonl`. These are complete public code-correctness results for this model and protocol, not a general coding leaderboard claim.
 
 ## Observed public result: BFCL tool calling
 
