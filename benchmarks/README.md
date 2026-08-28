@@ -166,6 +166,25 @@ $env:PYTHONUTF8 = '1'
 
 The observed logical-deduction score was flexible-extract exact match `0.5920` (148/250, stderr `0.0311`) in `1,335.02 s`. The arithmetic score was flexible-extract exact match `0.9640` (241/250, stderr `0.0118`) and strict-match `0.6480` (162/250, stderr `0.0303`) in `362.54 s`. The tracking score was flexible-extract exact match `0.8520` (213/250, stderr `0.0225`) in `884.61 s`; strict-match returned `0.0000`. The Dyck-language score was flexible-extract exact match `0.0360` (9/250, stderr `0.0118`) and strict-match `0.0320` (8/250, stderr `0.0112`) in `776.45 s`. The colored-objects score was flexible-extract exact match `0.4880` (122/250, stderr `0.0317`) in `294.17 s`; strict-match returned `0.0000`. The aggregate receipts are `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-logical-deduction-seven-objects_2026-08-28T04-09-12.159146.json`, `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-multistep-arithmetic-two_2026-08-28T04-24-52.265096.json`, `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-tracking-shuffled-objects-seven_2026-08-28T04-44-38.193434.json`, `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-dyck-languages_2026-08-28T05-02-55.787704.json`, and `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-reasoning-colored-objects_2026-08-28T05-12-54.724570.json`. These are complete public samples for five official BBH tasks, not a full BBH result or a leaderboard claim.
 
+## GSM8K through NVIDIA NIM
+
+The same official `lm-evaluation-harness` adapter evaluates the public [GSM8K](https://github.com/openai/grade-school-math) task through NVIDIA NIM. The observed run completed the full `openai/gsm8k` test split of 1,319 public problems with `openai/gpt-oss-20b`, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=512`, `reasoning_effort=low`, and one concurrent request. The harness was `lm-evaluation-harness 0.4.12`.
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe benchmarks\run_mmlu_pro.py run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=1,max_retries=3" `
+  --tasks gsm8k `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=512,reasoning_effort=low" --seed 42 `
+  --output_path artifacts/benchmarks/gsm8k/gpt-oss-20b-nvidia.json --log_samples
+```
+
+The full public test split returned flexible-extract exact match `0.8544` (1,127/1,319, stderr `0.0097`) and strict-match `0.0000` (0/1,319) in `2,420.32 s`. The aggregate receipt is `artifacts/benchmarks/gsm8k/gpt-oss-20b-nvidia_2026-08-28T05-59-45.464108.json`. This is a complete single-task result, not a general model ranking or a full benchmark suite result.
+
 ## BEIR BM25 baselines
 
 `run_beir_bm25.py` evaluates complete public SciFact, NFCorpus, ArguAna, FiQA, SCIDOCS, or TREC-COVID test splits with a deterministic BM25 baseline. It loads the corpus, queries, and test relevance judgments from the corresponding [BEIR datasets](https://github.com/beir-cellar/beir/wiki/Datasets-available) and reports nDCG@10, Recall@10, and MRR@10.
