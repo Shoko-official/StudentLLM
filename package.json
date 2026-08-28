@@ -8,6 +8,7 @@
     "desktop:dev": "node scripts/desktop-command.mjs dev",
     "desktop:build": "node scripts/desktop-command.mjs build --debug --no-bundle",
     "desktop:check": "node scripts/desktop-check.mjs",
+    "desktop:test": "node scripts/desktop-check.mjs test",
     "build": "tsc -b && vite build",
     "check": "tsc -b --pretty false",
     "test": "vitest",
@@ -24,6 +25,7 @@
     "node": ">=22.13.0"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest"

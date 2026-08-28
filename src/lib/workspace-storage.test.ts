@@ -1,5 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { loadWorkspace, saveWorkspace, WorkspaceSnapshot } from './workspace-storage';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadWorkspace, loadWorkspaceAsync, saveWorkspace, saveWorkspaceAsync, WorkspaceSnapshot } from './workspace-storage';
+
+const invoke = vi.hoisted(() => vi.fn());
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 
 const fallback: WorkspaceSnapshot = {
   activeLessonId: 'fallback',
@@ -20,7 +24,11 @@ const fallback: WorkspaceSnapshot = {
 };
 
 describe('workspace storage', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    invoke.mockReset();
+    delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  });
 
   it('round-trips a workspace snapshot through local storage', () => {
     const snapshot: WorkspaceSnapshot = {
@@ -74,5 +82,24 @@ describe('workspace storage', () => {
 
     expect(saveWorkspace(snapshot)).toBe(true);
     expect(loadWorkspace(fallback)).toEqual(snapshot);
+  });
+
+  it('round-trips through the native invoke bridge when Tauri is available', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const snapshot = { ...fallback, activeLessonId: 'native-lesson' };
+    invoke.mockResolvedValueOnce(null).mockResolvedValueOnce(undefined);
+
+    expect(await loadWorkspaceAsync(fallback)).toEqual(fallback);
+    expect(await saveWorkspaceAsync(snapshot)).toBe(true);
+    expect(invoke).toHaveBeenNthCalledWith(1, 'load_workspace');
+    expect(invoke).toHaveBeenNthCalledWith(2, 'save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
+  });
+
+  it('validates a native snapshot before restoring it', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const snapshot = { ...fallback, activeLessonId: 'native-lesson', lessons: [{ ...fallback.lessons[0], id: 'native-lesson' }] };
+    invoke.mockResolvedValue(JSON.stringify({ version: 1, ...snapshot }));
+
+    expect(await loadWorkspaceAsync(fallback)).toEqual(snapshot);
   });
 });

@@ -37,7 +37,7 @@ import {
   X,
 } from 'lucide-react';
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
-import { loadWorkspace, saveWorkspace } from './lib/workspace-storage';
+import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, saveWorkspaceAsync } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import type { LLMProvider } from './lib/llm-provider';
 import { createLocalSpeechEngine } from './lib/speech-engine';
@@ -148,6 +148,15 @@ const emptyLessonWorkspace: LessonWorkspace = {
   artifacts: [],
 };
 
+const initialWorkspace = {
+  activeLessonId: initialLessons[0].id,
+  lessons: initialLessons,
+  resources: initialResources,
+  transcript: initialTranscript,
+  chat: initialChat,
+  artifacts: [],
+};
+
 function formatElapsed(totalSeconds: number) {
   const hours = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
   const minutes = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
@@ -174,14 +183,8 @@ export interface AppProps {
 }
 
 function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine }: AppProps) {
-  const [workspace] = useState(() => loadWorkspace({
-    activeLessonId: initialLessons[0].id,
-    lessons: initialLessons,
-    resources: initialResources,
-    transcript: initialTranscript,
-    chat: initialChat,
-    artifacts: [],
-  }));
+  const [workspace] = useState(() => loadWorkspace(initialWorkspace));
+  const [nativeStorageReady, setNativeStorageReady] = useState(() => !isNativeRuntime());
   const [lessons, setLessons] = useState(workspace.lessons);
   const [activeLessonId, setActiveLessonId] = useState(workspace.activeLessonId);
   const [view, setView] = useState<ViewMode>('course');
@@ -271,8 +274,35 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   }, [toast]);
 
   useEffect(() => {
-    saveWorkspace({ activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces });
-  }, [activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces]);
+    if (!isNativeRuntime()) return undefined;
+
+    let cancelled = false;
+    void loadWorkspaceAsync(initialWorkspace).then((loaded) => {
+      if (cancelled) return;
+      const loadedWorkspaces = loaded.lessonWorkspaces ?? {
+        [loaded.activeLessonId]: {
+          resources: loaded.resources,
+          transcript: loaded.transcript,
+          chat: loaded.chat,
+          artifacts: loaded.artifacts,
+        },
+      };
+      setLessons(loaded.lessons);
+      setActiveLessonId(loaded.activeLessonId);
+      setLessonWorkspaces(loadedWorkspaces);
+      setSelectedArtifactId(loadedWorkspaces[loaded.activeLessonId]?.artifacts[0]?.id ?? loaded.artifacts[0]?.id ?? null);
+      setNativeStorageReady(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!nativeStorageReady) return;
+    void saveWorkspaceAsync({ activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces });
+  }, [nativeStorageReady, activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces]);
 
   useEffect(() => {
     let cancelled = false;

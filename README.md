@@ -123,7 +123,7 @@ docs/
 
 ## Roadmap
 
-- Move browser persistence to SQLite WAL in the Tauri desktop runtime, with crash recovery and tested migrations.
+- Add crash recovery and tested migrations on top of the Tauri SQLite WAL workspace bridge.
 - Extend the `SpeechEngine` contract to streaming partials, diarization, and crash-resumable jobs.
 - Extend OCR with structured tables, formulas, diagrams, handwriting, and richer page or region provenance.
 - Add hybrid BM25 plus dense retrieval, reranking, and a permissioned citation-first agent loop.
