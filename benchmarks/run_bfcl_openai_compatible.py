@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -43,6 +44,11 @@ def configure_environment(args: argparse.Namespace, project_root: Path) -> None:
     os.environ["OPENAI_BASE_URL"] = args.base_url.rstrip("/")
     os.environ["OPENAI_API_KEY"] = api_key
     os.environ["PYTHONUTF8"] = "1"
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
 def register_endpoint_model(model: str, request_timeout: float) -> None:
