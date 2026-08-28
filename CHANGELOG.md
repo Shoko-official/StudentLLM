@@ -70,6 +70,8 @@
 - complete 500-case public MATH-500 receipt through NVIDIA NIM: `math_verify` `0.8220` (411/500, stderr `0.0171`) and legacy `exact_match` `0.0000`;
 - complete public AIME 2024 receipt through NVIDIA NIM: exact match `0.3667` (11/30, stderr `0.0895`);
 - complete public AIME 2025 receipt through NVIDIA NIM: exact match `0.3000` (9/30, stderr `0.0851`);
+- NVIDIA-compatible official ARC-Challenge generation adapter that normalizes the provider-echoed answer prefix;
+- complete public ARC-Challenge receipt through NVIDIA NIM: exact match `0.8473` (993/1,172, stderr `0.0105`) with zero empty responses;
 - recorded the official GPQA Diamond dataset access finding: the gated `Idavidrein/gpqa` source stopped the task before generation without a configured Hugging Face token;
 - benchmark adapter syntax checks included in the local and GitHub verification gates;
 - NVIDIA NIM and LM Studio OpenAI-compatible smoke checks with runtime credentials;

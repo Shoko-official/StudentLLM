@@ -229,6 +229,27 @@ $env:PYTHONUTF8 = '1'
 
 The AIME 2024 receipt returned exact match `0.3667` (11/30, stderr `0.0895`) in `889.95 s`. The AIME 2025 receipt returned exact match `0.3000` (9/30, stderr `0.0851`) in `460.16 s`; change the task and output filename to `aime25` to reproduce it. The aggregate receipts are `artifacts/benchmarks/aime/gpt-oss-20b-nvidia-aime24_2026-08-28T07-20-06.666685.json` and `artifacts/benchmarks/aime/gpt-oss-20b-nvidia-aime25_2026-08-28T07-30-35.078582.json`. These are complete public samples for two years, not a combined leaderboard score or a general model ranking.
 
+## ARC-Challenge through NVIDIA NIM
+
+The official `lm-evaluation-harness 0.4.12` includes both the log-likelihood `arc_challenge` task and the generation-compatible `arc_challenge_chat` task. Chat-completions providers must use the latter. The observed run evaluated all 1,172 public `allenai/ai2_arc` ARC-Challenge test questions with `openai/gpt-oss-20b`, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=512`, `reasoning_effort=low`, one concurrent request, and the Windows User `NVIDIA_API_KEY` environment variable.
+
+`run_arc.py` removes only the `The best answer is` prefix echoed by NVIDIA NIM before the official task filter runs. The command also sets `until=None` because the task's default period stop sequence can terminate this provider after its reasoning channel and leave the content field empty:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe benchmarks\run_arc.py run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=1,max_retries=3" `
+  --tasks arc_challenge_chat `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=512,reasoning_effort=low,until=None" --seed 42 `
+  --output_path artifacts/benchmarks/arc-challenge/gpt-oss-20b-nvidia-full.json --log_samples
+```
+
+The full public run returned exact match `0.8473` (993/1,172, stderr `0.0105`) in `1,156.65 s`, with zero empty responses. Its aggregate receipt is `artifacts/benchmarks/arc-challenge/gpt-oss-20b-nvidia-full_2026-08-28T08-03-59.129683.json`. This is complete single-task evidence, not a global model ranking.
+
 ## BEIR BM25 baselines
 
 `run_beir_bm25.py` evaluates complete public SciFact, NFCorpus, ArguAna, FiQA, SCIDOCS, or TREC-COVID test splits with a deterministic BM25 baseline. It loads the corpus, queries, and test relevance judgments from the corresponding [BEIR datasets](https://github.com/beir-cellar/beir/wiki/Datasets-available) and reports nDCG@10, Recall@10, and MRR@10.
