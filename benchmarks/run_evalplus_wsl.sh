@@ -3,22 +3,43 @@ set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 venv_dir="${EVALPLUS_VENV:-/root/studentllm-human-eval}"
-output_dir="${EVALPLUS_ROOT:-$repo_dir/artifacts/benchmarks/humaneval-plus-code-only}"
 parallel="${EVALPLUS_PARALLEL:-4}"
 probe=false
+dataset="humaneval"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --dataset)
+      if [[ $# -lt 2 ]]; then
+        echo "Usage: bash benchmarks/run_evalplus_wsl.sh [--dataset humaneval|mbpp] [--probe]" >&2
+        exit 2
+      fi
+      dataset="$2"
+      shift 2
+      ;;
     --probe)
       probe=true
       shift
       ;;
     *)
-      echo "Usage: bash benchmarks/run_evalplus_wsl.sh [--probe]" >&2
+      echo "Usage: bash benchmarks/run_evalplus_wsl.sh [--dataset humaneval|mbpp] [--probe]" >&2
       exit 2
       ;;
   esac
 done
+
+if [[ "$dataset" != "humaneval" && "$dataset" != "mbpp" ]]; then
+  echo "Unsupported EvalPlus dataset: $dataset" >&2
+  exit 2
+fi
+
+if [[ -n "${EVALPLUS_ROOT:-}" ]]; then
+  output_dir="$EVALPLUS_ROOT"
+elif [[ "$dataset" == "humaneval" ]]; then
+  output_dir="$repo_dir/artifacts/benchmarks/humaneval-plus-code-only"
+else
+  output_dir="$repo_dir/artifacts/benchmarks/mbpp-plus-code-only"
+fi
 
 if [[ ! -x "$venv_dir/bin/python" ]]; then
   python3 -m venv "$venv_dir"
@@ -45,9 +66,10 @@ if $probe; then
 fi
 
 mkdir -p "$run_root"
-sample_path="$run_root/samples_humaneval_evalplus.jsonl"
-raw_sample_path="$run_root/samples_humaneval_evalplus.raw.jsonl"
+sample_path="$run_root/samples_${dataset}_evalplus.jsonl"
+raw_sample_path="$run_root/samples_${dataset}_evalplus.raw.jsonl"
 "$venv_dir/bin/python" "$repo_dir/benchmarks/run_evalplus_nvidia.py" \
+  --dataset "$dataset" \
   --output "$sample_path" \
   --raw-output "$raw_sample_path" \
   --model openai/gpt-oss-20b \
@@ -64,6 +86,6 @@ if $probe; then
   exit 0
 fi
 
-"$venv_dir/bin/evalplus.evaluate" humaneval \
+"$venv_dir/bin/evalplus.evaluate" "$dataset" \
   --samples "$sample_path" \
   --parallel "$parallel"
