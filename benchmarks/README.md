@@ -138,12 +138,12 @@ $env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
 .\.venv-bench\Scripts\python.exe benchmarks\run_mmlu_pro.py run `
   --model local-chat-completions `
   --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=1,max_retries=3" `
-  --tasks mmlu_pro --limit 1 --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --tasks mmlu_pro --limit 20 --num_fewshot 0 --batch_size 1 --apply_chat_template `
   --gen_kwargs "temperature=0,max_gen_toks=512,reasoning_effort=low" --seed 42 `
-  --output_path artifacts/benchmarks/mmlu-pro/gpt-oss-20b.json --log_samples
+  --output_path artifacts/benchmarks/mmlu-pro/gpt-oss-20b-nvidia-limit20-low.json --log_samples
 ```
 
-The first August 27, 2026 NVIDIA run timed out after retries before producing a response aggregate and is recorded as a transport failure with no score. A subsequent 140-item public sample across all 14 MMLU-Pro categories completed through NVIDIA NIM with exact match `0.2857` (40/140, stderr `0.0387`) using `reasoning_effort=low`. This is a partial public sample, not a leaderboard score or a full-suite result.
+The first August 27, 2026 NVIDIA run timed out after retries before producing a response aggregate and is recorded as a transport failure with no score. A subsequent 140-item public sample across all 14 MMLU-Pro categories completed through NVIDIA NIM with exact match `0.2857` (40/140, stderr `0.0387`) using `reasoning_effort=low`. A larger 280-item public sample completed on August 28, 2026 with exact match `0.2821` (79/280, stderr `0.0262`) across 20 items in each category; the recorded evaluation time was `4,124.09 s`. Both are partial public samples, not leaderboard scores or a full-suite result. The larger receipt is `artifacts/benchmarks/mmlu-pro/gpt-oss-20b-nvidia-limit20-low_*.json`.
 
 ## BEIR BM25 baselines
 

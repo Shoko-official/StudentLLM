@@ -27,7 +27,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | MTEB | Complete public STSBenchmark v2 and STS22 v2 tasks | Spearman and per-subset results recorded in [`benchmarks.md`](./benchmarks.md) |
 | BFCL V4 through LM Studio | Seven public categories, 20 cases per category | Official category scores recorded; multi-turn negative cases expose format compatibility failures |
 | BFCL V4 through NVIDIA NIM | Seven public categories, 20 cases per category, `openai/gpt-oss-20b` | `simple_python` 45.00%; `multiple` 5.00%; `parallel_multiple` 0.00%; `multi_turn_base` 25.00%; `multi_turn_miss_func` 15.00%; `multi_turn_miss_param` 10.00%; `multi_turn_long_context` 15.00%; partial samples |
-| MMLU-Pro | Public 140-item samples across all 14 categories through LM Studio and NVIDIA NIM | LM Studio `21.43%`; NVIDIA `28.57%`; partial samples, not leaderboard scores |
+| MMLU-Pro | Public 140- and 280-item samples across all 14 categories through LM Studio and NVIDIA NIM | LM Studio `21.43%` on 140 items; NVIDIA `28.57%` on 140 and `28.21%` on 280; partial samples, not leaderboard scores |
 | DocVQA | Public 100-image OCR extractability diagnostic | Normalized answer visibility 86.00%; not official ANLS |
 
 Detailed commands, model versions, hardware, validity labels, and local receipt paths are maintained in [`benchmarks.md`](./benchmarks.md). Raw receipts stay local and ignored by Git.
