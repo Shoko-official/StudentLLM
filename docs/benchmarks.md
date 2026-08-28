@@ -75,6 +75,33 @@ The earlier NVIDIA timeout is retained as a failed transport attempt with no sco
 
 The harness documents that `--limit` is not suitable for a final metric; these runs validate dataset loading, prompt construction, API routing, answer extraction, and metric calculation on public samples. Model strength remains unverified.
 
+## Observed public result: BIG-Bench Hard
+
+The official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) ran the public [BIG-Bench Hard](https://github.com/suzgunmirac/BIG-Bench-Hard) task `bbh_zeroshot_logical_deduction_seven_objects` through the OpenAI-compatible NVIDIA NIM endpoint. The run used `openai/gpt-oss-20b`, the Windows User `NVIDIA_API_KEY` environment variable, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=512`, `reasoning_effort=low`, and one concurrent request.
+
+| Run | Public scope | Result | Validity |
+| --- | --- | --- | --- |
+| 2026-08-28 | One official BBH task, 250 public cases | Flexible-extract exact match `0.5920` (148/250), stderr `0.0311` | Complete task sample; 1,335.02 s evaluation time; partial BBH evidence |
+
+Reproduce the observed run with:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe benchmarks\run_mmlu_pro.py run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=1,max_retries=3" `
+  --tasks bbh_zeroshot_logical_deduction_seven_objects `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=512,reasoning_effort=low" `
+  --seed 42 `
+  --output_path artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-logical-deduction-seven-objects.json `
+  --log_samples
+```
+
+The aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-logical-deduction-seven-objects_2026-08-28T04-09-12.159146.json`. The official flexible-extract metric is reported because the task's strict-match filter produced no matches under this harness configuration. This is one complete public BBH task, not a full BBH suite or a global model ranking.
+
 ## Observed public result: BFCL tool calling
 
 The official [BFCL evaluator](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-calling-leaderboard) was run against the OpenAI-compatible server that was already running in LM Studio. The BFCL model label was `Qwen/Qwen3-4B-Instruct-2507-FC`; the endpoint selected the existing local Qwen model. No local model process was restarted.

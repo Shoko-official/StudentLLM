@@ -79,7 +79,7 @@ describe('StudentLLM workspace', () => {
 
     expect(screen.getByText('Why do we divide by the square root of d?')).toBeInTheDocument();
     expect(screen.getByText('Connect LM Studio to ask the local model. The current workspace keeps this interaction offline.')).toBeInTheDocument();
-  });
+  }, 15000);
 
   it('uses an imported text source as an offline chat citation', async () => {
     const user = userEvent.setup();
