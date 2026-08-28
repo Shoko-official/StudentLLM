@@ -555,6 +555,7 @@ The observed NVIDIA NIM runs on 2026-08-28 used `openai/gpt-oss-20b`, `temperatu
 | `live_parallel` | 16 | `0.00%` (0/16) | Mean `1.571 s` |
 | `live_parallel_multiple` | 24 | `0.00%` (0/24) | Mean `1.224 s` |
 | `live_relevance` | 16 | `87.50%` (14/16) | Mean `2.045 s`; two empty result arrays |
+| `live_irrelevance` | 128 of 884 | `96.88%` (124/128) | Mean `6.534 s`; partial public sample with 124 no-tool result arrays |
 | `multi_turn_base` | 20 | `25.00%` (5/20) | 366 requests, mean `2.042 s`, p95 `3.769 s`, max `81.768 s` |
 | `multi_turn_miss_func` | 20 | `15.00%` (3/20) | 389 requests, mean `3.055 s`, p95 `5.703 s`, max `173.977 s` |
 | `multi_turn_miss_param` | 20 | `10.00%` (2/20) | 325 requests, mean `2.000 s`, p95 `4.392 s`, max `123.501 s` |
