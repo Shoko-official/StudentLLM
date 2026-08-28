@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { Artifact, ChatMessage, Lesson, LessonWorkspace, Resource, TranscriptSegment } from '../types';
 
 export const WORKSPACE_STORAGE_KEY = 'studentllm.workspace.v1';
@@ -96,13 +97,9 @@ function getStorage(): Storage | undefined {
   return window.localStorage;
 }
 
-export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): WorkspaceSnapshot {
-  if (!storage) return fallback;
-
+function parseWorkspaceRaw(raw: string | null, fallback: WorkspaceSnapshot): WorkspaceSnapshot {
+  if (!raw) return fallback;
   try {
-    const raw = storage.getItem(WORKSPACE_STORAGE_KEY);
-    if (!raw) return fallback;
-
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.lessons)) return fallback;
 
@@ -124,6 +121,15 @@ export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | un
   }
 }
 
+export function isNativeRuntime() {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): WorkspaceSnapshot {
+  if (!storage) return fallback;
+  return parseWorkspaceRaw(storage.getItem(WORKSPACE_STORAGE_KEY), fallback);
+}
+
 export function saveWorkspace(snapshot: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): boolean {
   if (!storage) return false;
 
@@ -132,5 +138,27 @@ export function saveWorkspace(snapshot: WorkspaceSnapshot, storage: Storage | un
     return true;
   } catch {
     return false;
+  }
+}
+
+export async function loadWorkspaceAsync(fallback: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): Promise<WorkspaceSnapshot> {
+  if (!isNativeRuntime()) return loadWorkspace(fallback, storage);
+
+  try {
+    const raw = await invoke<string | null>('load_workspace');
+    return parseWorkspaceRaw(raw, fallback);
+  } catch {
+    return loadWorkspace(fallback, storage);
+  }
+}
+
+export async function saveWorkspaceAsync(snapshot: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): Promise<boolean> {
+  if (!isNativeRuntime()) return saveWorkspace(snapshot, storage);
+
+  try {
+    await invoke('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
+    return true;
+  } catch {
+    return saveWorkspace(snapshot, storage);
   }
 }

@@ -10,7 +10,8 @@ const environment = { ...process.env };
 if (process.platform === 'win32' && !environment.CARGO_TARGET_DIR && environment.LOCALAPPDATA) {
   environment.CARGO_TARGET_DIR = join(environment.LOCALAPPDATA, 'StudentLLM', 'cargo-target');
 }
-const result = spawnSync(cargo, ['check', '--manifest-path', 'src-tauri/Cargo.toml'], {
+const command = process.argv[2] === 'test' ? 'test' : 'check';
+const result = spawnSync(cargo, [command, '--manifest-path', 'src-tauri/Cargo.toml'], {
   stdio: 'inherit',
   env: environment,
 });
