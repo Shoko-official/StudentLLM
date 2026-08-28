@@ -76,6 +76,8 @@
 - complete 541-prompt public IFEval receipt through NVIDIA NIM: prompt strict `0.7024`, instruction strict `0.7878`, prompt loose `0.7412`, and instruction loose `0.8177`, with four empty provider responses retained in the official sample log;
 - complete official BIG-Bench Hard `bbh_zeroshot` group through NVIDIA NIM: 27 task configurations and 6,511 public cases, flexible-extract exact match `0.7474` (4,866/6,511, stderr `0.0047`), with 152 empty provider responses retained in the official sample logs;
 - detailed per-task BBH receipt and reproducible full-suite command documented in `docs/benchmarks.md` and `benchmarks/README.md`;
+- dedicated Ubuntu WSL HumanEval runner using the official Linux `code_eval` scorer and the Windows User `NVIDIA_API_KEY` environment value;
+- complete public HumanEval `humaneval_instruct` and `humaneval` receipts through NVIDIA NIM: official `pass@1` `0.0000` (0/164) for each task, with zero empty responses and an explanation-first output-format finding;
 - recorded the official GPQA Diamond dataset access finding: the gated `Idavidrein/gpqa` source stopped the task before generation without a configured Hugging Face token;
 - benchmark adapter syntax checks included in the local and GitHub verification gates;
 - NVIDIA NIM and LM Studio OpenAI-compatible smoke checks with runtime credentials;
