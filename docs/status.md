@@ -1,6 +1,6 @@
 # Project status
 
-Last validated: 2026-08-28
+Last validated: 2026-08-29
 
 StudentLLM is an active local-first learning workspace. The application workflow is covered by automated tests and live integration checks. Public benchmark coverage is growing, but the evidence below is intentionally separated by scope.
 
@@ -15,6 +15,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | NVIDIA integration | Live provider smoke and official BFCL, BIG-Bench Hard, ARC-Challenge, IFEval, TruthfulQA, HumanEval, HumanEval+, MBPP+, GSM8K, MATH-500, and AIME evaluations | NIM requests pass using the Windows User `NVIDIA_API_KEY` environment variable; sixteen BFCL public category samples, the complete 27-configuration BBH zero-shot group, complete ARC-Challenge, IFEval, TruthfulQA, HumanEval, HumanEval+, and MBPP+ tasks, the complete GSM8K and MATH-500 test splits, and complete AIME 2024 and AIME 2025 samples completed |
 | Local speech pipeline | Public FLEURS sample, sidecar, and browser recording | Timestamped transcription and review-segment rendering pass |
 | Local document pipeline | Public arXiv PDF, sidecar, and browser import | 15/15 pages indexed and page-level review content rendered |
+| Tauri desktop shell | Rust `cargo check` and native-window build path | Shell scaffold added; browser workspace remains the frontend entry point; SQLite WAL and packaged installer validation remain pending |
 
 ## Public benchmark evidence
 

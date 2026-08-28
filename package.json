@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "desktop:dev": "node scripts/desktop-command.mjs dev",
+    "desktop:build": "node scripts/desktop-command.mjs build --debug --no-bundle",
+    "desktop:check": "node scripts/desktop-check.mjs",
     "build": "tsc -b && vite build",
     "check": "tsc -b --pretty false",
     "test": "vitest",
@@ -28,6 +31,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.62.1",
+    "@tauri-apps/cli": "^2.11.4",
     "@testing-library/jest-dom": "latest",
     "@testing-library/react": "latest",
     "@testing-library/user-event": "latest",
