@@ -37,6 +37,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | MTEB STS22 v2 | Official public multilingual test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | 18 subsets, unweighted descriptive macro-average 0.469262; language spread 0.181685-0.740204 |
 | ARC-Challenge | Complete public ARC-Challenge test split through the official generation-compatible chat task | `benchmarks/run_arc.py` with `arc_challenge_chat` and NVIDIA NIM | Exact match 0.8473 (993/1,172), stderr 0.0105; no empty responses |
 | IFEval | Complete public instruction-following task through the official generation harness | `python -m lm_eval run` with `ifeval` and NVIDIA NIM | Prompt strict 0.7024; instruction strict 0.7878; prompt loose 0.7412; instruction loose 0.8177 |
+| TruthfulQA generation | Complete public `truthfulqa_gen` validation split, 817 questions through the official generation harness | `python -m lm_eval run` with `truthfulqa_gen` and NVIDIA NIM | BLEU accuracy 0.3513, ROUGE-1 accuracy 0.3856, ROUGE-2 accuracy 0.2778, ROUGE-L accuracy 0.3917; 289 null-content placeholders retained |
 | BIG-Bench Hard zero-shot suite | Official public `bbh_zeroshot` group, 27 task configurations, 6,511 cases through NVIDIA NIM | `python -m lm_eval run` with `bbh_zeroshot` and the OpenAI-compatible NVIDIA endpoint | Flexible-extract exact match 0.7474 (4,866/6,511), stderr 0.0047; 152 empty provider responses retained |
 | HumanEval | Complete public `openai/openai_humaneval` test split, 164 problems through NVIDIA NIM with the official Linux code evaluator | `benchmarks/run_humaneval_wsl.sh` with `humaneval` and `humaneval_instruct` | Official `pass@1` 0.0000 on both tasks; all 164 responses in each run were non-empty, but leading explanations and fenced code were incompatible with the official code-only filters |
 | HumanEval+ | Complete public 164-problem HumanEval+ evaluation through the official EvalPlus evaluator | `benchmarks/run_evalplus_wsl.sh` with a code-only prompt and NVIDIA NIM | Base `pass@1` 0.8963 (147/164); HumanEval+ `pass@1` 0.8232 (135/164); one sanitised sample was not compilable and remained a scored failure |
@@ -358,6 +359,45 @@ $env:PYTHONUTF8 = '1'
 | 2026-08-28 | Official `google/IFEval` task, 541 public prompts | Prompt strict `0.7024` (stderr `0.0197`); instruction strict `0.7878`; prompt loose `0.7412` (stderr `0.0188`); instruction loose `0.8177` | Complete public task; four empty provider responses were retained by the harness and included in the metrics |
 
 The aggregate receipt is `artifacts/benchmarks/ifeval/gpt-oss-20b-nvidia-full_2026-08-28T08-34-22.627222.json`, with 541 logged samples in the matching `samples_ifeval_2026-08-28T08-34-22.627222.jsonl` file. The receipt records `sample_len=541`; the terminal run completed in approximately 1,126 seconds. This is complete single-task instruction-following evidence, not a general model ranking.
+
+## Observed public result: TruthfulQA generation
+
+The official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) evaluated the public [TruthfulQA](https://huggingface.co/datasets/truthfulqa/truthful_qa) `truthfulqa_gen` task through the OpenAI-compatible NVIDIA NIM endpoint. This task uses the public generation validation split and its official BLEU and ROUGE reference-overlap metrics. It is not the `truthfulqa_mc1` or `truthfulqa_mc2` likelihood task and does not use a separate judge model, so these results must not be described as a standalone truthfulness score.
+
+The run used `openai/gpt-oss-20b`, the Windows User `NVIDIA_API_KEY` environment variable, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=256`, four concurrent requests, and up to three retries. The repository adapter adds `/no_think` to the final user message for the OpenAI-compatible request. The harness version was `0.4.12` and the task version was `3`.
+
+Reproduce the complete public validation run with:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe benchmarks\run_mmlu_pro.py run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=4,max_retries=3" `
+  --tasks truthfulqa_gen `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=256" --seed 42 `
+  --output_path artifacts/benchmarks/truthfulqa/gpt-oss-20b-nvidia-full.json `
+  --log_samples
+```
+
+| Metric | Value | Stderr |
+| --- | ---: | ---: |
+| `bleu_max` | `5.4202` | `0.3755` |
+| `bleu_acc` | `0.3513` | `0.0167` |
+| `bleu_diff` | `0.3931` | `0.2509` |
+| `rouge1_max` | `20.9657` | `0.7792` |
+| `rouge1_acc` | `0.3856` | `0.0170` |
+| `rouge1_diff` | `2.3154` | `0.4882` |
+| `rouge2_max` | `10.3161` | `0.6013` |
+| `rouge2_acc` | `0.2778` | `0.0157` |
+| `rouge2_diff` | `0.6846` | `0.4577` |
+| `rougeL_max` | `18.9569` | `0.7327` |
+| `rougeL_acc` | `0.3917` | `0.0171` |
+| `rougeL_diff` | `2.2426` | `0.4834` |
+
+The complete run evaluated all 817 public validation examples in `1,244.89 s`. The sample file contains 817 unique document IDs and 289 null-content placeholders from the provider; those placeholders remain in the denominator and are included in the official metrics. The aggregate receipt is `artifacts/benchmarks/truthfulqa/gpt-oss-20b-nvidia-full_2026-08-28T19-11-55.851418.json`, with samples in `samples_truthfulqa_gen_2026-08-28T19-11-55.851418.jsonl`. The dataset task hash is `911ee70018dbce882fc57ce935a97752ab8188e2d8ce9a0bb1d056be346b4c48`; the sample SHA-256 is `8C05744D3678C5BF5D4C696C4049E73855FA7E4BE304ADC907D41DB7916ACB70` and the receipt SHA-256 is `5EB03138829BA549ED70E2714665549FE33D25A4581E4BC89B587631EDFE479C`. This is complete public generation-task evidence for the stated model and protocol, not a general truthfulness or leaderboard claim.
 
 ## Observed public result: HumanEval
 
