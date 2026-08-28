@@ -185,6 +185,25 @@ $env:PYTHONUTF8 = '1'
 
 The aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-full_2026-08-28T10-16-27.620727.json`. `lm-eval` writes one sample file per task and one row per metric filter, so the 13,022 raw filter rows represent 6,511 unique public cases.
 
+## HumanEval through NVIDIA NIM
+
+The official [HumanEval](https://huggingface.co/datasets/openai/openai_humaneval) task can be run through NVIDIA NIM with the official Linux `code_eval` scorer. Windows cannot provide the evaluator's Linux Python test-process runtime, so use the WSL runner from the repository root. It creates or reuses `/root/studentllm-human-eval`, retrieves `NVIDIA_API_KEY` from the Windows User environment at run time, and does not store the credential in the repository.
+
+Install and run the default instruction task:
+
+```powershell
+wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks/run_humaneval_wsl.sh
+```
+
+Run the standard continuation task or a one-case probe:
+
+```powershell
+wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks/run_humaneval_wsl.sh --task humaneval
+wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks/run_humaneval_wsl.sh --probe
+```
+
+The complete observed `humaneval_instruct` and `humaneval` runs each evaluated all 164 public problems with `openai/gpt-oss-20b`, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=1024`, `reasoning_effort=low`, four concurrent requests, and `until=None`. Both official `pass@1` values were `0.0000` (0/164), with zero empty responses. The raw outputs consistently began with explanatory prose followed by a fenced Python block, while the official filters expect a code-only continuation. The result is therefore both a complete public score and a format-compatibility finding; a future code-only prompt experiment must retain its own protocol label rather than overwrite these receipts.
+
 ## GSM8K through NVIDIA NIM
 
 The same official `lm-evaluation-harness` adapter evaluates the public [GSM8K](https://github.com/openai/grade-school-math) task through NVIDIA NIM. The observed run completed the full `openai/gsm8k` test split of 1,319 public problems with `openai/gpt-oss-20b`, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=512`, `reasoning_effort=low`, and one concurrent request. The harness was `lm-evaluation-harness 0.4.12`.
