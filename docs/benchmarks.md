@@ -142,6 +142,33 @@ The colored-objects task uses the same environment, model arguments, and generat
 
 Its aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-reasoning-colored-objects_2026-08-28T05-12-54.724570.json`. The flexible-extract filter is the useful reported metric for this task; strict-match returned no matches under this harness configuration. The five task samples are not a full BBH suite or a global model ranking.
 
+## Observed public result: GSM8K
+
+The official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) ran the public [GSM8K](https://github.com/openai/grade-school-math) `gsm8k` task through the OpenAI-compatible NVIDIA NIM endpoint. The run used `openai/gpt-oss-20b`, the Windows User `NVIDIA_API_KEY` environment variable, the complete public test split, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=512`, `reasoning_effort=low`, and one concurrent request. The harness version was `0.4.12`.
+
+| Run | Public scope | Result | Validity |
+| --- | --- | --- | --- |
+| 2026-08-28 | `openai/gsm8k` test split, 1,319 public problems | Flexible-extract exact match `0.8544` (1,127/1,319), stderr `0.0097`; strict-match `0.0000` (0/1,319) | Complete public test split; 2,420.32 s evaluation time; single-task evidence |
+
+Reproduce the observed run with:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe benchmarks\run_mmlu_pro.py run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=1,max_retries=3" `
+  --tasks gsm8k `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=512,reasoning_effort=low" `
+  --seed 42 `
+  --output_path artifacts/benchmarks/gsm8k/gpt-oss-20b-nvidia.json `
+  --log_samples
+```
+
+The aggregate receipt is `artifacts/benchmarks/gsm8k/gpt-oss-20b-nvidia_2026-08-28T05-59-45.464108.json`. This is a complete public GSM8K test split for one model and configuration, not a full general-capability evaluation or a leaderboard ranking.
+
 ## Observed public result: BFCL tool calling
 
 The official [BFCL evaluator](https://github.com/ShishirPatil/gorilla/tree/main/berkeley-function-calling-leaderboard) was run against the OpenAI-compatible server that was already running in LM Studio. The BFCL model label was `Qwen/Qwen3-4B-Instruct-2507-FC`; the endpoint selected the existing local Qwen model. No local model process was restarted.
