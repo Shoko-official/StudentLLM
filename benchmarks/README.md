@@ -185,6 +185,16 @@ $env:PYTHONUTF8 = '1'
 
 The aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-full_2026-08-28T10-16-27.620727.json`. `lm-eval` writes one sample file per task and one row per metric filter, so the 13,022 raw filter rows represent 6,511 unique public cases.
 
+## HumanEval+ through EvalPlus and NVIDIA NIM
+
+The official [EvalPlus](https://github.com/evalplus/evalplus) evaluator measures the public HumanEval+ tasks with the original HumanEval tests and the extended public tests. `run_evalplus_wsl.sh` uses EvalPlus `0.3.1`, the OpenAI-compatible NVIDIA endpoint, greedy decoding, and a code-only instruction prompt. The generation bridge preserves the official EvalPlus sanitisation and handles empty provider content without changing the benchmark tests or scorer.
+
+```powershell
+wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks/run_evalplus_wsl.sh
+```
+
+The complete run evaluated 164 unique public tasks. Official EvalPlus returned base `pass@1` `0.8963` (147/164) and HumanEval+ `pass@1` `0.8232` (135/164). `evalplus.syncheck` found one non-compilable sanitised sample, which remained a scored failure. The result file is `artifacts/benchmarks/humaneval-plus-code-only/samples_humaneval_evalplus_eval_results.json`; sanitised and raw samples are stored beside it as `samples_humaneval_evalplus.jsonl` and `samples_humaneval_evalplus.raw.jsonl`.
+
 ## HumanEval through NVIDIA NIM
 
 The official [HumanEval](https://huggingface.co/datasets/openai/openai_humaneval) task can be run through NVIDIA NIM with the official Linux `code_eval` scorer. Windows cannot provide the evaluator's Linux Python test-process runtime, so use the WSL runner from the repository root. It creates or reuses `/root/studentllm-human-eval`, retrieves `NVIDIA_API_KEY` from the Windows User environment at run time, and does not store the credential in the repository.
