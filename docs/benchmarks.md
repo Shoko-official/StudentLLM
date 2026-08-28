@@ -52,8 +52,28 @@ The first generation benchmark uses the official [EleutherAI lm-evaluation-harne
 | 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test split, 14 categories, 5 items per category, seed 42, `temperature=0`, `/no_think` | exact match `0.3000` (21/70), stderr `0.0484` | Partial public sample; per-category results retained in the local receipt |
 | 2026-08-27 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | test split, 14 categories, 10 items per category, seed 42, `temperature=0`, `/no_think` | exact match `0.2143` (30/140), stderr `0.0347` | Complete 140-item public sample; aggregate and per-task receipts written |
 | 2026-08-27 | `openai/gpt-oss-20b` / NVIDIA NIM | same protocol, credential from the Windows User `NVIDIA_API_KEY`, `max_gen_toks=512`, `reasoning_effort=low` | exact match `0.2857` (40/140), stderr `0.0387` | Complete 140-item public sample across all 14 categories; partial benchmark evidence |
+| 2026-08-28 | `openai/gpt-oss-20b` / NVIDIA NIM | same protocol, 20 items per category, 14 categories, seed 42, `max_gen_toks=512`, `reasoning_effort=low` | exact match `0.2821` (79/280), stderr `0.0262` | Complete 280-item public sample across all 14 categories; 4,124.09 s evaluation time; partial benchmark evidence |
 
-The earlier NVIDIA timeout is retained as a failed transport attempt with no score. The 0.2143, 0.3000, and 0.2857 values are public samples, not leaderboard scores. The harness documents that `--limit` is not suitable for a final metric; these runs validate dataset loading, prompt construction, API routing, answer extraction, and metric calculation on public samples. Model strength remains unverified.
+The earlier NVIDIA timeout is retained as a failed transport attempt with no score. The 0.2143, 0.3000, 0.2857, and 0.2821 values are public samples, not leaderboard scores. The 280-item receipt includes 20 examples for each of the 14 categories:
+
+| Category | Exact match |
+| --- | ---: |
+| Biology | `0.2500` (5/20) |
+| Business | `0.2500` (5/20) |
+| Chemistry | `0.4500` (9/20) |
+| Computer science | `0.3000` (6/20) |
+| Economics | `0.3500` (7/20) |
+| Engineering | `0.1500` (3/20) |
+| Health | `0.2500` (5/20) |
+| History | `0.1500` (3/20) |
+| Law | `0.1000` (2/20) |
+| Math | `0.7000` (14/20) |
+| Other | `0.3000` (6/20) |
+| Philosophy | `0.2500` (5/20) |
+| Physics | `0.2500` (5/20) |
+| Psychology | `0.2000` (4/20) |
+
+The harness documents that `--limit` is not suitable for a final metric; these runs validate dataset loading, prompt construction, API routing, answer extraction, and metric calculation on public samples. Model strength remains unverified.
 
 ## Observed public result: BFCL tool calling
 
