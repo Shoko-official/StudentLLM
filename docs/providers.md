@@ -56,7 +56,9 @@ npm run dev
 
 The frontend sends only course context and the user question to the configured local endpoint. NVIDIA credentials are never accepted by this browser path.
 
-The Vite development server proxies `/lm-studio/*` to `http://127.0.0.1:1234/*`, keeping browser requests same-origin when the local LM Studio server does not emit CORS headers. An absolute `VITE_LM_STUDIO_BASE_URL` remains supported, but then the target must allow the development server origin through CORS.
+The Vite development server proxies `/lm-studio/*` to the origin configured by `LM_STUDIO_BASE_URL`, keeping browser requests same-origin when the local LM Studio server does not emit CORS headers. If the variable is unset or malformed, the proxy falls back to `http://127.0.0.1:1234`. An absolute `VITE_LM_STUDIO_BASE_URL` remains supported, but then the target must allow the development server origin through CORS.
+
+The live browser path was verified against the existing `openai/gpt-oss-20b` process on 2026-08-28: the Vite proxy returned HTTP 200, the model returned 886 characters, the answer rendered in Chat, and the page reported no browser or console errors.
 
 ## Run the live check
 
