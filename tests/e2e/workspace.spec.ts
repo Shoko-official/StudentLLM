@@ -163,6 +163,15 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByRole('button', { name: 'Self-attention and Context' })).toBeVisible();
   });
 
+  test('dismisses the delete dialog with Escape', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByRole('button', { name: 'Delete course' }).click();
+    await expect(page.getByRole('dialog')).toContainText('Delete Attention & Scaled Dot-Product?');
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toBeHidden();
+  });
+
   test('captures a browser audio chunk and reports local persistence', async ({ page }) => {
     await page.addInitScript(() => {
       const track = { stop: () => undefined };

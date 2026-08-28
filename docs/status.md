@@ -8,8 +8,8 @@ StudentLLM is an active local-first learning workspace. The application workflow
 
 | Area | Evidence | Current result |
 | --- | --- | --- |
-| Application verification | `npm run verify` | TypeScript, benchmark adapter checks, 59 Vitest tests, Vite production build, and 20 Playwright tests pass |
-| Browser accessibility | Playwright plus axe | No serious or critical violations observed; mobile overflow and navigation regressions pass |
+| Application verification | `npm run verify` | TypeScript, benchmark adapter checks, 59 Vitest tests, Vite production build, and 21 Playwright tests pass |
+| Browser accessibility | Playwright plus axe | No serious or critical violations observed; mobile overflow, navigation, and Escape dismissal regressions pass |
 | Local persistence | Vitest and Playwright | Course isolation, reload recovery, corrupted export rejection, source blob fidelity, audio recovery, and deletion flows pass |
 | LM Studio integration | Existing `llama-server` process, live provider smoke, browser chat, and public DROP probe | The existing `openai/gpt-oss-20b` process is reachable through the LM Studio router on `127.0.0.1:1234`; live browser chat returned HTTP 200 and rendered an 886-character answer with no page or console errors. A larger local DROP run was interrupted before writing a receipt and is not counted as a score |
 | NVIDIA integration | Live provider smoke and official BFCL, BIG-Bench Hard, ARC-Challenge, IFEval, TruthfulQA, HumanEval, HumanEval+, MBPP+, GSM8K, MATH-500, and AIME evaluations | NIM requests pass using the Windows User `NVIDIA_API_KEY` environment variable; ten BFCL public category samples, the complete 27-configuration BBH zero-shot group, complete ARC-Challenge, IFEval, TruthfulQA, HumanEval, HumanEval+, and MBPP+ tasks, the complete GSM8K and MATH-500 test splits, and complete AIME 2024 and AIME 2025 samples completed |
