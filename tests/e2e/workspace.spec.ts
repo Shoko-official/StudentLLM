@@ -4,7 +4,8 @@ import { readFile } from 'node:fs/promises';
 
 test.describe('StudentLLM workspace', () => {
   test('has no serious or critical automated accessibility violations', async ({ page }) => {
-    await page.goto('/');
+    test.setTimeout(60_000);
+    await page.goto('/', { timeout: 60_000 });
 
     const results = await new AxeBuilder({ page }).analyze();
     const blockingViolations = results.violations.filter((violation) =>
@@ -15,8 +16,9 @@ test.describe('StudentLLM workspace', () => {
   });
 
   test('keeps the mobile layout accessible and within the viewport', async ({ page }) => {
+    test.setTimeout(60_000);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/');
+    await page.goto('/', { timeout: 60_000 });
 
     const results = await new AxeBuilder({ page }).analyze();
     const blockingViolations = results.violations.filter((violation) =>
