@@ -6,6 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tauri::{AppHandle, Manager};
 
 const DATABASE_FILE: &str = "studentllm.sqlite3";
+const SCHEMA_VERSION: i32 = 1;
 
 fn open_database(path: &Path) -> Result<Connection, String> {
     if let Some(parent) = path.parent() {
@@ -21,16 +22,30 @@ fn open_database(path: &Path) -> Result<Connection, String> {
     connection
         .pragma_update(None, "synchronous", "NORMAL")
         .map_err(|error| format!("Unable to configure SQLite synchronous mode: {error}"))?;
-    connection
-        .execute_batch(
-            "CREATE TABLE IF NOT EXISTS workspace (
+    let schema_version: i32 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|error| format!("Unable to read workspace schema version: {error}"))?;
+    if schema_version > SCHEMA_VERSION {
+        return Err(format!(
+            "Workspace database schema version {schema_version} is newer than supported version {SCHEMA_VERSION}"
+        ));
+    }
+
+    if schema_version == 0 {
+        connection
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS workspace (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 version INTEGER NOT NULL,
                 snapshot TEXT NOT NULL,
                 updated_at INTEGER NOT NULL
             );",
-        )
-        .map_err(|error| format!("Unable to migrate workspace database: {error}"))?;
+            )
+            .map_err(|error| format!("Unable to migrate workspace database: {error}"))?;
+        connection
+            .pragma_update(None, "user_version", SCHEMA_VERSION)
+            .map_err(|error| format!("Unable to record workspace schema version: {error}"))?;
+    }
     Ok(connection)
 }
 
@@ -105,6 +120,10 @@ mod tests {
             .query_row("PRAGMA journal_mode", [], |row| row.get(0))
             .expect("journal mode should be readable");
         assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+        let schema_version: i32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("schema version should be readable");
+        assert_eq!(schema_version, 1);
         drop(connection);
 
         assert_eq!(read_snapshot(&path).expect("read should succeed"), None);
@@ -113,6 +132,34 @@ mod tests {
             read_snapshot(&path).expect("read should succeed"),
             Some("{\"version\":1}".to_string())
         );
+
+        let _ = fs::remove_dir_all(path.parent().expect("test database parent"));
+    }
+
+    #[test]
+    fn migrates_an_existing_v0_database() {
+        let path = test_database_path();
+        fs::create_dir_all(path.parent().expect("legacy database parent"))
+            .expect("legacy database directory should be created");
+        let legacy = rusqlite::Connection::open(&path).expect("legacy database should open");
+        legacy
+            .execute_batch(
+                "CREATE TABLE workspace (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    version INTEGER NOT NULL,
+                    snapshot TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );",
+            )
+            .expect("legacy schema should be created");
+        drop(legacy);
+
+        let migrated = open_database(&path).expect("legacy database should migrate");
+        let schema_version: i32 = migrated
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("migrated schema version should be readable");
+        assert_eq!(schema_version, 1);
+        drop(migrated);
 
         let _ = fs::remove_dir_all(path.parent().expect("test database parent"));
     }
