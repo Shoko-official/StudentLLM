@@ -72,6 +72,8 @@
 - complete public AIME 2025 receipt through NVIDIA NIM: exact match `0.3000` (9/30, stderr `0.0851`);
 - NVIDIA-compatible official ARC-Challenge generation adapter that normalizes the provider-echoed answer prefix;
 - complete public ARC-Challenge receipt through NVIDIA NIM: exact match `0.8473` (993/1,172, stderr `0.0105`) with zero empty responses;
+- pinned IFEval benchmark dependencies and reproducible official-harness instructions for NVIDIA NIM;
+- complete 541-prompt public IFEval receipt through NVIDIA NIM: prompt strict `0.7024`, instruction strict `0.7878`, prompt loose `0.7412`, and instruction loose `0.8177`, with four empty provider responses retained in the official sample log;
 - recorded the official GPQA Diamond dataset access finding: the gated `Idavidrein/gpqa` source stopped the task before generation without a configured Hugging Face token;
 - benchmark adapter syntax checks included in the local and GitHub verification gates;
 - NVIDIA NIM and LM Studio OpenAI-compatible smoke checks with runtime credentials;
