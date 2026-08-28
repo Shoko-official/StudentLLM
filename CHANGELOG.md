@@ -63,6 +63,7 @@
 - complete 250-case public BIG-Bench Hard `bbh_zeroshot_logical_deduction_seven_objects` receipt through NVIDIA NIM: flexible-extract exact match `0.5920` (148/250, stderr `0.0311`);
 - complete 250-case public BIG-Bench Hard `bbh_zeroshot_multistep_arithmetic_two` receipt through NVIDIA NIM: flexible-extract exact match `0.9640` (241/250, stderr `0.0118`) and strict-match `0.6480` (162/250, stderr `0.0303`);
 - complete 250-case public BIG-Bench Hard `bbh_zeroshot_tracking_shuffled_objects_seven_objects` receipt through NVIDIA NIM: flexible-extract exact match `0.8520` (213/250, stderr `0.0225`);
+- complete 250-case public BIG-Bench Hard `bbh_zeroshot_dyck_languages` receipt through NVIDIA NIM: flexible-extract exact match `0.0360` (9/250, stderr `0.0118`) and strict-match `0.0320` (8/250, stderr `0.0112`);
 - recorded the official GPQA Diamond dataset access finding: the gated `Idavidrein/gpqa` source stopped the task before generation without a configured Hugging Face token;
 - benchmark adapter syntax checks included in the local and GitHub verification gates;
 - NVIDIA NIM and LM Studio OpenAI-compatible smoke checks with runtime credentials;
