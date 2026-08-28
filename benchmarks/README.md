@@ -145,6 +145,27 @@ $env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
 
 The first August 27, 2026 NVIDIA run timed out after retries before producing a response aggregate and is recorded as a transport failure with no score. A subsequent 140-item public sample across all 14 MMLU-Pro categories completed through NVIDIA NIM with exact match `0.2857` (40/140, stderr `0.0387`) using `reasoning_effort=low`. A larger 280-item public sample completed on August 28, 2026 with exact match `0.2821` (79/280, stderr `0.0262`) across 20 items in each category; the recorded evaluation time was `4,124.09 s`. Both are partial public samples, not leaderboard scores or a full-suite result. The larger receipt is `artifacts/benchmarks/mmlu-pro/gpt-oss-20b-nvidia-limit20-low_*.json`.
 
+## BIG-Bench Hard through NVIDIA NIM
+
+The same official `lm-evaluation-harness` adapter can run public [BIG-Bench Hard](https://github.com/suzgunmirac/BIG-Bench-Hard) tasks through NVIDIA NIM. The observed run completed all 250 public cases for `bbh_zeroshot_logical_deduction_seven_objects` with `openai/gpt-oss-20b`, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=512`, and `reasoning_effort=low`:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe benchmarks\run_mmlu_pro.py run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=1,max_retries=3" `
+  --tasks bbh_zeroshot_logical_deduction_seven_objects `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=512,reasoning_effort=low" `
+  --seed 42 `
+  --output_path artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-logical-deduction-seven-objects.json `
+  --log_samples
+```
+
+The observed score was flexible-extract exact match `0.5920` (148/250, stderr `0.0311`) in `1,335.02 s`. The aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-logical-deduction-seven-objects_2026-08-28T04-09-12.159146.json`. This is a complete public sample for one official BBH task, not a full BBH result or a leaderboard claim.
+
 ## BEIR BM25 baselines
 
 `run_beir_bm25.py` evaluates complete public SciFact, NFCorpus, ArguAna, FiQA, SCIDOCS, or TREC-COVID test splits with a deterministic BM25 baseline. It loads the corpus, queries, and test relevance judgments from the corresponding [BEIR datasets](https://github.com/beir-cellar/beir/wiki/Datasets-available) and reports nDCG@10, Recall@10, and MRR@10.
