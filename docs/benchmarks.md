@@ -83,6 +83,7 @@ The official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm
 | --- | --- | --- | --- |
 | 2026-08-28 | `bbh_zeroshot_logical_deduction_seven_objects`, 250 public cases | Flexible-extract exact match `0.5920` (148/250), stderr `0.0311` | Complete task sample; 1,335.02 s evaluation time; partial BBH evidence |
 | 2026-08-28 | `bbh_zeroshot_multistep_arithmetic_two`, 250 public cases | Flexible-extract exact match `0.9640` (241/250), stderr `0.0118`; strict-match `0.6480` (162/250), stderr `0.0303` | Complete task sample; 362.54 s evaluation time; partial BBH evidence |
+| 2026-08-28 | `bbh_zeroshot_tracking_shuffled_objects_seven_objects`, 250 public cases | Flexible-extract exact match `0.8520` (213/250), stderr `0.0225`; strict-match `0.0000` (0/250) | Complete task sample; 884.61 s evaluation time; partial BBH evidence |
 
 Reproduce the observed run with:
 
@@ -111,6 +112,15 @@ The arithmetic task uses the same environment, model arguments, and generation s
 ```
 
 Its aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-multistep-arithmetic-two_2026-08-28T04-24-52.265096.json`. Together these are two complete public task samples, not a full BBH suite or a global model ranking.
+
+The tracking task uses the same environment, model arguments, and generation settings; change the task and output path to:
+
+```text
+--tasks bbh_zeroshot_tracking_shuffled_objects_seven_objects
+--output_path artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-tracking-shuffled-objects-seven.json
+```
+
+Its aggregate receipt is `artifacts/benchmarks/bbh/gpt-oss-20b-nvidia-tracking-shuffled-objects-seven_2026-08-28T04-44-38.193434.json`. The flexible-extract filter is the useful reported metric for this task; strict-match returned no matches under this harness configuration. The three task samples are not a full BBH suite or a global model ranking.
 
 ## Observed public result: BFCL tool calling
 
