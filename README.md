@@ -33,7 +33,7 @@ StudentLLM is built around three principles:
 - Optional live LM Studio chat through a browser-safe OpenAI-compatible provider adapter; no remote API key is bundled in the client.
 - Local lexical retrieval selects transcript or bounded imported text passages and preserves source-part citations before a live provider request.
 - Vitest unit and integration coverage, Playwright browser coverage, axe accessibility checks, and GitHub Actions CI.
-- Tauri v2 desktop shell with a native-window build path and Rust compilation check.
+- Tauri v2 desktop shell with a native-window build path, SQLite WAL persistence, and CI build/test gates.
 
 ## Quick start
 
