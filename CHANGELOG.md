@@ -74,6 +74,7 @@
 - complete public ARC-Challenge receipt through NVIDIA NIM: exact match `0.8473` (993/1,172, stderr `0.0105`) with zero empty responses;
 - pinned IFEval benchmark dependencies and reproducible official-harness instructions for NVIDIA NIM;
 - complete 541-prompt public IFEval receipt through NVIDIA NIM: prompt strict `0.7024`, instruction strict `0.7878`, prompt loose `0.7412`, and instruction loose `0.8177`, with four empty provider responses retained in the official sample log;
+- complete 817-example public TruthfulQA generation receipt through NVIDIA NIM: BLEU accuracy `0.3513`, ROUGE-1 accuracy `0.3856`, ROUGE-2 accuracy `0.2778`, and ROUGE-L accuracy `0.3917`, with 289 null-content placeholders retained in the official sample log;
 - complete official BIG-Bench Hard `bbh_zeroshot` group through NVIDIA NIM: 27 task configurations and 6,511 public cases, flexible-extract exact match `0.7474` (4,866/6,511, stderr `0.0047`), with 152 empty provider responses retained in the official sample logs;
 - detailed per-task BBH receipt and reproducible full-suite command documented in `docs/benchmarks.md` and `benchmarks/README.md`;
 - dedicated Ubuntu WSL HumanEval runner using the official Linux `code_eval` scorer and the Windows User `NVIDIA_API_KEY` environment value;
