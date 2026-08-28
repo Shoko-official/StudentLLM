@@ -78,6 +78,7 @@
 - partial public DROP reading-comprehension receipt through NVIDIA NIM: 512 validation examples, exact match `0.0020`, token-level F1 `0.1109`, and one retained empty provider response;
 - three additional official BFCL V4 NVIDIA NIM category receipts: `simple_java` `0/20`, `simple_javascript` `9/20`, and `parallel` `0/20`, with isolated result roots and retained empty-result findings;
 - official BFCL V4 NVIDIA NIM `live_simple` receipt: `17/20` with the corrected official compound-ID selection, and the OpenAI-compatible runner now derives all category IDs from the dataset;
+- official BFCL V4 NVIDIA NIM `live_multiple` receipt: `3/20`, with 20 compound-ID cases, four empty result arrays, and a retained raw receipt;
 - Vite's same-origin LM Studio proxy now derives its target origin from `LM_STUDIO_BASE_URL`, with a documented local fallback, and the live browser chat path was revalidated against the existing `openai/gpt-oss-20b` process;
 - delete confirmation dialogs can now be dismissed with `Escape`, covered by a dedicated Playwright regression test;
 - complete official BIG-Bench Hard `bbh_zeroshot` group through NVIDIA NIM: 27 task configurations and 6,511 public cases, flexible-extract exact match `0.7474` (4,866/6,511, stderr `0.0047`), with 152 empty provider responses retained in the official sample logs;
