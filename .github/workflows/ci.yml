@@ -42,6 +42,8 @@ jobs:
         run: npm run build
       - name: Desktop shell check
         run: npm run desktop:check
+      - name: Desktop Rust tests
+        run: npm run desktop:test
 
   e2e:
     runs-on: ubuntu-latest
