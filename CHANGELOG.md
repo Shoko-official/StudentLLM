@@ -59,6 +59,7 @@
 - 70-item public MMLU-Pro LM Studio receipt covering all 14 categories with explicit partial-sample validity;
 - 140-item public MMLU-Pro LM Studio receipt covering all 14 categories, plus UTF-8 output handling for Windows benchmark runs;
 - 140-item public MMLU-Pro NVIDIA NIM receipt covering all 14 categories with per-category scores and runtime generation settings;
+- 280-item public MMLU-Pro NVIDIA NIM receipt covering 20 items in each of the 14 categories: exact match `0.2821` (79/280, stderr `0.0262`);
 - benchmark adapter syntax checks included in the local and GitHub verification gates;
 - NVIDIA NIM and LM Studio OpenAI-compatible smoke checks with runtime credentials;
 - browser OpenAI-compatible provider requests now bind the default fetch context correctly;
