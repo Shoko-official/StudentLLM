@@ -139,6 +139,8 @@ mod tests {
     #[test]
     fn migrates_an_existing_v0_database() {
         let path = test_database_path();
+        fs::create_dir_all(path.parent().expect("legacy database parent"))
+            .expect("legacy database directory should be created");
         let legacy = rusqlite::Connection::open(&path).expect("legacy database should open");
         legacy
             .execute_batch(
