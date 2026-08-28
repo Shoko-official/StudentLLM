@@ -12,7 +12,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | Browser accessibility | Playwright plus axe | No serious or critical violations observed; mobile overflow and navigation regressions pass |
 | Local persistence | Vitest and Playwright | Course isolation, reload recovery, corrupted export rejection, source blob fidelity, audio recovery, and deletion flows pass |
 | LM Studio integration | Historical live provider smoke and browser chat | Last live check passed on 2026-08-27; latest audit found no listener on `127.0.0.1:1234`, so no new local benchmark is recorded |
-| NVIDIA integration | Live provider smoke and official BFCL, GSM8K, MATH-500, and AIME evaluations | NIM requests pass using the Windows User `NVIDIA_API_KEY` environment variable; seven BFCL public category samples, the complete GSM8K and MATH-500 test splits, and complete AIME 2024 and AIME 2025 samples completed |
+| NVIDIA integration | Live provider smoke and official BFCL, ARC-Challenge, GSM8K, MATH-500, and AIME evaluations | NIM requests pass using the Windows User `NVIDIA_API_KEY` environment variable; seven BFCL public category samples, the complete ARC-Challenge, GSM8K, and MATH-500 test splits, and complete AIME 2024 and AIME 2025 samples completed |
 | Local speech pipeline | Public FLEURS sample, sidecar, and browser recording | Timestamped transcription and review-segment rendering pass |
 | Local document pipeline | Public arXiv PDF, sidecar, and browser import | 15/15 pages indexed and page-level review content rendered |
 
@@ -32,6 +32,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | GSM8K | Complete public `openai/gsm8k` test split, 1,319 problems through NVIDIA NIM | Flexible-extract exact match `85.44%` (1,127/1,319, stderr `0.97%`); strict-match `0.00%`; complete single-task result |
 | MATH-500 | Complete public `HuggingFaceH4/MATH-500` test split, 500 problems, four-shot through NVIDIA NIM | `math_verify` `82.20%` (411/500, stderr `1.71%`); legacy `exact_match` `0.00%`; complete single-task result |
 | AIME 2024 and AIME 2025 | Complete public 30-problem set for each year through NVIDIA NIM | AIME 2024 `36.67%` (11/30, stderr `8.95%`); AIME 2025 `30.00%` (9/30, stderr `8.51%`); complete year samples |
+| ARC-Challenge | Complete public `allenai/ai2_arc` test split, 1,172 questions through NVIDIA NIM | Exact match `84.73%` (993/1,172, stderr `1.05%`); zero empty responses; complete single-task result |
 | DocVQA | Public 100-image OCR extractability diagnostic | Normalized answer visibility 86.00%; not official ANLS |
 
 Detailed commands, model versions, hardware, validity labels, and local receipt paths are maintained in [`benchmarks.md`](./benchmarks.md). Raw receipts stay local and ignored by Git.

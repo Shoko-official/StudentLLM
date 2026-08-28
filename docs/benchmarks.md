@@ -35,6 +35,7 @@ Easy or self-authored checks are useful for regression coverage but are never th
 | BEIR TREC-COVID retrieval | Full public test split, deterministic BM25 and BGE-small dense retrieval | `benchmarks/run_beir_bm25.py --dataset trec-covid` and `benchmarks/run_beir_dense.py --dataset trec-covid --model BAAI/bge-small-en-v1.5 --device cpu` | BM25 nDCG@10 0.5537, Recall@10 0.0157, MRR@10 0.7906; dense nDCG@10 0.6438, Recall@10 0.0184, MRR@10 0.8779 |
 | MTEB STSBenchmark v2 | Official public test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STSBenchmark.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | Spearman main score 0.857289 |
 | MTEB STS22 v2 | Official public multilingual test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | 18 subsets, unweighted descriptive macro-average 0.469262; language spread 0.181685-0.740204 |
+| ARC-Challenge | Complete public ARC-Challenge test split through the official generation-compatible chat task | `benchmarks/run_arc.py` with `arc_challenge_chat` and NVIDIA NIM | Exact match 0.8473 (993/1,172), stderr 0.0105; no empty responses |
 | BFCL V4 through LM Studio | Official generator and evaluator against the existing LM Studio endpoint | `python -m bfcl_eval generate` + `python -m bfcl_eval evaluate --partial-eval` | `simple_python`: 1.0000 (20/20); `multiple`: 0.9500 (19/20); `parallel_multiple`: 0.8500 (17/20); `irrelevance`: 1.0000 (20/20); `multi_turn_base`: 0.3000 (6/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1500 (3/20); partial category samples |
 | BFCL V4 through NVIDIA NIM | Official generator and evaluator through the OpenAI-compatible NVIDIA endpoint | `benchmarks/run_bfcl_openai_compatible.py --category <category> --model openai/gpt-oss-20b --base-url https://integrate.api.nvidia.com/v1` | `simple_python`: 0.4500 (9/20); `multiple`: 0.0500 (1/20); `parallel_multiple`: 0.0000 (0/20); `multi_turn_base`: 0.2500 (5/20); `multi_turn_miss_func`: 0.1500 (3/20); `multi_turn_miss_param`: 0.1000 (2/20); `multi_turn_long_context`: 0.1500 (3/20); partial category samples |
 
@@ -234,6 +235,35 @@ $env:PYTHONUTF8 = '1'
 ```
 
 For AIME 2025, change `--tasks aime24` to `--tasks aime25` and change the output filename to `gpt-oss-20b-nvidia-aime25.json`. The aggregate receipts are `artifacts/benchmarks/aime/gpt-oss-20b-nvidia-aime24_2026-08-28T07-20-06.666685.json` and `artifacts/benchmarks/aime/gpt-oss-20b-nvidia-aime25_2026-08-28T07-30-35.078582.json`. These are complete public samples for two AIME years, not a combined leaderboard result or a general model ranking.
+
+## Observed public result: ARC-Challenge
+
+The official [EleutherAI lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) evaluated the public [AI2 ARC-Challenge](https://allenai.org/data/arc) test split through its official `arc_challenge_chat` generation task. The run used `openai/gpt-oss-20b`, the Windows User `NVIDIA_API_KEY` environment variable, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=512`, `reasoning_effort=low`, and one concurrent request through NVIDIA NIM. The harness version was `0.4.12`.
+
+The standard `arc_challenge` task is a log-likelihood evaluation and cannot run through a chat-completions endpoint. The official generation-compatible `arc_challenge_chat` task was used instead. NVIDIA NIM echoes the task's `The best answer is` assistant prefix in its content; `benchmarks/run_arc.py` removes only that echoed prefix before the official task filter and metric run. The task's default punctuation stop sequence also caused reasoning-only responses with this provider, so the recorded command explicitly sets `until=None`.
+
+| Run | Public scope | Result | Validity |
+| --- | --- | --- | --- |
+| 2026-08-28 | `allenai/ai2_arc`, `ARC-Challenge` test split, 1,172 public questions | Exact match `0.8473` (993/1,172), stderr `0.0105` | Complete public test split; 0 empty responses; 1,156.65 s evaluation time |
+
+Reproduce the observed run with:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe benchmarks\run_arc.py run `
+  --model local-chat-completions `
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=1,max_retries=3" `
+  --tasks arc_challenge_chat `
+  --num_fewshot 0 --batch_size 1 --apply_chat_template `
+  --gen_kwargs "temperature=0,max_gen_toks=512,reasoning_effort=low,until=None" `
+  --seed 42 `
+  --output_path artifacts/benchmarks/arc-challenge/gpt-oss-20b-nvidia-full.json `
+  --log_samples
+```
+
+The aggregate receipt is `artifacts/benchmarks/arc-challenge/gpt-oss-20b-nvidia-full_2026-08-28T08-03-59.129683.json`, with the 1,172 logged samples in the matching `samples_arc_challenge_chat_2026-08-28T08-03-59.129683.jsonl` file. This is a complete single-task public result, not a full general-reasoning evaluation or a global model ranking.
 
 ## Observed public result: BFCL tool calling
 
