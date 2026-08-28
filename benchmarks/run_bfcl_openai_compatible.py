@@ -69,6 +69,19 @@ def register_endpoint_model(model: str, request_timeout: float) -> None:
     )
 
 
+def select_test_ids(category: str, start: int, limit: int) -> list[str]:
+    from bfcl_eval.utils import load_dataset_entry
+
+    entries = load_dataset_entry(category)
+    selected = entries[start : start + limit]
+    if len(selected) != limit:
+        raise SystemExit(
+            f"Category {category!r} contains {len(entries)} cases; "
+            f"cannot select {limit} cases from offset {start}."
+        )
+    return [entry["id"] for entry in selected]
+
+
 def run(args: argparse.Namespace) -> None:
     if args.start < 0:
         raise SystemExit("--start must be non-negative.")
@@ -82,7 +95,7 @@ def run(args: argparse.Namespace) -> None:
     project_root = args.project_root.resolve()
     project_root.mkdir(parents=True, exist_ok=True)
     configure_environment(args, project_root)
-    test_ids = [f"{args.category}_{index}" for index in range(args.start, args.start + args.limit)]
+    test_ids = select_test_ids(args.category, args.start, args.limit)
     (project_root / "test_case_ids_to_generate.json").write_text(
         json.dumps({args.category: test_ids}, indent=2) + "\n",
         encoding="utf-8",
