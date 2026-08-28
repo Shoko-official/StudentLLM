@@ -40,6 +40,8 @@ jobs:
         run: npm run test:run
       - name: Production build
         run: npm run build
+      - name: Desktop debug build
+        run: npm run desktop:build
       - name: Desktop shell check
         run: npm run desktop:check
       - name: Desktop Rust tests
