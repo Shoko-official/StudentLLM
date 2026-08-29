@@ -41,6 +41,41 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('Attention & Scaled Dot-Product · 01:15:02')).toBeInTheDocument();
   });
 
+  it('opens the complete transcript and updates review state from it', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'View all' }));
+    const transcriptDialog = screen.getByRole('dialog', { name: 'Full transcript 3' });
+    expect(within(transcriptDialog).getByText('Without this normalization, dot products grow with the key dimension.')).toBeInTheDocument();
+
+    await user.click(within(transcriptDialog).getByRole('button', { name: 'Mark segment 01:15:02 verified' }));
+    expect(within(transcriptDialog).getByRole('button', { name: 'Mark segment 01:15:02 for review' })).toBeInTheDocument();
+  });
+
+  it('opens the full Studio editor and creates an artifact from it', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Open full Studio/ }));
+    const studioDialog = screen.getByRole('dialog', { name: 'Full Studio' });
+    await user.click(within(studioDialog).getByRole('button', { name: /Quick summary/ }));
+
+    expect(within(studioDialog).getByText(/Draft quick summary for Attention & Scaled Dot-Product/)).toBeInTheDocument();
+  });
+
+  it('applies transcript display preferences from Settings immediately', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Settings/ }));
+    const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
+    await user.click(within(settingsDialog).getByRole('checkbox', { name: /Show verified transcript segments/ }));
+
+    expect(screen.queryByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).not.toBeInTheDocument();
+    expect(screen.getByText('Without this normalization, dot products grow with the key dimension.')).toBeInTheDocument();
+  });
+
   it('changes the active course from the navigation tree', async () => {
     const user = userEvent.setup();
     render(<App />);

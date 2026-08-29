@@ -56,6 +56,29 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByRole('dialog', { name: 'Needs review 1' })).toContainText('Without this normalization');
   });
 
+  test('opens the complete transcript and Studio panels', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByRole('button', { name: 'View all' }).click();
+    await expect(page.getByRole('dialog', { name: 'Full transcript 3' })).toContainText('Without this normalization');
+    await page.getByRole('button', { name: 'Close full transcript' }).click();
+
+    await page.getByRole('button', { name: /Open full Studio/ }).click();
+    const studio = page.getByRole('dialog', { name: 'Full Studio' });
+    await studio.getByRole('button', { name: /Quick summary/ }).click();
+    await expect(studio).toContainText('Draft quick summary for Attention & Scaled Dot-Product.');
+  });
+
+  test('applies Settings transcript visibility preferences', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByRole('button', { name: /Settings/ }).click();
+    const settings = page.getByRole('dialog', { name: 'Settings' });
+    await settings.getByRole('checkbox', { name: /Show verified transcript segments/ }).uncheck();
+    await expect(page.getByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).toBeHidden();
+    await expect(page.getByText('Without this normalization, dot products grow with the key dimension.')).toBeVisible();
+  });
+
   test('supports transcript review state changes', async ({ page }) => {
     await page.goto('/');
 
