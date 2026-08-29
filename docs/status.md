@@ -116,6 +116,6 @@ PR [#166](https://github.com/Shoko-official/StudentLLM/pull/166) added packaged 
 
 PR [#168](https://github.com/Shoko-official/StudentLLM/pull/168) made the two transcript display preferences persist in browser-local storage and added unit and browser reload regressions. All seven CI jobs passed, the PR was squash-merged into `main`, and its temporary branch was deleted.
 
-PR [#169](https://github.com/Shoko-official/StudentLLM/pull/169) extended packaged crash-recovery coverage from three to ten relaunch cycles on Ubuntu, Windows, and macOS. Its seven-job CI matrix passed before merge.
+PR [#169](https://github.com/Shoko-official/StudentLLM/pull/169) extended packaged crash-recovery coverage from three to ten relaunch cycles on Ubuntu, Windows, and macOS. Its seven-job CI matrix passed, the PR was squash-merged into `main`, and its temporary branch was deleted.
 
-PR [#170](https://github.com/Shoko-official/StudentLLM/pull/170) added packaged frontend-to-native IPC round-trip coverage to the Ubuntu, Windows, and macOS smoke jobs. Its seven-job CI matrix passed before merge.
+PR [#170](https://github.com/Shoko-official/StudentLLM/pull/170) added packaged frontend-to-native IPC round-trip coverage to the Ubuntu, Windows, and macOS smoke jobs. Its seven-job CI matrix passed, the PR was squash-merged into `main`, and its temporary branch was deleted.
