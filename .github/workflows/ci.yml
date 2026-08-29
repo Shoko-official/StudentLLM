@@ -47,6 +47,31 @@ jobs:
       - name: Desktop Rust tests
         run: npm run desktop:test
 
+  desktop-platform-build:
+    name: Desktop build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: npm ci
+      - name: Production build
+        run: npm run build
+      - name: Desktop debug build
+        run: npm run desktop:build
+
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
