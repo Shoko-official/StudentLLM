@@ -75,17 +75,40 @@ def register_endpoint_model(model: str, request_timeout: float) -> None:
     )
 
 
-def select_test_ids(category: str, start: int, limit: int) -> list[str]:
+def select_test_ids(
+    category: str, start: int, limit: int
+) -> tuple[list[str], list[str], list[str]]:
     from bfcl_eval.utils import load_dataset_entry
 
     entries = load_dataset_entry(category)
-    selected = entries[start : start + limit]
+    target_entries = [entry for entry in entries if "_prereq_" not in entry["id"]]
+    selectable_entries = target_entries if category.startswith("memory_") else entries
+    selected = selectable_entries[start : start + limit]
     if len(selected) != limit:
         raise SystemExit(
-            f"Category {category!r} contains {len(entries)} cases; "
+            f"Category {category!r} contains {len(selectable_entries)} selectable cases; "
             f"cannot select {limit} cases from offset {start}."
         )
-    return [entry["id"] for entry in selected]
+
+    target_ids = [entry["id"] for entry in selected]
+    required_ids = set(target_ids)
+    pending_ids = list(target_ids)
+    entries_by_id = {entry["id"]: entry for entry in entries}
+    while pending_ids:
+        entry_id = pending_ids.pop()
+        for dependency_id in entries_by_id[entry_id].get("depends_on", []):
+            if dependency_id not in entries_by_id:
+                raise SystemExit(
+                    f"Category {category!r} is missing dependency {dependency_id!r} "
+                    f"required by {entry_id!r}."
+                )
+            if dependency_id not in required_ids:
+                required_ids.add(dependency_id)
+                pending_ids.append(dependency_id)
+
+    selected_ids = [entry["id"] for entry in entries if entry["id"] in required_ids]
+    prerequisite_ids = [entry_id for entry_id in selected_ids if entry_id not in target_ids]
+    return selected_ids, target_ids, prerequisite_ids
 
 
 def run(args: argparse.Namespace) -> None:
@@ -101,7 +124,9 @@ def run(args: argparse.Namespace) -> None:
     project_root = args.project_root.resolve()
     project_root.mkdir(parents=True, exist_ok=True)
     configure_environment(args, project_root)
-    test_ids = select_test_ids(args.category, args.start, args.limit)
+    test_ids, target_ids, prerequisite_ids = select_test_ids(
+        args.category, args.start, args.limit
+    )
     (project_root / "test_case_ids_to_generate.json").write_text(
         json.dumps({args.category: test_ids}, indent=2) + "\n",
         encoding="utf-8",
@@ -141,9 +166,11 @@ def run(args: argparse.Namespace) -> None:
                 "benchmark": "BFCL V4",
                 "model": args.model,
                 "category": args.category,
-                "case_count": len(test_ids),
-                "first_case": test_ids[0],
-                "last_case": test_ids[-1],
+                "case_count": len(target_ids),
+                "first_case": target_ids[0],
+                "last_case": target_ids[-1],
+                "prerequisite_case_count": len(prerequisite_ids),
+                "selected_case_count": len(test_ids),
                 "request_timeout_seconds": args.request_timeout,
                 "project_root": str(project_root),
                 "result_dir": str(project_root / "result"),
