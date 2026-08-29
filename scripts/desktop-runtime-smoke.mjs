@@ -129,7 +129,10 @@ async function runCrashRecovery() {
   const dataRoot = await mkdtemp(join(tmpdir(), 'studentllm-desktop-recovery-'));
   const environment = {
     ...process.env,
+    HOME: dataRoot,
     XDG_DATA_HOME: dataRoot,
+    XDG_CACHE_HOME: join(dataRoot, 'cache'),
+    XDG_CONFIG_HOME: join(dataRoot, 'config'),
     WEBKIT_DISABLE_DMABUF_RENDERER: '1',
   };
 
