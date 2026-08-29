@@ -17,6 +17,7 @@
 - native workspace writes now wait briefly on SQLite locks and are covered by an overlapping-writers integrity test;
 - native workspace load and save failures now surface an actionable toast while preserving the local fallback;
 - Tauri can now own explicitly configured local sidecar processes, expose their lifecycle status, and stop its children on exit;
+- packaged desktop smoke coverage now autostarts two configured sidecars and verifies both are stopped after a clean runtime exit;
 - imported text sources are available to local lexical retrieval with source-name citations;
 - imported text is chunked into bounded passages with source-part citations before provider calls;
 - injected live-provider coverage verifies source context and provider citations;

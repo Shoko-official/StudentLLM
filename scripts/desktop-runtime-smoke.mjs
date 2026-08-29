@@ -1,18 +1,19 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const requestedBinaryPath = process.argv[2];
 const recoveryRequested = process.argv[3] === '--crash-recovery';
+const sidecarSupervisionRequested = process.argv.includes('--sidecar-supervision');
 const recoveryCyclesArgument = process.argv.find((argument) => argument.startsWith('--recovery-cycles='));
 const recoveryCycles = recoveryCyclesArgument ? Number(recoveryCyclesArgument.slice('--recovery-cycles='.length)) : 1;
 const smokeDurationMs = 15_000;
 const shutdownGraceMs = 5_000;
 
 if (!requestedBinaryPath) {
-  console.error('Usage: node scripts/desktop-runtime-smoke.mjs <binary-path> [--crash-recovery] [--recovery-cycles=N]');
+  console.error('Usage: node scripts/desktop-runtime-smoke.mjs <binary-path> [--crash-recovery] [--recovery-cycles=N] [--sidecar-supervision]');
   process.exit(2);
 }
 
@@ -45,7 +46,7 @@ function spawnRuntime(environment) {
   return { child, getOutput: () => ({ stdout, stderr }) };
 }
 
-function runSmoke(environment, { forceKill = false, durationMs = smokeDurationMs } = {}) {
+function runSmoke(environment, { forceKill = false, durationMs = smokeDurationMs, allowEarlyExit = false } = {}) {
   const { child, getOutput } = spawnRuntime(environment);
 
   return new Promise((resolve, reject) => {
@@ -78,6 +79,10 @@ function runSmoke(environment, { forceKill = false, durationMs = smokeDurationMs
 
     child.once('exit', (code, signal) => {
       if (!timedOut) {
+        if (allowEarlyExit && code === 0 && !signal) {
+          finish(resolve, { code, signal, ...getOutput() });
+          return;
+        }
         const { stdout, stderr } = getOutput();
         const details = [
           `Desktop runtime exited before the ${durationMs / 1000}s smoke window (code=${code}, signal=${signal}).`,
@@ -241,6 +246,69 @@ function createRuntimeEnvironment(dataRoot) {
   return environment;
 }
 
+function sidecarCommand(readyFileVariable) {
+  const script = `const fs=require('node:fs');const file=process.env.${readyFileVariable};fs.writeFileSync(file,String(process.pid));const cleanup=()=>{try{fs.rmSync(file,{force:true})}catch{};process.exit(0)};process.on('SIGTERM',cleanup);process.on('SIGINT',cleanup);setInterval(()=>{},1000);`;
+  return `node -e "${script}"`;
+}
+
+async function waitForSidecarPid(readyFile, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const pid = Number((await readFile(readyFile, 'utf8')).trim());
+      if (Number.isInteger(pid) && pid > 0) return pid;
+    } catch {
+      // The managed process has not written its readiness file yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Managed sidecar did not publish its readiness file within ${timeoutMs / 1000}s.`);
+}
+
+function isProcessRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForProcessExit(pid, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessRunning(pid)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Managed sidecar process ${pid} remained alive after the desktop runtime exited.`);
+}
+
+async function runSidecarSupervision() {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'studentllm-desktop-sidecars-'));
+  const asrReadyFile = join(dataRoot, 'asr.ready');
+  const documentsReadyFile = join(dataRoot, 'documents.ready');
+  const environment = {
+    ...createRuntimeEnvironment(dataRoot),
+    STUDENTLLM_AUTOSTART_SIDECARS: 'true',
+    STUDENTLLM_ASR_COMMAND: sidecarCommand('STUDENTLLM_ASR_READY_FILE'),
+    STUDENTLLM_DOCUMENT_COMMAND: sidecarCommand('STUDENTLLM_DOCUMENT_READY_FILE'),
+    STUDENTLLM_ASR_READY_FILE: asrReadyFile,
+    STUDENTLLM_DOCUMENT_READY_FILE: documentsReadyFile,
+    STUDENTLLM_SMOKE_EXIT_AFTER_MS: '5000',
+  };
+
+  try {
+    const runtime = runSmoke(environment, { durationMs: smokeDurationMs, allowEarlyExit: true });
+    const asrPid = await waitForSidecarPid(asrReadyFile);
+    const documentsPid = await waitForSidecarPid(documentsReadyFile);
+    await runtime;
+    await Promise.all([waitForProcessExit(asrPid), waitForProcessExit(documentsPid)]);
+    console.log(`Packaged runtime autostarted two configured sidecars (pids ${asrPid}, ${documentsPid}) and stopped both after a clean exit.`);
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+}
+
 async function runCrashRecovery() {
   const dataRoot = await mkdtemp(join(tmpdir(), 'studentllm-desktop-recovery-'));
   const environment = createRuntimeEnvironment(dataRoot);
@@ -286,9 +354,9 @@ try {
     LIBGL_ALWAYS_SOFTWARE: '1',
     WEBKIT_DISABLE_DMABUF_RENDERER: '1',
   };
-  if (recoveryRequested) {
-    await runCrashRecovery();
-  } else {
+  if (recoveryRequested) await runCrashRecovery();
+  if (sidecarSupervisionRequested) await runSidecarSupervision();
+  if (!recoveryRequested && !sidecarSupervisionRequested) {
     await runSmoke(environment);
     console.log(`Desktop runtime stayed alive for ${smokeDurationMs / 1000}s and was stopped.`);
   }
