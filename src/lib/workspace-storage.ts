@@ -137,7 +137,11 @@ function parseWorkspaceRaw(raw: string | null, fallback: WorkspaceSnapshot): Wor
 }
 
 export function isNativeRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  if (typeof window === 'undefined') return false;
+  return '__TAURI_INTERNALS__' in window
+    || '__TAURI__' in window
+    || window.location.protocol === 'tauri:'
+    || window.location.hostname === 'tauri.localhost';
 }
 
 export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): WorkspaceSnapshot {
