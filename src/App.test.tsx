@@ -451,6 +451,31 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('remove-me.md removed from this course.')).toBeInTheDocument();
   });
 
+  it('clears persisted chunks when removing an audio source', async () => {
+    const user = userEvent.setup();
+    const clear = vi.fn(async () => undefined);
+    const recordingChunkStore = {
+      durability: 'durable' as const,
+      append: vi.fn(async () => undefined),
+      list: vi.fn(async () => []),
+      count: vi.fn(async () => 0),
+      clear,
+    };
+    render(<App recordingChunkStore={recordingChunkStore} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['audio bytes'],
+      'remove-recording.webm',
+      { type: 'audio/webm' },
+    ));
+    expect(await screen.findByText('remove-recording.webm')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove source remove-recording.webm' }));
+
+    expect(screen.queryByText('remove-recording.webm')).not.toBeInTheDocument();
+    expect(clear).toHaveBeenCalledWith(expect.any(String));
+  });
+
   it('opens the locally stored original source in a preview', async () => {
     const user = userEvent.setup();
     render(<App />);
