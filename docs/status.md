@@ -115,3 +115,5 @@ PR [#163](https://github.com/Shoko-official/StudentLLM/pull/163) added a browser
 PR [#166](https://github.com/Shoko-official/StudentLLM/pull/166) added packaged desktop supervision coverage. The CI smoke starts two configured child processes through the native supervisor, verifies both readiness signals, and confirms both processes are stopped after a clean runtime exit on Ubuntu, Windows, and macOS. All seven CI jobs passed; the PR was squash-merged into `main`, and its temporary branch was deleted.
 
 PR [#168](https://github.com/Shoko-official/StudentLLM/pull/168) made the two transcript display preferences persist in browser-local storage and added unit and browser reload regressions. All seven CI jobs passed, the PR was squash-merged into `main`, and its temporary branch was deleted.
+
+PR [#169](https://github.com/Shoko-official/StudentLLM/pull/169) extended packaged crash-recovery coverage from three to ten relaunch cycles on Ubuntu, Windows, and macOS. Its seven-job CI matrix passed before merge.
