@@ -132,7 +132,7 @@ docs/
 
 ## Roadmap
 
-- Add a longer cross-platform crash-recovery soak and packaged frontend IPC interaction coverage.
+- Add packaged frontend IPC interaction coverage beyond the current ten-cycle recovery soak.
 - Extend the `SpeechEngine` contract to streaming partials, diarization, and crash-resumable jobs.
 - Extend OCR with structured tables, formulas, diagrams, handwriting, and richer page or region provenance.
 - Add hybrid BM25 plus dense retrieval, reranking, and a permissioned citation-first agent loop.
