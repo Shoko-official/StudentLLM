@@ -99,9 +99,12 @@ async function findFiles(root, fileName) {
   return matches;
 }
 
-function checkIntegrity(databasePath) {
+function checkWorkspaceDatabase(databasePath) {
   return new Promise((resolve, reject) => {
-    const sqlite = spawn('sqlite3', [databasePath, 'PRAGMA integrity_check;'], {
+    const sqlite = spawn('sqlite3', [databasePath, `PRAGMA integrity_check;
+      SELECT CASE WHEN EXISTS (
+        SELECT 1 FROM workspace WHERE id = 1 AND version = 1 AND length(snapshot) > 0
+      ) THEN 'snapshot-present' ELSE 'snapshot-missing' END;`], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -116,8 +119,13 @@ function checkIntegrity(databasePath) {
         reject(new Error(`SQLite integrity check failed (code=${code}, signal=${signal}): ${stderr.trim()}`));
         return;
       }
-      if (stdout.trim() !== 'ok') {
-        reject(new Error(`SQLite integrity check returned ${JSON.stringify(stdout.trim())}.`));
+      const results = stdout.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (results[0] !== 'ok') {
+        reject(new Error(`SQLite integrity check returned ${JSON.stringify(results[0] ?? '')}.`));
+        return;
+      }
+      if (results[1] !== 'snapshot-present') {
+        reject(new Error(`Workspace snapshot check returned ${JSON.stringify(results[1] ?? '')}.`));
         return;
       }
       resolve();
@@ -137,20 +145,31 @@ async function runCrashRecovery() {
   };
 
   try {
-    await runSmoke(environment, { forceKill: true, durationMs: 30_000 });
+    const firstRun = await runSmoke(environment, { forceKill: true, durationMs: 30_000 });
     const databasesAfterCrash = await findFiles(dataRoot, 'studentllm.sqlite3');
     if (databasesAfterCrash.length !== 1) {
       throw new Error(`Expected one workspace database after the forced stop, found ${databasesAfterCrash.length}.`);
     }
 
-    await runSmoke(environment);
+    const secondRun = await runSmoke(environment);
     const databasesAfterRelaunch = await findFiles(dataRoot, 'studentllm.sqlite3');
     if (databasesAfterRelaunch.length !== 1 || databasesAfterRelaunch[0] !== databasesAfterCrash[0]) {
       throw new Error('Workspace database was not preserved across the forced stop and relaunch.');
     }
 
-    await checkIntegrity(databasesAfterRelaunch[0]);
-    console.log('Desktop runtime recovered after SIGKILL and SQLite integrity_check returned ok.');
+    try {
+      await checkWorkspaceDatabase(databasesAfterRelaunch[0]);
+    } catch (error) {
+      const outputs = [firstRun, secondRun]
+        .flatMap(({ stdout, stderr }, index) => [
+          `Runtime ${index + 1} stdout:\n${stdout.trim()}`,
+          `Runtime ${index + 1} stderr:\n${stderr.trim()}`,
+        ])
+        .filter((output) => !output.endsWith(':'))
+        .join('\n');
+      throw new Error(`${error instanceof Error ? error.message : error}\n${outputs}`);
+    }
+    console.log('Desktop runtime recovered after SIGKILL with a persisted workspace snapshot and SQLite integrity_check returning ok.');
   } finally {
     await rm(dataRoot, { recursive: true, force: true });
   }

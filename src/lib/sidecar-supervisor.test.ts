@@ -19,7 +19,7 @@ describe('sidecar supervisor bridge', () => {
   });
 
   it('maps native lifecycle commands to the Tauri bridge', async () => {
-    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
     const statuses = [{ kind: 'asr', configured: true, running: true, pid: 42, detail: 'Managed process is running.' }];
     invoke.mockResolvedValue(statuses);
 
