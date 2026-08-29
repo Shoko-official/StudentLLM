@@ -115,7 +115,11 @@ function parseLessonWorkspaces(value: unknown, lessons: Lesson[]): Record<string
 
 function getStorage(): Storage | undefined {
   if (typeof window === 'undefined') return undefined;
-  return window.localStorage;
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
 }
 
 function invokeNative<T>(command: string, args?: Record<string, unknown>) {

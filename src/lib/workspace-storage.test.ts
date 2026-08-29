@@ -50,6 +50,16 @@ describe('workspace storage', () => {
     expect(loadWorkspace(fallback)).toEqual(fallback);
   });
 
+  it('falls back safely when the WebView blocks local storage access', () => {
+    const localStorageGetter = vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('local storage is unavailable', 'SecurityError');
+    });
+
+    expect(loadWorkspace(fallback)).toEqual(fallback);
+
+    localStorageGetter.mockRestore();
+  });
+
   it('drops invalid child records instead of restoring corrupt state', () => {
     localStorage.setItem('studentllm.workspace.v1', JSON.stringify({
       version: 1,
