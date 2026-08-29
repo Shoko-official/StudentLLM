@@ -164,4 +164,32 @@ describe('workspace storage', () => {
     expect(onError).toHaveBeenCalledWith({ operation: 'save', message: 'disk full' });
     expect(loadWorkspace(fallback)).toEqual(snapshot);
   });
+
+  it('serializes overlapping native saves so the newest snapshot is written last', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
+    const pending: Array<{ snapshot: string; resolve: () => void }> = [];
+    invoke.mockImplementation((_command: string, args: { snapshot: string }) => new Promise<void>((resolve) => {
+      pending.push({ snapshot: args.snapshot, resolve });
+    }));
+    const first = { ...fallback, activeLessonId: 'first' };
+    const second = { ...fallback, activeLessonId: 'second' };
+
+    const firstSave = saveWorkspaceAsync(first);
+    const secondSave = saveWorkspaceAsync(second);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(pending[0]?.snapshot).toBe(JSON.stringify({ version: 1, ...first }));
+
+    pending[0]!.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(invoke).toHaveBeenCalledTimes(2);
+    expect(pending[1]?.snapshot).toBe(JSON.stringify({ version: 1, ...second }));
+
+    pending[1]!.resolve();
+    await expect(firstSave).resolves.toBe(true);
+    await expect(secondSave).resolves.toBe(true);
+  });
 });
