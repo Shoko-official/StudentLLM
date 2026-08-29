@@ -30,6 +30,8 @@ npm run dev
 
 When the recording is stopped, the app reports the saved-audio state, submits the persisted chunks to the sidecar, and appends returned segments to the transcript. If the sidecar is unavailable, the durable audio remains available and the transcript is not changed.
 
+Open Settings and choose `Refresh local services` to check the configured `/health` endpoint without starting, stopping, or reloading the sidecar. The result includes the advertised model when the service is ready and a readable error when it is unavailable.
+
 The complete browser path was also exercised on 2026-08-27 with one public `google/fleurs` French sample: the browser recording flow persisted the audio, the sidecar returned a non-empty timestamped segment, and the UI rendered it with `Needs review` status. The run produced no page errors and did not restart the existing LM Studio process.
 
 ## Contract
