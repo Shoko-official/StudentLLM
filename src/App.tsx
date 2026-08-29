@@ -149,6 +149,8 @@ const emptyLessonWorkspace: LessonWorkspace = {
   artifacts: [],
 };
 
+const sourceAccept = 'audio/*,image/*,.pdf,.txt,.md';
+
 const initialWorkspace = {
   activeLessonId: initialLessons[0].id,
   lessons: initialLessons,
@@ -239,6 +241,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
   const recorderRef = useRef<RecorderSession | null>(null);
   const resourcePreviewRequest = useRef(0);
+  const sourceInputRef = useRef<HTMLInputElement | null>(null);
   const localProvider = useMemo(() => provider === undefined ? createLocalLLMProvider() : provider, [provider]);
   const localSpeechEngine = useMemo(() => speechEngine === undefined ? createLocalSpeechEngine() : speechEngine, [speechEngine]);
   const localDocumentEngine = useMemo(() => documentEngine === undefined ? createLocalDocumentEngine() : documentEngine, [documentEngine]);
@@ -760,6 +763,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const importSource = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
+    event.target.accept = sourceAccept;
     if (!file) return;
     const lessonId = activeLesson.id;
     try {
@@ -791,6 +795,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     } catch {
       notify('The source could not be fingerprinted or stored locally.');
     }
+  };
+
+  const openSourcePicker = (accept: string) => {
+    if (!sourceInputRef.current) return;
+    sourceInputRef.current.accept = accept;
+    sourceInputRef.current.click();
   };
 
   const removeSource = async (resource: Resource) => {
@@ -938,6 +948,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   return (
     <div className="app-shell">
+      <input ref={sourceInputRef} className="visually-hidden" type="file" aria-label="Select course source" accept={sourceAccept} onChange={importSource} />
       <header className="topbar">
         <div className="topbar-leading">
           <button className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setShowLeftSidebar((value) => !value)}>
@@ -1087,7 +1098,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
               <form className="composer" onSubmit={submitComposer}>
                 <div className="composer-input"><MessageCircle size={16} /><input aria-label="Ask a course question" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about this course…" /><kbd>@</kbd></div>
-                <div className="composer-tools"><button type="button" aria-label="Attach a file" onClick={() => notify('Add a file from Studio.') }><Plus size={17} /></button><button type="button" aria-label="Attach an image" onClick={() => notify('Add a board photo from Studio.') }><FileImage size={16} /></button><button type="button" aria-label="Voice dictation" onClick={toggleRecording}><Mic size={16} /></button><button className="send-button" type="submit" aria-label="Send question"><Send size={15} /></button></div>
+                <div className="composer-tools"><button type="button" aria-label="Attach a file" onClick={() => openSourcePicker('audio/*,.pdf,.txt,.md')}><Plus size={17} /></button><button type="button" aria-label="Attach an image" onClick={() => openSourcePicker('image/*')}><FileImage size={16} /></button><button type="button" aria-label="Voice dictation" onClick={toggleRecording}><Mic size={16} /></button><button className="send-button" type="submit" aria-label="Send question"><Send size={15} /></button></div>
                 <small>Answers stay linked to sources. Check important formulas against your notes.</small>
               </form>
             </div>
@@ -1109,7 +1120,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             <div className="studio-heading"><div><span className="section-kicker">Studio</span><h2>Build for review</h2></div><button className="icon-button" aria-label="Close Studio" onClick={() => setShowRightSidebar(false)}><X size={16} /></button></div>
             <section className="context-card"><div className="context-card-top"><span className="context-icon"><BookOpen size={15} /></span><span className="local-badge"><span className="status-dot" /> local</span></div><h3>{activeLesson.title}</h3><dl><div><dt>Sources</dt><dd>{activeResources.length + 2}</dd></div><div><dt>Duration</dt><dd>{activeLesson.duration}</dd></div><div><dt>State</dt><dd className="success-text">Indexed</dd></div></dl></section>
             <div className="transfer-actions" aria-label="Course transfer"><button className="transfer-action" type="button" onClick={() => void exportCourse()}><Download size={13} /> Export course</button><label className="transfer-action"><input className="visually-hidden" type="file" accept="application/json,.json" aria-label="Import course export" onChange={(event) => void importCourse(event)} /><Upload size={13} /> Import course</label></div>
-            <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><label className="mini-action"><input className="visually-hidden" type="file" aria-label="Select course source" accept="audio/*,image/*,.pdf,.txt,.md" onChange={importSource} /><Plus size={13} /> add</label></div><div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}><button className="resource-open" type="button" onClick={() => void openResource(resource)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button><button className="resource-remove" type="button" aria-label={`Remove source ${resource.name}`} onClick={() => void removeSource(resource)}><X size={13} /></button></div>)}</div>{resources.length > 3 && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
+            <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><button className="mini-action" type="button" onClick={() => openSourcePicker(sourceAccept)}><Plus size={13} /> add</button></div><div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}><button className="resource-open" type="button" onClick={() => void openResource(resource)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button><button className="resource-remove" type="button" aria-label={`Remove source ${resource.name}`} onClick={() => void removeSource(resource)}><X size={13} /></button></div>)}</div>{resources.length > 3 && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
             <section className="studio-actions"><div className="sidebar-section-header"><span>Create an artifact</span><span className="eyebrow-count">source-linked</span></div><div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div></section>
             {artifacts.length > 0 && <section className="recent-section"><div className="sidebar-section-header"><span>Recently created</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} type="button" aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></button>)}{selectedArtifactId && (() => { const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId); if (!selectedArtifact) return null; return <article className="artifact-preview"><span className="section-kicker">Artifact preview</span><h3>{selectedArtifact.label}</h3><p>{selectedArtifact.content ?? 'This artifact has no stored content.'}</p>{selectedArtifact.citations && <div className="citation-list">{selectedArtifact.citations.map((citation) => <button key={citation} onClick={() => notify(`Source opened: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</article>; })()}</section>}
             <button className="studio-link" onClick={() => setShowStudioPanel(true)}>Open full Studio <ArrowUpRight size={14} /></button>

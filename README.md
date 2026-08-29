@@ -26,6 +26,7 @@ StudentLLM is built around three principles:
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.
 - Original imported source blobs are stored in IndexedDB when available, alongside their fingerprints.
 - Imported text, image, audio, and PDF sources can be opened from the workspace through a local preview.
+- Course questions can attach supported local sources directly from the composer.
 - Course deletion clears the lesson workspace and its locally stored source and recording blobs before switching sessions.
 - Active courses can be exported and imported as versioned JSON packages with source and audio assets.
 - OpenAI-compatible smoke checks for NVIDIA NIM and LM Studio.
