@@ -258,6 +258,51 @@ test.describe('StudentLLM workspace', () => {
     expect(storedChunkCount).toBe(1);
   });
 
+  test('removes a recorded audio source and its persisted chunks', async ({ page }) => {
+    await page.addInitScript(() => {
+      const track = { stop: () => undefined };
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => ({ getTracks: () => [track] }) },
+      });
+
+      class BrowserRecorderMock {
+        static isTypeSupported = () => false;
+        ondataavailable: ((event: { data: Blob }) => void) | null = null;
+        onstop: (() => void) | null = null;
+
+        start() {
+          queueMicrotask(() => this.ondataavailable?.({ data: new Blob(['removable audio'], { type: 'audio/webm' }) }));
+        }
+
+        stop() {
+          this.onstop?.();
+        }
+      }
+
+      Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: BrowserRecorderMock });
+    });
+    await page.goto('/');
+
+    await page.getByRole('button', { name: 'Start recording' }).click();
+    await page.getByRole('button', { name: 'Stop recording' }).click();
+    await expect(page.getByText('Attention & Scaled Dot-Product audio.webm')).toBeVisible();
+    await page.getByRole('button', { name: 'Remove source Attention & Scaled Dot-Product audio.webm' }).click();
+    await expect(page.getByText('Attention & Scaled Dot-Product audio.webm removed from this course.')).toBeVisible();
+
+    const storedChunkCount = await page.evaluate(() => new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open('studentllm-recordings', 1);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const countRequest = request.result.transaction('audio-chunks', 'readonly').objectStore('audio-chunks').count();
+        countRequest.onsuccess = () => resolve(countRequest.result);
+        countRequest.onerror = () => reject(countRequest.error);
+      };
+    }));
+
+    expect(storedChunkCount).toBe(0);
+  });
+
   test('recovers durable audio after an interrupted browser session', async ({ page }) => {
     await page.addInitScript(() => {
       const track = { stop: () => undefined };
