@@ -12,6 +12,10 @@ pub fn run() {
             sidecars::start_sidecars,
             sidecars::stop_sidecars
         ])
+        .setup(|app| {
+            workspace::initialize_workspace(&app.handle()).map_err(std::io::Error::other)?;
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error while building StudentLLM");
 
