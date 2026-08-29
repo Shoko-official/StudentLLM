@@ -1,10 +1,14 @@
-import { beforeEach, vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
+import { RECORDING_RECOVERY_STORAGE_KEY } from './lib/recording-recovery';
 
 describe('StudentLLM workspace', () => {
   beforeEach(() => localStorage.clear());
+  afterEach(() => {
+    delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+  });
 
   it('renders the course workspace with sources and Studio actions', () => {
     render(<App />);
@@ -289,6 +293,26 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('The local transcript.')).toBeInTheDocument();
     expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
     expect(await screen.findByText('Local transcription added 1 segments.')).toBeInTheDocument();
+  });
+
+  it('waits for native workspace hydration before processing recording recovery', async () => {
+    const loadPromise = new Promise<string>(() => undefined);
+    const invoke = vi.fn((command: string) => command === 'load_workspace' ? loadPromise : Promise.resolve(null));
+    Object.defineProperty(window, '__TAURI__', {
+      configurable: true,
+      value: { core: { invoke } },
+    });
+    localStorage.setItem(RECORDING_RECOVERY_STORAGE_KEY, JSON.stringify({
+      version: 1,
+      recordings: [{ recordingId: 'native-recording', lessonId: 'native-lesson', lessonTitle: 'Native course', startedAt: 100 }],
+    }));
+    const removeItem = vi.spyOn(localStorage, 'removeItem');
+
+    render(<App />);
+    await Promise.resolve();
+
+    expect(invoke).toHaveBeenCalledWith('load_workspace');
+    expect(removeItem).not.toHaveBeenCalledWith(RECORDING_RECOVERY_STORAGE_KEY);
   });
 
   it('restores a created course after remounting the workspace', async () => {
