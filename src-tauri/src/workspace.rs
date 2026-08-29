@@ -8,6 +8,7 @@ use tauri::{AppHandle, Manager};
 const DATABASE_FILE: &str = "studentllm.sqlite3";
 const SCHEMA_VERSION: i32 = 1;
 const WAL_ENABLE_ATTEMPTS: usize = 8;
+const BOOTSTRAP_SNAPSHOT: &str = r#"{"version":1,"bootstrap":true}"#;
 
 fn is_busy_error(error: &SqliteError) -> bool {
     matches!(
@@ -77,6 +78,12 @@ fn open_database(path: &Path) -> Result<Connection, String> {
             .pragma_update(None, "user_version", SCHEMA_VERSION)
             .map_err(|error| format!("Unable to record workspace schema version: {error}"))?;
     }
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO workspace (id, version, snapshot, updated_at) VALUES (1, 1, ?1, 0)",
+            params![BOOTSTRAP_SNAPSHOT],
+        )
+        .map_err(|error| format!("Unable to create workspace bootstrap snapshot: {error}"))?;
     Ok(connection)
 }
 
@@ -123,12 +130,18 @@ fn write_snapshot(path: &Path, snapshot: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn load_workspace(app: AppHandle) -> Result<Option<String>, String> {
-    read_snapshot(&database_path(&app)?)
+    let result = read_snapshot(&database_path(&app)?);
+    #[cfg(debug_assertions)]
+    eprintln!("[studentllm] load_workspace invoked: {}", if result.is_ok() { "ok" } else { "error" });
+    result
 }
 
 #[tauri::command]
 pub fn save_workspace(app: AppHandle, snapshot: String) -> Result<(), String> {
-    write_snapshot(&database_path(&app)?, &snapshot)
+    let result = write_snapshot(&database_path(&app)?, &snapshot);
+    #[cfg(debug_assertions)]
+    eprintln!("[studentllm] save_workspace invoked: {}", if result.is_ok() { "ok" } else { "error" });
+    result
 }
 
 #[cfg(test)]
@@ -162,7 +175,10 @@ mod tests {
         assert_eq!(schema_version, 1);
         drop(connection);
 
-        assert_eq!(read_snapshot(&path).expect("read should succeed"), None);
+        assert_eq!(
+            read_snapshot(&path).expect("read should succeed"),
+            Some(r#"{"version":1,"bootstrap":true}"#.to_string())
+        );
         write_snapshot(&path, "{\"version\":1}").expect("write should succeed");
         assert_eq!(
             read_snapshot(&path).expect("read should succeed"),

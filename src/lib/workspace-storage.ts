@@ -24,6 +24,12 @@ export interface WorkspaceStorageCallbacks {
   onError?: (error: WorkspaceStorageError) => void;
 }
 
+type GlobalTauri = {
+  core?: {
+    invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+  };
+};
+
 function describeStorageError(error: unknown): string {
   return error instanceof Error && error.message ? error.message : 'The native workspace storage operation failed.';
 }
@@ -109,7 +115,23 @@ function parseLessonWorkspaces(value: unknown, lessons: Lesson[]): Record<string
 
 function getStorage(): Storage | undefined {
   if (typeof window === 'undefined') return undefined;
-  return window.localStorage;
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+function invokeNative<T>(command: string, args?: Record<string, unknown>) {
+  const globalTauri = typeof window === 'undefined'
+    ? undefined
+    : (window as Window & { __TAURI__?: GlobalTauri }).__TAURI__;
+  if (globalTauri?.core?.invoke) {
+    return args === undefined
+      ? globalTauri.core.invoke<T>(command)
+      : globalTauri.core.invoke<T>(command, args);
+  }
+  return args === undefined ? invoke<T>(command) : invoke<T>(command, args);
 }
 
 function parseWorkspaceRaw(raw: string | null, fallback: WorkspaceSnapshot): WorkspaceSnapshot {
@@ -137,7 +159,20 @@ function parseWorkspaceRaw(raw: string | null, fallback: WorkspaceSnapshot): Wor
 }
 
 export function isNativeRuntime() {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  if (typeof window === 'undefined') return false;
+  const internals = (window as Window & {
+    __TAURI_INTERNALS__?: { invoke?: unknown };
+    __TAURI__?: GlobalTauri;
+    isTauri?: boolean;
+  }).__TAURI_INTERNALS__;
+  const globalTauri = (window as Window & { __TAURI__?: GlobalTauri }).__TAURI__;
+  return typeof internals?.invoke === 'function'
+    || typeof globalTauri?.core?.invoke === 'function'
+    || (window as Window & { isTauri?: boolean }).isTauri === true
+    || window.location.protocol === 'tauri:'
+    || window.location.protocol === 'file:'
+    || window.location.hostname === 'tauri.localhost'
+    || (import.meta.env.PROD && window.location.hostname === 'localhost');
 }
 
 export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): WorkspaceSnapshot {
@@ -164,8 +199,16 @@ export async function loadWorkspaceAsync(
   if (!isNativeRuntime()) return loadWorkspace(fallback, storage);
 
   try {
-    const raw = await invoke<string | null>('load_workspace');
-    return parseWorkspaceRaw(raw, fallback);
+    const raw = await invokeNative<string | null>('load_workspace');
+    const snapshot = parseWorkspaceRaw(raw, fallback);
+    if (raw === null || snapshot === fallback) {
+      try {
+        await invokeNative('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
+      } catch (error) {
+        callbacks.onError?.({ operation: 'save', message: describeStorageError(error) });
+      }
+    }
+    return snapshot;
   } catch (error) {
     callbacks.onError?.({ operation: 'load', message: describeStorageError(error) });
     return loadWorkspace(fallback, storage);
@@ -180,7 +223,7 @@ export async function saveWorkspaceAsync(
   if (!isNativeRuntime()) return saveWorkspace(snapshot, storage);
 
   try {
-    await invoke('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
+    await invokeNative('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
     return true;
   } catch (error) {
     callbacks.onError?.({ operation: 'save', message: describeStorageError(error) });
