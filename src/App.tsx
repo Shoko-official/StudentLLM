@@ -636,12 +636,19 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     try {
       const session = await recorderSessionFactory();
       if (session.stream && session.durability === 'durable') {
-        savePendingRecording({
+        const recoverySaved = savePendingRecording({
           recordingId: session.recordingId,
           lessonId: activeLesson.id,
           lessonTitle: activeLesson.title,
           startedAt: Date.now(),
         });
+        if (!recoverySaved) {
+          await session.stop().catch(() => undefined);
+          const message = 'Recording was not started because interrupted-session recovery is unavailable.';
+          setRecordingError(message);
+          notify(message);
+          return;
+        }
       }
       recorderRef.current = session;
       setIsRecording(true);
