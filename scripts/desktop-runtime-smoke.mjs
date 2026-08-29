@@ -104,7 +104,13 @@ function checkWorkspaceDatabase(databasePath) {
     const sqlite = spawn('sqlite3', [databasePath, `PRAGMA integrity_check;
       SELECT CASE WHEN EXISTS (
         SELECT 1 FROM workspace WHERE id = 1 AND version = 1 AND length(snapshot) > 0
-      ) THEN 'snapshot-present' ELSE 'snapshot-missing' END;`], {
+      ) THEN 'snapshot-present' ELSE 'snapshot-missing' END;
+      SELECT CASE WHEN EXISTS (
+        SELECT 1 FROM workspace
+        WHERE id = 1 AND version = 1 AND json_valid(snapshot)
+          AND json_type(snapshot, '$.lessons') = 'array'
+          AND json_array_length(json_extract(snapshot, '$.lessons')) > 0
+      ) THEN 'frontend-snapshot-present' ELSE 'frontend-snapshot-missing' END;`], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -128,6 +134,10 @@ function checkWorkspaceDatabase(databasePath) {
         reject(new Error(`Workspace snapshot check returned ${JSON.stringify(results[1] ?? '')}.`));
         return;
       }
+      if (results[2] !== 'frontend-snapshot-present') {
+        reject(new Error(`Frontend snapshot check returned ${JSON.stringify(results[2] ?? '')}.`));
+        return;
+      }
       resolve();
     });
   });
@@ -141,6 +151,8 @@ async function runCrashRecovery() {
     XDG_DATA_HOME: dataRoot,
     XDG_CACHE_HOME: join(dataRoot, 'cache'),
     XDG_CONFIG_HOME: join(dataRoot, 'config'),
+    GDK_BACKEND: 'x11',
+    LIBGL_ALWAYS_SOFTWARE: '1',
     WEBKIT_DISABLE_DMABUF_RENDERER: '1',
   };
 
@@ -169,7 +181,7 @@ async function runCrashRecovery() {
         .join('\n');
       throw new Error(`${error instanceof Error ? error.message : error}\n${outputs}`);
     }
-    console.log('Desktop runtime recovered after SIGKILL with a persisted workspace snapshot and SQLite integrity_check returning ok.');
+    console.log('Desktop runtime recovered after SIGKILL with a frontend-persisted workspace snapshot and SQLite integrity_check returning ok.');
   } finally {
     await rm(dataRoot, { recursive: true, force: true });
   }
@@ -178,6 +190,8 @@ async function runCrashRecovery() {
 try {
   const environment = {
     ...process.env,
+    GDK_BACKEND: 'x11',
+    LIBGL_ALWAYS_SOFTWARE: '1',
     WEBKIT_DISABLE_DMABUF_RENDERER: '1',
   };
   if (recoveryRequested) {
