@@ -55,7 +55,7 @@ The following targets are not yet complete product evidence:
 - MUSAN noise robustness by SNR;
 - DIHARD and VoxConverse diarization metrics;
 - OmniDocBench parsing metrics, official DocVQA ANLS, and PubTabNet TEDS;
-- full MTEB, BEIR, BFCL, MMLU-Pro, and Ragas evaluation suites;
+- full MTEB, BEIR, BFCL, MMLU-Pro, and Ragas evaluation suites; the BFCL memory-case wrapper now resolves prerequisite closures, but the NVIDIA `memory_kv` diagnostic remains unscored because generation produced repeated empty responses and exceeded the practical runtime budget;
 - versioned LectureBench held-out classroom and document scenarios;
 - SQLite WAL and Tauri runtime validation, sidecar supervision, and crash recovery soak.
 - additional code-generation protocols;
