@@ -8,7 +8,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 
 | Area | Evidence | Current result |
 | --- | --- | --- |
-| Application verification | `npm run verify` | TypeScript, benchmark adapter checks, 81 Vitest tests, Vite production build, and 28 Playwright tests pass |
+| Application verification | `npm run verify` | TypeScript, benchmark adapter checks, 81 Vitest tests, Vite production build, and 29 Playwright tests pass |
 | Browser accessibility | Playwright plus axe | No serious or critical violations observed; mobile overflow, navigation, and Escape dismissal regressions pass |
 | Local persistence | Vitest and Playwright | Course isolation, reload recovery, corrupted export rejection, source blob fidelity, local source previews, audio recovery, source deletion cleanup, course deletion cleanup, and native storage failure fallback feedback pass |
 | LM Studio integration | Existing `llama-server` process, live provider smoke, browser chat, and public DROP probe | The existing `openai/gpt-oss-20b` process is reachable through the LM Studio router on `127.0.0.1:1234`; live browser chat returned HTTP 200 and rendered an 886-character answer with no page or console errors. A larger local DROP run was interrupted before writing a receipt and is not counted as a score |
@@ -109,3 +109,5 @@ PR [#156](https://github.com/Shoko-official/StudentLLM/pull/156) made durable re
 PR [#158](https://github.com/Shoko-official/StudentLLM/pull/158) made course deletion clear orphaned interrupted-recording manifests and their persisted chunks. The change added an injected-store regression covering physical recording cleanup; all seven CI jobs passed, the PR was squash-merged into `main`, and its temporary branch was deleted.
 
 PR [#161](https://github.com/Shoko-official/StudentLLM/pull/161) made removal of an audio source clear any persisted recording chunks associated with that source. The change added an injected-store regression for source-level cleanup; all seven CI jobs passed, the PR was squash-merged into `main`, and its temporary branch was deleted.
+
+PR [#163](https://github.com/Shoko-official/StudentLLM/pull/163) added a browser regression that records an audio chunk, removes the recorded source through the workspace UI, and verifies the IndexedDB audio store is empty. All seven CI jobs passed, the PR was squash-merged into `main`, and its temporary branch was deleted. The verified browser suite now contains 29 scenarios.
