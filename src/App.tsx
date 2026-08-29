@@ -861,6 +861,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const removeSource = async (resource: Resource) => {
     try {
       await sourceBlobStore.remove(resource.id);
+      if (resource.kind === 'audio') await recordingChunkStore.clear(resource.id);
       updateActiveWorkspace((current) => ({
         ...current,
         resources: current.resources.filter((item) => item.id !== resource.id),
