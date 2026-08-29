@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use tauri::{AppHandle, Manager};
@@ -16,6 +16,9 @@ fn open_database(path: &Path) -> Result<Connection, String> {
 
     let connection = Connection::open(path)
         .map_err(|error| format!("Unable to open workspace database: {error}"))?;
+    connection
+        .busy_timeout(Duration::from_secs(5))
+        .map_err(|error| format!("Unable to configure workspace lock timeout: {error}"))?;
     connection
         .pragma_update(None, "journal_mode", "WAL")
         .map_err(|error| format!("Unable to enable WAL mode: {error}"))?;
@@ -100,6 +103,7 @@ pub fn save_workspace(app: AppHandle, snapshot: String) -> Result<(), String> {
 mod tests {
     use super::{open_database, read_snapshot, write_snapshot};
     use std::fs;
+    use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_database_path() -> std::path::PathBuf {
@@ -191,5 +195,42 @@ mod tests {
         assert!(error.contains("newer than supported version 1"));
 
         let _ = fs::remove_dir_all(path.parent().expect("future database parent"));
+    }
+
+    #[test]
+    fn keeps_the_database_valid_when_writers_overlap() {
+        let path = Arc::new(test_database_path());
+        let writers = (0..8)
+            .map(|index| {
+                let path = Arc::clone(&path);
+                std::thread::spawn(move || {
+                    write_snapshot(
+                        path.as_ref(),
+                        &format!("{{\"version\":1,\"writer\":{index}}}"),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for writer in writers {
+            writer
+                .join()
+                .expect("writer thread should finish")
+                .expect("overlapping write should succeed");
+        }
+
+        let connection = open_database(path.as_ref()).expect("database should reopen");
+        let integrity: String = connection
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .expect("integrity check should be readable");
+        assert_eq!(integrity, "ok");
+        drop(connection);
+
+        let snapshot = read_snapshot(path.as_ref())
+            .expect("final snapshot should be readable")
+            .expect("at least one writer should persist a snapshot");
+        assert!(snapshot.starts_with("{\"version\":1,\"writer\":"));
+
+        let _ = fs::remove_dir_all(path.parent().expect("concurrent database parent"));
     }
 }
