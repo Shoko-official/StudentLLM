@@ -46,6 +46,7 @@ import type { SpeechEngine } from './lib/speech-engine';
 import { createLocalDocumentEngine } from './lib/document-engine';
 import type { DocumentEngine } from './lib/document-engine';
 import { probeSidecar, SidecarHealth } from './lib/sidecar-health';
+import { getManagedSidecarStatus, ManagedSidecarStatus, startManagedSidecars, stopManagedSidecars } from './lib/sidecar-supervisor';
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore } from './lib/source-storage';
 import { createRecordingChunkStore } from './lib/recording-storage';
@@ -236,6 +237,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [compactTranscript, setCompactTranscript] = useState(false);
   const [showVerifiedTranscript, setShowVerifiedTranscript] = useState(true);
   const [sidecarHealth, setSidecarHealth] = useState<{ asr: SidecarHealth; documents: SidecarHealth } | null>(null);
+  const [managedSidecars, setManagedSidecars] = useState<ManagedSidecarStatus[]>([]);
   const [isCheckingSidecars, setIsCheckingSidecars] = useState(false);
   const [resourcePreview, setResourcePreview] = useState<ResourcePreview | null>(null);
   const [newCourseTitle, setNewCourseTitle] = useState('');
@@ -469,12 +471,40 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   const checkSidecars = async () => {
     setIsCheckingSidecars(true);
-    const [asr, documents] = await Promise.all([
+    const [asr, documents, managed] = await Promise.all([
       probeSidecar(import.meta.env.VITE_LOCAL_ASR_BASE_URL),
       probeSidecar(import.meta.env.VITE_LOCAL_DOCUMENT_BASE_URL),
+      getManagedSidecarStatus().catch(() => []),
     ]);
     setSidecarHealth({ asr, documents });
+    setManagedSidecars(managed);
     setIsCheckingSidecars(false);
+  };
+
+  const startConfiguredSidecars = async () => {
+    try {
+      const statuses = await startManagedSidecars();
+      setManagedSidecars(statuses);
+      await checkSidecars();
+      notify(statuses.some((sidecar) => sidecar.configured)
+        ? 'Configured local services started.'
+        : 'No local services are configured yet.');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Configured local services could not be started.');
+    }
+  };
+
+  const stopConfiguredSidecars = async () => {
+    try {
+      const statuses = await stopManagedSidecars();
+      setManagedSidecars(statuses);
+      await checkSidecars();
+      notify(statuses.some((sidecar) => sidecar.running)
+        ? 'Some managed local services are still running.'
+        : 'Managed local services stopped.');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'Managed local services could not be stopped.');
+    }
   };
 
   const openResource = async (resource: Resource) => {
@@ -1152,6 +1182,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       {showTranscriptPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowTranscriptPanel(false)}><section className="modal transcript-modal" role="dialog" aria-modal="true" aria-labelledby="transcript-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Transcript archive</span><h2 id="transcript-panel-title">Full transcript <span className="modal-count">{transcript.length}</span></h2></div><button className="icon-button" aria-label="Close full transcript" onClick={() => setShowTranscriptPanel(false)}><X size={17} /></button></div><p className="modal-description">Review every indexed segment from {activeLesson.title}. Changes are saved to this course workspace.</p><div className={`transcript-list modal-transcript-list ${compactTranscript ? 'compact' : ''}`}>{transcript.length ? transcript.map(renderTranscriptSegment) : <p className="empty-state">This course has no transcript segments yet.</p>}</div></section></div>}
       {showStudioPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowStudioPanel(false)}><section className="modal studio-modal" role="dialog" aria-modal="true" aria-labelledby="studio-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Artifact workspace</span><h2 id="studio-panel-title">Full Studio</h2></div><button className="icon-button" aria-label="Close full Studio" onClick={() => setShowStudioPanel(false)}><X size={17} /></button></div><p className="modal-description">Create source-linked study materials for {activeLesson.title}. Select an artifact to inspect its latest draft.</p><div className="artifact-grid modal-artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div>{artifacts.length > 0 && <div className="studio-library"><div className="sidebar-section-header"><span>Saved artifacts</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <button className={`recent-artifact ${artifact.id === selectedArtifactId ? 'selected' : ''}`} key={artifact.id} type="button" onClick={() => setSelectedArtifactId(artifact.id)}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></button>)}{selectedArtifactId && (() => { const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId); if (!selectedArtifact) return null; return <article className="artifact-preview"><span className="section-kicker">Artifact preview</span><h3>{selectedArtifact.label}</h3><p>{selectedArtifact.content ?? 'This artifact has no stored content.'}</p>{selectedArtifact.citations && <div className="citation-list">{selectedArtifact.citations.map((citation) => <button key={citation} onClick={() => notify(`Source opened: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</article>; })()}</div>}</section></div>}
       {showSettingsPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettingsPanel(false)}><section className="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace preferences</span><h2 id="settings-panel-title">Settings</h2></div><button className="icon-button" aria-label="Close settings" onClick={() => setShowSettingsPanel(false)}><X size={17} /></button></div><p className="modal-description">Adjust how this workspace presents local course data. Preferences apply immediately to this session.</p><div className="settings-list"><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>Audio and document sidecars are checked without interrupting any running local model.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>ASR sidecar</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document sidecar</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
+      {isNativeRuntime() && <div className="managed-sidecar-tray" aria-label="Managed local services"><span>Managed services</span><span aria-live="polite">{managedSidecars.filter((sidecar) => sidecar.running).length}/2 running</span><button type="button" onClick={() => void startConfiguredSidecars()}>Start</button><button type="button" onClick={() => void stopConfiguredSidecars()}>Stop</button></div>}
       {toast && <div className="toast" role="status"><Check size={15} /> {toast}</div>}
     </div>
   );

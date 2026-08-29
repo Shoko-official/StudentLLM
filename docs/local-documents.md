@@ -29,6 +29,14 @@ $env:VITE_LOCAL_DOCUMENT_BASE_URL = 'http://127.0.0.1:8766'
 npm run dev
 ```
 
+For a Tauri desktop build, configure the optional document service command before launch:
+
+```powershell
+$env:STUDENTLLM_DOCUMENT_COMMAND = 'python scripts/local_document_server.py --port 8766'
+```
+
+The desktop service tray can start or stop only the process launched by StudentLLM. The service command is not enabled unless this variable is set.
+
 Importing a PDF or image saves the original file first. If extraction succeeds, the UI adds one reviewable segment per non-empty page. If the sidecar is unavailable, the source remains saved and the transcript is unchanged.
 
 Open Settings and choose `Refresh local services` to check the configured document sidecar `/health` endpoint without interrupting the service. The UI reports readiness, the advertised engine, or the failure detail.

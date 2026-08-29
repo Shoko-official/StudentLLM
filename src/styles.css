@@ -296,6 +296,9 @@ kbd { color: var(--faint); font-family: var(--mono); font-size: 9px; }
 .danger-submit { display: flex; align-items: center; gap: 7px; padding: 9px 12px; color: #2d1512; background: var(--danger); border-radius: 8px; font-size: 10px; font-weight: 800; }
 .danger-submit:hover { background: #f5aaa0; }
 .toast { position: fixed; z-index: 20; right: 24px; bottom: 24px; display: flex; align-items: center; gap: 8px; max-width: min(360px, calc(100vw - 32px)); padding: 11px 13px; color: #122229; background: var(--accent); border-radius: 9px; box-shadow: 0 12px 35px rgba(0,0,0,.35); font-size: 10px; font-weight: 800; animation: toast-in 180ms ease-out; }
+.managed-sidecar-tray { position: fixed; z-index: 19; right: 24px; bottom: 70px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 12px 35px rgba(0,0,0,.2); font-family: var(--mono); font-size: 9px; }
+.managed-sidecar-tray button { padding: 3px 6px; color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 4px; font: inherit; cursor: pointer; }
+.managed-sidecar-tray button:hover { color: var(--accent); border-color: var(--accent); }
 
 @keyframes pulse { 50% { transform: scale(.7); opacity: .5; } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
