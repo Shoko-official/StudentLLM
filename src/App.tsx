@@ -217,6 +217,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [globalSearchValue, setGlobalSearchValue] = useState('');
   const [showReviewPanel, setShowReviewPanel] = useState(false);
+  const [showTranscriptPanel, setShowTranscriptPanel] = useState(false);
+  const [showStudioPanel, setShowStudioPanel] = useState(false);
+  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  const [compactTranscript, setCompactTranscript] = useState(false);
+  const [showVerifiedTranscript, setShowVerifiedTranscript] = useState(true);
   const [newCourseTitle, setNewCourseTitle] = useState('');
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
   const recorderRef = useRef<RecorderSession | null>(null);
@@ -294,6 +299,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         setShowDeleteCourse(false);
         setShowGlobalSearch(false);
         setShowReviewPanel(false);
+        setShowTranscriptPanel(false);
+        setShowStudioPanel(false);
+        setShowSettingsPanel(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -406,6 +414,20 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     selectLesson(lessonId);
     setShowGlobalSearch(false);
     setGlobalSearchValue('');
+  };
+
+  const visibleTranscript = showVerifiedTranscript
+    ? transcript
+    : transcript.filter((segment) => segment.status === 'review');
+
+  const shareCourse = async () => {
+    const shareText = `${activeLesson.title}\n${activeLesson.subject} / ${activeLesson.chapter}\n${activeLesson.teacher}`;
+    try {
+      await navigator.clipboard.writeText(shareText);
+      notify('Course details copied to the clipboard.');
+    } catch {
+      notify('Clipboard access is unavailable in this browser.');
+    }
   };
 
   const loadRetrievalDocuments = async () => {
@@ -836,6 +858,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     notify('New course created. Ready to record.');
   };
 
+  const renderTranscriptSegment = (segment: TranscriptSegment) => (
+    <article className={`transcript-item ${segment.status === 'review' ? 'needs-review' : ''}`} key={segment.id}>
+      <div className="transcript-time">{segment.timestamp}</div>
+      <div className="transcript-body"><div className="speaker-line"><strong>{segment.speaker}</strong>{segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><p>{segment.text}</p></div>
+      <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => toggleTranscriptReview(segment.id)}>...</button>
+    </article>
+  );
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -932,7 +962,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 <div><strong>Shoko-official</strong><span>Student plan</span></div>
                 <GraduationCap size={16} />
               </div>
-              <div className="footer-links"><button onClick={() => notify('Settings will be available in a future update.') }><Settings2 size={14} /> Settings</button><button aria-label="Help" onClick={() => notify('Need help? Check the project documentation.') }><CircleHelp size={15} /></button></div>
+              <div className="footer-links"><button onClick={() => setShowSettingsPanel(true)}><Settings2 size={14} /> Settings</button><button aria-label="Help" onClick={() => notify('Need help? Check the project documentation.') }><CircleHelp size={15} /></button></div>
             </div>
           </aside>
         )}
@@ -949,7 +979,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 <button role="tab" aria-selected={view === 'course'} className={view === 'course' ? 'active' : ''} onClick={() => setView('course')}><BookOpen size={14} /> Course</button>
                 <button role="tab" aria-selected={view === 'chat'} className={view === 'chat' ? 'active' : ''} onClick={() => setView('chat')}><MessageCircle size={14} /> Chat</button>
               </div>
-              <button className="secondary-action desktop-only" onClick={() => notify('Local share link copied.') }><Copy size={14} /> Share</button>
+              <button className="secondary-action desktop-only" onClick={() => void shareCourse()}><Copy size={14} /> Share</button>
             </div>
           </div>
 
@@ -979,15 +1009,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               </section>
 
               <section className="transcript-section">
-                <div className="section-toolbar"><div><span className="section-kicker">Live transcript</span><h2>The course, source by source</h2></div><button className="text-action" onClick={() => notify('All segments are already available offline.')}>View all <ArrowUpRight size={13} /></button></div>
-                <div className="transcript-list">
-                  {transcript.map((segment) => (
-                    <article className={`transcript-item ${segment.status === 'review' ? 'needs-review' : ''}`} key={segment.id}>
-                      <div className="transcript-time">{segment.timestamp}</div>
-                      <div className="transcript-body"><div className="speaker-line"><strong>{segment.speaker}</strong>{segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><p>{segment.text}</p></div>
-                      <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => toggleTranscriptReview(segment.id)}>•••</button>
-                    </article>
-                  ))}
+                <div className="section-toolbar"><div><span className="section-kicker">Live transcript</span><h2>The course, source by source</h2></div><button className="text-action" onClick={() => setShowTranscriptPanel(true)}>View all <ArrowUpRight size={13} /></button></div>
+                <div className={`transcript-list ${compactTranscript ? 'compact' : ''}`}>
+                  {visibleTranscript.length ? visibleTranscript.map(renderTranscriptSegment) : <p className="empty-state">No transcript segments match the current display settings.</p>}
                 </div>
               </section>
 
@@ -1018,7 +1042,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><label className="mini-action"><input className="visually-hidden" type="file" aria-label="Select course source" accept="audio/*,image/*,.pdf,.txt,.md" onChange={importSource} /><Plus size={13} /> add</label></div><div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}><button className="resource-open" type="button" onClick={() => notify(`Source selected: ${resource.name}`)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button><button className="resource-remove" type="button" aria-label={`Remove source ${resource.name}`} onClick={() => void removeSource(resource)}><X size={13} /></button></div>)}</div>{resources.length > 3 && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
             <section className="studio-actions"><div className="sidebar-section-header"><span>Create an artifact</span><span className="eyebrow-count">source-linked</span></div><div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div></section>
             {artifacts.length > 0 && <section className="recent-section"><div className="sidebar-section-header"><span>Recently created</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} type="button" aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></button>)}{selectedArtifactId && (() => { const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId); if (!selectedArtifact) return null; return <article className="artifact-preview"><span className="section-kicker">Artifact preview</span><h3>{selectedArtifact.label}</h3><p>{selectedArtifact.content ?? 'This artifact has no stored content.'}</p>{selectedArtifact.citations && <div className="citation-list">{selectedArtifact.citations.map((citation) => <button key={citation} onClick={() => notify(`Source opened: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</article>; })()}</section>}
-            <button className="studio-link" onClick={() => notify('The full Studio editor will open in a future update.')}>Open full Studio <ArrowUpRight size={14} /></button>
+            <button className="studio-link" onClick={() => setShowStudioPanel(true)}>Open full Studio <ArrowUpRight size={14} /></button>
             <button className="danger-link" onClick={() => lessons.length <= 1 ? notify('Keep at least one course in the workspace.') : isRecording ? notify('Stop the recording before deleting this course.') : setShowDeleteCourse(true)}><Trash2 size={13} /> Delete course</button>
           </aside>
         )}
@@ -1028,6 +1052,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       {showDeleteCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowDeleteCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Delete session</span><h2 id="delete-course-title">Delete {activeLesson.title}?</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowDeleteCourse(false)}><X size={17} /></button></div><p className="modal-description">This removes the course workspace and its locally stored source and recording data. This action cannot be undone from the app.</p><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowDeleteCourse(false)}>Cancel</button><button className="danger-submit" type="button" onClick={() => void deleteActiveCourse()}><Trash2 size={14} /> Delete course permanently</button></div></section></div>}
       {showGlobalSearch && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowGlobalSearch(false)}><section className="modal search-modal" role="dialog" aria-modal="true" aria-labelledby="global-search-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace index</span><h2 id="global-search-title">Search all course content</h2></div><button className="icon-button" aria-label="Close search" onClick={() => setShowGlobalSearch(false)}><X size={17} /></button></div><label className="modal-search"><Search size={15} /><input autoFocus aria-label="Search all course content" value={globalSearchValue} onChange={(event) => setGlobalSearchValue(event.target.value)} placeholder="Search courses, transcripts, and sources" /></label>{globalSearchValue.trim() && <div className="search-results" aria-live="polite">{globalSearchResults.length ? globalSearchResults.map((result) => <button className="search-result" key={`${result.lessonId}:${result.id}`} onClick={() => openSearchResult(result.lessonId)}><strong>{result.title}</strong><small>{result.detail}</small></button>) : <p className="empty-state">No matching course content.</p>}</div>}</section></div>}
       {showReviewPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowReviewPanel(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="review-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Review queue</span><h2 id="review-panel-title">Needs review <span className="modal-count">{reviewItems.length}</span></h2></div><button className="icon-button" aria-label="Close review queue" onClick={() => setShowReviewPanel(false)}><X size={17} /></button></div><p className="modal-description">Transcript segments and imported pages that still need a quick human check.</p><div className="review-results">{reviewItems.length ? reviewItems.map(({ lesson, segment }) => <button className="review-result" key={`${lesson.id}:${segment.id}`} onClick={() => { selectLesson(lesson.id); setShowReviewPanel(false); }}><strong>{segment.text}</strong><small>{lesson.title} · {segment.timestamp}</small></button>) : <p className="empty-state">Nothing needs review.</p>}</div></section></div>}
+      {showTranscriptPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowTranscriptPanel(false)}><section className="modal transcript-modal" role="dialog" aria-modal="true" aria-labelledby="transcript-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Transcript archive</span><h2 id="transcript-panel-title">Full transcript <span className="modal-count">{transcript.length}</span></h2></div><button className="icon-button" aria-label="Close full transcript" onClick={() => setShowTranscriptPanel(false)}><X size={17} /></button></div><p className="modal-description">Review every indexed segment from {activeLesson.title}. Changes are saved to this course workspace.</p><div className={`transcript-list modal-transcript-list ${compactTranscript ? 'compact' : ''}`}>{transcript.length ? transcript.map(renderTranscriptSegment) : <p className="empty-state">This course has no transcript segments yet.</p>}</div></section></div>}
+      {showStudioPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowStudioPanel(false)}><section className="modal studio-modal" role="dialog" aria-modal="true" aria-labelledby="studio-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Artifact workspace</span><h2 id="studio-panel-title">Full Studio</h2></div><button className="icon-button" aria-label="Close full Studio" onClick={() => setShowStudioPanel(false)}><X size={17} /></button></div><p className="modal-description">Create source-linked study materials for {activeLesson.title}. Select an artifact to inspect its latest draft.</p><div className="artifact-grid modal-artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div>{artifacts.length > 0 && <div className="studio-library"><div className="sidebar-section-header"><span>Saved artifacts</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <button className={`recent-artifact ${artifact.id === selectedArtifactId ? 'selected' : ''}`} key={artifact.id} type="button" onClick={() => setSelectedArtifactId(artifact.id)}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></button>)}{selectedArtifactId && (() => { const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId); if (!selectedArtifact) return null; return <article className="artifact-preview"><span className="section-kicker">Artifact preview</span><h3>{selectedArtifact.label}</h3><p>{selectedArtifact.content ?? 'This artifact has no stored content.'}</p>{selectedArtifact.citations && <div className="citation-list">{selectedArtifact.citations.map((citation) => <button key={citation} onClick={() => notify(`Source opened: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</article>; })()}</div>}</section></div>}
+      {showSettingsPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettingsPanel(false)}><section className="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace preferences</span><h2 id="settings-panel-title">Settings</h2></div><button className="icon-button" aria-label="Close settings" onClick={() => setShowSettingsPanel(false)}><X size={17} /></button></div><p className="modal-description">Adjust how this workspace presents local course data. Preferences apply immediately to this session.</p><div className="settings-list"><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className="status-dot" /><span><strong>Local processing</strong><small>Audio, documents, and workspace data stay on this device unless you connect a provider.</small></span></div></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
       {toast && <div className="toast" role="status"><Check size={15} /> {toast}</div>}
     </div>
   );
