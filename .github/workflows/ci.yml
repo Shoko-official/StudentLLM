@@ -72,6 +72,38 @@ jobs:
       - name: Desktop debug build
         run: npm run desktop:build
 
+  desktop-package:
+    name: Desktop package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: npm ci
+      - name: Build desktop package
+        run: npm run desktop:package
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: studentllm-${{ matrix.os }}
+          path: src-tauri/target/debug/bundle/
+          if-no-files-found: error
+
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15

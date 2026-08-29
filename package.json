@@ -7,6 +7,7 @@
     "dev": "vite",
     "desktop:dev": "node scripts/desktop-command.mjs dev",
     "desktop:build": "node scripts/desktop-command.mjs build --debug --no-bundle",
+    "desktop:package": "node scripts/desktop-command.mjs build --debug --no-sign --ci",
     "desktop:check": "node scripts/desktop-check.mjs",
     "desktop:test": "node scripts/desktop-check.mjs test",
     "build": "tsc -b && vite build",
