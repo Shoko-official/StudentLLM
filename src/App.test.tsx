@@ -262,6 +262,35 @@ describe('StudentLLM workspace', () => {
     expect(session.stop).toHaveBeenCalledTimes(1);
   });
 
+  it('does not start a durable recording when interrupted-session recovery cannot be saved', async () => {
+    const user = userEvent.setup();
+    const session = {
+      recordingId: 'recording-recovery-failure-test',
+      stream: {} as MediaStream,
+      durability: 'durable' as const,
+      readChunks: vi.fn(async () => []),
+      stop: vi.fn(async () => ({
+        recordingId: 'recording-recovery-failure-test',
+        chunksPersisted: 0,
+        persistenceError: false,
+      })),
+    };
+    const originalSetItem = Storage.prototype.setItem;
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key, value) => {
+      if (key === RECORDING_RECOVERY_STORAGE_KEY) throw new Error('Recovery manifest unavailable.');
+      originalSetItem.call(localStorage, key, value);
+    });
+
+    render(<App recorderSessionFactory={async () => session} />);
+
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+
+    expect(session.stop).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status')).toHaveTextContent('Recording was not started because interrupted-session recovery is unavailable.');
+    expect(screen.getByRole('button', { name: 'Start recording' })).toBeInTheDocument();
+    setItem.mockRestore();
+  });
+
   it('adds local ASR segments after durable recording finalization', async () => {
     const user = userEvent.setup();
     const session = {
