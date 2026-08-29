@@ -29,7 +29,7 @@ function spawnRuntime(environment) {
   return { child, getOutput: () => ({ stdout, stderr }) };
 }
 
-function runSmoke(environment, { forceKill = false } = {}) {
+function runSmoke(environment, { forceKill = false, durationMs = smokeDurationMs } = {}) {
   const { child, getOutput } = spawnRuntime(environment);
 
   return new Promise((resolve, reject) => {
@@ -54,7 +54,7 @@ function runSmoke(environment, { forceKill = false } = {}) {
         child.kill('SIGTERM');
         forceTimer = setTimeout(() => child.kill('SIGKILL'), shutdownGraceMs);
       }
-    }, smokeDurationMs);
+    }, durationMs);
 
     child.once('error', (error) => {
       finish(reject, new Error(`Desktop runtime failed to start: ${error.message}`));
@@ -64,7 +64,7 @@ function runSmoke(environment, { forceKill = false } = {}) {
       if (!timedOut) {
         const { stdout, stderr } = getOutput();
         const details = [
-          `Desktop runtime exited before the ${smokeDurationMs / 1000}s smoke window (code=${code}, signal=${signal}).`,
+          `Desktop runtime exited before the ${durationMs / 1000}s smoke window (code=${code}, signal=${signal}).`,
           stdout.trim(),
           stderr.trim(),
         ].filter(Boolean).join('\n');
@@ -137,7 +137,7 @@ async function runCrashRecovery() {
   };
 
   try {
-    await runSmoke(environment, { forceKill: true });
+    await runSmoke(environment, { forceKill: true, durationMs: 30_000 });
     const databasesAfterCrash = await findFiles(dataRoot, 'studentllm.sqlite3');
     if (databasesAfterCrash.length !== 1) {
       throw new Error(`Expected one workspace database after the forced stop, found ${databasesAfterCrash.length}.`);
