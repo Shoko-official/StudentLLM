@@ -15,6 +15,8 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building StudentLLM");
 
+    workspace::initialize_workspace(&app.handle()).expect("error while initializing workspace");
+
     use tauri::Manager;
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::Exit) {
