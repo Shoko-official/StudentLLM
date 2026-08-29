@@ -2,11 +2,41 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, Error as SqliteError, ErrorCode, OptionalExtension};
 use tauri::{AppHandle, Manager};
 
 const DATABASE_FILE: &str = "studentllm.sqlite3";
 const SCHEMA_VERSION: i32 = 1;
+const WAL_ENABLE_ATTEMPTS: usize = 8;
+
+fn is_busy_error(error: &SqliteError) -> bool {
+    matches!(
+        error,
+        SqliteError::SqliteFailure(
+            sqlite_error,
+            _
+        ) if matches!(
+            sqlite_error.code,
+            ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked
+        )
+    )
+}
+
+fn enable_wal(connection: &Connection) -> Result<(), String> {
+    for attempt in 0..WAL_ENABLE_ATTEMPTS {
+        match connection.pragma_update(None, "journal_mode", "WAL") {
+            Ok(()) => return Ok(()),
+            Err(error) if is_busy_error(&error) && attempt + 1 < WAL_ENABLE_ATTEMPTS => {
+                std::thread::sleep(Duration::from_millis(25 * (attempt as u64 + 1)));
+            }
+            Err(error) => {
+                return Err(format!("Unable to enable WAL mode: {error}"));
+            }
+        }
+    }
+
+    Err("Unable to enable WAL mode after retrying a busy database".to_string())
+}
 
 fn open_database(path: &Path) -> Result<Connection, String> {
     if let Some(parent) = path.parent() {
@@ -19,9 +49,7 @@ fn open_database(path: &Path) -> Result<Connection, String> {
     connection
         .busy_timeout(Duration::from_secs(5))
         .map_err(|error| format!("Unable to configure workspace lock timeout: {error}"))?;
-    connection
-        .pragma_update(None, "journal_mode", "WAL")
-        .map_err(|error| format!("Unable to enable WAL mode: {error}"))?;
+    enable_wal(&connection)?;
     connection
         .pragma_update(None, "synchronous", "NORMAL")
         .map_err(|error| format!("Unable to configure SQLite synchronous mode: {error}"))?;

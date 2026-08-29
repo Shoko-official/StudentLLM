@@ -90,13 +90,16 @@ jobs:
           cache: npm
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev xvfb
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies
         run: npm ci
       - name: Build desktop package
         run: npm run desktop:package
+      - name: Smoke test packaged desktop runtime
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1440x920x24' node scripts/desktop-runtime-smoke.mjs src-tauri/target/debug/studentllm
       - name: Upload package artifacts
         uses: actions/upload-artifact@v4
         with:
