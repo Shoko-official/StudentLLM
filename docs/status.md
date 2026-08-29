@@ -8,7 +8,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 
 | Area | Evidence | Current result |
 | --- | --- | --- |
-| Application verification | `npm run verify` | TypeScript, benchmark adapter checks, 61 Vitest tests, Vite production build, and 21 Playwright tests pass |
+| Application verification | `npm run verify` | TypeScript, benchmark adapter checks, 63 Vitest tests, Vite production build, and 22 Playwright tests pass |
 | Browser accessibility | Playwright plus axe | No serious or critical violations observed; mobile overflow, navigation, and Escape dismissal regressions pass |
 | Local persistence | Vitest and Playwright | Course isolation, reload recovery, corrupted export rejection, source blob fidelity, audio recovery, and deletion flows pass |
 | LM Studio integration | Existing `llama-server` process, live provider smoke, browser chat, and public DROP probe | The existing `openai/gpt-oss-20b` process is reachable through the LM Studio router on `127.0.0.1:1234`; live browser chat returned HTTP 200 and rendered an 886-character answer with no page or console errors. A larger local DROP run was interrupted before writing a receipt and is not counted as a score |
@@ -16,6 +16,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | Local speech pipeline | Public FLEURS sample, sidecar, and browser recording | Timestamped transcription and review-segment rendering pass |
 | Local document pipeline | Public arXiv PDF, sidecar, and browser import | 15/15 pages indexed and page-level review content rendered |
 | Tauri desktop shell | Rust check/tests, cross-platform debug builds, and unsigned package jobs | Shell scaffold and SQLite WAL workspace bridge pass native compilation and persistence tests on Linux; Windows and macOS debug builds are gated; unsigned Ubuntu, Windows, and macOS package jobs are now being validated; sidecar supervision and crash-recovery soak remain pending |
+| Workspace navigation | Vitest and Playwright | Global content search and a live needs-review queue navigate across persisted course workspaces |
 
 ## Public benchmark evidence
 

@@ -16,6 +16,31 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('transcript.txt')).toBeInTheDocument();
   });
 
+  it('searches indexed course content and opens the matching course', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Global search/ }));
+    const searchDialog = screen.getByRole('dialog', { name: /Search all course content/ });
+    await user.type(within(searchDialog).getByLabelText('Search all course content'), 'square-root factor');
+
+    const result = await within(searchDialog).findByRole('button', { name: /square-root factor/ });
+    expect(result).toHaveTextContent('Attention & Scaled Dot-Product');
+    await user.click(result);
+    expect(screen.queryByRole('dialog', { name: /Search all course content/ })).not.toBeInTheDocument();
+  });
+
+  it('opens a review queue with the current unresolved segments', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Needs review/ }));
+
+    expect(screen.getByRole('dialog', { name: /Needs review/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Without this normalization/ })).toBeInTheDocument();
+    expect(screen.getByText('Attention & Scaled Dot-Product · 01:15:02')).toBeInTheDocument();
+  });
+
   it('changes the active course from the navigation tree', async () => {
     const user = userEvent.setup();
     render(<App />);
