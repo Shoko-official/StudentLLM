@@ -1,0 +1,6 @@
+{
+  "build": {
+    "beforeDevCommand": "npm.cmd run dev -- --host 127.0.0.1 --port 1420",
+    "beforeBuildCommand": "npm.cmd run build"
+  }
+}

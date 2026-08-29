@@ -7,7 +7,8 @@ const localCargoDir = process.platform === 'win32' && process.env.USERPROFILE
   : null;
 const environment = { ...process.env };
 if (localCargoDir && existsSync(join(localCargoDir, 'cargo.exe'))) {
-  environment.PATH = [localCargoDir, environment.PATH].filter(Boolean).join(';');
+  const pathKey = Object.keys(environment).find((key) => key.toLowerCase() === 'path') ?? 'PATH';
+  environment[pathKey] = [localCargoDir, environment[pathKey]].filter(Boolean).join(';');
 }
 
 const tauriScript = join(process.cwd(), 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
