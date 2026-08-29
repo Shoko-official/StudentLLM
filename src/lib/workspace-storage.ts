@@ -230,3 +230,7 @@ export async function saveWorkspaceAsync(
     return saveWorkspace(snapshot, storage);
   }
 }
+
+export function runPackagedIpcSmoke() {
+  return invokeNative<string>('smoke_frontend_ipc');
+}

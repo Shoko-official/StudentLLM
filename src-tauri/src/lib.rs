@@ -12,6 +12,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             workspace::load_workspace,
             workspace::save_workspace,
+            workspace::smoke_frontend_ipc,
             sidecars::sidecar_status,
             sidecars::start_sidecars,
             sidecars::stop_sidecars
