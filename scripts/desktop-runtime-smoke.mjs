@@ -15,6 +15,7 @@ if (!requestedBinaryPath) {
 }
 
 const binaryPath = existsSync(requestedBinaryPath) ? requestedBinaryPath : `${requestedBinaryPath}.exe`;
+const hostWindowsAppData = process.platform === 'win32' && process.env.CI === 'true' ? process.env.APPDATA : undefined;
 
 if (!existsSync(binaryPath)) {
   console.error(`Desktop runtime binary was not found at ${requestedBinaryPath}.`);
@@ -105,6 +106,12 @@ async function findFiles(root, fileName) {
 
   await visit(root);
   return matches;
+}
+
+async function findWorkspaceDatabases(dataRoot) {
+  const roots = [dataRoot, hostWindowsAppData].filter(Boolean);
+  const matches = await Promise.all(roots.map((root) => findFiles(root, 'studentllm.sqlite3')));
+  return [...new Set(matches.flat())];
 }
 
 const SQLITE_CHECK = `PRAGMA integrity_check;
@@ -233,13 +240,13 @@ async function runCrashRecovery() {
 
   try {
     const firstRun = await runSmoke(environment, { forceKill: true, durationMs: 30_000 });
-    const databasesAfterCrash = await findFiles(dataRoot, 'studentllm.sqlite3');
+    const databasesAfterCrash = await findWorkspaceDatabases(dataRoot);
     if (databasesAfterCrash.length !== 1) {
       throw new Error(`Expected one workspace database after the forced stop, found ${databasesAfterCrash.length}.`);
     }
 
     const secondRun = await runSmoke(environment);
-    const databasesAfterRelaunch = await findFiles(dataRoot, 'studentllm.sqlite3');
+    const databasesAfterRelaunch = await findWorkspaceDatabases(dataRoot);
     if (databasesAfterRelaunch.length !== 1 || databasesAfterRelaunch[0] !== databasesAfterCrash[0]) {
       throw new Error('Workspace database was not preserved across the forced stop and relaunch.');
     }
