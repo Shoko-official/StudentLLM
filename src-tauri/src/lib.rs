@@ -44,6 +44,9 @@ pub fn run() {
     #[cfg(debug_assertions)]
     eprintln!("[studentllm] workspace initialized");
 
+    #[cfg(debug_assertions)]
+    eprintln!("[studentllm] entering event loop");
+
     app.run(|app_handle, event| {
         #[cfg(debug_assertions)]
         if matches!(event, RunEvent::Ready) {
