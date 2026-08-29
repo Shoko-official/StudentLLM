@@ -88,6 +88,10 @@ fn database_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join(DATABASE_FILE))
 }
 
+pub fn initialize_workspace(app: &AppHandle) -> Result<(), String> {
+    open_database(&database_path(app)?).map(|_| ())
+}
+
 fn read_snapshot(path: &Path) -> Result<Option<String>, String> {
     let connection = open_database(path)?;
     connection
