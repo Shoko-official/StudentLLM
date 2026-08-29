@@ -201,7 +201,7 @@ export async function loadWorkspaceAsync(
   try {
     const raw = await invokeNative<string | null>('load_workspace');
     const snapshot = parseWorkspaceRaw(raw, fallback);
-    if (raw === null) {
+    if (raw === null || snapshot === fallback) {
       try {
         await invokeNative('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
       } catch (error) {

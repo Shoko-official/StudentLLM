@@ -116,6 +116,14 @@ describe('workspace storage', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
+  it('replaces an invalid native bootstrap snapshot with the application fallback', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
+    invoke.mockResolvedValueOnce(JSON.stringify({ version: 1, bootstrap: true })).mockResolvedValueOnce(undefined);
+
+    expect(await loadWorkspaceAsync(fallback)).toEqual(fallback);
+    expect(invoke).toHaveBeenNthCalledWith(2, 'save_workspace', { snapshot: JSON.stringify({ version: 1, ...fallback }) });
+  });
+
   it('validates a native snapshot before restoring it', async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
     const snapshot = { ...fallback, activeLessonId: 'native-lesson', lessons: [{ ...fallback.lessons[0], id: 'native-lesson' }] };
