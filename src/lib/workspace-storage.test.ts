@@ -102,4 +102,29 @@ describe('workspace storage', () => {
 
     expect(await loadWorkspaceAsync(fallback)).toEqual(snapshot);
   });
+
+  it('reports native load failures before using the local fallback', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const onError = vi.fn();
+    invoke.mockRejectedValueOnce(new Error('database is locked'));
+    saveWorkspace(fallback);
+
+    expect(await loadWorkspaceAsync({ ...fallback, lessons: [] }, undefined, { onError })).toEqual(fallback);
+    expect(onError).toHaveBeenCalledWith({ operation: 'load', message: 'database is locked' });
+  });
+
+  it('reports native save failures while preserving the local fallback', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const onError = vi.fn();
+    const snapshot = {
+      ...fallback,
+      activeLessonId: 'native-lesson',
+      lessons: [{ ...fallback.lessons[0], id: 'native-lesson' }],
+    };
+    invoke.mockRejectedValueOnce(new Error('disk full'));
+
+    expect(await saveWorkspaceAsync(snapshot, undefined, { onError })).toBe(true);
+    expect(onError).toHaveBeenCalledWith({ operation: 'save', message: 'disk full' });
+    expect(loadWorkspace(fallback)).toEqual(snapshot);
+  });
 });

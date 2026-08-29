@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
 import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, saveWorkspaceAsync } from './lib/workspace-storage';
+import type { WorkspaceStorageError } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import type { LLMProvider } from './lib/llm-provider';
 import { createLocalSpeechEngine } from './lib/speech-engine';
@@ -240,6 +241,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [newCourseTitle, setNewCourseTitle] = useState('');
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
   const recorderRef = useRef<RecorderSession | null>(null);
+  const storageIssueRef = useRef<WorkspaceStorageError['operation'] | null>(null);
   const resourcePreviewRequest = useRef(0);
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
   const localProvider = useMemo(() => provider === undefined ? createLocalLLMProvider() : provider, [provider]);
@@ -247,6 +249,15 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const localDocumentEngine = useMemo(() => documentEngine === undefined ? createLocalDocumentEngine() : documentEngine, [documentEngine]);
   const sourceBlobStore = useMemo(() => createSourceBlobStore(), []);
   const recordingChunkStore = useMemo(() => createRecordingChunkStore(), []);
+
+  const reportStorageError = (error: WorkspaceStorageError) => {
+    console.warn(`[workspace-storage:${error.operation}] ${error.message}`);
+    if (storageIssueRef.current === error.operation) return;
+    storageIssueRef.current = error.operation;
+    setToast(error.operation === 'load'
+      ? 'Native workspace storage unavailable. Using local fallback.'
+      : 'Native workspace save failed. Changes remain in local fallback.');
+  };
 
   const activeLesson = lessons.find((lesson) => lesson.id === activeLessonId) ?? lessons[0];
   const activeWorkspace = lessonWorkspaces[activeLessonId] ?? emptyLessonWorkspace;
@@ -340,7 +351,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     if (!isNativeRuntime()) return undefined;
 
     let cancelled = false;
-    void loadWorkspaceAsync(initialWorkspace).then((loaded) => {
+    void loadWorkspaceAsync(initialWorkspace, undefined, { onError: reportStorageError }).then((loaded) => {
       if (cancelled) return;
       const loadedWorkspaces = loaded.lessonWorkspaces ?? {
         [loaded.activeLessonId]: {
@@ -364,7 +375,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   useEffect(() => {
     if (!nativeStorageReady) return;
-    void saveWorkspaceAsync({ activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces });
+    void saveWorkspaceAsync(
+      { activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces },
+      undefined,
+      { onError: reportStorageError },
+    );
   }, [nativeStorageReady, activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces]);
 
   useEffect(() => {
