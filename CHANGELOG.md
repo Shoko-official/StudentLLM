@@ -34,6 +34,7 @@
 - a reproducible public-data FLEURS plus MUSAN SNR robustness adapter records WER and CER by noise category;
 - a dated English project status page summarizes verified workflows, public benchmark coverage, and remaining evaluation work;
 - imported course sources can be removed from the active workspace and their IndexedDB blobs are deleted;
+- removing an audio source also clears any persisted recording chunks associated with it;
 - durable recordings can be sent to an optional local faster-whisper service and added back as reviewable transcript segments;
 - course deletion clears the active lesson workspace and its local source and recording blobs;
 - active courses can be exported and imported as versioned JSON packages with source and audio fidelity;
