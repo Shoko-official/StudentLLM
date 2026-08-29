@@ -26,7 +26,9 @@ npm run desktop:package
 
 The desktop shell embeds the existing Vite workspace. In a Tauri runtime, workspace snapshots are loaded and saved through native Rust commands backed by a SQLite database in the application data directory. The database uses WAL mode and a versioned single-row snapshot schema. Browser runs continue to use the local storage adapter.
 
-Native sidecar supervision and crash recovery soak testing remain separate stages so each can be validated in the actual desktop runtime before promotion. The Tauri bundle is enabled for unsigned local and CI packaging; production signing and release publication remain release-configuration work.
+The desktop shell can own optional local sidecars when their commands are configured through `STUDENTLLM_ASR_COMMAND` and `STUDENTLLM_DOCUMENT_COMMAND`. Each value is a whitespace-separated command line with single or double quoted arguments, for example `python scripts/local_asr_server.py --port 8765`. The desktop UI exposes start and stop controls, reports child PIDs and exit status, and retries a stopped service when Start is pressed again. Only processes launched by the current app instance are stopped during shutdown; existing local services remain untouched.
+
+This supervisor is intentionally opt-in because the current unsigned package does not bundle Python runtimes or the optional sidecar dependencies. Use absolute script paths for packaged desktop experiments, and configure the matching `VITE_LOCAL_ASR_BASE_URL` or `VITE_LOCAL_DOCUMENT_BASE_URL` endpoint so the health probe can verify readiness after launch. Packaged-runtime crash soak evidence is still pending.
 
 ## Validation
 
