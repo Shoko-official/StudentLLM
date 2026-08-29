@@ -35,7 +35,7 @@ StudentLLM is built around three principles:
 - Optional live LM Studio chat through a browser-safe OpenAI-compatible provider adapter; no remote API key is bundled in the client.
 - Local lexical retrieval selects transcript or bounded imported text passages and preserves source-part citations before a live provider request.
 - Vitest unit and integration coverage, Playwright browser coverage, axe accessibility checks, and GitHub Actions CI.
-- Tauri v2 desktop shell with a native-window build path, SQLite WAL persistence, and CI build/test gates.
+- Tauri v2 desktop shell with a native-window build path, SQLite WAL persistence, crash-recovery coverage, and CI build/test gates.
 - Unsigned debug desktop bundles produced and retained by CI for Ubuntu, Windows, and macOS.
 
 ## Quick start
@@ -132,12 +132,11 @@ docs/
 
 ## Roadmap
 
-- Add crash recovery and tested migrations on top of the Tauri SQLite WAL workspace bridge.
+- Complete interactive frontend-to-native validation for packaged desktop runtimes on Windows, macOS, and Linux.
+- Add a longer cross-platform crash-recovery soak and packaged sidecar supervision coverage.
 - Extend the `SpeechEngine` contract to streaming partials, diarization, and crash-resumable jobs.
 - Extend OCR with structured tables, formulas, diagrams, handwriting, and richer page or region provenance.
 - Add hybrid BM25 plus dense retrieval, reranking, and a permissioned citation-first agent loop.
-- Extend the current lexical retriever with dense retrieval and reranking after the native knowledge store is available.
-- Complete interactive and crash-recovery validation for the packaged desktop runtime on Windows, macOS, and Linux.
 - Expand public benchmark coverage and the versioned LectureBench described in [docs/benchmarks.md](./docs/benchmarks.md).
 
 ## Contributing
