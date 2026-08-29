@@ -251,6 +251,13 @@ kbd { color: var(--faint); font-family: var(--mono); font-size: 9px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 6px; }
 .modal-search { display: flex !important; grid-template-columns: none !important; align-items: center; gap: 8px !important; padding: 0 11px; color: var(--faint) !important; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
 .modal-search input { padding: 10px 0; border: 0; }
+.resource-preview-modal { width: min(100%, 760px); }
+.source-text-preview { display: grid; gap: 8px; max-height: min(62vh, 560px); overflow: auto; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 9px; }
+.source-text-preview pre { margin: 0; color: var(--muted); font: 11px/1.65 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.source-text-preview small { color: var(--faint); font-size: 9px; }
+.source-image-preview { display: block; width: 100%; max-height: min(62vh, 560px); object-fit: contain; background: var(--surface); border: 1px solid var(--line); border-radius: 9px; }
+.source-audio-preview { width: 100%; }
+.source-document-preview { width: 100%; height: min(62vh, 560px); background: var(--surface); border: 1px solid var(--line); border-radius: 9px; }
 .search-results, .review-results { display: grid; gap: 6px; max-height: 330px; margin-top: 14px; overflow: auto; }
 .search-result, .review-result { display: grid; gap: 4px; padding: 10px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; text-align: left; }
 .search-result:hover, .review-result:hover { border-color: rgba(142, 208, 193, .5); background: var(--surface-2); }

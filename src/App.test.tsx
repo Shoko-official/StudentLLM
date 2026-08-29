@@ -398,6 +398,25 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('remove-me.md removed from this course.')).toBeInTheDocument();
   });
 
+  it('opens the locally stored original source in a preview', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['Notes about gradient descent.'],
+      'preview-me.md',
+      { type: 'text/markdown' },
+    ));
+    const sourceName = await screen.findByText('preview-me.md');
+    const sourceButton = sourceName.closest('button');
+    expect(sourceButton).not.toBeNull();
+    await user.click(sourceButton!);
+
+    const dialog = await screen.findByRole('dialog', { name: 'preview-me.md' });
+    expect(dialog).toHaveTextContent('Original source');
+    expect(dialog).toHaveTextContent('Notes about gradient descent.');
+  });
+
   it('removes transcript segments derived from an imported PDF', async () => {
     const user = userEvent.setup();
     const extract = vi.fn().mockResolvedValue({
