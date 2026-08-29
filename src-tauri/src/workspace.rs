@@ -138,6 +138,16 @@ pub fn save_workspace(app: AppHandle, snapshot: String) -> Result<(), String> {
     write_snapshot(&database_path(&app)?, &snapshot)
 }
 
+#[tauri::command]
+pub fn smoke_frontend_ipc() -> Result<String, String> {
+    let marker = std::env::var_os("STUDENTLLM_FRONTEND_IPC_SMOKE_MARKER")
+        .map(PathBuf::from)
+        .ok_or_else(|| "Frontend IPC smoke marker path is not configured".to_string())?;
+    fs::write(marker, "ok")
+        .map_err(|error| format!("Unable to write frontend IPC smoke marker: {error}"))?;
+    Ok("ok".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{open_database, read_snapshot, write_snapshot};

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { loadWorkspace, loadWorkspaceAsync, saveWorkspace, saveWorkspaceAsync, WorkspaceSnapshot } from './workspace-storage';
+import { loadWorkspace, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspace, saveWorkspaceAsync, WorkspaceSnapshot } from './workspace-storage';
 
 const invoke = vi.hoisted(() => vi.fn());
 
@@ -114,6 +114,14 @@ describe('workspace storage', () => {
     expect(await loadWorkspaceAsync(fallback)).toEqual(fallback);
     expect(globalInvoke).toHaveBeenCalledWith('load_workspace');
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('invokes the packaged frontend IPC smoke command through the native bridge', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
+    invoke.mockResolvedValue('ok');
+
+    await expect(runPackagedIpcSmoke()).resolves.toBe('ok');
+    expect(invoke).toHaveBeenCalledWith('smoke_frontend_ipc');
   });
 
   it('replaces an invalid native bootstrap snapshot with the application fallback', async () => {

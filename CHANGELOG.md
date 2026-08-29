@@ -19,6 +19,7 @@
 - Tauri can now own explicitly configured local sidecar processes, expose their lifecycle status, and stop its children on exit;
 - packaged desktop smoke coverage now autostarts two configured sidecars and verifies both are stopped after a clean runtime exit;
 - packaged desktop crash-recovery smoke now verifies ten relaunch cycles on Ubuntu, Windows, and macOS;
+- packaged desktop smoke now verifies that the frontend invokes a native IPC command and receives its response;
 - imported text sources are available to local lexical retrieval with source-name citations;
 - imported text is chunked into bounded passages with source-part citations before provider calls;
 - injected live-provider coverage verifies source context and provider citations;

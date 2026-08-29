@@ -37,7 +37,7 @@ import {
   X,
 } from 'lucide-react';
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
-import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, saveWorkspaceAsync } from './lib/workspace-storage';
+import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspaceAsync } from './lib/workspace-storage';
 import type { WorkspaceStorageError } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import type { LLMProvider } from './lib/llm-provider';
@@ -153,6 +153,7 @@ const emptyLessonWorkspace: LessonWorkspace = {
 
 const sourceAccept = 'audio/*,image/*,.pdf,.txt,.md';
 const PREFERENCES_STORAGE_KEY = 'studentllm.preferences.v1';
+const packagedIpcSmokeRequested = import.meta.env.VITE_STUDENTLLM_PACKAGED_IPC_SMOKE === 'true';
 
 function loadPreference(name: 'compactTranscript' | 'showVerifiedTranscript', fallback: boolean) {
   try {
@@ -404,6 +405,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       { onError: reportStorageError },
     );
   }, [nativeStorageReady, activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces]);
+
+  useEffect(() => {
+    if (!packagedIpcSmokeRequested || !nativeStorageReady) return;
+
+    void runPackagedIpcSmoke().catch((error) => {
+      console.error(`[packaged-ipc-smoke] ${error instanceof Error ? error.message : error}`);
+    });
+  }, [nativeStorageReady]);
 
   useEffect(() => {
     if (!nativeStorageReady) return undefined;
