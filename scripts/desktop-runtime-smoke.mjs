@@ -1,15 +1,23 @@
+import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const binaryPath = process.argv[2];
+const requestedBinaryPath = process.argv[2];
 const recoveryRequested = process.argv[3] === '--crash-recovery';
 const smokeDurationMs = 15_000;
 const shutdownGraceMs = 5_000;
 
-if (!binaryPath) {
+if (!requestedBinaryPath) {
   console.error('Usage: node scripts/desktop-runtime-smoke.mjs <binary-path> [--crash-recovery]');
+  process.exit(2);
+}
+
+const binaryPath = existsSync(requestedBinaryPath) ? requestedBinaryPath : `${requestedBinaryPath}.exe`;
+
+if (!existsSync(binaryPath)) {
+  console.error(`Desktop runtime binary was not found at ${requestedBinaryPath}.`);
   process.exit(2);
 }
 
@@ -72,7 +80,7 @@ function runSmoke(environment, { forceKill = false, durationMs = smokeDurationMs
         return;
       }
 
-      if (forceKill && signal !== 'SIGKILL') {
+      if (forceKill && process.platform !== 'win32' && signal !== 'SIGKILL') {
         finish(reject, new Error(`Crash-recovery process did not receive SIGKILL (code=${code}, signal=${signal}).`));
         return;
       }
@@ -99,9 +107,7 @@ async function findFiles(root, fileName) {
   return matches;
 }
 
-function checkWorkspaceDatabase(databasePath) {
-  return new Promise((resolve, reject) => {
-    const sqlite = spawn('sqlite3', [databasePath, `PRAGMA integrity_check;
+const SQLITE_CHECK = `PRAGMA integrity_check;
       SELECT CASE WHEN EXISTS (
         SELECT 1 FROM workspace WHERE id = 1 AND version = 1 AND length(snapshot) > 0
       ) THEN 'snapshot-present' ELSE 'snapshot-missing' END;
@@ -110,51 +116,121 @@ function checkWorkspaceDatabase(databasePath) {
         WHERE id = 1 AND version = 1 AND json_valid(snapshot)
           AND json_type(snapshot, '$.lessons') = 'array'
           AND json_array_length(json_extract(snapshot, '$.lessons')) > 0
-      ) THEN 'frontend-snapshot-present' ELSE 'frontend-snapshot-missing' END;`], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+      ) THEN 'frontend-snapshot-present' ELSE 'frontend-snapshot-missing' END;`;
+
+function validateWorkspaceDatabaseOutput(stdout, stderr, code, signal) {
+  if (code !== 0 || signal) {
+    throw new Error(`SQLite integrity check failed (code=${code}, signal=${signal}): ${stderr.trim()}`);
+  }
+  const results = stdout.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (results[0] !== 'ok') {
+    throw new Error(`SQLite integrity check returned ${JSON.stringify(results[0] ?? '')}.`);
+  }
+  if (results[1] !== 'snapshot-present') {
+    throw new Error(`Workspace snapshot check returned ${JSON.stringify(results[1] ?? '')}.`);
+  }
+  if (results[2] !== 'frontend-snapshot-present') {
+    throw new Error(`Frontend snapshot check returned ${JSON.stringify(results[2] ?? '')}.`);
+  }
+}
+
+function checkWorkspaceDatabaseWithPython(databasePath) {
+  const python = process.platform === 'win32' ? 'python' : 'python3';
+  const script = `
+import json
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+try:
+    print(connection.execute('PRAGMA integrity_check').fetchone()[0])
+    snapshot = connection.execute(
+        'SELECT snapshot FROM workspace WHERE id = 1 AND version = 1 AND length(snapshot) > 0'
+    ).fetchone()
+    print('snapshot-present' if snapshot else 'snapshot-missing')
+    lessons_present = False
+    if snapshot:
+        try:
+            lessons_present = isinstance(json.loads(snapshot[0]).get('lessons'), list) and bool(json.loads(snapshot[0]).get('lessons'))
+        except (AttributeError, TypeError, json.JSONDecodeError):
+            lessons_present = False
+    print('frontend-snapshot-present' if lessons_present else 'frontend-snapshot-missing')
+finally:
+    connection.close()
+`;
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(python, ['-c', script, databasePath], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    sqlite.stdout.setEncoding('utf8');
-    sqlite.stderr.setEncoding('utf8');
-    sqlite.stdout.on('data', (chunk) => { stdout += chunk; });
-    sqlite.stderr.on('data', (chunk) => { stderr += chunk; });
-    sqlite.once('error', (error) => reject(new Error(`SQLite integrity check could not start: ${error.message}`)));
-    sqlite.once('exit', (code, signal) => {
-      if (code !== 0 || signal) {
-        reject(new Error(`SQLite integrity check failed (code=${code}, signal=${signal}): ${stderr.trim()}`));
-        return;
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', (error) => reject(new Error(`Python SQLite integrity check could not start: ${error.message}`)));
+    child.once('exit', (code, signal) => {
+      try {
+        validateWorkspaceDatabaseOutput(stdout, stderr, code, signal);
+        resolve();
+      } catch (error) {
+        reject(error);
       }
-      const results = stdout.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-      if (results[0] !== 'ok') {
-        reject(new Error(`SQLite integrity check returned ${JSON.stringify(results[0] ?? '')}.`));
-        return;
-      }
-      if (results[1] !== 'snapshot-present') {
-        reject(new Error(`Workspace snapshot check returned ${JSON.stringify(results[1] ?? '')}.`));
-        return;
-      }
-      if (results[2] !== 'frontend-snapshot-present') {
-        reject(new Error(`Frontend snapshot check returned ${JSON.stringify(results[2] ?? '')}.`));
-        return;
-      }
-      resolve();
     });
   });
 }
 
-async function runCrashRecovery() {
-  const dataRoot = await mkdtemp(join(tmpdir(), 'studentllm-desktop-recovery-'));
+function checkWorkspaceDatabase(databasePath) {
+  return new Promise((resolve, reject) => {
+    const sqlite = spawn('sqlite3', [databasePath, SQLITE_CHECK], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let fallbackStarted = false;
+    sqlite.stdout.setEncoding('utf8');
+    sqlite.stderr.setEncoding('utf8');
+    sqlite.stdout.on('data', (chunk) => { stdout += chunk; });
+    sqlite.stderr.on('data', (chunk) => { stderr += chunk; });
+    sqlite.once('error', (error) => {
+      if (error.code === 'ENOENT') {
+        fallbackStarted = true;
+        checkWorkspaceDatabaseWithPython(databasePath).then(resolve, reject);
+        return;
+      }
+      reject(new Error(`SQLite integrity check could not start: ${error.message}`));
+    });
+    sqlite.once('exit', (code, signal) => {
+      if (fallbackStarted) return;
+      try {
+        validateWorkspaceDatabaseOutput(stdout, stderr, code, signal);
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
+function createRuntimeEnvironment(dataRoot) {
   const environment = {
     ...process.env,
     HOME: dataRoot,
+    USERPROFILE: dataRoot,
     XDG_DATA_HOME: dataRoot,
     XDG_CACHE_HOME: join(dataRoot, 'cache'),
     XDG_CONFIG_HOME: join(dataRoot, 'config'),
+    APPDATA: join(dataRoot, 'appdata'),
+    LOCALAPPDATA: join(dataRoot, 'localappdata'),
     GDK_BACKEND: 'x11',
     LIBGL_ALWAYS_SOFTWARE: '1',
     WEBKIT_DISABLE_DMABUF_RENDERER: '1',
   };
+  return environment;
+}
+
+async function runCrashRecovery() {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'studentllm-desktop-recovery-'));
+  const environment = createRuntimeEnvironment(dataRoot);
 
   try {
     const firstRun = await runSmoke(environment, { forceKill: true, durationMs: 30_000 });
