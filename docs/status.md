@@ -83,3 +83,5 @@ PR [#132](https://github.com/Shoko-official/StudentLLM/pull/132) added an end-to
 PR [#133](https://github.com/Shoko-official/StudentLLM/pull/133) added native SQLite regressions for preserving v0 snapshots during migration and rejecting databases from a newer schema. It passed all seven CI jobs, was squash-merged into `main`, and its temporary branch was deleted.
 
 PR [#134](https://github.com/Shoko-official/StudentLLM/pull/134) hardened SQLite writes with a bounded lock wait and an overlapping-writers integrity regression. It passed all seven CI jobs, was squash-merged into `main`, and its temporary branch was deleted.
+
+PR [#135](https://github.com/Shoko-official/StudentLLM/pull/135) made native workspace load and save failures visible while preserving the local fallback. PR [#136](https://github.com/Shoko-official/StudentLLM/pull/136) added the opt-in Tauri sidecar supervisor, desktop lifecycle controls, child-process cleanup, and restart-after-exit status handling. Both passed all seven CI jobs, were squash-merged into `main`, and their temporary branches were deleted.
