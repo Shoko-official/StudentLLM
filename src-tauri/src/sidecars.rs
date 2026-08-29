@@ -318,4 +318,55 @@ mod tests {
 
         panic!("short-lived managed process did not exit in time");
     }
+
+    #[test]
+    fn starts_and_stops_a_configured_sidecar_process() {
+        struct EnvironmentRestore {
+            key: &'static str,
+            value: Option<String>,
+        }
+
+        impl Drop for EnvironmentRestore {
+            fn drop(&mut self) {
+                match &self.value {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+
+        let key = "STUDENTLLM_ASR_COMMAND";
+        let _restore = EnvironmentRestore {
+            key,
+            value: std::env::var(key).ok(),
+        };
+        if cfg!(windows) {
+            std::env::set_var(key, r#"cmd /C "ping -n 30 127.0.0.1 > nul""#);
+        } else {
+            std::env::set_var(key, r#"sh -c "sleep 30""#);
+        }
+
+        let supervisor = super::SidecarSupervisor::default();
+        let started = supervisor
+            .start_all()
+            .expect("configured sidecar should start");
+        let asr = started
+            .iter()
+            .find(|status| status.kind == "asr")
+            .expect("ASR status should be returned");
+        assert!(asr.configured);
+        assert!(asr.running);
+        assert!(asr.pid.is_some());
+
+        let stopped = supervisor
+            .stop_all()
+            .expect("configured sidecar should stop");
+        let asr = stopped
+            .iter()
+            .find(|status| status.kind == "asr")
+            .expect("ASR status should be returned after stopping");
+        assert!(asr.configured);
+        assert!(!asr.running);
+        assert!(asr.pid.is_none());
+    }
 }
