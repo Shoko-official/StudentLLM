@@ -80,6 +80,25 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('Without this normalization, dot products grow with the key dimension.')).toBeInTheDocument();
   });
 
+  it('restores transcript display preferences from local storage', async () => {
+    const user = userEvent.setup();
+    const firstRender = render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Settings/ }));
+    const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
+    await user.click(within(settingsDialog).getByRole('checkbox', { name: /Show verified transcript segments/ }));
+    await user.click(within(settingsDialog).getByRole('checkbox', { name: /Compact transcript spacing/ }));
+    firstRender.unmount();
+
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Settings/ }));
+    const reloadedSettings = screen.getByRole('dialog', { name: 'Settings' });
+    expect(within(reloadedSettings).getByRole('checkbox', { name: /Show verified transcript segments/ })).not.toBeChecked();
+    expect(within(reloadedSettings).getByRole('checkbox', { name: /Compact transcript spacing/ })).toBeChecked();
+    expect(screen.queryByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).not.toBeInTheDocument();
+  });
+
   it('changes the active course from the navigation tree', async () => {
     const user = userEvent.setup();
     render(<App />);

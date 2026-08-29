@@ -79,6 +79,23 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByText('Without this normalization, dot products grow with the key dimension.')).toBeVisible();
   });
 
+  test('persists Settings preferences after a browser reload', async ({ page }) => {
+    test.setTimeout(120_000);
+    await page.goto('/', { timeout: 120_000 });
+
+    await page.getByRole('button', { name: /Settings/ }).click();
+    const settings = page.getByRole('dialog', { name: 'Settings' });
+    await settings.getByRole('checkbox', { name: /Show verified transcript segments/ }).uncheck();
+    await settings.getByRole('checkbox', { name: /Compact transcript spacing/ }).check();
+
+    await page.reload();
+    await page.getByRole('button', { name: /Settings/ }).click();
+    const reloadedSettings = page.getByRole('dialog', { name: 'Settings' });
+    await expect(reloadedSettings.getByRole('checkbox', { name: /Show verified transcript segments/ })).not.toBeChecked();
+    await expect(reloadedSettings.getByRole('checkbox', { name: /Compact transcript spacing/ })).toBeChecked();
+    await expect(page.getByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).toBeHidden();
+  });
+
   test('supports transcript review state changes', async ({ page }) => {
     await page.goto('/');
 
