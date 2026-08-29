@@ -132,7 +132,10 @@ fn write_snapshot(path: &Path, snapshot: &str) -> Result<(), String> {
 pub fn load_workspace(app: AppHandle) -> Result<Option<String>, String> {
     let result = read_snapshot(&database_path(&app)?);
     #[cfg(debug_assertions)]
-    eprintln!("[studentllm] load_workspace invoked: {}", if result.is_ok() { "ok" } else { "error" });
+    eprintln!(
+        "[studentllm] load_workspace invoked: {}",
+        if result.is_ok() { "ok" } else { "error" }
+    );
     result
 }
 
@@ -140,7 +143,10 @@ pub fn load_workspace(app: AppHandle) -> Result<Option<String>, String> {
 pub fn save_workspace(app: AppHandle, snapshot: String) -> Result<(), String> {
     let result = write_snapshot(&database_path(&app)?, &snapshot);
     #[cfg(debug_assertions)]
-    eprintln!("[studentllm] save_workspace invoked: {}", if result.is_ok() { "ok" } else { "error" });
+    eprintln!(
+        "[studentllm] save_workspace invoked: {}",
+        if result.is_ok() { "ok" } else { "error" }
+    );
     result
 }
 
