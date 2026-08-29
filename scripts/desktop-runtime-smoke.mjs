@@ -7,13 +7,14 @@ import { join } from 'node:path';
 const requestedBinaryPath = process.argv[2];
 const recoveryRequested = process.argv[3] === '--crash-recovery';
 const sidecarSupervisionRequested = process.argv.includes('--sidecar-supervision');
+const frontendIpcRequested = process.argv.includes('--frontend-ipc');
 const recoveryCyclesArgument = process.argv.find((argument) => argument.startsWith('--recovery-cycles='));
 const recoveryCycles = recoveryCyclesArgument ? Number(recoveryCyclesArgument.slice('--recovery-cycles='.length)) : 1;
 const smokeDurationMs = 15_000;
 const shutdownGraceMs = 5_000;
 
 if (!requestedBinaryPath) {
-  console.error('Usage: node scripts/desktop-runtime-smoke.mjs <binary-path> [--crash-recovery] [--recovery-cycles=N] [--sidecar-supervision]');
+  console.error('Usage: node scripts/desktop-runtime-smoke.mjs <binary-path> [--crash-recovery] [--recovery-cycles=N] [--sidecar-supervision] [--frontend-ipc]');
   process.exit(2);
 }
 
@@ -265,6 +266,20 @@ async function waitForSidecarPid(readyFile, timeoutMs = 10_000) {
   throw new Error(`Managed sidecar did not publish its readiness file within ${timeoutMs / 1000}s.`);
 }
 
+async function waitForSmokeMarker(markerFile, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const value = (await readFile(markerFile, 'utf8')).trim();
+      if (value === 'ok') return;
+    } catch {
+      // The frontend has not completed its IPC call yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Packaged frontend IPC smoke marker was not written within ${timeoutMs / 1000}s.`);
+}
+
 function isProcessRunning(pid) {
   try {
     process.kill(pid, 0);
@@ -304,6 +319,34 @@ async function runSidecarSupervision() {
     await runtime;
     await Promise.all([waitForProcessExit(asrPid), waitForProcessExit(documentsPid)]);
     console.log(`Packaged runtime autostarted two configured sidecars (pids ${asrPid}, ${documentsPid}) and stopped both after a clean exit.`);
+  } finally {
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+}
+
+async function runFrontendIpcSmoke() {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'studentllm-desktop-ipc-'));
+  const markerFile = join(dataRoot, 'frontend-ipc-smoke.ok');
+  const environment = {
+    ...createRuntimeEnvironment(dataRoot),
+    STUDENTLLM_FRONTEND_IPC_SMOKE_MARKER: markerFile,
+    STUDENTLLM_SMOKE_EXIT_AFTER_MS: '5000',
+  };
+
+  try {
+    const runtime = runSmoke(environment, { durationMs: smokeDurationMs, allowEarlyExit: true });
+    try {
+      await Promise.race([
+        waitForSmokeMarker(markerFile),
+        runtime.then(() => {
+          throw new Error('Packaged frontend exited before completing the IPC smoke call.');
+        }),
+      ]);
+      await runtime;
+      console.log('Packaged frontend invoked the native smoke command and received the expected response.');
+    } finally {
+      await runtime.catch(() => undefined);
+    }
   } finally {
     await rm(dataRoot, { recursive: true, force: true });
   }
@@ -356,7 +399,8 @@ try {
   };
   if (recoveryRequested) await runCrashRecovery();
   if (sidecarSupervisionRequested) await runSidecarSupervision();
-  if (!recoveryRequested && !sidecarSupervisionRequested) {
+  if (frontendIpcRequested) await runFrontendIpcSmoke();
+  if (!recoveryRequested && !sidecarSupervisionRequested && !frontendIpcRequested) {
     await runSmoke(environment);
     console.log(`Desktop runtime stayed alive for ${smokeDurationMs / 1000}s and was stopped.`);
   }
