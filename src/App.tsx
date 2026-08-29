@@ -385,6 +385,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   }, [nativeStorageReady, activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces]);
 
   useEffect(() => {
+    if (!nativeStorageReady) return undefined;
+
     let cancelled = false;
     const pendingRecordings = listPendingRecordings();
     if (!pendingRecordings.length) return undefined;
@@ -434,7 +436,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [lessons, nativeStorageReady, recordingChunkStore]);
 
   useEffect(() => () => {
     void recorderRef.current?.stop();
