@@ -30,6 +30,8 @@ type GlobalTauri = {
   };
 };
 
+let nativeSaveQueue: Promise<void> = Promise.resolve();
+
 function describeStorageError(error: unknown): string {
   return error instanceof Error && error.message ? error.message : 'The native workspace storage operation failed.';
 }
@@ -222,13 +224,17 @@ export async function saveWorkspaceAsync(
 ): Promise<boolean> {
   if (!isNativeRuntime()) return saveWorkspace(snapshot, storage);
 
-  try {
-    await invokeNative('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
-    return true;
-  } catch (error) {
-    callbacks.onError?.({ operation: 'save', message: describeStorageError(error) });
-    return saveWorkspace(snapshot, storage);
-  }
+  const saveOperation = nativeSaveQueue.then(async () => {
+    try {
+      await invokeNative('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
+      return true;
+    } catch (error) {
+      callbacks.onError?.({ operation: 'save', message: describeStorageError(error) });
+      return saveWorkspace(snapshot, storage);
+    }
+  });
+  nativeSaveQueue = saveOperation.then(() => undefined, () => undefined);
+  return saveOperation;
 }
 
 export function runPackagedIpcSmoke() {
