@@ -160,10 +160,19 @@ function parseWorkspaceRaw(raw: string | null, fallback: WorkspaceSnapshot): Wor
 
 export function isNativeRuntime() {
   if (typeof window === 'undefined') return false;
-  return '__TAURI_INTERNALS__' in window
-    || '__TAURI__' in window
+  const internals = (window as Window & {
+    __TAURI_INTERNALS__?: { invoke?: unknown };
+    __TAURI__?: GlobalTauri;
+    isTauri?: boolean;
+  }).__TAURI_INTERNALS__;
+  const globalTauri = (window as Window & { __TAURI__?: GlobalTauri }).__TAURI__;
+  return typeof internals?.invoke === 'function'
+    || typeof globalTauri?.core?.invoke === 'function'
+    || (window as Window & { isTauri?: boolean }).isTauri === true
     || window.location.protocol === 'tauri:'
-    || window.location.hostname === 'tauri.localhost';
+    || window.location.protocol === 'file:'
+    || window.location.hostname === 'tauri.localhost'
+    || (import.meta.env.PROD && window.location.hostname === 'localhost');
 }
 
 export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): WorkspaceSnapshot {

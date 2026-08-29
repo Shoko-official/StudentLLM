@@ -96,7 +96,7 @@ describe('workspace storage', () => {
   });
 
   it('round-trips through the native invoke bridge when Tauri is available', async () => {
-    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
     const snapshot = { ...fallback, activeLessonId: 'native-lesson' };
     invoke.mockResolvedValueOnce(null).mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
 
@@ -117,7 +117,7 @@ describe('workspace storage', () => {
   });
 
   it('validates a native snapshot before restoring it', async () => {
-    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
     const snapshot = { ...fallback, activeLessonId: 'native-lesson', lessons: [{ ...fallback.lessons[0], id: 'native-lesson' }] };
     invoke.mockResolvedValue(JSON.stringify({ version: 1, ...snapshot }));
 
@@ -125,7 +125,7 @@ describe('workspace storage', () => {
   });
 
   it('reports native load failures before using the local fallback', async () => {
-    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
     const onError = vi.fn();
     invoke.mockRejectedValueOnce(new Error('database is locked'));
     saveWorkspace(fallback);
@@ -135,7 +135,7 @@ describe('workspace storage', () => {
   });
 
   it('reports native save failures while preserving the local fallback', async () => {
-    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
     const onError = vi.fn();
     const snapshot = {
       ...fallback,
