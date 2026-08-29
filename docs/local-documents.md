@@ -31,6 +31,8 @@ npm run dev
 
 Importing a PDF or image saves the original file first. If extraction succeeds, the UI adds one reviewable segment per non-empty page. If the sidecar is unavailable, the source remains saved and the transcript is unchanged.
 
+Open Settings and choose `Refresh local services` to check the configured document sidecar `/health` endpoint without interrupting the service. The UI reports readiness, the advertised engine, or the failure detail.
+
 ## Observed live check
 
 On 2026-08-27, the browser path was exercised with the public [Attention Is All You Need PDF](https://arxiv.org/abs/1706.03762). The sidecar returned HTTP 200 with model `pymupdf` and 15 pages; the UI stored `attention-public.pdf`, indexed all 15 pages, rendered the `Page 1` review segment, and reported no page errors. The original PDF remains a local ignored test artifact.
