@@ -6,11 +6,18 @@ import { join } from 'node:path';
 
 const requestedBinaryPath = process.argv[2];
 const recoveryRequested = process.argv[3] === '--crash-recovery';
+const recoveryCyclesArgument = process.argv.find((argument) => argument.startsWith('--recovery-cycles='));
+const recoveryCycles = recoveryCyclesArgument ? Number(recoveryCyclesArgument.slice('--recovery-cycles='.length)) : 1;
 const smokeDurationMs = 15_000;
 const shutdownGraceMs = 5_000;
 
 if (!requestedBinaryPath) {
-  console.error('Usage: node scripts/desktop-runtime-smoke.mjs <binary-path> [--crash-recovery]');
+  console.error('Usage: node scripts/desktop-runtime-smoke.mjs <binary-path> [--crash-recovery] [--recovery-cycles=N]');
+  process.exit(2);
+}
+
+if (!Number.isInteger(recoveryCycles) || recoveryCycles < 1) {
+  console.error('The recovery cycle count must be a positive integer.');
   process.exit(2);
 }
 
@@ -240,30 +247,33 @@ async function runCrashRecovery() {
 
   try {
     const firstRun = await runSmoke(environment, { forceKill: true, durationMs: 30_000 });
+    const runs = [firstRun];
     const databasesAfterCrash = await findWorkspaceDatabases(dataRoot);
     if (databasesAfterCrash.length !== 1) {
       throw new Error(`Expected one workspace database after the forced stop, found ${databasesAfterCrash.length}.`);
     }
 
-    const secondRun = await runSmoke(environment);
-    const databasesAfterRelaunch = await findWorkspaceDatabases(dataRoot);
-    if (databasesAfterRelaunch.length !== 1 || databasesAfterRelaunch[0] !== databasesAfterCrash[0]) {
-      throw new Error('Workspace database was not preserved across the forced stop and relaunch.');
-    }
+    for (let cycle = 0; cycle < recoveryCycles; cycle += 1) {
+      runs.push(await runSmoke(environment));
+      const databasesAfterRelaunch = await findWorkspaceDatabases(dataRoot);
+      if (databasesAfterRelaunch.length !== 1 || databasesAfterRelaunch[0] !== databasesAfterCrash[0]) {
+        throw new Error(`Workspace database was not preserved across recovery cycle ${cycle + 1}.`);
+      }
 
-    try {
-      await checkWorkspaceDatabase(databasesAfterRelaunch[0]);
-    } catch (error) {
-      const outputs = [firstRun, secondRun]
-        .flatMap(({ stdout, stderr }, index) => [
-          `Runtime ${index + 1} stdout:\n${stdout.trim()}`,
-          `Runtime ${index + 1} stderr:\n${stderr.trim()}`,
-        ])
-        .filter((output) => !output.endsWith(':'))
-        .join('\n');
-      throw new Error(`${error instanceof Error ? error.message : error}\n${outputs}`);
+      try {
+        await checkWorkspaceDatabase(databasesAfterRelaunch[0]);
+      } catch (error) {
+        const outputs = runs
+          .flatMap(({ stdout, stderr }, index) => [
+            `Runtime ${index + 1} stdout:\n${stdout.trim()}`,
+            `Runtime ${index + 1} stderr:\n${stderr.trim()}`,
+          ])
+          .filter((output) => !output.endsWith(':'))
+          .join('\n');
+        throw new Error(`${error instanceof Error ? error.message : error}\n${outputs}`);
+      }
     }
-    console.log('Desktop runtime recovered after SIGKILL with a frontend-persisted workspace snapshot and SQLite integrity_check returning ok.');
+    console.log(`Desktop runtime recovered after SIGKILL and ${recoveryCycles} relaunch cycle${recoveryCycles === 1 ? '' : 's'} with a frontend-persisted workspace snapshot and SQLite integrity_check returning ok.`);
   } finally {
     await rm(dataRoot, { recursive: true, force: true });
   }
