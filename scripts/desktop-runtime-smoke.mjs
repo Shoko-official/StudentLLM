@@ -214,8 +214,6 @@ function checkWorkspaceDatabase(databasePath) {
 function createRuntimeEnvironment(dataRoot) {
   const environment = {
     ...process.env,
-    HOME: dataRoot,
-    USERPROFILE: dataRoot,
     XDG_DATA_HOME: dataRoot,
     XDG_CACHE_HOME: join(dataRoot, 'cache'),
     XDG_CONFIG_HOME: join(dataRoot, 'config'),
@@ -225,6 +223,7 @@ function createRuntimeEnvironment(dataRoot) {
     LIBGL_ALWAYS_SOFTWARE: '1',
     WEBKIT_DISABLE_DMABUF_RENDERER: '1',
   };
+  if (process.platform !== 'win32') environment.HOME = dataRoot;
   return environment;
 }
 
