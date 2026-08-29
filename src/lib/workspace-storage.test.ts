@@ -28,6 +28,7 @@ describe('workspace storage', () => {
     localStorage.clear();
     invoke.mockReset();
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
   });
 
   it('round-trips a workspace snapshot through local storage', () => {
@@ -94,6 +95,15 @@ describe('workspace storage', () => {
     expect(invoke).toHaveBeenNthCalledWith(1, 'load_workspace');
     expect(invoke).toHaveBeenNthCalledWith(2, 'save_workspace', { snapshot: JSON.stringify({ version: 1, ...fallback }) });
     expect(invoke).toHaveBeenNthCalledWith(3, 'save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
+  });
+
+  it('uses the global Tauri core bridge when the packaged runtime exposes it', async () => {
+    const globalInvoke = vi.fn().mockResolvedValue(JSON.stringify({ version: 1, ...fallback }));
+    (window as Window & { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: globalInvoke } };
+
+    expect(await loadWorkspaceAsync(fallback)).toEqual(fallback);
+    expect(globalInvoke).toHaveBeenCalledWith('load_workspace');
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it('validates a native snapshot before restoring it', async () => {

@@ -24,6 +24,12 @@ export interface WorkspaceStorageCallbacks {
   onError?: (error: WorkspaceStorageError) => void;
 }
 
+type GlobalTauri = {
+  core?: {
+    invoke: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+  };
+};
+
 function describeStorageError(error: unknown): string {
   return error instanceof Error && error.message ? error.message : 'The native workspace storage operation failed.';
 }
@@ -112,6 +118,18 @@ function getStorage(): Storage | undefined {
   return window.localStorage;
 }
 
+function invokeNative<T>(command: string, args?: Record<string, unknown>) {
+  const globalTauri = typeof window === 'undefined'
+    ? undefined
+    : (window as Window & { __TAURI__?: GlobalTauri }).__TAURI__;
+  if (globalTauri?.core?.invoke) {
+    return args === undefined
+      ? globalTauri.core.invoke<T>(command)
+      : globalTauri.core.invoke<T>(command, args);
+  }
+  return args === undefined ? invoke<T>(command) : invoke<T>(command, args);
+}
+
 function parseWorkspaceRaw(raw: string | null, fallback: WorkspaceSnapshot): WorkspaceSnapshot {
   if (!raw) return fallback;
   try {
@@ -168,11 +186,11 @@ export async function loadWorkspaceAsync(
   if (!isNativeRuntime()) return loadWorkspace(fallback, storage);
 
   try {
-    const raw = await invoke<string | null>('load_workspace');
+    const raw = await invokeNative<string | null>('load_workspace');
     const snapshot = parseWorkspaceRaw(raw, fallback);
     if (raw === null) {
       try {
-        await invoke('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
+        await invokeNative('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
       } catch (error) {
         callbacks.onError?.({ operation: 'save', message: describeStorageError(error) });
       }
@@ -192,7 +210,7 @@ export async function saveWorkspaceAsync(
   if (!isNativeRuntime()) return saveWorkspace(snapshot, storage);
 
   try {
-    await invoke('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
+    await invokeNative('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
     return true;
   } catch (error) {
     callbacks.onError?.({ operation: 'save', message: describeStorageError(error) });
