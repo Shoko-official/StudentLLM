@@ -259,7 +259,10 @@ pub fn stop_sidecars(
 
 #[cfg(test)]
 mod tests {
-    use super::split_command_line;
+    use super::{split_command_line, status_for, SidecarKind, SupervisorState};
+    use std::process::{Command, Stdio};
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn splits_quoted_command_arguments() {
@@ -275,5 +278,44 @@ mod tests {
         let error = split_command_line("python \"scripts/local_asr_server.py")
             .expect_err("command should be rejected");
         assert!(error.contains("unterminated quote"));
+    }
+
+    #[test]
+    fn reports_an_exited_managed_process_for_restart() {
+        let child = if cfg!(windows) {
+            Command::new("cmd")
+                .args(["/C", "exit", "7"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("short-lived Windows process should start")
+        } else {
+            Command::new("sh")
+                .args(["-c", "exit 7"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("short-lived Unix process should start")
+        };
+
+        let mut state = SupervisorState::default();
+        state.children.insert(SidecarKind::Asr, child);
+
+        for _ in 0..100 {
+            let status = status_for(&mut state, SidecarKind::Asr);
+            if !status.running {
+                assert_eq!(status.kind, "asr");
+                assert!(status.pid.is_none());
+                assert!(status.detail.contains("Exited with status"));
+                assert!(status.detail.contains("Start again to recover"));
+                assert!(!state.children.contains_key(&SidecarKind::Asr));
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        panic!("short-lived managed process did not exit in time");
     }
 }
