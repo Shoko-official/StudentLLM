@@ -390,6 +390,23 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByRole('heading', { name: 'Attention & Scaled Dot-Product' }).first()).toBeVisible();
   });
 
+  test('opens an imported image source preview locally', async ({ page }) => {
+    await page.goto('/');
+    await page.setInputFiles('input[aria-label="Select course source"]', {
+      name: 'image-preview.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
+    });
+
+    const source = page.getByRole('button', { name: /^image-preview\.png/ });
+    await expect(source).toBeVisible();
+    await source.click();
+
+    const preview = page.getByRole('dialog', { name: 'image-preview.png' });
+    await expect(preview).toBeVisible();
+    await expect(preview.locator('img[alt="Preview of image-preview.png"]')).toBeVisible();
+  });
+
   test('imports and persists a PDF source in the browser workspace', async ({ page }) => {
     await page.goto('/');
     await page.setInputFiles('input[aria-label="Select course source"]', {
