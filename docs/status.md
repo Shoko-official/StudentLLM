@@ -15,7 +15,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | NVIDIA integration | Live provider smoke and official BFCL, BIG-Bench Hard, ARC-Challenge, IFEval, TruthfulQA, HumanEval, HumanEval+, MBPP+, GSM8K, MATH-500, and AIME evaluations | NIM requests pass using the Windows User `NVIDIA_API_KEY` environment variable; sixteen BFCL public category samples, the complete 27-configuration BBH zero-shot group, complete ARC-Challenge, IFEval, TruthfulQA, HumanEval, HumanEval+, and MBPP+ tasks, the complete GSM8K and MATH-500 test splits, and complete AIME 2024 and AIME 2025 samples completed |
 | Local speech pipeline | Public FLEURS sample, sidecar, browser recording, and readiness probe | Timestamped transcription and review-segment rendering pass; Settings can report ASR sidecar readiness without interrupting local services |
 | Local document pipeline | Public arXiv PDF, sidecar, browser import, and readiness probe | 15/15 pages indexed and page-level review content rendered; Settings can report document sidecar readiness |
-| Tauri desktop shell | Rust check/tests, cross-platform debug builds, unsigned package jobs, and managed sidecar lifecycle | Shell scaffold, SQLite WAL workspace bridge, managed sidecar lifecycle commands, and supervisor unit coverage pass native compilation/tests in CI; Windows and macOS debug builds and unsigned Ubuntu, Windows, and macOS package jobs pass; packaged-runtime crash-recovery soak remains pending |
+| Tauri desktop shell | Rust check/tests, cross-platform debug builds, unsigned package jobs, packaged launch smoke, and managed sidecar lifecycle | Shell scaffold, SQLite WAL workspace bridge, managed sidecar lifecycle commands, and supervisor unit coverage pass native compilation/tests in CI; Windows and macOS debug builds, unsigned Ubuntu/Windows/macOS package jobs, and a 15-second Ubuntu packaged launch smoke under Xvfb pass; cross-platform packaged interaction and crash-recovery soak remain pending |
 | Workspace navigation and review | Vitest and Playwright | Global content search, needs-review queue, full transcript archive, full Studio workspace, and Settings preferences operate across persisted course workspaces |
 
 ## Public benchmark evidence
@@ -57,7 +57,7 @@ The following targets are not yet complete product evidence:
 - OmniDocBench parsing metrics, official DocVQA ANLS, and PubTabNet TEDS;
 - full MTEB, BEIR, BFCL, MMLU-Pro, and Ragas evaluation suites; the BFCL memory-case wrapper now resolves prerequisite closures, but the NVIDIA `memory_kv` diagnostic remains unscored because generation produced repeated empty responses and exceeded the practical runtime budget;
 - versioned LectureBench held-out classroom and document scenarios;
-- SQLite WAL and Tauri runtime validation, sidecar supervision, and crash recovery soak.
+- cross-platform packaged Tauri interaction, SQLite WAL persistence in the packaged runtime, sidecar supervision in packaged deployments, and crash recovery soak.
 - additional code-generation protocols;
 
 ## Data-source notes
@@ -85,3 +85,5 @@ PR [#133](https://github.com/Shoko-official/StudentLLM/pull/133) added native SQ
 PR [#134](https://github.com/Shoko-official/StudentLLM/pull/134) hardened SQLite writes with a bounded lock wait and an overlapping-writers integrity regression. It passed all seven CI jobs, was squash-merged into `main`, and its temporary branch was deleted.
 
 PR [#135](https://github.com/Shoko-official/StudentLLM/pull/135) made native workspace load and save failures visible while preserving the local fallback. PR [#136](https://github.com/Shoko-official/StudentLLM/pull/136) added the opt-in Tauri sidecar supervisor, desktop lifecycle controls, child-process cleanup, and restart-after-exit status handling. Both passed all seven CI jobs, were squash-merged into `main`, and their temporary branches were deleted.
+
+PR [#140](https://github.com/Shoko-official/StudentLLM/pull/140) added a packaged desktop launch smoke under Ubuntu Xvfb and hardened SQLite WAL initialization when writers overlap. Its seven CI jobs passed, including six native Rust tests, 28 browser tests, cross-platform debug builds, three package builds, and the 15-second packaged launch smoke. It was squash-merged into `main`, and its temporary branch was deleted.
