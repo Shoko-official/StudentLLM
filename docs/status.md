@@ -79,3 +79,5 @@ PR [#128](https://github.com/Shoko-official/StudentLLM/pull/128) extended that s
 PR [#131](https://github.com/Shoko-official/StudentLLM/pull/131) added a browser regression for the composer image attachment action, including the image MIME filter and source metadata. It passed all seven CI jobs, was squash-merged into `main`, and its temporary branch was deleted. The verified browser suite now contains 27 Playwright scenarios.
 
 PR [#132](https://github.com/Shoko-official/StudentLLM/pull/132) added an end-to-end image preview regression covering local import, blob retrieval, and rendered preview output. It passed all seven CI jobs, was squash-merged into `main`, and its temporary branch was deleted. The verified browser suite now contains 28 Playwright scenarios.
+
+PR [#133](https://github.com/Shoko-official/StudentLLM/pull/133) added native SQLite regressions for preserving v0 snapshots during migration and rejecting databases from a newer schema. It passed all seven CI jobs, was squash-merged into `main`, and its temporary branch was deleted.
