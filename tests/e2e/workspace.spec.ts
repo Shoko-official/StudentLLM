@@ -340,6 +340,21 @@ test.describe('StudentLLM workspace', () => {
     expect(storedSource).toEqual({ count: 1, text: '# Week one' });
   });
 
+  test('imports a source from the course composer attachment action', async ({ page }) => {
+    await page.goto('/');
+    const fileChooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: 'Attach a file' }).click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles({
+      name: 'composer-notes.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('Composer attachments stay in the active course.'),
+    });
+
+    await expect(page.getByText(/composer-notes\.md added to course sources/)).toBeVisible();
+    await expect(page.getByRole('button', { name: /^composer-notes\.md Text · 47 B$/ })).toBeVisible();
+  });
+
   test('opens an imported source preview without leaving the workspace', async ({ page }) => {
     await page.goto('/');
     await page.setInputFiles('input[aria-label="Select course source"]', {

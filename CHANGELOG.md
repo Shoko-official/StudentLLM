@@ -10,6 +10,7 @@
 - local source import with MIME classification, metadata, and SHA-256 fingerprints;
 - original imported source blobs stored in IndexedDB when available;
 - imported text, image, audio, and PDF sources can be opened through a local workspace preview;
+- course composer attachment actions now open the local source picker for supported files and images;
 - imported text sources are available to local lexical retrieval with source-name citations;
 - imported text is chunked into bounded passages with source-part citations before provider calls;
 - injected live-provider coverage verifies source context and provider citations;
