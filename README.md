@@ -34,6 +34,7 @@ StudentLLM is built around three principles:
 - Local lexical retrieval selects transcript or bounded imported text passages and preserves source-part citations before a live provider request.
 - Vitest unit and integration coverage, Playwright browser coverage, axe accessibility checks, and GitHub Actions CI.
 - Tauri v2 desktop shell with a native-window build path, SQLite WAL persistence, and CI build/test gates.
+- Unsigned debug desktop bundles produced and retained by CI for Ubuntu, Windows, and macOS.
 
 ## Quick start
 
@@ -49,6 +50,12 @@ Open the local URL printed by Vite. To inspect the production build:
 ```bash
 npm run build
 npm run preview
+```
+
+To create a local unsigned desktop bundle:
+
+```bash
+npm run desktop:package
 ```
 
 ## Verification
