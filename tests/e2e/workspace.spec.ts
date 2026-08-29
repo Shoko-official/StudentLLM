@@ -43,6 +43,19 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByText('Targeted quiz').last()).toBeVisible();
   });
 
+  test('searches course content and exposes the review queue', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByRole('button', { name: /Global search/ }).click();
+    await page.getByRole('textbox', { name: 'Search all course content' }).fill('square-root factor');
+    await expect(page.getByRole('button', { name: /square-root factor/ })).toContainText('Attention & Scaled Dot-Product');
+    await page.getByRole('button', { name: /square-root factor/ }).click();
+    await expect(page.getByRole('heading', { name: 'Attention & Scaled Dot-Product' }).first()).toBeVisible();
+
+    await page.getByRole('button', { name: /Needs review/ }).click();
+    await expect(page.getByRole('dialog', { name: 'Needs review 1' })).toContainText('Without this normalization');
+  });
+
   test('supports transcript review state changes', async ({ page }) => {
     await page.goto('/');
 

@@ -214,6 +214,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [toast, setToast] = useState('');
   const [showNewCourse, setShowNewCourse] = useState(false);
   const [showDeleteCourse, setShowDeleteCourse] = useState(false);
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
+  const [globalSearchValue, setGlobalSearchValue] = useState('');
+  const [showReviewPanel, setShowReviewPanel] = useState(false);
   const [newCourseTitle, setNewCourseTitle] = useState('');
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
   const recorderRef = useRef<RecorderSession | null>(null);
@@ -246,6 +249,34 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     return showAllResources ? resources : resources.slice(0, 3);
   }, [activeLesson.id, resources, showAllResources]);
 
+  const reviewItems = useMemo(() => lessons.flatMap((lesson) =>
+    (lessonWorkspaces[lesson.id]?.transcript ?? [])
+      .filter((segment) => segment.status === 'review')
+      .map((segment) => ({ lesson, segment }))), [lessons, lessonWorkspaces]);
+
+  const globalSearchResults = useMemo(() => {
+    const query = globalSearchValue.trim().toLocaleLowerCase();
+    if (!query) return [];
+    return lessons.flatMap((lesson) => {
+      const lessonWorkspace = lessonWorkspaces[lesson.id] ?? emptyLessonWorkspace;
+      const results: { id: string; lessonId: string; title: string; detail: string }[] = [];
+      if (`${lesson.title} ${lesson.subject} ${lesson.chapter}`.toLocaleLowerCase().includes(query)) {
+        results.push({ id: lesson.id, lessonId: lesson.id, title: lesson.title, detail: `${lesson.subject} · ${lesson.chapter}` });
+      }
+      lessonWorkspace.transcript.forEach((segment) => {
+        if (`${segment.speaker} ${segment.text} ${segment.timestamp}`.toLocaleLowerCase().includes(query)) {
+          results.push({ id: segment.id, lessonId: lesson.id, title: segment.text, detail: `${lesson.title} · ${segment.timestamp}` });
+        }
+      });
+      lessonWorkspace.resources.forEach((resource) => {
+        if (`${resource.name} ${resource.meta}`.toLocaleLowerCase().includes(query)) {
+          results.push({ id: resource.id, lessonId: lesson.id, title: resource.name, detail: `${lesson.title} · ${resource.meta}` });
+        }
+      });
+      return results;
+    }).slice(0, 20);
+  }, [globalSearchValue, lessons, lessonWorkspaces]);
+
   useEffect(() => {
     if (!isRecording) return undefined;
     const interval = window.setInterval(() => setRecordingSeconds((value) => value + 1), 1000);
@@ -261,6 +292,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       if (event.key === 'Escape') {
         setShowNewCourse(false);
         setShowDeleteCourse(false);
+        setShowGlobalSearch(false);
+        setShowReviewPanel(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -367,6 +400,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     setView('course');
     setShowAllResources(false);
     setSelectedArtifactId(lessonWorkspaces[lessonId]?.artifacts[0]?.id ?? null);
+  };
+
+  const openSearchResult = (lessonId: string) => {
+    selectLesson(lessonId);
+    setShowGlobalSearch(false);
+    setGlobalSearchValue('');
   };
 
   const loadRetrievalDocuments = async () => {
@@ -882,8 +921,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 })}
               </nav>
 
-              <button className="ghost-row" onClick={() => notify('Global search will be available with the local index.') }><Search size={14} /> Global search <ArrowUpRight size={13} /></button>
-              <button className="ghost-row attention-row" onClick={() => notify('3 items need manual review.') }><Lightbulb size={14} /> Needs review <span className="count-pill">3</span></button>
+              <button className="ghost-row" onClick={() => setShowGlobalSearch(true)}><Search size={14} /> Global search <ArrowUpRight size={13} /></button>
+              <button className="ghost-row attention-row" onClick={() => setShowReviewPanel(true)}><Lightbulb size={14} /> Needs review <span className="count-pill">{reviewItems.length}</span></button>
             </div>
 
             <div className="sidebar-footer">
@@ -987,6 +1026,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
       {showNewCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="new-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">New session</span><h2 id="new-course-title">Start a course</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowNewCourse(false)}><X size={17} /></button></div><p className="modal-description">Create a persistent session now. Add audio, images, and documents as the course progresses.</p><form onSubmit={createCourse}><label>Course title<input autoFocus value={newCourseTitle} onChange={(event) => setNewCourseTitle(event.target.value)} placeholder="e.g. Introduction to probability" /></label><label>Subject<select value={newCourseSubject} onChange={(event) => setNewCourseSubject(event.target.value)}><option>Machine Learning</option><option>Mathematics</option><option>Electronics</option></select></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowNewCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!newCourseTitle.trim()}><Mic size={15} /> Create and prepare recording</button></div></form></section></div>}
       {showDeleteCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowDeleteCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Delete session</span><h2 id="delete-course-title">Delete {activeLesson.title}?</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowDeleteCourse(false)}><X size={17} /></button></div><p className="modal-description">This removes the course workspace and its locally stored source and recording data. This action cannot be undone from the app.</p><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowDeleteCourse(false)}>Cancel</button><button className="danger-submit" type="button" onClick={() => void deleteActiveCourse()}><Trash2 size={14} /> Delete course permanently</button></div></section></div>}
+      {showGlobalSearch && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowGlobalSearch(false)}><section className="modal search-modal" role="dialog" aria-modal="true" aria-labelledby="global-search-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace index</span><h2 id="global-search-title">Search all course content</h2></div><button className="icon-button" aria-label="Close search" onClick={() => setShowGlobalSearch(false)}><X size={17} /></button></div><label className="modal-search"><Search size={15} /><input autoFocus aria-label="Search all course content" value={globalSearchValue} onChange={(event) => setGlobalSearchValue(event.target.value)} placeholder="Search courses, transcripts, and sources" /></label>{globalSearchValue.trim() && <div className="search-results" aria-live="polite">{globalSearchResults.length ? globalSearchResults.map((result) => <button className="search-result" key={`${result.lessonId}:${result.id}`} onClick={() => openSearchResult(result.lessonId)}><strong>{result.title}</strong><small>{result.detail}</small></button>) : <p className="empty-state">No matching course content.</p>}</div>}</section></div>}
+      {showReviewPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowReviewPanel(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="review-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Review queue</span><h2 id="review-panel-title">Needs review <span className="modal-count">{reviewItems.length}</span></h2></div><button className="icon-button" aria-label="Close review queue" onClick={() => setShowReviewPanel(false)}><X size={17} /></button></div><p className="modal-description">Transcript segments and imported pages that still need a quick human check.</p><div className="review-results">{reviewItems.length ? reviewItems.map(({ lesson, segment }) => <button className="review-result" key={`${lesson.id}:${segment.id}`} onClick={() => { selectLesson(lesson.id); setShowReviewPanel(false); }}><strong>{segment.text}</strong><small>{lesson.title} · {segment.timestamp}</small></button>) : <p className="empty-state">Nothing needs review.</p>}</div></section></div>}
       {toast && <div className="toast" role="status"><Check size={15} /> {toast}</div>}
     </div>
   );
