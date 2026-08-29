@@ -13,6 +13,21 @@ export interface WorkspaceSnapshot {
   lessonWorkspaces?: Record<string, LessonWorkspace>;
 }
 
+export type WorkspaceStorageOperation = 'load' | 'save';
+
+export interface WorkspaceStorageError {
+  operation: WorkspaceStorageOperation;
+  message: string;
+}
+
+export interface WorkspaceStorageCallbacks {
+  onError?: (error: WorkspaceStorageError) => void;
+}
+
+function describeStorageError(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : 'The native workspace storage operation failed.';
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -141,24 +156,34 @@ export function saveWorkspace(snapshot: WorkspaceSnapshot, storage: Storage | un
   }
 }
 
-export async function loadWorkspaceAsync(fallback: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): Promise<WorkspaceSnapshot> {
+export async function loadWorkspaceAsync(
+  fallback: WorkspaceSnapshot,
+  storage: Storage | undefined = getStorage(),
+  callbacks: WorkspaceStorageCallbacks = {},
+): Promise<WorkspaceSnapshot> {
   if (!isNativeRuntime()) return loadWorkspace(fallback, storage);
 
   try {
     const raw = await invoke<string | null>('load_workspace');
     return parseWorkspaceRaw(raw, fallback);
-  } catch {
+  } catch (error) {
+    callbacks.onError?.({ operation: 'load', message: describeStorageError(error) });
     return loadWorkspace(fallback, storage);
   }
 }
 
-export async function saveWorkspaceAsync(snapshot: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): Promise<boolean> {
+export async function saveWorkspaceAsync(
+  snapshot: WorkspaceSnapshot,
+  storage: Storage | undefined = getStorage(),
+  callbacks: WorkspaceStorageCallbacks = {},
+): Promise<boolean> {
   if (!isNativeRuntime()) return saveWorkspace(snapshot, storage);
 
   try {
     await invoke('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
     return true;
-  } catch {
+  } catch (error) {
+    callbacks.onError?.({ operation: 'save', message: describeStorageError(error) });
     return saveWorkspace(snapshot, storage);
   }
 }
