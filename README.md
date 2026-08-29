@@ -128,7 +128,7 @@ docs/
 - Extend OCR with structured tables, formulas, diagrams, handwriting, and richer page or region provenance.
 - Add hybrid BM25 plus dense retrieval, reranking, and a permissioned citation-first agent loop.
 - Extend the current lexical retriever with dense retrieval and reranking after the native knowledge store is available.
-- Validate the desktop shell on Windows, macOS, and Linux.
+- Validate the packaged desktop runtime on Windows, macOS, and Linux.
 - Expand public benchmark coverage and the versioned LectureBench described in [docs/benchmarks.md](./docs/benchmarks.md).
 
 ## Contributing
