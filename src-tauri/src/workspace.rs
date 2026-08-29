@@ -123,12 +123,18 @@ fn write_snapshot(path: &Path, snapshot: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn load_workspace(app: AppHandle) -> Result<Option<String>, String> {
-    read_snapshot(&database_path(&app)?)
+    let result = read_snapshot(&database_path(&app)?);
+    #[cfg(debug_assertions)]
+    eprintln!("[studentllm] load_workspace invoked: {}", if result.is_ok() { "ok" } else { "error" });
+    result
 }
 
 #[tauri::command]
 pub fn save_workspace(app: AppHandle, snapshot: String) -> Result<(), String> {
-    write_snapshot(&database_path(&app)?, &snapshot)
+    let result = write_snapshot(&database_path(&app)?, &snapshot);
+    #[cfg(debug_assertions)]
+    eprintln!("[studentllm] save_workspace invoked: {}", if result.is_ok() { "ok" } else { "error" });
+    result
 }
 
 #[cfg(test)]

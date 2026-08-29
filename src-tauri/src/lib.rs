@@ -17,6 +17,9 @@ pub fn run() {
 
     workspace::initialize_workspace(&app.handle()).expect("error while initializing workspace");
 
+    #[cfg(debug_assertions)]
+    eprintln!("[studentllm] workspace database initialized before event loop");
+
     use tauri::Manager;
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::Exit) {
