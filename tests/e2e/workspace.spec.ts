@@ -355,6 +355,24 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByRole('button', { name: /^composer-notes\.md Text · 47 B$/ })).toBeVisible();
   });
 
+  test('imports an image from the course composer attachment action', async ({ page }) => {
+    await page.goto('/');
+    const sourceInput = page.locator('input[aria-label="Select course source"]');
+    const fileChooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: 'Attach an image' }).click();
+    const fileChooser = await fileChooserPromise;
+
+    await expect(sourceInput).toHaveAttribute('accept', 'image/*');
+    await fileChooser.setFiles({
+      name: 'course-diagram.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from([137, 80, 78, 71]),
+    });
+
+    await expect(page.getByText(/course-diagram\.png added to course sources/)).toBeVisible();
+    await expect(page.getByRole('button', { name: /^course-diagram\.png Image .* 4 B$/ })).toBeVisible();
+  });
+
   test('opens an imported source preview without leaving the workspace', async ({ page }) => {
     await page.goto('/');
     await page.setInputFiles('input[aria-label="Select course source"]', {
