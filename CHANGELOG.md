@@ -14,6 +14,7 @@
 - the composer image attachment action is covered by a browser regression with MIME-filter verification;
 - imported image preview rendering is covered through local blob retrieval and browser output verification;
 - native SQLite coverage preserves legacy snapshots during migration and rejects newer unsupported schemas;
+- native workspace writes now wait briefly on SQLite locks and are covered by an overlapping-writers integrity test;
 - imported text sources are available to local lexical retrieval with source-name citations;
 - imported text is chunked into bounded passages with source-part citations before provider calls;
 - injected live-provider coverage verifies source context and provider citations;

@@ -81,3 +81,5 @@ PR [#131](https://github.com/Shoko-official/StudentLLM/pull/131) added a browser
 PR [#132](https://github.com/Shoko-official/StudentLLM/pull/132) added an end-to-end image preview regression covering local import, blob retrieval, and rendered preview output. It passed all seven CI jobs, was squash-merged into `main`, and its temporary branch was deleted. The verified browser suite now contains 28 Playwright scenarios.
 
 PR [#133](https://github.com/Shoko-official/StudentLLM/pull/133) added native SQLite regressions for preserving v0 snapshots during migration and rejecting databases from a newer schema. It passed all seven CI jobs, was squash-merged into `main`, and its temporary branch was deleted.
+
+PR [#134](https://github.com/Shoko-official/StudentLLM/pull/134) hardened SQLite writes with a bounded lock wait and an overlapping-writers integrity regression. It passed all seven CI jobs, was squash-merged into `main`, and its temporary branch was deleted.
