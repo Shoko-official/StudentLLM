@@ -274,6 +274,15 @@ kbd { color: var(--faint); font-family: var(--mono); font-size: 9px; }
 .setting-row input[type='checkbox'] { width: 18px; height: 18px; flex: 0 0 auto; accent-color: var(--accent); }
 .setting-info { justify-content: flex-start; align-items: flex-start; }
 .setting-info .status-dot { margin-top: 3px; }
+.sidecar-status-dot { width: 6px; height: 6px; display: inline-block; flex: 0 0 auto; margin-top: 3px; background: var(--faint); border-radius: 50%; }
+.sidecar-status-dot.ready { background: var(--accent); box-shadow: 0 0 0 3px rgba(142, 208, 193, .1); }
+.sidecar-status-list { display: grid; gap: 5px; padding: 10px 12px; background: rgba(12, 16, 21, .35); border: 1px solid var(--line); border-radius: 9px; }
+.sidecar-status-list div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.sidecar-status-list strong { color: var(--muted); font-size: 10px; }
+.sidecar-status-list span { color: var(--faint); font-family: var(--mono); font-size: 9px; text-align: right; }
+.sidecar-status-list span.ready { color: var(--accent); }
+.refresh-sidecars { justify-content: center; width: 100%; }
+.refresh-sidecars:disabled { cursor: wait; opacity: .65; }
 .settings-modal .modal-footer { margin-top: 16px; }
 .primary-submit { display: flex; align-items: center; gap: 7px; padding: 9px 12px; color: #122229; background: var(--accent); border-radius: 8px; font-size: 10px; font-weight: 800; }
 .primary-submit:disabled { cursor: not-allowed; opacity: .4; }
