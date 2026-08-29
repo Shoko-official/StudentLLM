@@ -152,6 +152,13 @@ mod tests {
                 );",
             )
             .expect("legacy schema should be created");
+        legacy
+            .execute(
+                "INSERT INTO workspace (id, version, snapshot, updated_at)
+                 VALUES (1, 1, ?1, ?2)",
+                rusqlite::params!["{\"version\":1,\"legacy\":true}", 1_i64],
+            )
+            .expect("legacy snapshot should be created");
         drop(legacy);
 
         let migrated = open_database(&path).expect("legacy database should migrate");
@@ -161,6 +168,28 @@ mod tests {
         assert_eq!(schema_version, 1);
         drop(migrated);
 
+        assert_eq!(
+            read_snapshot(&path).expect("legacy snapshot should remain readable"),
+            Some("{\"version\":1,\"legacy\":true}".to_string())
+        );
+
         let _ = fs::remove_dir_all(path.parent().expect("test database parent"));
+    }
+
+    #[test]
+    fn rejects_a_database_from_a_newer_schema() {
+        let path = test_database_path();
+        fs::create_dir_all(path.parent().expect("future database parent"))
+            .expect("future database directory should be created");
+        let connection = rusqlite::Connection::open(&path).expect("future database should open");
+        connection
+            .pragma_update(None, "user_version", 2_i32)
+            .expect("future schema version should be writable");
+        drop(connection);
+
+        let error = open_database(&path).expect_err("future schema should be rejected");
+        assert!(error.contains("newer than supported version 1"));
+
+        let _ = fs::remove_dir_all(path.parent().expect("future database parent"));
     }
 }
