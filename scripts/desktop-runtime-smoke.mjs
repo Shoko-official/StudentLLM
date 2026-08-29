@@ -151,6 +151,8 @@ async function runCrashRecovery() {
     XDG_DATA_HOME: dataRoot,
     XDG_CACHE_HOME: join(dataRoot, 'cache'),
     XDG_CONFIG_HOME: join(dataRoot, 'config'),
+    GDK_BACKEND: 'x11',
+    LIBGL_ALWAYS_SOFTWARE: '1',
     WEBKIT_DISABLE_DMABUF_RENDERER: '1',
   };
 
@@ -188,6 +190,8 @@ async function runCrashRecovery() {
 try {
   const environment = {
     ...process.env,
+    GDK_BACKEND: 'x11',
+    LIBGL_ALWAYS_SOFTWARE: '1',
     WEBKIT_DISABLE_DMABUF_RENDERER: '1',
   };
   if (recoveryRequested) {
