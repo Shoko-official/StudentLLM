@@ -28,6 +28,14 @@ $env:VITE_LOCAL_ASR_LANGUAGE = 'fr'
 npm run dev
 ```
 
+For a Tauri desktop build, the app can own the service lifecycle when `STUDENTLLM_ASR_COMMAND` is configured before launch:
+
+```powershell
+$env:STUDENTLLM_ASR_COMMAND = 'python scripts/local_asr_server.py --model small --language fr --device cpu --compute-type int8'
+```
+
+The desktop service tray can start or stop only the process launched by StudentLLM. The service command is not enabled unless this variable is set.
+
 When the recording is stopped, the app reports the saved-audio state, submits the persisted chunks to the sidecar, and appends returned segments to the transcript. If the sidecar is unavailable, the durable audio remains available and the transcript is not changed.
 
 Open Settings and choose `Refresh local services` to check the configured `/health` endpoint without starting, stopping, or reloading the sidecar. The result includes the advertised model when the service is ready and a readable error when it is unavailable.
