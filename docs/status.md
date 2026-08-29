@@ -8,7 +8,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 
 | Area | Evidence | Current result |
 | --- | --- | --- |
-| Application verification | `npm run verify` | TypeScript, benchmark adapter checks, 79 Vitest tests, Vite production build, and 28 Playwright tests pass |
+| Application verification | `npm run verify` | TypeScript, benchmark adapter checks, 80 Vitest tests, Vite production build, and 28 Playwright tests pass |
 | Browser accessibility | Playwright plus axe | No serious or critical violations observed; mobile overflow, navigation, and Escape dismissal regressions pass |
 | Local persistence | Vitest and Playwright | Course isolation, reload recovery, corrupted export rejection, source blob fidelity, local source previews, audio recovery, deletion flows, and native storage failure fallback feedback pass |
 | LM Studio integration | Existing `llama-server` process, live provider smoke, browser chat, and public DROP probe | The existing `openai/gpt-oss-20b` process is reachable through the LM Studio router on `127.0.0.1:1234`; live browser chat returned HTTP 200 and rendered an 886-character answer with no page or console errors. A larger local DROP run was interrupted before writing a receipt and is not counted as a score |
@@ -105,3 +105,5 @@ PR [#154](https://github.com/Shoko-official/StudentLLM/pull/154) added a real co
 PR [#155](https://github.com/Shoko-official/StudentLLM/pull/155) refreshed the live LM Studio provider smoke evidence without restarting the existing local model process. The smoke observed the configured `qwen/qwen3-4b` endpoint on `127.0.0.1:1234`, and its CI matrix passed before squash merge and branch deletion.
 
 PR [#156](https://github.com/Shoko-official/StudentLLM/pull/156) made durable recording startup depend on successful interrupted-session recovery persistence. If the recovery manifest cannot be written, the acquired recording session is stopped and the UI reports that recording was not started. The change added a user-facing regression test; all seven CI jobs passed, the PR was squash-merged into `main`, and its temporary branch was deleted.
+
+PR [#158](https://github.com/Shoko-official/StudentLLM/pull/158) made course deletion clear orphaned interrupted-recording manifests and their persisted chunks. The change added an injected-store regression covering physical recording cleanup; all seven CI jobs passed, the PR was squash-merged into `main`, and its temporary branch was deleted.
