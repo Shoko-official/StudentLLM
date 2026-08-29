@@ -16,15 +16,17 @@ npm run desktop:check
 npm run desktop:test
 npm run desktop:dev
 npm run desktop:build
+npm run desktop:package
 ```
 
 `desktop:check` validates the Rust shell without launching a window. `desktop:test` runs the native persistence tests without opening a window. `desktop:dev` starts Vite on the Tauri development port and opens the native window. `desktop:build` compiles a debug desktop executable without creating an installer bundle.
+`desktop:package` creates unsigned debug installer bundles for the current platform. CI runs it on Ubuntu, Windows, and macOS and uploads the resulting bundle directory as a workflow artifact.
 
 ## Runtime boundary
 
 The desktop shell embeds the existing Vite workspace. In a Tauri runtime, workspace snapshots are loaded and saved through native Rust commands backed by a SQLite database in the application data directory. The database uses WAL mode and a versioned single-row snapshot schema. Browser runs continue to use the local storage adapter.
 
-Native sidecar supervision, crash recovery soak testing, and packaged release artifacts remain separate stages so each can be validated in the actual desktop runtime before promotion.
+Native sidecar supervision and crash recovery soak testing remain separate stages so each can be validated in the actual desktop runtime before promotion. The Tauri bundle is enabled for unsigned local and CI packaging; production signing and release publication remain release-configuration work.
 
 ## Validation
 
