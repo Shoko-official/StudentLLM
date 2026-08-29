@@ -2,7 +2,7 @@ import { afterEach, beforeEach, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
-import { RECORDING_RECOVERY_STORAGE_KEY } from './lib/recording-recovery';
+import { listPendingRecordings, RECORDING_RECOVERY_STORAGE_KEY, savePendingRecording } from './lib/recording-recovery';
 
 describe('StudentLLM workspace', () => {
   beforeEach(() => localStorage.clear());
@@ -507,6 +507,33 @@ describe('StudentLLM workspace', () => {
     expect((await screen.findAllByRole('heading', { name: 'Self-attention and Context' })).length).toBeGreaterThan(0);
     expect(screen.queryByText('course-data.md')).not.toBeInTheDocument();
     expect(await screen.findByText('Attention & Scaled Dot-Product deleted.')).toBeInTheDocument();
+  });
+
+  it('deletes an interrupted-recording manifest with its course', async () => {
+    const user = userEvent.setup();
+    const clear = vi.fn(async () => undefined);
+    const recordingChunkStore = {
+      durability: 'durable' as const,
+      append: vi.fn(async () => undefined),
+      list: vi.fn(async () => []),
+      count: vi.fn(async () => 0),
+      clear,
+    };
+    render(<App recordingChunkStore={recordingChunkStore} />);
+    await Promise.resolve();
+    savePendingRecording({
+      recordingId: 'orphaned-recording',
+      lessonId: 'transformers-06',
+      lessonTitle: 'Attention & Scaled Dot-Product',
+      startedAt: 100,
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Delete course' }));
+    await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
+
+    expect(await screen.findByText('Attention & Scaled Dot-Product deleted.')).toBeInTheDocument();
+    expect(clear).toHaveBeenCalledWith('orphaned-recording');
+    expect(listPendingRecordings()).toEqual([]);
   });
 
   it('restores chat history after remounting the workspace', async () => {
