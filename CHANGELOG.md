@@ -12,6 +12,7 @@
 - imported text, image, audio, and PDF sources can be opened through a local workspace preview;
 - course composer attachment actions now open the local source picker for supported files and images;
 - the composer image attachment action is covered by a browser regression with MIME-filter verification;
+- imported image preview rendering is covered through local blob retrieval and browser output verification;
 - imported text sources are available to local lexical retrieval with source-name citations;
 - imported text is chunked into bounded passages with source-part citations before provider calls;
 - injected live-provider coverage verifies source context and provider citations;

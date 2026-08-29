@@ -8,7 +8,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 
 | Area | Evidence | Current result |
 | --- | --- | --- |
-| Application verification | `npm run verify` | TypeScript, benchmark adapter checks, 70 Vitest tests, Vite production build, and 27 Playwright tests pass |
+| Application verification | `npm run verify` | TypeScript, benchmark adapter checks, 70 Vitest tests, Vite production build, and 28 Playwright tests pass |
 | Browser accessibility | Playwright plus axe | No serious or critical violations observed; mobile overflow, navigation, and Escape dismissal regressions pass |
 | Local persistence | Vitest and Playwright | Course isolation, reload recovery, corrupted export rejection, source blob fidelity, local source previews, audio recovery, and deletion flows pass |
 | LM Studio integration | Existing `llama-server` process, live provider smoke, browser chat, and public DROP probe | The existing `openai/gpt-oss-20b` process is reachable through the LM Studio router on `127.0.0.1:1234`; live browser chat returned HTTP 200 and rendered an 886-character answer with no page or console errors. A larger local DROP run was interrupted before writing a receipt and is not counted as a score |
@@ -77,3 +77,5 @@ PR [#127](https://github.com/Shoko-official/StudentLLM/pull/127) recorded that d
 PR [#128](https://github.com/Shoko-official/StudentLLM/pull/128) extended that source workflow to the course composer, so file and image attachment actions now open the local picker instead of displaying a placeholder message. It passed all seven CI jobs, was squash-merged into `main`, and its temporary branch was deleted. The verified browser suite now contains 26 Playwright scenarios.
 
 PR [#131](https://github.com/Shoko-official/StudentLLM/pull/131) added a browser regression for the composer image attachment action, including the image MIME filter and source metadata. It passed all seven CI jobs, was squash-merged into `main`, and its temporary branch was deleted. The verified browser suite now contains 27 Playwright scenarios.
+
+PR [#132](https://github.com/Shoko-official/StudentLLM/pull/132) added an end-to-end image preview regression covering local import, blob retrieval, and rendered preview output. It passed all seven CI jobs, was squash-merged into `main`, and its temporary branch was deleted. The verified browser suite now contains 28 Playwright scenarios.
