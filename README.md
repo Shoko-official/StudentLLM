@@ -132,7 +132,6 @@ docs/
 
 ## Roadmap
 
-- Complete interactive frontend-to-native validation for packaged desktop runtimes on Windows, macOS, and Linux.
 - Add a longer cross-platform crash-recovery soak and packaged sidecar supervision coverage.
 - Extend the `SpeechEngine` contract to streaming partials, diarization, and crash-resumable jobs.
 - Extend OCR with structured tables, formulas, diagrams, handwriting, and richer page or region provenance.
