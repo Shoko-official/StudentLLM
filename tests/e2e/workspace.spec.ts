@@ -239,6 +239,10 @@ test.describe('StudentLLM workspace', () => {
     await page.getByRole('button', { name: 'Stop recording' }).click();
     await expect(page.getByText('1 audio chunks saved locally.')).toBeVisible();
     await expect(page.getByText('Attention & Scaled Dot-Product audio.webm')).toBeVisible();
+    await page.getByRole('button', { name: /^Attention & Scaled Dot-Product audio\.webm Audio · 1 chunk$/ }).click();
+    await expect(page.getByRole('dialog', { name: /Attention & Scaled Dot-Product audio\.webm/ })).toContainText('Original source');
+    await expect(page.locator('audio.source-audio-preview')).toBeVisible();
+    await page.getByRole('button', { name: 'Close source preview' }).click();
 
     const storedChunkCount = await page.evaluate(() => new Promise<number>((resolve, reject) => {
       const request = indexedDB.open('studentllm-recordings', 1);
@@ -334,6 +338,23 @@ test.describe('StudentLLM workspace', () => {
     }));
 
     expect(storedSource).toEqual({ count: 1, text: '# Week one' });
+  });
+
+  test('opens an imported source preview without leaving the workspace', async ({ page }) => {
+    await page.goto('/');
+    await page.setInputFiles('input[aria-label="Select course source"]', {
+      name: 'preview-notes.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('Preview content stays local.'),
+    });
+
+    await page.getByRole('button', { name: /^preview-notes\.md Text · 28 B$/ }).click();
+    const preview = page.getByRole('dialog', { name: 'preview-notes.md' });
+    await expect(preview).toContainText('Original source');
+    await expect(preview).toContainText('Preview content stays local.');
+    await page.getByRole('button', { name: 'Close source preview' }).click();
+    await expect(preview).toBeHidden();
+    await expect(page.getByRole('heading', { name: 'Attention & Scaled Dot-Product' }).first()).toBeVisible();
   });
 
   test('imports and persists a PDF source in the browser workspace', async ({ page }) => {

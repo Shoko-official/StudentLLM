@@ -183,6 +183,15 @@ export interface AppProps {
   documentEngine?: DocumentEngine | null;
 }
 
+interface ResourcePreview {
+  resource: Resource;
+  state: 'loading' | 'ready' | 'missing' | 'error';
+  blobUrl?: string;
+  text?: string;
+  truncated?: boolean;
+  detail?: string;
+}
+
 function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine }: AppProps) {
   const [workspace] = useState(() => loadWorkspace(initialWorkspace));
   const [nativeStorageReady, setNativeStorageReady] = useState(() => !isNativeRuntime());
@@ -225,9 +234,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [showVerifiedTranscript, setShowVerifiedTranscript] = useState(true);
   const [sidecarHealth, setSidecarHealth] = useState<{ asr: SidecarHealth; documents: SidecarHealth } | null>(null);
   const [isCheckingSidecars, setIsCheckingSidecars] = useState(false);
+  const [resourcePreview, setResourcePreview] = useState<ResourcePreview | null>(null);
   const [newCourseTitle, setNewCourseTitle] = useState('');
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
   const recorderRef = useRef<RecorderSession | null>(null);
+  const resourcePreviewRequest = useRef(0);
   const localProvider = useMemo(() => provider === undefined ? createLocalLLMProvider() : provider, [provider]);
   const localSpeechEngine = useMemo(() => speechEngine === undefined ? createLocalSpeechEngine() : speechEngine, [speechEngine]);
   const localDocumentEngine = useMemo(() => documentEngine === undefined ? createLocalDocumentEngine() : documentEngine, [documentEngine]);
@@ -305,6 +316,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         setShowTranscriptPanel(false);
         setShowStudioPanel(false);
         setShowSettingsPanel(false);
+        setResourcePreview(null);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -446,6 +458,47 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     setSidecarHealth({ asr, documents });
     setIsCheckingSidecars(false);
   };
+
+  const openResource = async (resource: Resource) => {
+    const requestId = ++resourcePreviewRequest.current;
+    setResourcePreview({ resource, state: 'loading' });
+
+    try {
+      let blob = await sourceBlobStore.load(resource.id);
+      if (!blob && resource.kind === 'audio') {
+        const chunks = await recordingChunkStore.list(resource.id);
+        if (chunks.length) blob = new Blob(chunks.map((chunk) => chunk.blob), { type: chunks[0].blob.type || resource.mimeType || 'audio/webm' });
+      }
+      if (requestId !== resourcePreviewRequest.current) return;
+      if (!blob) {
+        setResourcePreview({ resource, state: 'missing', detail: 'The original source is not stored in this browser.' });
+        return;
+      }
+
+      if (isTextResource(resource) || blob.type.startsWith('text/')) {
+        const text = await blob.text();
+        if (requestId !== resourcePreviewRequest.current) return;
+        const maxCharacters = 12_000;
+        setResourcePreview({ resource, state: 'ready', text: text.slice(0, maxCharacters), truncated: text.length > maxCharacters });
+        return;
+      }
+
+      const blobUrl = URL.createObjectURL(blob);
+      if (requestId !== resourcePreviewRequest.current) {
+        URL.revokeObjectURL(blobUrl);
+        return;
+      }
+      setResourcePreview({ resource, state: 'ready', blobUrl });
+    } catch {
+      if (requestId === resourcePreviewRequest.current) {
+        setResourcePreview({ resource, state: 'error', detail: 'The original source could not be opened.' });
+      }
+    }
+  };
+
+  useEffect(() => () => {
+    if (resourcePreview?.blobUrl) URL.revokeObjectURL(resourcePreview.blobUrl);
+  }, [resourcePreview?.blobUrl]);
 
   const loadRetrievalDocuments = async () => {
     const retrievalDocuments: RetrievalDocument[] = transcript.map((segment) => ({
@@ -1056,7 +1109,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             <div className="studio-heading"><div><span className="section-kicker">Studio</span><h2>Build for review</h2></div><button className="icon-button" aria-label="Close Studio" onClick={() => setShowRightSidebar(false)}><X size={16} /></button></div>
             <section className="context-card"><div className="context-card-top"><span className="context-icon"><BookOpen size={15} /></span><span className="local-badge"><span className="status-dot" /> local</span></div><h3>{activeLesson.title}</h3><dl><div><dt>Sources</dt><dd>{activeResources.length + 2}</dd></div><div><dt>Duration</dt><dd>{activeLesson.duration}</dd></div><div><dt>State</dt><dd className="success-text">Indexed</dd></div></dl></section>
             <div className="transfer-actions" aria-label="Course transfer"><button className="transfer-action" type="button" onClick={() => void exportCourse()}><Download size={13} /> Export course</button><label className="transfer-action"><input className="visually-hidden" type="file" accept="application/json,.json" aria-label="Import course export" onChange={(event) => void importCourse(event)} /><Upload size={13} /> Import course</label></div>
-            <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><label className="mini-action"><input className="visually-hidden" type="file" aria-label="Select course source" accept="audio/*,image/*,.pdf,.txt,.md" onChange={importSource} /><Plus size={13} /> add</label></div><div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}><button className="resource-open" type="button" onClick={() => notify(`Source selected: ${resource.name}`)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button><button className="resource-remove" type="button" aria-label={`Remove source ${resource.name}`} onClick={() => void removeSource(resource)}><X size={13} /></button></div>)}</div>{resources.length > 3 && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
+            <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><label className="mini-action"><input className="visually-hidden" type="file" aria-label="Select course source" accept="audio/*,image/*,.pdf,.txt,.md" onChange={importSource} /><Plus size={13} /> add</label></div><div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}><button className="resource-open" type="button" onClick={() => void openResource(resource)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button><button className="resource-remove" type="button" aria-label={`Remove source ${resource.name}`} onClick={() => void removeSource(resource)}><X size={13} /></button></div>)}</div>{resources.length > 3 && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
             <section className="studio-actions"><div className="sidebar-section-header"><span>Create an artifact</span><span className="eyebrow-count">source-linked</span></div><div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div></section>
             {artifacts.length > 0 && <section className="recent-section"><div className="sidebar-section-header"><span>Recently created</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} type="button" aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></button>)}{selectedArtifactId && (() => { const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId); if (!selectedArtifact) return null; return <article className="artifact-preview"><span className="section-kicker">Artifact preview</span><h3>{selectedArtifact.label}</h3><p>{selectedArtifact.content ?? 'This artifact has no stored content.'}</p>{selectedArtifact.citations && <div className="citation-list">{selectedArtifact.citations.map((citation) => <button key={citation} onClick={() => notify(`Source opened: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</article>; })()}</section>}
             <button className="studio-link" onClick={() => setShowStudioPanel(true)}>Open full Studio <ArrowUpRight size={14} /></button>
@@ -1065,6 +1118,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         )}
       </div>
 
+      {resourcePreview && <div className="modal-backdrop" role="presentation" onMouseDown={() => setResourcePreview(null)}><section className="modal resource-preview-modal" role="dialog" aria-modal="true" aria-labelledby="resource-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Original source</span><h2 id="resource-preview-title">{resourcePreview.resource.name}</h2></div><button className="icon-button" aria-label="Close source preview" onClick={() => setResourcePreview(null)}><X size={17} /></button></div><p className="modal-description">{resourcePreview.resource.meta}{resourcePreview.resource.sha256 ? ` · SHA-256 ${resourcePreview.resource.sha256.slice(0, 12)}…` : ''}</p>{resourcePreview.state === 'loading' && <p className="empty-state">Opening the locally stored source…</p>}{resourcePreview.state === 'missing' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'error' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'ready' && resourcePreview.text !== undefined && <div className="source-text-preview"><pre>{resourcePreview.text}</pre>{resourcePreview.truncated && <small>Preview truncated to 12,000 characters. The original source remains unchanged.</small>}</div>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'image' && <img className="source-image-preview" src={resourcePreview.blobUrl} alt={`Preview of ${resourcePreview.resource.name}`} />}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'audio' && <audio className="source-audio-preview" controls src={resourcePreview.blobUrl}>Your browser cannot play this audio source.</audio>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'document' && <iframe className="source-document-preview" title={`Preview of ${resourcePreview.resource.name}`} src={resourcePreview.blobUrl} />}</section></div>}
       {showNewCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="new-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">New session</span><h2 id="new-course-title">Start a course</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowNewCourse(false)}><X size={17} /></button></div><p className="modal-description">Create a persistent session now. Add audio, images, and documents as the course progresses.</p><form onSubmit={createCourse}><label>Course title<input autoFocus value={newCourseTitle} onChange={(event) => setNewCourseTitle(event.target.value)} placeholder="e.g. Introduction to probability" /></label><label>Subject<select value={newCourseSubject} onChange={(event) => setNewCourseSubject(event.target.value)}><option>Machine Learning</option><option>Mathematics</option><option>Electronics</option></select></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowNewCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!newCourseTitle.trim()}><Mic size={15} /> Create and prepare recording</button></div></form></section></div>}
       {showDeleteCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowDeleteCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Delete session</span><h2 id="delete-course-title">Delete {activeLesson.title}?</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowDeleteCourse(false)}><X size={17} /></button></div><p className="modal-description">This removes the course workspace and its locally stored source and recording data. This action cannot be undone from the app.</p><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowDeleteCourse(false)}>Cancel</button><button className="danger-submit" type="button" onClick={() => void deleteActiveCourse()}><Trash2 size={14} /> Delete course permanently</button></div></section></div>}
       {showGlobalSearch && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowGlobalSearch(false)}><section className="modal search-modal" role="dialog" aria-modal="true" aria-labelledby="global-search-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace index</span><h2 id="global-search-title">Search all course content</h2></div><button className="icon-button" aria-label="Close search" onClick={() => setShowGlobalSearch(false)}><X size={17} /></button></div><label className="modal-search"><Search size={15} /><input autoFocus aria-label="Search all course content" value={globalSearchValue} onChange={(event) => setGlobalSearchValue(event.target.value)} placeholder="Search courses, transcripts, and sources" /></label>{globalSearchValue.trim() && <div className="search-results" aria-live="polite">{globalSearchResults.length ? globalSearchResults.map((result) => <button className="search-result" key={`${result.lessonId}:${result.id}`} onClick={() => openSearchResult(result.lessonId)}><strong>{result.title}</strong><small>{result.detail}</small></button>) : <p className="empty-state">No matching course content.</p>}</div>}</section></div>}
