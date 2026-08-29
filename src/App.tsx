@@ -152,6 +152,18 @@ const emptyLessonWorkspace: LessonWorkspace = {
 };
 
 const sourceAccept = 'audio/*,image/*,.pdf,.txt,.md';
+const PREFERENCES_STORAGE_KEY = 'studentllm.preferences.v1';
+
+function loadPreference(name: 'compactTranscript' | 'showVerifiedTranscript', fallback: boolean) {
+  try {
+    const raw = window.localStorage.getItem(PREFERENCES_STORAGE_KEY);
+    if (!raw) return fallback;
+    const preferences = JSON.parse(raw) as Record<string, unknown>;
+    return typeof preferences[name] === 'boolean' ? preferences[name] : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 const initialWorkspace = {
   activeLessonId: initialLessons[0].id,
@@ -235,8 +247,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [showTranscriptPanel, setShowTranscriptPanel] = useState(false);
   const [showStudioPanel, setShowStudioPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
-  const [compactTranscript, setCompactTranscript] = useState(false);
-  const [showVerifiedTranscript, setShowVerifiedTranscript] = useState(true);
+  const [compactTranscript, setCompactTranscript] = useState(() => loadPreference('compactTranscript', false));
+  const [showVerifiedTranscript, setShowVerifiedTranscript] = useState(() => loadPreference('showVerifiedTranscript', true));
   const [sidecarHealth, setSidecarHealth] = useState<{ asr: SidecarHealth; documents: SidecarHealth } | null>(null);
   const [managedSidecars, setManagedSidecars] = useState<ManagedSidecarStatus[]>([]);
   const [isCheckingSidecars, setIsCheckingSidecars] = useState(false);
@@ -345,6 +357,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const timeout = window.setTimeout(() => setToast(''), 2600);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ compactTranscript, showVerifiedTranscript }));
+    } catch {
+      // Preferences remain session-scoped when browser storage is unavailable.
+    }
+  }, [compactTranscript, showVerifiedTranscript]);
 
   useEffect(() => {
     if (showSettingsPanel) void checkSidecars();
