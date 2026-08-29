@@ -15,7 +15,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | NVIDIA integration | Live provider smoke and official BFCL, BIG-Bench Hard, ARC-Challenge, IFEval, TruthfulQA, HumanEval, HumanEval+, MBPP+, GSM8K, MATH-500, and AIME evaluations | NIM requests pass using the Windows User `NVIDIA_API_KEY` environment variable; sixteen BFCL public category samples, the complete 27-configuration BBH zero-shot group, complete ARC-Challenge, IFEval, TruthfulQA, HumanEval, HumanEval+, and MBPP+ tasks, the complete GSM8K and MATH-500 test splits, and complete AIME 2024 and AIME 2025 samples completed |
 | Local speech pipeline | Public FLEURS sample, sidecar, browser recording, and readiness probe | Timestamped transcription and review-segment rendering pass; Settings can report ASR sidecar readiness without interrupting local services |
 | Local document pipeline | Public arXiv PDF, sidecar, browser import, and readiness probe | 15/15 pages indexed and page-level review content rendered; Settings can report document sidecar readiness |
-| Tauri desktop shell | Rust check/tests, cross-platform debug builds, unsigned package jobs, packaged launch smoke, and managed sidecar lifecycle | Shell scaffold, SQLite WAL workspace bridge, managed sidecar lifecycle commands, and exited-process recovery coverage pass native compilation/tests in CI; Windows and macOS debug builds, unsigned Ubuntu/Windows/macOS package jobs, and a 15-second Ubuntu packaged launch smoke under Xvfb pass; cross-platform packaged interaction and crash-recovery soak remain pending |
+| Tauri desktop shell | Rust check/tests, cross-platform debug builds, unsigned package jobs, packaged launch and crash-recovery smoke, and managed sidecar lifecycle | Shell scaffold, SQLite WAL workspace bridge, managed sidecar lifecycle commands, and exited-process recovery coverage pass native compilation/tests in CI; Windows and macOS debug builds, unsigned Ubuntu/Windows/macOS package jobs, and the Ubuntu packaged runtime crash-recovery smoke pass; cross-platform packaged interaction, sidecar supervision, and longer crash-recovery soak remain pending |
 | Workspace navigation and review | Vitest and Playwright | Global content search, needs-review queue, full transcript archive, full Studio workspace, and Settings preferences operate across persisted course workspaces |
 
 ## Public benchmark evidence
@@ -57,7 +57,7 @@ The following targets are not yet complete product evidence:
 - OmniDocBench parsing metrics, official DocVQA ANLS, and PubTabNet TEDS;
 - full MTEB, BEIR, BFCL, MMLU-Pro, and Ragas evaluation suites; the BFCL memory-case wrapper now resolves prerequisite closures, but the NVIDIA `memory_kv` diagnostic remains unscored because generation produced repeated empty responses and exceeded the practical runtime budget;
 - versioned LectureBench held-out classroom and document scenarios;
-- cross-platform packaged Tauri interaction, SQLite WAL persistence in the packaged runtime, sidecar supervision in packaged deployments, and crash recovery soak.
+- cross-platform packaged Tauri interaction, sidecar supervision in packaged deployments, and a longer cross-platform crash-recovery soak.
 - additional code-generation protocols;
 
 ## Data-source notes
@@ -89,3 +89,5 @@ PR [#135](https://github.com/Shoko-official/StudentLLM/pull/135) made native wor
 PR [#140](https://github.com/Shoko-official/StudentLLM/pull/140) added a packaged desktop launch smoke under Ubuntu Xvfb and hardened SQLite WAL initialization when writers overlap. Its seven CI jobs passed, including six native Rust tests, 28 browser tests, cross-platform debug builds, three package builds, and the 15-second packaged launch smoke. It was squash-merged into `main`, and its temporary branch was deleted.
 
 PR [#142](https://github.com/Shoko-official/StudentLLM/pull/142) added a portable sidecar lifecycle regression that launches a real short-lived child process and verifies exit reporting, restart guidance, PID cleanup, and supervisor state cleanup. Its seven CI jobs passed across Windows and Unix runners, it was squash-merged into `main`, and its temporary branch was deleted.
+
+PR [#144](https://github.com/Shoko-official/StudentLLM/pull/144) added packaged Ubuntu crash-recovery coverage: an isolated runtime is force-stopped, its SQLite workspace is checked after relaunch, and `PRAGMA integrity_check` must return `ok`. It also initializes the workspace database before the Tauri event loop, so startup persistence does not depend on WebView readiness. All seven CI jobs passed, including the packaged recovery smoke, and the temporary branch was squash-merged into `main` and deleted.
