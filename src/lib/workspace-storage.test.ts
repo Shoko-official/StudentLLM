@@ -87,12 +87,13 @@ describe('workspace storage', () => {
   it('round-trips through the native invoke bridge when Tauri is available', async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     const snapshot = { ...fallback, activeLessonId: 'native-lesson' };
-    invoke.mockResolvedValueOnce(null).mockResolvedValueOnce(undefined);
+    invoke.mockResolvedValueOnce(null).mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
 
     expect(await loadWorkspaceAsync(fallback)).toEqual(fallback);
     expect(await saveWorkspaceAsync(snapshot)).toBe(true);
     expect(invoke).toHaveBeenNthCalledWith(1, 'load_workspace');
-    expect(invoke).toHaveBeenNthCalledWith(2, 'save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
+    expect(invoke).toHaveBeenNthCalledWith(2, 'save_workspace', { snapshot: JSON.stringify({ version: 1, ...fallback }) });
+    expect(invoke).toHaveBeenNthCalledWith(3, 'save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
   });
 
   it('validates a native snapshot before restoring it', async () => {

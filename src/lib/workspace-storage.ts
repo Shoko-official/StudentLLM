@@ -165,7 +165,15 @@ export async function loadWorkspaceAsync(
 
   try {
     const raw = await invoke<string | null>('load_workspace');
-    return parseWorkspaceRaw(raw, fallback);
+    const snapshot = parseWorkspaceRaw(raw, fallback);
+    if (raw === null) {
+      try {
+        await invoke('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
+      } catch (error) {
+        callbacks.onError?.({ operation: 'save', message: describeStorageError(error) });
+      }
+    }
+    return snapshot;
   } catch (error) {
     callbacks.onError?.({ operation: 'load', message: describeStorageError(error) });
     return loadWorkspace(fallback, storage);

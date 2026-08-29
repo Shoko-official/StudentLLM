@@ -145,19 +145,30 @@ async function runCrashRecovery() {
   };
 
   try {
-    await runSmoke(environment, { forceKill: true, durationMs: 30_000 });
+    const firstRun = await runSmoke(environment, { forceKill: true, durationMs: 30_000 });
     const databasesAfterCrash = await findFiles(dataRoot, 'studentllm.sqlite3');
     if (databasesAfterCrash.length !== 1) {
       throw new Error(`Expected one workspace database after the forced stop, found ${databasesAfterCrash.length}.`);
     }
 
-    await runSmoke(environment);
+    const secondRun = await runSmoke(environment);
     const databasesAfterRelaunch = await findFiles(dataRoot, 'studentllm.sqlite3');
     if (databasesAfterRelaunch.length !== 1 || databasesAfterRelaunch[0] !== databasesAfterCrash[0]) {
       throw new Error('Workspace database was not preserved across the forced stop and relaunch.');
     }
 
-    await checkWorkspaceDatabase(databasesAfterRelaunch[0]);
+    try {
+      await checkWorkspaceDatabase(databasesAfterRelaunch[0]);
+    } catch (error) {
+      const outputs = [firstRun, secondRun]
+        .flatMap(({ stdout, stderr }, index) => [
+          `Runtime ${index + 1} stdout:\n${stdout.trim()}`,
+          `Runtime ${index + 1} stderr:\n${stderr.trim()}`,
+        ])
+        .filter((output) => !output.endsWith(':'))
+        .join('\n');
+      throw new Error(`${error instanceof Error ? error.message : error}\n${outputs}`);
+    }
     console.log('Desktop runtime recovered after SIGKILL with a persisted workspace snapshot and SQLite integrity_check returning ok.');
   } finally {
     await rm(dataRoot, { recursive: true, force: true });
