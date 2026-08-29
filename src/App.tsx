@@ -49,7 +49,7 @@ import { probeSidecar, SidecarHealth } from './lib/sidecar-health';
 import { getManagedSidecarStatus, ManagedSidecarStatus, startManagedSidecars, stopManagedSidecars } from './lib/sidecar-supervisor';
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore } from './lib/source-storage';
-import { createRecordingChunkStore } from './lib/recording-storage';
+import { AudioChunkStore, createRecordingChunkStore } from './lib/recording-storage';
 import { listPendingRecordings, removePendingRecording, savePendingRecording } from './lib/recording-recovery';
 import { buildCourseExport, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
@@ -185,6 +185,7 @@ export interface AppProps {
   recorderSessionFactory?: () => Promise<RecorderSession>;
   speechEngine?: SpeechEngine | null;
   documentEngine?: DocumentEngine | null;
+  recordingChunkStore?: AudioChunkStore;
 }
 
 interface ResourcePreview {
@@ -196,7 +197,7 @@ interface ResourcePreview {
   detail?: string;
 }
 
-function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine }: AppProps) {
+function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine, recordingChunkStore: recordingChunkStoreOverride }: AppProps) {
   const [workspace] = useState(() => loadWorkspace(initialWorkspace));
   const [nativeStorageReady, setNativeStorageReady] = useState(() => !isNativeRuntime());
   const [lessons, setLessons] = useState(workspace.lessons);
@@ -250,7 +251,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const localSpeechEngine = useMemo(() => speechEngine === undefined ? createLocalSpeechEngine() : speechEngine, [speechEngine]);
   const localDocumentEngine = useMemo(() => documentEngine === undefined ? createLocalDocumentEngine() : documentEngine, [documentEngine]);
   const sourceBlobStore = useMemo(() => createSourceBlobStore(), []);
-  const recordingChunkStore = useMemo(() => createRecordingChunkStore(), []);
+  const recordingChunkStore = useMemo(() => recordingChunkStoreOverride ?? createRecordingChunkStore(), [recordingChunkStoreOverride]);
 
   const reportStorageError = (error: WorkspaceStorageError) => {
     console.warn(`[workspace-storage:${error.operation}] ${error.message}`);
@@ -886,9 +887,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const lessonId = activeLesson.id;
     const lessonTitle = activeLesson.title;
     try {
+      const pendingRecordings = listPendingRecordings().filter((pending) => pending.lessonId === lessonId);
       for (const resource of resources) {
         await sourceBlobStore.remove(resource.id);
         await recordingChunkStore.clear(resource.id);
+      }
+      for (const pending of pendingRecordings) {
+        await recordingChunkStore.clear(pending.recordingId);
+        if (!removePendingRecording(pending.recordingId)) throw new Error('Unable to remove interrupted recording state.');
       }
       const nextLessons = lessons.filter((lesson) => lesson.id !== lessonId);
       const nextLesson = nextLessons[0];
