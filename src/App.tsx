@@ -266,11 +266,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const storageIssueRef = useRef<WorkspaceStorageError['operation'] | null>(null);
   const resourcePreviewRequest = useRef(0);
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
+  const lastFocusedElementRef = useRef<HTMLElement | null>(null);
   const localProvider = useMemo(() => provider === undefined ? createLocalLLMProvider() : provider, [provider]);
   const localSpeechEngine = useMemo(() => speechEngine === undefined ? createLocalSpeechEngine() : speechEngine, [speechEngine]);
   const localDocumentEngine = useMemo(() => documentEngine === undefined ? createLocalDocumentEngine() : documentEngine, [documentEngine]);
   const sourceBlobStore = useMemo(() => createSourceBlobStore(), []);
   const recordingChunkStore = useMemo(() => recordingChunkStoreOverride ?? createRecordingChunkStore(), [recordingChunkStoreOverride]);
+  const hasOpenDialog = Boolean(resourcePreview || showNewCourse || showDeleteCourse || showGlobalSearch || showReviewPanel || showTranscriptPanel || showStudioPanel || showSettingsPanel);
 
   const reportStorageError = (error: WorkspaceStorageError) => {
     console.warn(`[workspace-storage:${error.operation}] ${error.message}`);
@@ -397,6 +399,39 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  useEffect(() => {
+    if (!hasOpenDialog) return undefined;
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    if (!dialog) return undefined;
+    lastFocusedElementRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+    const focusableElements = () => Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector));
+    const autofocusElement = dialog.querySelector<HTMLElement>('[autofocus]');
+    (autofocusElement ?? focusableElements()[0])?.focus();
+    const onDialogKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const elements = focusableElements();
+      if (!elements.length) return;
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    dialog.addEventListener('keydown', onDialogKeyDown);
+
+    return () => {
+      dialog.removeEventListener('keydown', onDialogKeyDown);
+      if (lastFocusedElementRef.current?.isConnected) lastFocusedElementRef.current.focus();
+      lastFocusedElementRef.current = null;
+    };
+  }, [hasOpenDialog]);
 
   useEffect(() => {
     if (!toast) return undefined;
