@@ -57,7 +57,8 @@ The following targets are not yet complete product evidence:
 - OmniDocBench parsing metrics, official DocVQA ANLS, and PubTabNet TEDS;
 - full MTEB, BEIR, BFCL, MMLU-Pro, and Ragas evaluation suites; the BFCL memory-case wrapper now resolves prerequisite closures, but the NVIDIA `memory_kv` diagnostic remains unscored because generation produced repeated empty responses and exceeded the practical runtime budget;
 - versioned LectureBench held-out classroom and document scenarios;
-- cross-platform packaged Tauri interaction, sidecar supervision in packaged deployments, and a longer cross-platform crash-recovery soak.
+- UI-driven interaction inside packaged Tauri windows beyond the verified frontend-to-native IPC smoke;
+- a continuous long-duration cross-platform crash-recovery soak.
 - additional code-generation protocols;
 
 ## Data-source notes
@@ -119,3 +120,9 @@ PR [#168](https://github.com/Shoko-official/StudentLLM/pull/168) made the two tr
 PR [#169](https://github.com/Shoko-official/StudentLLM/pull/169) extended packaged crash-recovery coverage from three to ten relaunch cycles on Ubuntu, Windows, and macOS. Its seven-job CI matrix passed, the PR was squash-merged into `main`, and its temporary branch was deleted.
 
 PR [#170](https://github.com/Shoko-official/StudentLLM/pull/170) added packaged frontend-to-native IPC round-trip coverage to the Ubuntu, Windows, and macOS smoke jobs. Its seven-job CI matrix passed, the PR was squash-merged into `main`, and its temporary branch was deleted.
+
+PR [#171](https://github.com/Shoko-official/StudentLLM/pull/171) corrected the delivery-history wording so the documented release trail matches the verified repository state. Its seven-job CI matrix passed, it was squash-merged into `main`, and its temporary branch was deleted.
+
+PR [#172](https://github.com/Shoko-official/StudentLLM/pull/172) serialized overlapping native workspace saves so the latest frontend snapshot is written last, with a regression test for concurrent save ordering. Its seven-job CI matrix passed, it was squash-merged into `main`, and its temporary branch was deleted.
+
+PR [#173](https://github.com/Shoko-official/StudentLLM/pull/173) refreshed live provider smoke evidence from the existing local LM Studio process and the Windows User `NVIDIA_API_KEY` environment value. Its seven-job CI matrix and post-merge `main` run passed, it was squash-merged into `main`, and its temporary branch was deleted.
