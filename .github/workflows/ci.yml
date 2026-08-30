@@ -167,9 +167,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $edgePolicyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+          New-Item -Path $edgePolicyPath -Force | Out-Null
+          New-ItemProperty -Path $edgePolicyPath -Name 'RemoteDebuggingAllowed' -PropertyType DWord -Value 1 -Force | Out-Null
           $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
           New-Item -Path $policyPath -Force | Out-Null
-          New-ItemProperty -Path $policyPath -Name 'studentllm.exe' -PropertyType String -Value '--remote-debugging-port=9222' -Force | Out-Null
+          New-ItemProperty -Path $policyPath -Name 'studentllm.exe' -PropertyType String -Value '--remote-debugging-port=0' -Force | Out-Null
+          Get-ItemProperty -Path $edgePolicyPath -Name 'RemoteDebuggingAllowed'
           Get-ItemProperty -Path $policyPath -Name 'studentllm.exe'
       - name: Run packaged desktop UI tests (Linux)
         if: runner.os == 'Linux'
