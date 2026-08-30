@@ -33,6 +33,11 @@ export const config = {
   maxInstances: 1,
   capabilities: [{
     browserName: 'tauri',
+    'ms:edgeOptions': {
+      webviewOptions: {
+        userDataFolder: path.join(dataRoot, 'webview2'),
+      },
+    },
     'tauri:options': {
       application: binaryPath,
     },
