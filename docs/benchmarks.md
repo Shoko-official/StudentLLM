@@ -12,7 +12,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | --- | --- | --- | --- |
 | TypeScript | TypeScript project check | `npm run check` | PASS |
 | Benchmark adapters | Python bytecode compilation | `npm run benchmarks:check` | PASS |
-| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 85 tests |
+| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 86 tests |
 | Production artifact | Vite | `npm run build` | PASS |
 | Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 30 tests |
 | FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
