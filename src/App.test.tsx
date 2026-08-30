@@ -99,6 +99,22 @@ describe('StudentLLM workspace', () => {
     expect(screen.queryByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).not.toBeInTheDocument();
   });
 
+  it('traps focus inside dialogs and restores the trigger after closing', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const settingsButton = screen.getByRole('button', { name: /Settings/ });
+    await user.click(settingsButton);
+    const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
+    const closeButton = within(settingsDialog).getByRole('button', { name: 'Close settings' });
+    expect(closeButton).toHaveFocus();
+
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(within(settingsDialog).getByRole('button', { name: 'Done' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(settingsButton).toHaveFocus());
+  });
+
   it('changes the active course from the navigation tree', async () => {
     const user = userEvent.setup();
     render(<App />);
