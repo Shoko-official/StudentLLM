@@ -371,6 +371,41 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled();
   });
 
+  it('shows an incremental local ASR preview while recording', async () => {
+    const user = userEvent.setup();
+    const session = {
+      recordingId: 'recording-live-preview-test',
+      stream: {} as MediaStream,
+      durability: 'durable' as const,
+      stop: vi.fn(async () => ({
+        recordingId: 'recording-live-preview-test',
+        chunksPersisted: 1,
+        persistenceError: false,
+      })),
+      readChunks: vi.fn(async () => [{
+        recordingId: 'recording-live-preview-test',
+        sequence: 0,
+        blob: new Blob(['audio'], { type: 'audio/webm' }),
+        recordedAt: 123,
+      }]),
+    };
+    const transcribe = vi.fn(async () => ({
+      model: 'faster-whisper-small',
+      segments: [{ id: 'live-asr-1', timestamp: '00:00:01', speaker: 'Speaker', text: 'Live lecture preview.', status: 'review' as const }],
+    }));
+
+    render(<App recorderSessionFactory={async () => session} speechEngine={{ transcribe }} />);
+
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    await waitFor(() => expect(screen.getAllByText('Live preview').length).toBeGreaterThan(0));
+    expect(screen.getByText('Live lecture preview.')).toBeInTheDocument();
+    expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
+
+    await user.click(screen.getByRole('button', { name: 'Stop recording' }));
+    await waitFor(() => expect(screen.getByText('Session ready')).toBeInTheDocument());
+    expect(screen.queryByText('Live preview')).not.toBeInTheDocument();
+  });
+
   it('waits for native workspace hydration before processing recording recovery', async () => {
     const loadPromise = new Promise<string>(() => undefined);
     const invoke = vi.fn((command: string) => command === 'load_workspace' ? loadPromise : Promise.resolve(null));

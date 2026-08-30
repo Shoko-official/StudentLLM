@@ -27,6 +27,7 @@ export interface Resource {
 export interface TranscriptSegment {
   id: string;
   sourceId?: string;
+  provisional?: boolean;
   timestamp: string;
   speaker: string;
   text: string;
