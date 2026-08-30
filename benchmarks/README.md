@@ -152,6 +152,24 @@ An observed 70-item run on 2026-08-27 covered all 14 MMLU-Pro categories with 5 
 
 An observed 140-item run covered all 14 categories with 10 items per category and returned exact match `0.2143` (30/140, stderr `0.0347`). All requests and aggregate receipts were written; the initial process exit was affected only by Windows CP1252 terminal output after scoring, and the adapter now forces UTF-8 stdout.
 
+### Resumable complete MMLU-Pro run
+
+`run_mmlu_pro_full.py` runs the official fourteen-category `mmlu_pro` group one category at a time. Each completed category keeps its own lm-evaluation-harness receipt, while `mmlu_pro_full_manifest.json` records the exact command, configuration, exit code, and receipt path. Re-running the command reuses complete category receipts and continues from the first missing category.
+
+Use the NVIDIA User environment value without placing credentials in a file:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
+$env:PYTHONUTF8 = '1'
+& .\.venv-bench\Scripts\python.exe benchmarks\run_mmlu_pro_full.py `
+  --output-dir artifacts\benchmarks\mmlu-pro\full `
+  --num-concurrent 4 `
+  --reasoning-effort low
+```
+
+The runner expects the complete public group of 12,032 items and writes `mmlu_pro_full_summary.json` only after every selected category has a scored receipt. Use `--dry-run` to inspect the category commands without making provider requests.
+
 ## NVIDIA NIM
 
 The same adapter can target NVIDIA NIM through the Windows User environment variable:
