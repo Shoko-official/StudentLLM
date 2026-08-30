@@ -170,6 +170,8 @@ $env:PYTHONUTF8 = '1'
 
 The runner expects the complete public group of 12,032 items and writes `mmlu_pro_full_summary.json` only after every selected category has a scored receipt. Use `--dry-run` to inspect the category commands without making provider requests.
 
+The first completed category campaign covered all 717 public biology test items and returned exact match `0.2720` (195/717, stderr `0.0166`). This is a complete category result, not a complete fourteen-category MMLU-Pro result. Its local receipt is `artifacts/benchmarks/mmlu-pro/full/mmlu_pro_biology_2026-08-30T17-52-59.449454.json`.
+
 ## NVIDIA NIM
 
 The same adapter can target NVIDIA NIM through the Windows User environment variable:
