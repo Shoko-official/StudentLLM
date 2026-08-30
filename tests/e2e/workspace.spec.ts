@@ -79,6 +79,21 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByText('Without this normalization, dot products grow with the key dimension.')).toBeVisible();
   });
 
+  test('traps keyboard focus in dialogs and restores the trigger', async ({ page }) => {
+    await page.goto('/');
+
+    const settingsButton = page.getByRole('button', { name: /Settings/ });
+    await settingsButton.click();
+    const settings = page.getByRole('dialog', { name: 'Settings' });
+    const closeButton = settings.getByRole('button', { name: 'Close settings' });
+    await expect(closeButton).toBeFocused();
+
+    await page.keyboard.press('Shift+Tab');
+    await expect(settings.getByRole('button', { name: 'Done' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(settingsButton).toBeFocused();
+  });
+
   test('persists Settings preferences after a browser reload', async ({ page }) => {
     test.setTimeout(120_000);
     await page.goto('/', { timeout: 120_000 });
