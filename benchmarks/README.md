@@ -246,7 +246,15 @@ wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks
 wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks/run_humaneval_wsl.sh --probe
 ```
 
-The complete observed `humaneval_instruct` and `humaneval` runs each evaluated all 164 public problems with `openai/gpt-oss-20b`, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=1024`, `reasoning_effort=low`, four concurrent requests, and `until=None`. Both official `pass@1` values were `0.0000` (0/164), with zero empty responses. The raw outputs consistently began with explanatory prose followed by a fenced Python block, while the official filters expect a code-only continuation. The result is therefore both a complete public score and a format-compatibility finding; a future code-only prompt experiment must retain its own protocol label rather than overwrite these receipts.
+To evaluate the same public split with an explicit code-only output contract while retaining the official HumanEval scorer, run:
+
+```powershell
+wsl.exe -d Ubuntu-24.04 -- bash /mnt/f/Code/Travail/Etudes/StudentLLM/benchmarks/run_humaneval_wsl.sh --code-only
+```
+
+This is a separate protocol and writes a separate receipt. The adapter extracts a fenced or entry-point code region before applying the official candidate construction; it does not overwrite the earlier explanation-first result.
+
+The complete observed `humaneval_instruct` and `humaneval` runs each evaluated all 164 public problems with `openai/gpt-oss-20b`, zero-shot prompts, seed 42, `temperature=0`, `max_gen_toks=1024`, `reasoning_effort=low`, four concurrent requests, and `until=None`. Both official `pass@1` values were `0.0000` (0/164), with zero empty responses. The raw outputs consistently began with explanatory prose followed by a fenced Python block, while the official filters expect a code-only continuation. The separate `--code-only` protocol evaluated all 164 public problems with the same model and decoding settings, scored `0.8780` (144/164, stderr `0.0256`), and retained one empty provider response. Its receipt is `artifacts/benchmarks/humaneval/gpt-oss-20b-nvidia-code-only-full_2026-08-30T13-39-52.840104.json`, with samples in `samples_humaneval_code_only_2026-08-30T13-39-52.840104.jsonl`. The two protocols remain separately labeled and independently reproducible.
 
 ## GSM8K through NVIDIA NIM
 

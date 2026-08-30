@@ -4,6 +4,7 @@ set -euo pipefail
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 venv_dir="${HUMANEVAL_VENV:-/root/studentllm-human-eval}"
 output_dir="$repo_dir/artifacts/benchmarks/humaneval"
+code_only_task_dir="$repo_dir/benchmarks/humaneval_code_only"
 
 if [[ ! -x "$venv_dir/bin/python" ]]; then
   python3 -m venv "$venv_dir"
@@ -23,6 +24,7 @@ export PYTHONUTF8=1
 
 concurrency="${HUMANEVAL_CONCURRENCY:-4}"
 task_name="humaneval_instruct"
+code_only=false
 probe=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,20 +34,28 @@ while [[ $# -gt 0 ]]; do
       ;;
     --task)
       if [[ $# -lt 2 ]]; then
-        echo "Usage: bash benchmarks/run_humaneval_wsl.sh [--probe] [--task humaneval|humaneval_instruct]" >&2
+        echo "Usage: bash benchmarks/run_humaneval_wsl.sh [--probe] [--code-only] [--task humaneval|humaneval_instruct]" >&2
         exit 2
       fi
       task_name="$2"
       shift 2
       ;;
+    --code-only)
+      code_only=true
+      shift
+      ;;
     *)
-      echo "Usage: bash benchmarks/run_humaneval_wsl.sh [--probe] [--task humaneval|humaneval_instruct]" >&2
+      echo "Usage: bash benchmarks/run_humaneval_wsl.sh [--probe] [--code-only] [--task humaneval|humaneval_instruct]" >&2
       exit 2
       ;;
   esac
 done
 
-if [[ "$task_name" != "humaneval" && "$task_name" != "humaneval_instruct" ]]; then
+if $code_only; then
+  task_name="humaneval_code_only"
+fi
+
+if [[ "$task_name" != "humaneval" && "$task_name" != "humaneval_instruct" && "$task_name" != "humaneval_code_only" ]]; then
   echo "Unsupported HumanEval task: $task_name" >&2
   exit 2
 fi
@@ -57,9 +67,27 @@ if $probe; then
   output_name="gpt-oss-20b-nvidia-${task_name}-probe.json"
 elif [[ "$task_name" == "humaneval" ]]; then
   output_name="gpt-oss-20b-nvidia-humaneval-full.json"
+elif $code_only; then
+  output_name="gpt-oss-20b-nvidia-code-only-full.json"
 fi
 
 mkdir -p "$output_dir"
+if $code_only; then
+  "$venv_dir/bin/python" -m lm_eval run \
+  --include_path "$code_only_task_dir" \
+  --model local-chat-completions \
+  --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=$concurrency,max_retries=3" \
+  --tasks "$task_name" \
+  --num_fewshot 0 --batch_size 1 --apply_chat_template \
+  --confirm_run_unsafe_code \
+  --gen_kwargs "temperature=0,max_gen_toks=1024,reasoning_effort=low,until=None" \
+  --seed 42 \
+  --output_path "$output_dir/$output_name" \
+  --log_samples \
+  "${limit_args[@]}"
+  exit $?
+fi
+
 "$venv_dir/bin/python" -m lm_eval run \
   --model local-chat-completions \
   --model_args "model=openai/gpt-oss-20b,base_url=https://integrate.api.nvidia.com/v1/chat/completions,tokenizer_backend=None,num_concurrent=$concurrency,max_retries=3" \
