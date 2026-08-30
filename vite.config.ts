@@ -17,6 +17,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
+    base: './',
     plugins: [react()],
     server: {
       proxy: {
@@ -32,7 +33,7 @@ export default defineConfig(({ mode }) => {
       setupFiles: './src/test/setup.ts',
       globals: true,
       css: true,
-      exclude: ['tests/e2e/**', 'node_modules/**', 'dist/**'],
+      exclude: ['tests/e2e/**', 'tests/desktop-ui/**', 'node_modules/**', 'dist/**'],
     },
   };
 });

@@ -1202,7 +1202,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                             </button>
                           )}
                           {subjectLessons.map((lesson) => (
-                            <button key={lesson.id} className={`tree-lesson ${activeLesson.id === lesson.id ? 'active' : ''}`} onClick={() => selectLesson(lesson.id)}>
+                            <button key={lesson.id} className={`tree-lesson ${activeLesson.id === lesson.id ? 'active' : ''}`} aria-label={lesson.title} onClick={() => selectLesson(lesson.id)}>
                               <span>{lesson.title}</span>
                               {activeLesson.id === lesson.id && <span className="active-dot" />}
                             </button>
