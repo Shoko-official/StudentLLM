@@ -36,7 +36,7 @@ $env:STUDENTLLM_ASR_COMMAND = 'python scripts/local_asr_server.py --model small 
 
 The desktop service tray can start or stop only the process launched by StudentLLM. The service command is not enabled unless this variable is set.
 
-When the recording is stopped, the app reports the saved-audio state, submits the persisted chunks to the sidecar, and appends returned segments to the transcript. If the sidecar is unavailable, the durable audio remains available and the transcript is not changed.
+While a durable recording is active, the app periodically sends the persisted audio window to the same `/transcribe` endpoint and renders the returned segments as a `Live preview`. These segments are temporary and are never written to the workspace. When the recording is stopped, the app submits the complete persisted audio to the sidecar and writes the returned timestamped segments to the transcript as the authoritative result. This incremental preview uses repeated HTTP transcription calls; it is not a server-side streaming protocol and its latency is not counted as a streaming benchmark.
 
 Open Settings and choose `Refresh local services` to check the configured `/health` endpoint without starting, stopping, or reloading the sidecar. The result includes the advertised model when the service is ready and a readable error when it is unavailable.
 

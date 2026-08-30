@@ -22,6 +22,7 @@ StudentLLM is built around three principles:
 - Chunked `MediaRecorder` capture with IndexedDB persistence when supported by the browser.
 - Interrupted durable recordings are recovered into the owning course on the next launch.
 - Optional local faster-whisper sidecar transcription after durable recording, with timestamped review segments.
+- Configured local ASR can also show an incremental transcript preview while recording; the post-recording transcription remains authoritative.
 - Imported audio can use the same local ASR path, with transcript segments linked back to the audio source.
 - Optional local PDF text extraction and RapidOCR for images or scanned PDF pages, with page-level review segments.
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.

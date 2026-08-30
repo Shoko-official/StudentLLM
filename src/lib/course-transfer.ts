@@ -133,6 +133,7 @@ function isTranscriptSegment(value: unknown): value is TranscriptSegment {
   if (!isRecord(value)) return false;
   return isString(value.id) && isString(value.timestamp) && isString(value.speaker) && isString(value.text)
     && (value.sourceId === undefined || isString(value.sourceId))
+    && (value.provisional === undefined || typeof value.provisional === 'boolean')
     && (value.status === undefined || value.status === 'verified' || value.status === 'review');
 }
 
