@@ -226,6 +226,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [searchQuery, setSearchQuery] = useState('');
   const [showAllResources, setShowAllResources] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isFinalizingRecording, setIsFinalizingRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordingError, setRecordingError] = useState('');
   const [lessonWorkspaces, setLessonWorkspaces] = useState<Record<string, LessonWorkspace>>(() => workspace.lessonWorkspaces ?? {
@@ -607,6 +608,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   const toggleRecording = async () => {
     setRecordingError('');
+    if (isFinalizingRecording) {
+      notify('Finish saving the current recording before starting another.');
+      return;
+    }
     if (isRecording) {
       const session = recorderRef.current;
       const recordingLessonId = activeLesson.id;
@@ -659,7 +664,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         } catch {
           notify('Audio saved locally; local transcription needs review.');
         }
-      }).catch(() => setRecordingError('The audio session could not be finalized correctly.'));
+      }).catch(() => setRecordingError('The audio session could not be finalized correctly.'))
+        .finally(() => setIsFinalizingRecording(false));
+      setIsFinalizingRecording(true);
       return;
     }
 
@@ -1156,9 +1163,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
           {view === 'course' ? (
             <div className="course-view">
-              <section className={`recording-card ${isRecording ? 'recording' : ''}`} aria-label="Course recording">
+              <section className={`recording-card ${isRecording ? 'recording' : ''} ${isFinalizingRecording ? 'finalizing' : ''}`} aria-label="Course recording">
                 <div className="recording-topline">
-                  <div className="recording-label"><span className="recording-pulse" /> {isRecording ? 'Recording in progress' : 'Session ready'}</div>
+                  <div className="recording-label"><span className="recording-pulse" /> {isRecording ? 'Recording in progress' : isFinalizingRecording ? 'Saving recording' : 'Session ready'}</div>
                   <span className="local-badge"><span className="status-dot" /> On this device</span>
                 </div>
                 <div className="recording-core">
@@ -1168,7 +1175,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                   </div>
                   <div className="signal-rail" aria-hidden="true">{Array.from({ length: 42 }, (_, index) => <span key={index} style={{ height: `${14 + ((index * 17) % 28)}%` }} />)}</div>
                   <div className="recording-actions">
-                    <button className={`record-button ${isRecording ? 'stop' : ''}`} onClick={toggleRecording} aria-label={isRecording ? 'Stop recording' : 'Start recording'}>
+                    <button className={`record-button ${isRecording ? 'stop' : ''}`} onClick={toggleRecording} disabled={isFinalizingRecording} aria-label={isRecording ? 'Stop recording' : isFinalizingRecording ? 'Finishing recording' : 'Start recording'}>
                       {isRecording ? <Square size={17} fill="currentColor" /> : <Mic size={18} />}
                     </button>
                     <button className="bookmark-button" onClick={addBookmark} aria-label="Bookmark this passage"><Lightbulb size={16} /> Bookmark</button>
@@ -1176,7 +1183,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 </div>
                 {recordingError && <p className="inline-error">{recordingError}</p>}
                 <div className="recording-progress"><span style={{ width: `${activeLesson.progress}%` }} /></div>
-                <div className="recording-meta"><span><Clock3 size={13} /> {activeLesson.progress}% complete</span><span><Upload size={13} /> Chunked autosave</span><span><Pause size={13} /> ASR priority</span></div>
+                <div className="recording-meta"><span><Clock3 size={13} /> {activeLesson.progress}% complete</span><span><Upload size={13} /> Chunked autosave</span><span><Pause size={13} /> {isFinalizingRecording ? 'Saving audio and preparing transcript...' : 'ASR priority'}</span></div>
               </section>
 
               <section className="transcript-section">
