@@ -11,7 +11,7 @@ async function courseWithTitle(title) {
     const courses = await $$('button.tree-lesson');
     const labels = [];
     for (let index = 0; index < courses.length; index += 1) {
-      labels.push(await courses[index].getText());
+      labels.push(await courses[index].getAttribute('aria-label'));
     }
     return labels.some((label) => label.includes(title));
   }, {
@@ -22,7 +22,7 @@ async function courseWithTitle(title) {
   const courses = await $$('button.tree-lesson');
   for (let index = 0; index < courses.length; index += 1) {
     const course = courses[index];
-    if ((await course.getText()).includes(title)) return course;
+    if ((await course.getAttribute('aria-label'))?.includes(title)) return course;
   }
 
   throw new Error(`Course button with title "${title}" disappeared`);
@@ -37,10 +37,10 @@ describe('StudentLLM packaged desktop workflow', () => {
     await (await visible('button.primary-submit')).click();
 
     const course = await courseWithTitle('Desktop WebDriver course');
-    await expect(course).toHaveText('Desktop WebDriver course');
+    await expect(course).toHaveAttribute('aria-label', 'Desktop WebDriver course');
 
     await browser.refresh();
-    await expect(await courseWithTitle('Desktop WebDriver course')).toHaveText('Desktop WebDriver course');
+    await expect(await courseWithTitle('Desktop WebDriver course')).toHaveAttribute('aria-label', 'Desktop WebDriver course');
 
     await (await visible('button.studio-link')).click();
     await expect(await visible('.studio-modal h2')).toHaveText('Full Studio');
