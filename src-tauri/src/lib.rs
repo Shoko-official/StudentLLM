@@ -7,7 +7,7 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .manage(sidecars::SidecarSupervisor::default())
         .invoke_handler(tauri::generate_handler![
             workspace::load_workspace,
@@ -16,7 +16,12 @@ pub fn run() {
             sidecars::sidecar_status,
             sidecars::start_sidecars,
             sidecars::stop_sidecars
-        ])
+        ]);
+
+    #[cfg(debug_assertions)]
+    let builder = builder.plugin(tauri_plugin_wdio::init());
+
+    let app = builder
         .build(tauri::generate_context!())
         .expect("error while building StudentLLM");
 

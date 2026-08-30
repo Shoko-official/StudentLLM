@@ -29,6 +29,7 @@
 - recording finalization now remains visible and blocks a second start until audio processing completes;
 - configured local ASR now shows an incremental live preview during durable recording, then replaces it with the final transcript after stop;
 - the full transcript archive now includes an active live preview while preserving its persisted-segment count;
+- packaged desktop UI coverage now drives the Linux and Windows Tauri windows through course creation, native reload persistence, and Studio artifact persistence;
 - a manual cross-platform desktop recovery soak workflow now exercises configurable repeated packaged relaunches, with the first 30-cycle Ubuntu, Windows, and macOS campaign passing;
 - interrupted durable recordings are recovered from their local manifest on the next launch;
 - durable recording startup now stops safely when its interrupted-session recovery manifest cannot be persisted;
