@@ -42,6 +42,8 @@
 - the browser suite now verifies recorded-audio deletion through the real IndexedDB store;
 - Settings transcript display preferences now persist in browser-local storage and restore after reload;
 - durable recordings can be sent to an optional local faster-whisper service and added back as reviewable transcript segments;
+- imported audio can be transcribed through the optional local faster-whisper service, with source-linked transcript provenance;
+- removing an audio source now removes its derived transcript segments and preserves source links across course export and import;
 - course deletion clears the active lesson workspace and its local source and recording blobs;
 - active courses can be exported and imported as versioned JSON packages with source and audio fidelity;
 - unsupported chat questions now return an evidence refusal without calling a provider on empty context;

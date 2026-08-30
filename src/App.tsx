@@ -254,6 +254,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [sidecarHealth, setSidecarHealth] = useState<{ asr: SidecarHealth; documents: SidecarHealth } | null>(null);
   const [managedSidecars, setManagedSidecars] = useState<ManagedSidecarStatus[]>([]);
   const [isCheckingSidecars, setIsCheckingSidecars] = useState(false);
+  const [transcribingResourceIds, setTranscribingResourceIds] = useState<Set<string>>(() => new Set());
   const [resourcePreview, setResourcePreview] = useState<ResourcePreview | null>(null);
   const [newCourseTitle, setNewCourseTitle] = useState('');
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
@@ -582,10 +583,15 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   }, [resourcePreview?.blobUrl]);
 
   const loadRetrievalDocuments = async () => {
+    const resourceNames = new Map(resources.map((resource) => [resource.id, resource.name]));
     const retrievalDocuments: RetrievalDocument[] = transcript.map((segment) => ({
       id: segment.id,
       text: segment.text,
-      metadata: { timestamp: segment.timestamp, speaker: segment.speaker },
+      metadata: {
+        timestamp: segment.timestamp,
+        speaker: segment.speaker,
+        ...(segment.sourceId && resourceNames.has(segment.sourceId) ? { resourceName: resourceNames.get(segment.sourceId)! } : {}),
+      },
     }));
     for (const resource of resources) {
       if (!resource.sha256 || !isTextResource(resource)) continue;
@@ -604,6 +610,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       }
     }
     return retrievalDocuments;
+  };
+
+  const formatRetrievalCitation = (document: RetrievalDocument) => {
+    if (!document.metadata.resourceName) return `Transcript · ${document.metadata.timestamp}`;
+    return document.metadata.part
+      ? `Source · ${document.metadata.resourceName} · part ${document.metadata.part}`
+      : `Source · ${document.metadata.resourceName} · ${document.metadata.timestamp}`;
   };
 
   const toggleRecording = async () => {
@@ -658,7 +671,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           }
           updateLessonWorkspace(recordingLessonId, (current) => ({
             ...current,
-            transcript: [...current.transcript, ...transcription.segments],
+            transcript: [...current.transcript, ...transcription.segments.map((segment, index) => ({
+              ...segment,
+              id: `${session.recordingId}:${segment.id || index}`,
+              sourceId: session.recordingId,
+            }))],
           }));
           notify(`Local transcription added ${transcription.segments.length} segments.`);
         } catch {
@@ -737,9 +754,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     try {
       const retrievalDocuments = await loadRetrievalDocuments();
       const retrievalHits = searchDocuments(retrievalDocuments, message, 4);
-      const retrievedCitations = retrievalHits.slice(0, 2).map((hit) => hit.document.metadata.resourceName
-        ? `Source · ${hit.document.metadata.resourceName} · part ${hit.document.metadata.part}`
-        : `Transcript · ${hit.document.metadata.timestamp}`);
+      const retrievedCitations = retrievalHits.slice(0, 2).map((hit) => formatRetrievalCitation(hit.document));
       if (!retrievalHits.length) {
         updateActiveWorkspace((current) => ({
           ...current,
@@ -836,9 +851,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           },
           { role: 'user', content: `Generate the ${definition.label.toLowerCase()}.` },
         ]);
-        const citations = [...new Set(contextDocuments.slice(0, 3).map((document) => document.metadata.resourceName
-          ? `Source · ${document.metadata.resourceName} · part ${document.metadata.part}`
-          : `Transcript · ${document.metadata.timestamp}`))];
+        const citations = [...new Set(contextDocuments.slice(0, 3).map(formatRetrievalCitation))];
         updateActiveWorkspace((current) => ({
           ...current,
           artifacts: current.artifacts.map((item) => item.id === artifactId
@@ -862,6 +875,30 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       await sourceBlobStore.save(resource.id, file);
       updateLessonWorkspace(lessonId, (current) => ({ ...current, resources: [resource, ...current.resources] }));
       notify(`${resource.name} added to course sources${sourceBlobStore.durability === 'durable' ? ' and saved locally.' : ' in memory only.'}`);
+      if (resource.kind === 'audio' && localSpeechEngine) {
+        setTranscribingResourceIds((current) => new Set(current).add(resource.id));
+        notify(`${resource.name} saved locally. Transcribing with local ASR...`);
+        try {
+          const transcription = await localSpeechEngine.transcribe(file);
+          const segments = transcription.segments.map((segment, index) => ({
+            ...segment,
+            id: `${resource.id}:${segment.id || index}`,
+            sourceId: resource.id,
+          }));
+          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: [...current.transcript, ...segments] }));
+          notify(segments.length
+            ? `Local transcription added ${segments.length} segments from ${resource.name}.`
+            : `${resource.name} contains no detected speech.`);
+        } catch {
+          notify(`${resource.name} was saved, but local transcription needs review.`);
+        } finally {
+          setTranscribingResourceIds((current) => {
+            const next = new Set(current);
+            next.delete(resource.id);
+            return next;
+          });
+        }
+      }
       const isPdf = resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name));
       if (localDocumentEngine && (isPdf || resource.kind === 'image')) {
         try {
@@ -901,7 +938,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       updateActiveWorkspace((current) => ({
         ...current,
         resources: current.resources.filter((item) => item.id !== resource.id),
-        transcript: current.transcript.filter((segment) => !segment.id.startsWith(`${resource.id}:`)),
+        transcript: current.transcript.filter((segment) => segment.sourceId !== resource.id && !segment.id.startsWith(`${resource.id}:`)),
       }));
       notify(`${resource.name} removed from this course.`);
     } catch {
@@ -1217,7 +1254,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             <div className="studio-heading"><div><span className="section-kicker">Studio</span><h2>Build for review</h2></div><button className="icon-button" aria-label="Close Studio" onClick={() => setShowRightSidebar(false)}><X size={16} /></button></div>
             <section className="context-card"><div className="context-card-top"><span className="context-icon"><BookOpen size={15} /></span><span className="local-badge"><span className="status-dot" /> local</span></div><h3>{activeLesson.title}</h3><dl><div><dt>Sources</dt><dd>{activeResources.length + 2}</dd></div><div><dt>Duration</dt><dd>{activeLesson.duration}</dd></div><div><dt>State</dt><dd className="success-text">Indexed</dd></div></dl></section>
             <div className="transfer-actions" aria-label="Course transfer"><button className="transfer-action" type="button" onClick={() => void exportCourse()}><Download size={13} /> Export course</button><label className="transfer-action"><input className="visually-hidden" type="file" accept="application/json,.json" aria-label="Import course export" onChange={(event) => void importCourse(event)} /><Upload size={13} /> Import course</label></div>
-            <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><button className="mini-action" type="button" onClick={() => openSourcePicker(sourceAccept)}><Plus size={13} /> add</button></div><div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}><button className="resource-open" type="button" onClick={() => void openResource(resource)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{resource.meta}</small></span><ChevronRight size={14} /></button><button className="resource-remove" type="button" aria-label={`Remove source ${resource.name}`} onClick={() => void removeSource(resource)}><X size={13} /></button></div>)}</div>{resources.length > 3 && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
+            <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><button className="mini-action" type="button" onClick={() => openSourcePicker(sourceAccept)}><Plus size={13} /> add</button></div><div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}><button className="resource-open" type="button" onClick={() => void openResource(resource)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{transcribingResourceIds.has(resource.id) ? 'Transcribing locally...' : resource.meta}</small></span><ChevronRight size={14} /></button><button className="resource-remove" type="button" aria-label={`Remove source ${resource.name}`} onClick={() => void removeSource(resource)} disabled={transcribingResourceIds.has(resource.id)}><X size={13} /></button></div>)}</div>{resources.length > 3 && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
             <section className="studio-actions"><div className="sidebar-section-header"><span>Create an artifact</span><span className="eyebrow-count">source-linked</span></div><div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div></section>
             {artifacts.length > 0 && <section className="recent-section"><div className="sidebar-section-header"><span>Recently created</span><span className="eyebrow-count">{artifacts.length}</span></div>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} type="button" aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}><span className="artifact-icon summary"><Check size={14} /></span><span><strong>{artifact.label}</strong><small>{artifact.createdAt}</small></span></button>)}{selectedArtifactId && (() => { const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId); if (!selectedArtifact) return null; return <article className="artifact-preview"><span className="section-kicker">Artifact preview</span><h3>{selectedArtifact.label}</h3><p>{selectedArtifact.content ?? 'This artifact has no stored content.'}</p>{selectedArtifact.citations && <div className="citation-list">{selectedArtifact.citations.map((citation) => <button key={citation} onClick={() => notify(`Source opened: ${citation}`)}><Headphones size={12} /> {citation}</button>)}</div>}</article>; })()}</section>}
             <button className="studio-link" onClick={() => setShowStudioPanel(true)}>Open full Studio <ArrowUpRight size={14} /></button>

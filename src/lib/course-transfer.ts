@@ -132,6 +132,7 @@ function isResource(value: unknown): value is Resource {
 function isTranscriptSegment(value: unknown): value is TranscriptSegment {
   if (!isRecord(value)) return false;
   return isString(value.id) && isString(value.timestamp) && isString(value.speaker) && isString(value.text)
+    && (value.sourceId === undefined || isString(value.sourceId))
     && (value.status === undefined || value.status === 'verified' || value.status === 'review');
 }
 
@@ -203,7 +204,14 @@ export async function readCourseExport(input: Blob | string, idFactory: CourseId
 
   return {
     lesson,
-    workspace: { ...parsed.workspace, resources },
+    workspace: {
+      ...parsed.workspace,
+      resources,
+      transcript: parsed.workspace.transcript.map((segment) => ({
+        ...segment,
+        ...(segment.sourceId ? { sourceId: resourceIds.get(segment.sourceId) ?? segment.sourceId } : {}),
+      })),
+    },
     assets,
   };
 }

@@ -17,7 +17,7 @@ const workspace = {
     { id: 'source-1', name: 'notes.md', meta: 'Text · 5 B', kind: 'transcript' as const, mimeType: 'text/markdown', sha256: 'abc' },
     { id: 'recording-1', name: 'Attention audio.webm', meta: 'Audio · 2 chunks', kind: 'audio' as const, mimeType: 'audio/webm' },
   ],
-  transcript: [{ id: 'segment-1', timestamp: '00:00:01', speaker: 'Professor', text: 'Attention.', status: 'review' as const }],
+  transcript: [{ id: 'segment-1', sourceId: 'recording-1', timestamp: '00:00:01', speaker: 'Professor', text: 'Attention.', status: 'review' as const }],
   chat: [],
   artifacts: [],
 };
@@ -45,6 +45,7 @@ describe('course transfer', () => {
     expect(imported.lesson.id).toBe('lesson-imported-0');
     expect(imported.workspace.resources.map((resource) => resource.id)).toEqual(['resource-imported-1', 'resource-imported-2']);
     expect(imported.assets.map((asset) => asset.resourceId)).toEqual(['resource-imported-1', 'resource-imported-2']);
+    expect(imported.workspace.transcript[0]).toMatchObject({ sourceId: 'resource-imported-2' });
     expect(await imported.assets[0].chunks[0].blob.text()).toBe('notes');
     expect(await Promise.all(imported.assets[1].chunks.map((chunk) => chunk.blob.text()))).toEqual(['first', 'second']);
   });

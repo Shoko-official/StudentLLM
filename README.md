@@ -22,6 +22,7 @@ StudentLLM is built around three principles:
 - Chunked `MediaRecorder` capture with IndexedDB persistence when supported by the browser.
 - Interrupted durable recordings are recovered into the owning course on the next launch.
 - Optional local faster-whisper sidecar transcription after durable recording, with timestamped review segments.
+- Imported audio can use the same local ASR path, with transcript segments linked back to the audio source.
 - Optional local PDF text extraction and RapidOCR for images or scanned PDF pages, with page-level review segments.
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.
 - Original imported source blobs are stored in IndexedDB when available, alongside their fingerprints.
@@ -34,6 +35,7 @@ StudentLLM is built around three principles:
 - Public DocVQA OCR extractability diagnostic with a reproducible partial validation receipt.
 - Optional live LM Studio chat through a browser-safe OpenAI-compatible provider adapter; no remote API key is bundled in the client.
 - Local lexical retrieval selects transcript or bounded imported text passages and preserves source-part citations before a live provider request.
+- Audio-derived transcript citations retain their source filename and timestamp, and removing the audio removes its derived segments.
 - Vitest unit and integration coverage, Playwright browser coverage, axe accessibility checks, and GitHub Actions CI.
 - Tauri v2 desktop shell with a native-window build path, SQLite WAL persistence, crash-recovery coverage, and CI build/test gates.
 - Unsigned debug desktop bundles produced and retained by CI for Ubuntu, Windows, and macOS.
