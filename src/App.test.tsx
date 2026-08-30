@@ -401,6 +401,12 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('Live lecture preview.')).toBeInTheDocument();
     expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
 
+    await user.click(screen.getByRole('button', { name: 'View all' }));
+    const transcriptDialog = screen.getByRole('dialog', { name: 'Full transcript 3' });
+    expect(within(transcriptDialog).getByText('Live lecture preview.')).toBeInTheDocument();
+    expect(within(transcriptDialog).getAllByText('Live preview')).toHaveLength(2);
+    await user.click(within(transcriptDialog).getByRole('button', { name: 'Close full transcript' }));
+
     await user.click(screen.getByRole('button', { name: 'Stop recording' }));
     await waitFor(() => expect(screen.getByText('Session ready')).toBeInTheDocument());
     expect(screen.queryByText('Live preview')).not.toBeInTheDocument();
