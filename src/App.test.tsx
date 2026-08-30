@@ -341,6 +341,9 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('The local transcript.')).toBeInTheDocument();
     expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
     expect(await screen.findByText('Local transcription added 1 segments.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove source Attention & Scaled Dot-Product audio.webm' }));
+    expect(screen.queryByText('The local transcript.')).not.toBeInTheDocument();
   });
 
   it('shows recording finalization state until audio processing completes', async () => {
@@ -493,6 +496,30 @@ describe('StudentLLM workspace', () => {
 
     expect(screen.queryByText('remove-me.md')).not.toBeInTheDocument();
     expect(screen.getByText('remove-me.md removed from this course.')).toBeInTheDocument();
+  });
+
+  it('transcribes imported audio and removes its linked transcript segments', async () => {
+    const user = userEvent.setup();
+    const transcribe = vi.fn(async () => ({
+      model: 'faster-whisper-small',
+      segments: [{ id: 'imported-asr-1', timestamp: '00:00:02', speaker: 'Speaker', text: 'Imported lecture audio.', status: 'review' as const }],
+    }));
+    render(<App speechEngine={{ transcribe }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['audio bytes'],
+      'imported-lecture.webm',
+      { type: 'audio/webm' },
+    ));
+
+    expect(await screen.findByText('Imported lecture audio.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove source imported-lecture.webm' })).toBeEnabled());
+    expect(transcribe).toHaveBeenCalledWith(expect.any(File));
+
+    await user.click(screen.getByRole('button', { name: 'Remove source imported-lecture.webm' }));
+
+    expect(screen.queryByText('Imported lecture audio.')).not.toBeInTheDocument();
+    expect(screen.getByText('imported-lecture.webm removed from this course.')).toBeInTheDocument();
   });
 
   it('clears persisted chunks when removing an audio source', async () => {
