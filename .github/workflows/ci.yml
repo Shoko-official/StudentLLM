@@ -163,6 +163,14 @@ jobs:
         run: npm run desktop:build
       - name: Install tauri-driver
         run: cargo install tauri-driver --locked
+      - name: Enable WebView2 automation policy (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+          New-Item -Path $policyPath -Force | Out-Null
+          New-ItemProperty -Path $policyPath -Name 'studentllm.exe' -PropertyType String -Value '--remote-debugging-port=9222' -Force | Out-Null
+          Get-ItemProperty -Path $policyPath -Name 'studentllm.exe'
       - name: Run packaged desktop UI tests (Linux)
         if: runner.os == 'Linux'
         run: dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x920x24' npm run test:desktop-ui
