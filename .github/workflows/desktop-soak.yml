@@ -1,0 +1,52 @@
+name: Desktop recovery soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      recovery_cycles:
+        description: Number of clean relaunch cycles after the forced stop
+        required: false
+        default: '30'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-soak:
+    name: Recovery soak (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev sqlite3 xvfb
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: npm ci
+      - name: Build desktop package
+        env:
+          VITE_STUDENTLLM_PACKAGED_IPC_SMOKE: 'true'
+        run: npm run desktop:package
+      - name: Run recovery soak
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x920x24' node scripts/desktop-runtime-smoke.mjs src-tauri/target/debug/studentllm --crash-recovery --recovery-cycles=${{ inputs.recovery_cycles }} --sidecar-supervision --frontend-ipc
+      - name: Run recovery soak
+        if: runner.os != 'Linux'
+        run: node scripts/desktop-runtime-smoke.mjs src-tauri/target/debug/studentllm --crash-recovery --recovery-cycles=${{ inputs.recovery_cycles }} --sidecar-supervision --frontend-ipc
