@@ -275,6 +275,55 @@ test.describe('StudentLLM workspace', () => {
     expect(storedChunkCount).toBe(1);
   });
 
+  test('shows the live transcript preview in the complete transcript panel', async ({ page }) => {
+    await page.addInitScript(() => {
+      const appWindow = window as Window & { __STUDENTLLM_E2E_SPEECH_ENGINE__?: unknown };
+      appWindow.__STUDENTLLM_E2E_SPEECH_ENGINE__ = {
+        transcribe: async () => ({
+          model: 'e2e-local-asr',
+          segments: [{ id: 'live-preview', timestamp: '00:00:01', speaker: 'Speaker', text: 'Preview from the recording.', status: 'review' }],
+        }),
+      };
+
+      const track = { stop: () => undefined };
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => ({ getTracks: () => [track] }) },
+      });
+
+      class BrowserRecorderMock {
+        static isTypeSupported = () => false;
+        ondataavailable: ((event: { data: Blob }) => void) | null = null;
+        onstop: (() => void) | null = null;
+
+        start() {
+          queueMicrotask(() => this.ondataavailable?.({ data: new Blob(['preview audio'], { type: 'audio/webm' }) }));
+        }
+
+        stop() {
+          this.onstop?.();
+        }
+      }
+
+      Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: BrowserRecorderMock });
+    });
+    await page.goto('/');
+
+    await page.getByRole('button', { name: 'Start recording' }).click();
+    await expect(page.getByText('Microphone active, local transcription ready.')).toBeVisible();
+    await expect(page.getByText('Preview from the recording.')).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole('button', { name: 'View all' }).click();
+    const transcriptDialog = page.getByRole('dialog', { name: 'Full transcript 3' });
+    await expect(transcriptDialog).toContainText('Live preview');
+    await expect(transcriptDialog).toContainText('Preview from the recording.');
+    await page.getByRole('button', { name: 'Close full transcript' }).click();
+    await page.getByRole('button', { name: 'Stop recording' }).click();
+    await expect(page.getByText('Session ready')).toBeVisible();
+    await expect(page.getByText('Live preview')).toBeHidden();
+    await expect(page.getByText('Preview from the recording.')).toBeVisible();
+  });
+
   test('removes a recorded audio source and its persisted chunks', async ({ page }) => {
     await page.addInitScript(() => {
       const track = { stop: () => undefined };
