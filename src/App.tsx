@@ -199,6 +199,7 @@ export interface AppProps {
   speechEngine?: SpeechEngine | null;
   documentEngine?: DocumentEngine | null;
   recordingChunkStore?: AudioChunkStore;
+  liveTranscriptionIntervalMs?: number;
 }
 
 interface ResourcePreview {
@@ -210,7 +211,7 @@ interface ResourcePreview {
   detail?: string;
 }
 
-function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine, recordingChunkStore: recordingChunkStoreOverride }: AppProps) {
+function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine, recordingChunkStore: recordingChunkStoreOverride, liveTranscriptionIntervalMs = 3_000 }: AppProps) {
   const [workspace] = useState(() => loadWorkspace(initialWorkspace));
   const [nativeStorageReady, setNativeStorageReady] = useState(() => !isNativeRuntime());
   const [lessons, setLessons] = useState(workspace.lessons);
@@ -227,6 +228,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [showAllResources, setShowAllResources] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isFinalizingRecording, setIsFinalizingRecording] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState<TranscriptSegment[]>([]);
+  const [liveRecordingLessonId, setLiveRecordingLessonId] = useState<string | null>(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordingError, setRecordingError] = useState('');
   const [lessonWorkspaces, setLessonWorkspaces] = useState<Record<string, LessonWorkspace>>(() => workspace.lessonWorkspaces ?? {
@@ -259,6 +262,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [newCourseTitle, setNewCourseTitle] = useState('');
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
   const recorderRef = useRef<RecorderSession | null>(null);
+  const liveTranscriptionInFlight = useRef(false);
   const storageIssueRef = useRef<WorkspaceStorageError['operation'] | null>(null);
   const resourcePreviewRequest = useRef(0);
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
@@ -333,6 +337,45 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const interval = window.setInterval(() => setRecordingSeconds((value) => value + 1), 1000);
     return () => window.clearInterval(interval);
   }, [isRecording]);
+
+  useEffect(() => {
+    if (!isRecording || !localSpeechEngine) {
+      if (!isRecording) setLiveTranscript([]);
+      return undefined;
+    }
+    const session = recorderRef.current;
+    if (!session?.stream || session.durability !== 'durable') return undefined;
+    let cancelled = false;
+    const transcribeLatestAudio = async () => {
+      if (cancelled || liveTranscriptionInFlight.current) return;
+      liveTranscriptionInFlight.current = true;
+      try {
+        const chunks = await session.readChunks();
+        if (cancelled || !chunks.length) return;
+        const audio = new Blob(chunks.map((chunk) => chunk.blob), { type: chunks[0].blob.type || 'audio/webm' });
+        const transcription = await localSpeechEngine.transcribe(audio);
+        if (cancelled) return;
+        setLiveTranscript(transcription.segments.map((segment, index) => ({
+          ...segment,
+          id: `${session.recordingId}:live:${segment.id || index}`,
+          sourceId: session.recordingId,
+          provisional: true,
+          status: 'review' as const,
+        })));
+      } catch {
+        // Final transcription remains the authoritative retry path after stop.
+      } finally {
+        liveTranscriptionInFlight.current = false;
+      }
+    };
+    void transcribeLatestAudio();
+    const interval = window.setInterval(() => void transcribeLatestAudio(), Math.max(liveTranscriptionIntervalMs, 250));
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      setLiveTranscript([]);
+    };
+  }, [isRecording, liveTranscriptionIntervalMs, localSpeechEngine]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -492,6 +535,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const visibleTranscript = showVerifiedTranscript
     ? transcript
     : transcript.filter((segment) => segment.status === 'review');
+  const visibleLiveTranscript = liveRecordingLessonId === activeLessonId
+    ? liveTranscript
+    : [];
 
   const shareCourse = async () => {
     const shareText = `${activeLesson.title}\n${activeLesson.subject} / ${activeLesson.chapter}\n${activeLesson.teacher}`;
@@ -631,6 +677,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       const recordingLessonTitle = activeLesson.title;
       recorderRef.current = null;
       setIsRecording(false);
+      setLiveTranscript([]);
+      setLiveRecordingLessonId(null);
       if (!session) {
         notify('Session stopped.');
         return;
@@ -705,6 +753,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         }
       }
       recorderRef.current = session;
+      setLiveRecordingLessonId(activeLesson.id);
       setIsRecording(true);
       setRecordingSeconds(0);
       notify(recorderRef.current.stream
@@ -1075,8 +1124,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const renderTranscriptSegment = (segment: TranscriptSegment) => (
     <article className={`transcript-item ${segment.status === 'review' ? 'needs-review' : ''}`} key={segment.id}>
       <div className="transcript-time">{segment.timestamp}</div>
-      <div className="transcript-body"><div className="speaker-line"><strong>{segment.speaker}</strong>{segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><p>{segment.text}</p></div>
-      <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => toggleTranscriptReview(segment.id)}>...</button>
+      <div className="transcript-body"><div className="speaker-line"><strong>{segment.speaker}</strong>{segment.provisional ? <span className="review-badge">Live preview</span> : segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><p>{segment.text}</p></div>
+      {!segment.provisional && <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => toggleTranscriptReview(segment.id)}>...</button>}
     </article>
   );
 
@@ -1224,9 +1273,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               </section>
 
               <section className="transcript-section">
-                <div className="section-toolbar"><div><span className="section-kicker">Live transcript</span><h2>The course, source by source</h2></div><button className="text-action" onClick={() => setShowTranscriptPanel(true)}>View all <ArrowUpRight size={13} /></button></div>
+                <div className="section-toolbar"><div><span className="section-kicker">Live transcript {visibleLiveTranscript.length > 0 && <span className="review-badge">Live preview</span>}</span><h2>The course, source by source</h2></div><button className="text-action" onClick={() => setShowTranscriptPanel(true)}>View all <ArrowUpRight size={13} /></button></div>
                 <div className={`transcript-list ${compactTranscript ? 'compact' : ''}`}>
-                  {visibleTranscript.length ? visibleTranscript.map(renderTranscriptSegment) : <p className="empty-state">No transcript segments match the current display settings.</p>}
+                  {visibleTranscript.length || visibleLiveTranscript.length ? [...visibleTranscript, ...visibleLiveTranscript].map(renderTranscriptSegment) : <p className="empty-state">No transcript segments match the current display settings.</p>}
                 </div>
               </section>
 
