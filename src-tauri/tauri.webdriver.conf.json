@@ -1,0 +1,17 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "StudentLLM",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "dataDirectory": "webdriver",
+        "additionalBrowserArgs": "--remote-debugging-port=9222"
+      }
+    ]
+  }
+}

@@ -160,7 +160,7 @@ jobs:
       - name: Build desktop debug binary
         env:
           VITE_STUDENTLLM_DESKTOP_UI: 'true'
-        run: npm run desktop:build
+        run: npm run desktop:build -- --config src-tauri/tauri.webdriver.conf.json
       - name: Install tauri-driver
         run: cargo install tauri-driver --locked
       - name: Enable WebView2 automation policy (Windows)
