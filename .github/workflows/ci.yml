@@ -141,7 +141,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -162,6 +162,7 @@ jobs:
           VITE_STUDENTLLM_DESKTOP_UI: 'true'
         run: npm run desktop:build -- --config src-tauri/tauri.webdriver.conf.json
       - name: Install tauri-driver
+        if: runner.os != 'macOS'
         run: cargo install tauri-driver --locked
       - name: Enable WebView2 automation policy (Windows)
         if: runner.os == 'Windows'

@@ -5,6 +5,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 const repositoryRoot = process.cwd();
 const binaryName = process.platform === 'win32' ? 'studentllm.exe' : 'studentllm';
 const binaryPath = path.join(repositoryRoot, 'src-tauri', 'target', 'debug', binaryName);
+const isMacOS = process.platform === 'darwin';
 const dataRoot = path.join(os.tmpdir(), `studentllm-wdio-${process.pid}`);
 
 rmSync(dataRoot, { recursive: true, force: true });
@@ -46,7 +47,7 @@ export const config = {
     '@wdio/tauri-service',
     {
       appBinaryPath: binaryPath,
-      driverProvider: 'external',
+      driverProvider: isMacOS ? 'embedded' : 'external',
       autoInstallTauriDriver: false,
       autoDownloadEdgeDriver: true,
       startTimeout: 60_000,
