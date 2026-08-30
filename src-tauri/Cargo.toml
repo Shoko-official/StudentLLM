@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
+tauri-plugin-wdio = "1"
 
 [profile.release]
 panic = "abort"

@@ -1,0 +1,10 @@
+{
+  "identifier": "default",
+  "description": "Default StudentLLM desktop capability",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "wdio:default"
+  ]
+}

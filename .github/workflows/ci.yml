@@ -133,3 +133,51 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Browser tests
         run: npm run test:e2e
+
+  desktop-ui:
+    name: Desktop UI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev libgtk-3-0t64 libasound2t64 libatk-bridge2.0-0t64 libcups2t64 webkit2gtk-driver xvfb
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: npm ci
+      - name: Build desktop debug binary
+        env:
+          VITE_STUDENTLLM_DESKTOP_UI: 'true'
+        run: npm run desktop:build -- --config src-tauri/tauri.webdriver.conf.json
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+      - name: Enable WebView2 automation policy (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $edgePolicyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+          New-Item -Path $edgePolicyPath -Force | Out-Null
+          New-ItemProperty -Path $edgePolicyPath -Name 'RemoteDebuggingAllowed' -PropertyType DWord -Value 1 -Force | Out-Null
+          $policyPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+          New-Item -Path $policyPath -Force | Out-Null
+          New-ItemProperty -Path $policyPath -Name 'studentllm.exe' -PropertyType String -Value '--remote-debugging-port=0' -Force | Out-Null
+          Get-ItemProperty -Path $edgePolicyPath -Name 'RemoteDebuggingAllowed'
+          Get-ItemProperty -Path $policyPath -Name 'studentllm.exe'
+      - name: Run packaged desktop UI tests (Linux)
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x920x24' npm run test:desktop-ui
+      - name: Run packaged desktop UI tests (Windows)
+        if: runner.os == 'Windows'
+        run: npm run test:desktop-ui
