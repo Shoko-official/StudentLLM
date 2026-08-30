@@ -41,8 +41,7 @@ export const config = {
     '@wdio/tauri-service',
     {
       appBinaryPath: binaryPath,
-      driverProvider: process.platform === 'win32' ? 'external' : 'embedded',
-      embeddedPort: 4445,
+      driverProvider: 'external',
       autoInstallTauriDriver: false,
       autoDownloadEdgeDriver: true,
       startTimeout: 60_000,

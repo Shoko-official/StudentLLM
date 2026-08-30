@@ -161,8 +161,7 @@ jobs:
         env:
           VITE_STUDENTLLM_DESKTOP_UI: 'true'
         run: npm run desktop:build
-      - name: Install tauri-driver (Windows)
-        if: runner.os == 'Windows'
+      - name: Install tauri-driver
         run: cargo install tauri-driver --locked
       - name: Run packaged desktop UI tests (Linux)
         if: runner.os == 'Linux'
