@@ -10,7 +10,7 @@
         "minHeight": 640,
         "resizable": true,
         "dataDirectory": "webdriver",
-        "additionalBrowserArgs": "--remote-debugging-port=9222"
+        "additionalBrowserArgs": "--remote-debugging-port=0"
       }
     ]
   }
