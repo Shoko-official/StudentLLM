@@ -110,6 +110,7 @@ kbd { color: var(--faint); font-family: var(--mono); font-size: 9px; }
 .recording-card { position: relative; padding: 18px 20px 15px; background: linear-gradient(130deg, rgba(33, 55, 61, .66), rgba(17, 23, 30, .72) 58%); border: 1px solid rgba(142, 208, 193, .16); border-radius: 14px; overflow: hidden; }
 .recording-card::after { content: ''; position: absolute; right: -80px; bottom: -110px; width: 250px; height: 250px; background: radial-gradient(circle, rgba(142,208,193,.12), transparent 67%); pointer-events: none; }
 .recording-card.recording { border-color: rgba(238, 143, 130, .35); }
+.recording-card.finalizing { border-color: rgba(238, 194, 108, .35); }
 .recording-topline { justify-content: space-between; }
 .recording-label, .local-badge, .recording-meta span, .verified-badge { display: flex; align-items: center; gap: 7px; }
 .recording-label { color: var(--text); font-size: 10px; font-weight: 800; }

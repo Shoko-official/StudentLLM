@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 import { listPendingRecordings, RECORDING_RECOVERY_STORAGE_KEY, savePendingRecording } from './lib/recording-recovery';
@@ -341,6 +341,31 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('The local transcript.')).toBeInTheDocument();
     expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
     expect(await screen.findByText('Local transcription added 1 segments.')).toBeInTheDocument();
+  });
+
+  it('shows recording finalization state until audio processing completes', async () => {
+    const user = userEvent.setup();
+    let resolveStop!: (summary: { recordingId: string; chunksPersisted: number; persistenceError: boolean }) => void;
+    const session = {
+      recordingId: 'recording-finalization-test',
+      stream: {} as MediaStream,
+      durability: 'durable' as const,
+      stop: vi.fn(() => new Promise<{ recordingId: string; chunksPersisted: number; persistenceError: boolean }>((resolve) => { resolveStop = resolve; })),
+      readChunks: vi.fn(async () => []),
+    };
+
+    render(<App recorderSessionFactory={async () => session} />);
+
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    await user.click(screen.getByRole('button', { name: 'Stop recording' }));
+
+    expect(screen.getByText('Saving recording')).toBeInTheDocument();
+    expect(screen.getByText('Saving audio and preparing transcript...')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Finishing recording' })).toBeDisabled();
+
+    resolveStop({ recordingId: session.recordingId, chunksPersisted: 0, persistenceError: false });
+    await waitFor(() => expect(screen.getByText('Session ready')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled();
   });
 
   it('waits for native workspace hydration before processing recording recovery', async () => {
