@@ -1,9 +1,31 @@
-import { $, browser, expect } from '@wdio/globals';
+import { $, $$, browser, expect } from '@wdio/globals';
 
 async function visible(selector) {
   const element = await $(selector);
   await element.waitForDisplayed({ timeout: 60_000 });
   return element;
+}
+
+async function courseWithTitle(title) {
+  await browser.waitUntil(async () => {
+    const courses = await $$('button.tree-lesson');
+    const labels = [];
+    for (let index = 0; index < courses.length; index += 1) {
+      labels.push(await courses[index].getText());
+    }
+    return labels.some((label) => label.includes(title));
+  }, {
+    timeout: 60_000,
+    timeoutMsg: `Course button with title "${title}" was not rendered`,
+  });
+
+  const courses = await $$('button.tree-lesson');
+  for (let index = 0; index < courses.length; index += 1) {
+    const course = courses[index];
+    if ((await course.getText()).includes(title)) return course;
+  }
+
+  throw new Error(`Course button with title "${title}" disappeared`);
 }
 
 describe('StudentLLM packaged desktop workflow', () => {
@@ -14,11 +36,11 @@ describe('StudentLLM packaged desktop workflow', () => {
     await courseTitle.setValue('Desktop WebDriver course');
     await (await visible('button.primary-submit')).click();
 
-    const course = await visible('button.tree-lesson');
+    const course = await courseWithTitle('Desktop WebDriver course');
     await expect(course).toHaveText('Desktop WebDriver course');
 
     await browser.refresh();
-    await expect(await visible('button.tree-lesson')).toHaveText('Desktop WebDriver course');
+    await expect(await courseWithTitle('Desktop WebDriver course')).toHaveText('Desktop WebDriver course');
 
     await (await visible('button.studio-link')).click();
     await expect(await visible('.studio-modal h2')).toHaveText('Full Studio');

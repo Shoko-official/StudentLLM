@@ -9,6 +9,7 @@ const dataRoot = path.join(os.tmpdir(), `studentllm-wdio-${process.pid}`);
 
 rmSync(dataRoot, { recursive: true, force: true });
 mkdirSync(dataRoot, { recursive: true });
+mkdirSync(path.join(dataRoot, 'webview2'), { recursive: true });
 
 const applicationEnvironment = {
   ...process.env,
@@ -20,6 +21,7 @@ const applicationEnvironment = {
   GDK_BACKEND: 'x11',
   LIBGL_ALWAYS_SOFTWARE: '1',
   WEBKIT_DISABLE_DMABUF_RENDERER: '1',
+  WEBVIEW2_USER_DATA_FOLDER: path.join(dataRoot, 'webview2'),
 };
 
 if (process.platform !== 'win32') applicationEnvironment.HOME = dataRoot;
@@ -39,7 +41,8 @@ export const config = {
     '@wdio/tauri-service',
     {
       appBinaryPath: binaryPath,
-      driverProvider: 'external',
+      driverProvider: process.platform === 'win32' ? 'external' : 'embedded',
+      embeddedPort: 4445,
       autoInstallTauriDriver: false,
       autoDownloadEdgeDriver: true,
       startTimeout: 60_000,
