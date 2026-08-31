@@ -196,6 +196,26 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByRole('button', { name: 'Source · optimization.md · part 1' })).toBeInTheDocument();
   }, 15000);
 
+  it('opens an imported source from a chat citation', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['Gradient descent updates parameters using the learning rate.'],
+      'optimization.md',
+      { type: 'text/markdown' },
+    ));
+    await user.click(screen.getByRole('tab', { name: /Chat/ }));
+    await user.type(screen.getByLabelText('Ask the course chat'), 'What updates parameters using the learning rate?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const citation = await screen.findByRole('button', { name: 'Source · optimization.md · part 1' });
+    await user.click(citation);
+
+    expect(await screen.findByRole('heading', { name: 'optimization.md' })).toBeInTheDocument();
+    expect(await screen.findByText('Gradient descent updates parameters using the learning rate.')).toBeInTheDocument();
+  }, 15000);
+
   it('sends retrieved source context to an injected live provider', async () => {
     const user = userEvent.setup();
     const generate = vi.fn().mockResolvedValue({ content: 'The source explains gradient descent.', model: 'mock-local-model' });
