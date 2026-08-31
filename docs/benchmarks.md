@@ -43,6 +43,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | MTEB STSBenchmark v2 | Official public test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STSBenchmark.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | Spearman main score 0.857289 |
 | MTEB STS22 v2 | Official public multilingual test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | 18 subsets, unweighted descriptive macro-average 0.469262; language spread 0.181685-0.740204 |
 | MTEB STS22 v2 on CUDA | Official public multilingual test task, BGE-small sentence embeddings on local CUDA | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | 18 subsets, unweighted descriptive macro-average 0.469258; 17.278 seconds; language spread 0.181685-0.740204 |
+| MTEB Banking77Classification v2 on CUDA | Official public 77-intent classification task, BGE-small sentence embeddings on local CUDA | `benchmarks/run_mteb.py --task Banking77Classification.v2 --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 128` | Accuracy `0.817555`; macro F1 `0.808097`; precision `0.838071`; recall `0.817389`; 3,076 test items; 15.704 seconds |
 | ARC-Challenge | Complete public ARC-Challenge test split through the official generation-compatible chat task | `benchmarks/run_arc.py` with `arc_challenge_chat` and NVIDIA NIM | Exact match 0.8473 (993/1,172), stderr 0.0105; no empty responses |
 | IFEval | Complete public instruction-following task through the official generation harness | `python -m lm_eval run` with `ifeval` and NVIDIA NIM | Prompt strict 0.7024; instruction strict 0.7878; prompt loose 0.7412; instruction loose 0.8177 |
 | TruthfulQA generation | Complete public `truthfulqa_gen` validation split, 817 questions through the official generation harness | `python -m lm_eval run` with `truthfulqa_gen` and NVIDIA NIM | BLEU accuracy 0.3513, ROUGE-1 accuracy 0.3856, ROUGE-2 accuracy 0.2778, ROUGE-L accuracy 0.3917; 289 null-content placeholders retained |
@@ -581,6 +582,20 @@ The official [MTEB task runner](https://github.com/embeddings-benchmark/mteb) ev
 The unweighted macro-average of these reported main scores is `0.469262`. It is a descriptive summary calculated from the subset results, not an official MTEB aggregate. The local receipt is `artifacts/benchmarks/mteb/sts22-v2-bge-small-en-v1.5.json`; it is ignored by Git.
 
 A separate complete local-CUDA run used the same public task, model, and MTEB version with batch size 64. It produced the same practical language spread, an unweighted descriptive macro-average of `0.469258`, and completed in `17.278` seconds. The CUDA receipt is `artifacts/benchmarks/mteb/sts22-v2-bge-small-cuda.json`; it is ignored by Git. The small difference in the sixth decimal place is numerical aggregation variation, not a change in the evaluated task or model.
+
+## Observed public result: MTEB Banking77Classification v2
+
+The official [MTEB task runner](https://github.com/embeddings-benchmark/mteb) evaluated the current `Banking77Classification.v2` test task with `BAAI/bge-small-en-v1.5`, MTEB `2.20.2`, model revision `5c38ec7c405ec4b44b94cc5a9bb96e735b38267a`, CUDA execution, and batch size 128. The task contains 3,076 public test utterances assigned to 77 banking-support intents.
+
+| Metric | Result |
+| --- | ---: |
+| Accuracy | `0.817555` |
+| Macro F1 | `0.808097` |
+| Macro precision | `0.838071` |
+| Macro recall | `0.817389` |
+| Evaluation time | `15.704` seconds |
+
+This is a complete public classification-task result for the stated embedding model and hardware. It is not a measure of the full StudentLLM RAG answer quality or a leaderboard claim. The compact receipt is `artifacts/benchmarks/mteb/banking77-v2-bge-small-cuda.json`; the native MTEB result remains in its local cache.
 
 The 140-item run completed all API requests and saved the aggregate receipt `artifacts/benchmarks/mmlu-pro/qwen3-4b-limit10_2026-08-27T15-43-26.008905.json` before the first invocation failed while printing a Unicode arrow to a CP1252 terminal. The adapter now configures UTF-8 stdout so future runs report a clean exit status; the saved metrics are valid for the stated public sample and the presentation failure is recorded separately.
 
