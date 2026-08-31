@@ -45,6 +45,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | MTEB STS22 v2 on CUDA | Official public multilingual test task, BGE-small sentence embeddings on local CUDA | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | 18 subsets, unweighted descriptive macro-average 0.469258; 17.278 seconds; language spread 0.181685-0.740204 |
 | MTEB Banking77Classification v2 on CUDA | Official public 77-intent classification task, BGE-small sentence embeddings on local CUDA | `benchmarks/run_mteb.py --task Banking77Classification.v2 --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 128` | Accuracy `0.817555`; macro F1 `0.808097`; precision `0.838071`; recall `0.817389`; 3,076 test items; 15.704 seconds |
 | MTEB NQ on CUDA | Official public Natural Questions retrieval task, BGE-small normalized embeddings on local CUDA | `benchmarks/run_mteb.py --task NQ --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | nDCG@10 `0.501790`; Recall@10 `0.708290`; MRR@10 `0.451624`; 3,452 test queries over 2,681,468 corpus passages; 1,411.804 seconds |
+| MTEB HotpotQA on CUDA | Official public multi-hop question retrieval task, BGE-small normalized embeddings on local CUDA | `benchmarks/run_mteb.py --task HotpotQA --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | nDCG@10 `0.699310`; Recall@10 `0.727890`; MRR@10 `0.841258`; 14,810 test queries over 5,233,329 corpus passages; 1,967.274 seconds |
 | ARC-Challenge | Complete public ARC-Challenge test split through the official generation-compatible chat task | `benchmarks/run_arc.py` with `arc_challenge_chat` and NVIDIA NIM | Exact match 0.8473 (993/1,172), stderr 0.0105; no empty responses |
 | IFEval | Complete public instruction-following task through the official generation harness | `python -m lm_eval run` with `ifeval` and NVIDIA NIM | Prompt strict 0.7024; instruction strict 0.7878; prompt loose 0.7412; instruction loose 0.8177 |
 | TruthfulQA generation | Complete public `truthfulqa_gen` validation split, 817 questions through the official generation harness | `python -m lm_eval run` with `truthfulqa_gen` and NVIDIA NIM | BLEU accuracy 0.3513, ROUGE-1 accuracy 0.3856, ROUGE-2 accuracy 0.2778, ROUGE-L accuracy 0.3917; 289 null-content placeholders retained |
@@ -612,6 +613,23 @@ The official [MTEB task runner](https://github.com/embeddings-benchmark/mteb) ev
 | Evaluation time | `1,411.804` seconds |
 
 The compact receipt is `artifacts/benchmarks/mteb/nq-bge-small-cuda.json`; the native MTEB result remains in its local cache. This is a complete public retrieval-task result for the stated embedding model and protocol. It does not establish the full StudentLLM RAG quality target or a global MTEB ranking.
+
+## Observed public result: MTEB HotpotQA
+
+The official [MTEB task runner](https://github.com/embeddings-benchmark/mteb) evaluated the public `HotpotQA` test task with `BAAI/bge-small-en-v1.5`, MTEB `2.20.2`, model revision `5c38ec7c405ec4b44b94cc5a9bb96e735b38267a`, CUDA execution, and batch size 64. The complete test task evaluated 14,810 multi-hop questions against 5,233,329 Wikipedia passages. MTEB uses `nDCG@10` as the task's main score.
+
+The run used the repository MTEB wrapper. Because this Windows environment exposes an incompatible optional TensorFlow/JAX installation through the benchmark virtual environment, the invocation supplied a small TensorFlow seed compatibility shim before importing MTEB; dataset loading, embedding, retrieval, and official scoring were unchanged.
+
+| Metric | Result |
+| --- | ---: |
+| nDCG@1 | `0.782710` |
+| nDCG@10 | `0.699310` |
+| nDCG@100 | `0.730170` |
+| Recall@10 | `0.727890` |
+| MRR@10 | `0.841258` |
+| Evaluation time | `1,967.274` seconds |
+
+The compact receipt is `artifacts/benchmarks/mteb/hotpotqa-bge-small-cuda.json`; the native MTEB result remains in its local cache. This is a complete public retrieval-task result for the stated embedding model and protocol. It does not establish the full StudentLLM RAG quality target or a global MTEB ranking.
 
 The 140-item run completed all API requests and saved the aggregate receipt `artifacts/benchmarks/mmlu-pro/qwen3-4b-limit10_2026-08-27T15-43-26.008905.json` before the first invocation failed while printing a Unicode arrow to a CP1252 terminal. The adapter now configures UTF-8 stdout so future runs report a clean exit status; the saved metrics are valid for the stated public sample and the presentation failure is recorded separately.
 
