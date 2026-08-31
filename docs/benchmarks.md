@@ -86,6 +86,7 @@ The first generation benchmark uses the official [EleutherAI lm-evaluation-harne
 | 2026-08-28 | `openai/gpt-oss-20b` / NVIDIA NIM | same protocol, 20 items per category, 14 categories, seed 42, `max_gen_toks=512`, `reasoning_effort=low` | exact match `0.2821` (79/280), stderr `0.0262` | Complete 280-item public sample across all 14 categories; 4,124.09 s evaluation time; partial benchmark evidence |
 | 2026-08-30 | `openai/gpt-oss-20b` / NVIDIA NIM | official biology category, all 717 test items, zero-shot, seed 42, `max_gen_toks=512`, `reasoning_effort=low`, four concurrent requests | exact match `0.2720` (195/717), stderr `0.0166` | Complete public category; receipt `artifacts/benchmarks/mmlu-pro/full/mmlu_pro_biology_2026-08-30T17-52-59.449454.json`; the fourteen-category group is still incomplete |
 | 2026-08-31 | `openai/gpt-oss-20b` / NVIDIA NIM | official categories, zero-shot, seed 42, `max_gen_toks=512`, `reasoning_effort=low`, two concurrent requests; 13 complete categories | weighted exact match `0.2655` (2,983/11,234), across 13 complete categories | Complete public receipts for biology, business, chemistry, computer science, economics, engineering, health, history, law, math, other, philosophy, and physics; `psychology` interrupted at 34/798 after provider timeouts and has no score; not a complete fourteen-category result |
+| 2026-08-31 | `openai/gpt-oss-20b` / NVIDIA NIM | `psychology[50:100]` contiguous resume chunk, zero-shot, seed 42, `max_gen_toks=256`, `reasoning_effort=low`, one concurrent request, one retry | no score; 6/50 requests observed before interruption while provider latency rose to approximately 69.5 seconds per item | Rejected transport attempt; no complete receipt or benchmark score; the runner now records console interruption and stale-process recovery as terminal manifest states |
 
 The 13-category campaign produced the following complete per-category receipts:
 
@@ -105,7 +106,7 @@ The 13-category campaign produced the following complete per-category receipts:
 | Philosophy | 499 | `18.24%` (91/499) |
 | Physics | 1,299 | `19.09%` (248/1,299) |
 
-The weighted aggregate is descriptive of these 11,234 completed questions only. It is not a full MMLU-Pro score, leaderboard result, or model-strength claim. The manifest records the interrupted `psychology` run and the exact provider failure state.
+The weighted aggregate is descriptive of these 11,234 completed questions only. It is not a full MMLU-Pro score, leaderboard result, or model-strength claim. The manifest records both the initial interrupted `psychology` run and the later rejected chunk retry with their exact provider failure states.
 
 The earlier NVIDIA timeout is retained as a failed transport attempt with no score. The 0.2143, 0.3000, 0.2857, and 0.2821 values are public samples, not leaderboard scores. The 280-item receipt includes 20 examples for each of the 14 categories:
 
