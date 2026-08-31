@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from benchmarks.run_mmlu_pro_full import (
@@ -10,6 +11,8 @@ from benchmarks.run_mmlu_pro_full import (
     latest_receipt_for_output,
     parse_categories,
     receipt_is_complete,
+    load_json,
+    main,
     summary_scope,
 )
 
@@ -96,6 +99,29 @@ class MMLUProFullRunnerTest(unittest.TestCase):
         aggregate = aggregate_chunk_receipts("biology", chunks)
         self.assertEqual(aggregate["results"]["mmlu_pro_biology"]["sample_len"], 3)
         self.assertAlmostEqual(aggregate["results"]["mmlu_pro_biology"]["exact_match,custom-extract"], 2 / 3)
+
+    def test_interrupted_chunk_is_persisted_as_terminal_manifest_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            with patch("benchmarks.run_mmlu_pro_full.subprocess.run", side_effect=KeyboardInterrupt):
+                result = main(
+                    [
+                        "--categories",
+                        "biology",
+                        "--chunk-size",
+                        "3",
+                        "--output-dir",
+                        str(output_dir),
+                        "--benchmark-script",
+                        "benchmark.py",
+                    ]
+                )
+
+            manifest = load_json(output_dir / "mmlu_pro_full_manifest.json")
+            self.assertEqual(result, 130)
+            self.assertIsNotNone(manifest)
+            self.assertEqual(manifest["categories"]["biology"]["status"], "interrupted")
+            self.assertEqual(manifest["categories"]["biology"]["chunks"][0]["status"], "interrupted")
 
 
 if __name__ == "__main__":
