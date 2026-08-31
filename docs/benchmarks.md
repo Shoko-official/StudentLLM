@@ -28,6 +28,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | LM Studio generation | Live local server, existing process | `npm run providers:smoke` | PASS observed on 2026-08-30 with `qwen/qwen3-4b`, 20,199 ms; the existing model process was not restarted |
 | LM Studio browser chat | Playwright UI path through the built-in Vite same-origin proxy to the existing process | Manual live UI check | PASS observed on 2026-08-28; HTTP 200, 886-character model answer, 0 page or console errors |
 | BEIR SciFact retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset scifact` | nDCG@10 0.6593, Recall@10 0.7809, MRR@10 0.6252 |
+| BEIR SciFact dense retrieval | Full public test split, BGE-small normalized embeddings on local CUDA | `benchmarks/run_beir_dense.py --dataset scifact --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | nDCG@10 0.7200, Recall@10 0.8452, MRR@10 0.6845; 14.873 seconds |
 | BEIR NFCorpus retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset nfcorpus` | nDCG@10 0.3037, Recall@10 0.1423, MRR@10 0.5137 |
 | BEIR NFCorpus dense retrieval | Full public test split, BGE-small normalized embeddings on local CUDA | `benchmarks/run_beir_dense.py --dataset nfcorpus --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | nDCG@10 0.3393, Recall@10 0.1583, MRR@10 0.5299; 64.003 seconds |
 | BEIR ArguAna BM25 retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset arguana --output_path artifacts/benchmarks/beir-arguana-bm25.json` | nDCG@10 0.3132, Recall@10 0.6636, MRR@10 0.2030; 1,406/1,406 queries, 8,674 corpus documents, 178.241 seconds |
@@ -659,7 +660,7 @@ The first dense baseline on 2026-08-27 used `BAAI/bge-small-en-v1.5`, CPU, batch
 
 | Dataset | Corpus | Evaluation set | Dense result | BM25 result | Comparison |
 | --- | ---: | --- | --- | --- | --- |
-| SciFact | 5,183 documents | 300 evaluated test queries | nDCG@10 `0.7200`, Recall@10 `0.8452`, MRR@10 `0.6845` | `0.6593`, `0.7809`, `0.6252` | Dense higher on all three metrics |
+| SciFact | 5,183 documents | 300 evaluated test queries | nDCG@10 `0.7200` CPU / `0.7200` CUDA, Recall@10 `0.8452` CPU / `0.8452` CUDA, MRR@10 `0.6845` CPU / `0.6845` CUDA | `0.6593`, `0.7809`, `0.6252` | Dense higher on all three metrics; CUDA receipt is `artifacts/benchmarks/beir-scifact-bge-small-cuda.json` |
 | NFCorpus | 3,633 documents | 323 evaluated test queries | nDCG@10 `0.3391` CPU / `0.3393` CUDA, Recall@10 `0.1580` CPU / `0.1583` CUDA, MRR@10 `0.5299` | `0.3037`, `0.1423`, `0.5137` | Dense higher on all three metrics; CUDA receipt is `artifacts/benchmarks/beir-nfcorpus-bge-small-cuda.json` |
 | ArguAna | 8,674 documents | 1,406 evaluated test queries | nDCG@10 `0.4287`, Recall@10 `0.8414`, MRR@10 `0.2956` | `0.3132`, `0.6636`, `0.2030` | Dense higher on all three metrics |
 | SCIDOCS | 25,657 documents | 1,000 evaluated test queries | nDCG@10 `0.1973`, Recall@10 `0.2091`, MRR@10 `0.3344` | `0.1528`, `0.1584`, `0.2736` | Dense higher on all three metrics |
@@ -669,6 +670,8 @@ The first dense baseline on 2026-08-27 used `BAAI/bge-small-en-v1.5`, CPU, batch
 These are complete public test splits, not sampled benchmarks. The receipts are `artifacts/benchmarks/beir/scifact-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/nfcorpus-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/arguana-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/scidocs-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/fiqa-bge-small-en-v1.5.json`, and `artifacts/benchmarks/beir/trec-covid-bge-small-en-v1.5.json`; they are ignored by Git. The TREC-COVID dense run took 3,002.23 seconds on CPU.
 
 The 2026-08-31 NFCorpus CUDA rerun used the same complete public split and qrels with BGE-small, batch size 64, normalized embeddings, cosine similarity, and `top_k=10`. It wrote `artifacts/benchmarks/beir-nfcorpus-bge-small-cuda.json` with nDCG@10 `0.3393`, Recall@10 `0.1583`, MRR@10 `0.5299`, and elapsed time `64.003` seconds. This is an independent hardware comparison, not a replacement for the earlier CPU receipt.
+
+The 2026-08-31 SciFact CUDA rerun used the same complete public split and qrels with BGE-small, batch size 64, normalized embeddings, cosine similarity, and `top_k=10`. It wrote `artifacts/benchmarks/beir-scifact-bge-small-cuda.json` with nDCG@10 `0.7200`, Recall@10 `0.8452`, MRR@10 `0.6845`, and elapsed time `14.873` seconds. The deterministic result matches the earlier CPU receipt while providing an independently verified local-GPU timing point.
 
 ## Public benchmarks to integrate
 
