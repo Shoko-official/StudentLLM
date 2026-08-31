@@ -26,4 +26,16 @@ describe('local lexical retrieval', () => {
     expect(searchDocuments(documents, 'logits', 1)).toHaveLength(1);
     expect(searchDocuments(documents, 'What is the boiling point of mercury on Mars?')).toEqual([]);
   });
+
+  it('searches source metadata alongside indexed passage text', () => {
+    const importedSource = {
+      id: 'resource-42:chunk-3',
+      text: 'Gradient descent updates model parameters iteratively.',
+      metadata: { resourceName: 'optimization-handout.pdf', part: '4' },
+    };
+
+    expect(searchDocuments([importedSource], 'optimization handout pdf')).toMatchObject([
+      { document: importedSource, matchedTerms: expect.arrayContaining(['optimization', 'handout', 'pdf']) },
+    ]);
+  });
 });

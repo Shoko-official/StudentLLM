@@ -28,7 +28,10 @@ export function searchDocuments(documents: RetrievalDocument[], query: string, l
   const queryTerms = [...new Set(tokenize(query))];
   if (!queryTerms.length || !documents.length || limit <= 0) return [];
 
-  const tokenized = documents.map((document) => ({ document, terms: tokenize(`${document.id} ${document.text}`) }));
+  const tokenized = documents.map((document) => ({
+    document,
+    terms: tokenize(`${document.id} ${Object.values(document.metadata).join(' ')} ${document.text}`),
+  }));
   const documentFrequency = new Map<string, number>();
   for (const item of tokenized) {
     for (const term of new Set(item.terms)) documentFrequency.set(term, (documentFrequency.get(term) ?? 0) + 1);
