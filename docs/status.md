@@ -1,6 +1,6 @@
 # Project status
 
-Last validated: 2026-08-30
+Last validated: 2026-08-31
 
 StudentLLM is an active local-first learning workspace. The application workflow is covered by automated tests and live integration checks. Public benchmark coverage is growing, but the evidence below is intentionally separated by scope.
 
@@ -29,7 +29,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | MTEB | Complete public STSBenchmark v2 and STS22 v2 tasks | Spearman and per-subset results recorded in [`benchmarks.md`](./benchmarks.md) |
 | BFCL V4 through LM Studio | Seven public categories, 20 cases per category | Official category scores recorded; multi-turn negative cases expose format compatibility failures |
 | BFCL V4 through NVIDIA NIM | Seventeen public category samples, `openai/gpt-oss-20b` | `simple_python` 45.00%; `multiple` 5.00%; `parallel_multiple` 0.00%; `live_parallel_multiple` 0.00% (0/24); `live_relevance` 87.50% (14/16); complete `live_irrelevance` 81.90% (724/884); multi-turn and remaining categories are partial samples |
-| MMLU-Pro | Public 140- and 280-item samples across all 14 categories, plus the complete public biology category through NVIDIA NIM | LM Studio `21.43%` on 140 items; NVIDIA `28.57%` on 140, `28.21%` on 280, and `27.20%` on all 717 biology items; the overall 14-category group remains incomplete |
+| MMLU-Pro | Official public zero-shot category runs through NVIDIA NIM | 13 of 14 categories complete, 11,234/12,032 items scored; weighted exact match `26.55%` (2,983/11,234). `psychology` is interrupted at 34/798 after provider timeouts and has no score; the complete 14-category group remains incomplete |
 | BIG-Bench Hard | Complete official `bbh_zeroshot` group, 27 task configurations, 6,511 public cases through NVIDIA NIM | Flexible-extract exact match `74.74%` (4,866/6,511, stderr `0.47%`); 152 empty provider responses retained; complete public group result for harness version `0.4.12` |
 | GSM8K | Complete public `openai/gsm8k` test split, 1,319 problems through NVIDIA NIM | Flexible-extract exact match `85.44%` (1,127/1,319, stderr `0.97%`); strict-match `0.00%`; complete single-task result |
 | MATH-500 | Complete public `HuggingFaceH4/MATH-500` test split, 500 problems, four-shot through NVIDIA NIM | `math_verify` `82.20%` (411/500, stderr `1.71%`); legacy `exact_match` `0.00%`; complete single-task result |
@@ -55,7 +55,7 @@ The following targets are not yet complete product evidence:
 - MUSAN noise robustness by SNR;
 - DIHARD and VoxConverse diarization metrics;
 - OmniDocBench parsing metrics, official DocVQA ANLS, and PubTabNet TEDS;
-- full MTEB, BEIR, BFCL, MMLU-Pro, and Ragas evaluation suites; the BFCL memory-case wrapper now resolves prerequisite closures, but the NVIDIA `memory_kv` diagnostic remains unscored because generation produced repeated empty responses and exceeded the practical runtime budget;
+- full MTEB, BEIR, BFCL, MMLU-Pro, and Ragas evaluation suites; 13 MMLU-Pro categories are now complete, while `psychology` remains interrupted after provider timeouts; the BFCL memory-case wrapper now resolves prerequisite closures, but the NVIDIA `memory_kv` diagnostic remains unscored because generation produced repeated empty responses and exceeded the practical runtime budget;
 - versioned LectureBench held-out classroom and document scenarios;
 - additional code-generation protocols;
 
@@ -134,4 +134,4 @@ PR [#185](https://github.com/Shoko-official/StudentLLM/pull/185) synchronized th
 
 PR [#188](https://github.com/Shoko-official/StudentLLM/pull/188) added packaged desktop UI WebDriver coverage on macOS through the embedded Tauri provider and expanded the PR matrix to ten jobs. Its Linux, Windows, and macOS UI jobs all passed, it was squash-merged into `main`, its temporary branch was deleted, and the post-merge ten-job verification [33314073851](https://github.com/Shoko-official/StudentLLM/actions/runs/33314073851) passed.
 
-PR [#189](https://github.com/Shoko-official/StudentLLM/pull/189) synchronized the documentation with the cross-platform packaged UI evidence and its ten-job post-merge verification. PR [#190](https://github.com/Shoko-official/StudentLLM/pull/190) added the resumable official MMLU-Pro fourteen-category runner with per-category receipts and completion manifests. Both passed their ten-job PR and post-merge CI gates, were squash-merged into `main`, and had their temporary branches deleted. The latest post-merge verification for PR #190 is [33319268197](https://github.com/Shoko-official/StudentLLM/actions/runs/33319268197).
+PR [#189](https://github.com/Shoko-official/StudentLLM/pull/189) synchronized the documentation with the cross-platform packaged UI evidence and its ten-job post-merge verification. PR [#190](https://github.com/Shoko-official/StudentLLM/pull/190) added the resumable official MMLU-Pro fourteen-category runner with per-category receipts and completion manifests. PR [#191](https://github.com/Shoko-official/StudentLLM/pull/191) recorded the complete MMLU-Pro biology category result. Both passed their ten-job PR and post-merge CI gates, were squash-merged into `main`, and had their temporary branches deleted. The latest post-merge verification for PR #191 is [33323117496](https://github.com/Shoko-official/StudentLLM/actions/runs/33323117496).
