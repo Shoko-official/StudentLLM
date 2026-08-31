@@ -14,7 +14,7 @@
     "check": "tsc -b --pretty false",
     "test": "vitest",
     "test:run": "vitest run",
-    "benchmarks:check": "python -m py_compile benchmarks/run_asr_fleurs.py benchmarks/run_asr_hf.py benchmarks/run_asr_musan.py benchmarks/run_beir_bm25.py benchmarks/run_mmlu_pro.py benchmarks/run_mmlu_pro_full.py benchmarks/run_arc.py benchmarks/run_math.py benchmarks/rescore_math.py benchmarks/run_docvqa_ocr.py benchmarks/run_beir_dense.py benchmarks/run_mteb.py benchmarks/run_bfcl_openai_compatible.py benchmarks/run_evalplus_nvidia.py benchmarks/humaneval_code_only/utils.py tests/humaneval_code_only_test.py tests/mmlu_pro_full_test.py scripts/local_asr_server.py scripts/local_document_server.py",
+    "benchmarks:check": "python -m py_compile benchmarks/run_asr_fleurs.py benchmarks/run_asr_hf.py benchmarks/run_asr_musan.py benchmarks/run_beir_bm25.py benchmarks/run_mmlu_pro.py benchmarks/run_mmlu_pro_full.py benchmarks/run_arc.py benchmarks/run_math.py benchmarks/rescore_math.py benchmarks/run_docvqa_ocr.py benchmarks/run_beir_dense.py benchmarks/run_mteb.py benchmarks/run_bfcl_openai_compatible.py benchmarks/run_evalplus_nvidia.py benchmarks/humaneval_code_only/utils.py tests/humaneval_code_only_test.py tests/mmlu_pro_full_test.py scripts/local_asr_server.py scripts/local_document_server.py && python -m unittest tests/mmlu_pro_full_test.py",
     "asr:server": "python scripts/local_asr_server.py",
     "document:server": "python scripts/local_document_server.py",
     "providers:smoke": "node scripts/provider-smoke.mjs",
