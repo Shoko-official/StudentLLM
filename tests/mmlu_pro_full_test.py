@@ -1,3 +1,5 @@
+import json
+import signal
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -13,6 +15,8 @@ from benchmarks.run_mmlu_pro_full import (
     receipt_is_complete,
     load_json,
     main,
+    reconcile_interrupted_entries,
+    run_benchmark_subprocess,
     summary_scope,
 )
 
@@ -122,6 +126,61 @@ class MMLUProFullRunnerTest(unittest.TestCase):
             self.assertIsNotNone(manifest)
             self.assertEqual(manifest["categories"]["biology"]["status"], "interrupted")
             self.assertEqual(manifest["categories"]["biology"]["chunks"][0]["status"], "interrupted")
+
+    def test_stale_running_entries_are_reconciled_before_resume(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            manifest_path = output_dir / "mmlu_pro_full_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "categories": {
+                            "biology": {
+                                "status": "running",
+                                "chunks": [{"start": 0, "end": 3, "status": "running"}],
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            reconcile_interrupted_entries(manifest, manifest_path)
+            manifest = load_json(manifest_path)
+            self.assertEqual(manifest["categories"]["biology"]["status"], "interrupted")
+            self.assertIn("Previous benchmark process", manifest["categories"]["biology"]["reason"])
+            self.assertEqual(manifest["categories"]["biology"]["chunks"][0]["status"], "interrupted")
+
+    def test_console_signal_persists_interruption_before_return(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            manifest = {"categories": {"biology": {"status": "running"}}}
+            manifest_path = output_dir / "mmlu_pro_full_manifest.json"
+            registered_handlers = {}
+
+            def interrupt_process(*args, **kwargs):
+                registered_handlers[signal.SIGINT](signal.SIGINT, None)
+
+            def register_handler(signal_value, handler):
+                registered_handlers[signal_value] = handler
+
+            with (
+                patch("benchmarks.run_mmlu_pro_full.subprocess.run", side_effect=interrupt_process),
+                patch("benchmarks.run_mmlu_pro_full.signal.getsignal", return_value=signal.SIG_DFL),
+                patch("benchmarks.run_mmlu_pro_full.signal.signal", side_effect=register_handler),
+            ):
+                completed, interrupted = run_benchmark_subprocess(
+                    ["benchmark.py"],
+                    {},
+                    manifest,
+                    manifest_path,
+                    "biology",
+                )
+
+            persisted = load_json(manifest_path)
+            self.assertIsNone(completed)
+            self.assertTrue(interrupted)
+            self.assertEqual(persisted["categories"]["biology"]["status"], "interrupted")
 
 
 if __name__ == "__main__":
