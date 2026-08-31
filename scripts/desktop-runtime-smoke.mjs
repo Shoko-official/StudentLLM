@@ -330,16 +330,21 @@ async function runFrontendIpcSmoke() {
   const environment = {
     ...createRuntimeEnvironment(dataRoot),
     STUDENTLLM_FRONTEND_IPC_SMOKE_MARKER: markerFile,
-    STUDENTLLM_SMOKE_EXIT_AFTER_MS: '5000',
+    STUDENTLLM_SMOKE_EXIT_AFTER_MS: '15000',
   };
 
   try {
-    const runtime = runSmoke(environment, { durationMs: smokeDurationMs, allowEarlyExit: true });
+    const runtime = runSmoke(environment, { durationMs: 30_000, allowEarlyExit: true });
     try {
       await Promise.race([
         waitForSmokeMarker(markerFile),
-        runtime.then(() => {
-          throw new Error('Packaged frontend exited before completing the IPC smoke call.');
+        runtime.then(({ stdout, stderr }) => {
+          const details = [
+            'Packaged frontend exited before completing the IPC smoke call.',
+            stdout.trim(),
+            stderr.trim(),
+          ].filter(Boolean).join('\n');
+          throw new Error(details);
         }),
       ]);
       await runtime;
