@@ -29,6 +29,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | LM Studio browser chat | Playwright UI path through the built-in Vite same-origin proxy to the existing process | Manual live UI check | PASS observed on 2026-08-28; HTTP 200, 886-character model answer, 0 page or console errors |
 | BEIR SciFact retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset scifact` | nDCG@10 0.6593, Recall@10 0.7809, MRR@10 0.6252 |
 | BEIR NFCorpus retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset nfcorpus` | nDCG@10 0.3037, Recall@10 0.1423, MRR@10 0.5137 |
+| BEIR NFCorpus dense retrieval | Full public test split, BGE-small normalized embeddings on local CUDA | `benchmarks/run_beir_dense.py --dataset nfcorpus --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | nDCG@10 0.3393, Recall@10 0.1583, MRR@10 0.5299; 64.003 seconds |
 | BEIR ArguAna BM25 retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset arguana --output_path artifacts/benchmarks/beir-arguana-bm25.json` | nDCG@10 0.3132, Recall@10 0.6636, MRR@10 0.2030; 1,406/1,406 queries, 8,674 corpus documents, 178.241 seconds |
 | BEIR ArguAna dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset arguana --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.4287, Recall@10 0.8414, MRR@10 0.2956 |
 | BEIR SCIDOCS dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset scidocs --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.1973, Recall@10 0.2091, MRR@10 0.3344 |
@@ -654,18 +655,20 @@ The rows above correspond, in order, to the public [SciFact](https://huggingface
 
 The dense adapter uses the same complete public splits and qrels with a selectable SentenceTransformers model, normalized embeddings, cosine similarity, and `top_k=10`. Dense results are added only after the command completes and writes a receipt.
 
-Observed dense results on 2026-08-27 use `BAAI/bge-small-en-v1.5`, CPU, batch size 32, normalized embeddings, cosine similarity, and `top_k=10`:
+The first dense baseline on 2026-08-27 used `BAAI/bge-small-en-v1.5`, CPU, batch size 32, normalized embeddings, cosine similarity, and `top_k=10`. A later NFCorpus rerun used local CUDA and batch size 64; it is recorded separately because hardware and batch size changed:
 
 | Dataset | Corpus | Evaluation set | Dense result | BM25 result | Comparison |
 | --- | ---: | --- | --- | --- | --- |
 | SciFact | 5,183 documents | 300 evaluated test queries | nDCG@10 `0.7200`, Recall@10 `0.8452`, MRR@10 `0.6845` | `0.6593`, `0.7809`, `0.6252` | Dense higher on all three metrics |
-| NFCorpus | 3,633 documents | 323 evaluated test queries | nDCG@10 `0.3391`, Recall@10 `0.1580`, MRR@10 `0.5299` | `0.3037`, `0.1423`, `0.5137` | Dense higher on all three metrics |
+| NFCorpus | 3,633 documents | 323 evaluated test queries | nDCG@10 `0.3391` CPU / `0.3393` CUDA, Recall@10 `0.1580` CPU / `0.1583` CUDA, MRR@10 `0.5299` | `0.3037`, `0.1423`, `0.5137` | Dense higher on all three metrics; CUDA receipt is `artifacts/benchmarks/beir-nfcorpus-bge-small-cuda.json` |
 | ArguAna | 8,674 documents | 1,406 evaluated test queries | nDCG@10 `0.4287`, Recall@10 `0.8414`, MRR@10 `0.2956` | `0.3132`, `0.6636`, `0.2030` | Dense higher on all three metrics |
 | SCIDOCS | 25,657 documents | 1,000 evaluated test queries | nDCG@10 `0.1973`, Recall@10 `0.2091`, MRR@10 `0.3344` | `0.1528`, `0.1584`, `0.2736` | Dense higher on all three metrics |
 | FiQA | 57,638 documents | 648 evaluated test queries | nDCG@10 `0.3848`, Recall@10 `0.4396`, MRR@10 `0.4650` | `0.2347`, `0.2962`, `0.2919` | Dense higher on all three metrics |
 | TREC-COVID | 171,332 documents | 50 evaluated test queries | nDCG@10 `0.6438`, Recall@10 `0.0184`, MRR@10 `0.8779` | `0.5537`, `0.0157`, `0.7906` | Dense higher on all three metrics |
 
 These are complete public test splits, not sampled benchmarks. The receipts are `artifacts/benchmarks/beir/scifact-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/nfcorpus-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/arguana-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/scidocs-bge-small-en-v1.5.json`, `artifacts/benchmarks/beir/fiqa-bge-small-en-v1.5.json`, and `artifacts/benchmarks/beir/trec-covid-bge-small-en-v1.5.json`; they are ignored by Git. The TREC-COVID dense run took 3,002.23 seconds on CPU.
+
+The 2026-08-31 NFCorpus CUDA rerun used the same complete public split and qrels with BGE-small, batch size 64, normalized embeddings, cosine similarity, and `top_k=10`. It wrote `artifacts/benchmarks/beir-nfcorpus-bge-small-cuda.json` with nDCG@10 `0.3393`, Recall@10 `0.1583`, MRR@10 `0.5299`, and elapsed time `64.003` seconds. This is an independent hardware comparison, not a replacement for the earlier CPU receipt.
 
 ## Public benchmarks to integrate
 
