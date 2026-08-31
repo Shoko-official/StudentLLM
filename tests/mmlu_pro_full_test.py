@@ -7,6 +7,7 @@ from benchmarks.run_mmlu_pro_full import (
     aggregate_chunk_receipts,
     build_category_command,
     build_chunk_ranges,
+    latest_receipt_for_output,
     parse_categories,
     receipt_is_complete,
     summary_scope,
@@ -74,6 +75,14 @@ class MMLUProFullRunnerTest(unittest.TestCase):
             )
         command_text = " ".join(command)
         self.assertIn('--samples {"mmlu_pro_biology":[3,4,5]}', command_text)
+
+    def test_chunk_receipt_finds_harness_timestamped_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            output_path = output_dir / "mmlu_pro_psychology_chunk_00000_00050.json"
+            receipt_path = output_dir / "mmlu_pro_psychology_chunk_00000_00050_2026-08-31T08-14-06.json"
+            receipt_path.write_text('{"results": {}}', encoding="utf-8")
+            self.assertEqual(latest_receipt_for_output(output_dir, output_path), receipt_path)
 
     def test_partial_category_summary_is_not_called_complete_group(self):
         self.assertEqual(summary_scope(["biology"]), "selected public category set")
