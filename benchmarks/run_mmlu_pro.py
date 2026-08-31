@@ -20,6 +20,8 @@ _original_create_payload = LocalChatCompletion._create_payload
 
 
 def _api_key(self):
+    if "nvidia.com" in str(getattr(self, "base_url", "")):
+        return os.environ.get("NVIDIA_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
     return os.environ.get("OPENAI_API_KEY") or os.environ.get("NVIDIA_API_KEY", "")
 
 

@@ -25,7 +25,6 @@ The official `drop` task from `lm-evaluation-harness` evaluates discrete and pas
 
 ```powershell
 $env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
-$env:OPENAI_API_KEY = $env:NVIDIA_API_KEY
 $env:PYTHONUTF8 = '1'
 .\.venv-bench\Scripts\python.exe benchmarks\run_mmlu_pro.py run `
   --model local-chat-completions `
@@ -168,7 +167,9 @@ $env:PYTHONUTF8 = '1'
   --reasoning-effort low
 ```
 
-The runner expects the complete public group of 12,032 items and writes `mmlu_pro_full_summary.json` only after every selected category has a scored receipt. Use `--dry-run` to inspect the category commands without making provider requests. The current campaign has complete receipts for 13 categories (11,234 items); `psychology` is recorded as interrupted after provider timeouts at item 34/798 and can be resumed from the manifest.
+The runner expects the complete public group of 12,032 items and writes `mmlu_pro_full_summary.json` only after every selected category has a scored receipt. Use `--dry-run` to inspect the category commands without making provider requests. For long or unstable provider runs, add `--chunk-size 100`: each category is evaluated through explicit contiguous `--samples` ranges, each completed range gets its own receipt, and a later invocation reuses completed ranges. Chunked category aggregates are labeled as weighted means of their harness receipts. The current campaign has complete receipts for 13 categories (11,234 items); `psychology` is recorded as interrupted after provider timeouts at item 34/798 and can be resumed with the chunked mode.
+
+The adapter selects `NVIDIA_API_KEY` when the configured endpoint is NVIDIA NIM and preserves `OPENAI_API_KEY` for other OpenAI-compatible endpoints such as the existing LM Studio server.
 
 The first completed category campaign covered all 717 public biology test items and returned exact match `0.2720` (195/717, stderr `0.0166`). This is a complete category result, not a complete fourteen-category MMLU-Pro result. Its local receipt is `artifacts/benchmarks/mmlu-pro/full/mmlu_pro_biology_2026-08-30T17-52-59.449454.json`.
 
