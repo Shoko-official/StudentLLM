@@ -140,7 +140,8 @@ function isTranscriptSegment(value: unknown): value is TranscriptSegment {
 function isChatMessage(value: unknown): value is ChatMessage {
   if (!isRecord(value)) return false;
   return isString(value.id) && (value.role === 'user' || value.role === 'assistant') && isString(value.content)
-    && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every(isString)));
+    && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every(isString)))
+    && (value.citationTargets === undefined || (Array.isArray(value.citationTargets) && value.citationTargets.every(isString)));
 }
 
 function isArtifact(value: unknown): value is Artifact {
@@ -148,7 +149,8 @@ function isArtifact(value: unknown): value is Artifact {
   return isString(value.id) && isString(value.kind) && ['summary', 'guide', 'quiz', 'flashcards', 'mindmap', 'glossary'].includes(value.kind)
     && isString(value.label) && isString(value.createdAt)
     && (value.content === undefined || isString(value.content))
-    && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every(isString)));
+    && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every(isString)))
+    && (value.citationTargets === undefined || (Array.isArray(value.citationTargets) && value.citationTargets.every(isString)));
 }
 
 function isWorkspace(value: unknown): value is LessonWorkspace {

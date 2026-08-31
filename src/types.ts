@@ -39,6 +39,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   citations?: string[];
+  citationTargets?: string[];
 }
 
 export interface LessonWorkspace {
@@ -55,4 +56,5 @@ export interface Artifact {
   createdAt: string;
   content?: string;
   citations?: string[];
+  citationTargets?: string[];
 }

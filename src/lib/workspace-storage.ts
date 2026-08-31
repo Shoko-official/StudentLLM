@@ -85,7 +85,8 @@ function isArtifact(value: unknown): value is Artifact {
     && typeof value.label === 'string'
     && typeof value.createdAt === 'string'
     && (value.content === undefined || typeof value.content === 'string')
-    && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every((citation) => typeof citation === 'string')));
+    && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every((citation) => typeof citation === 'string')))
+    && (value.citationTargets === undefined || (Array.isArray(value.citationTargets) && value.citationTargets.every((target) => typeof target === 'string')));
 }
 
 function isChatMessage(value: unknown): value is ChatMessage {
@@ -93,7 +94,8 @@ function isChatMessage(value: unknown): value is ChatMessage {
   return typeof value.id === 'string'
     && (value.role === 'user' || value.role === 'assistant')
     && typeof value.content === 'string'
-    && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every((citation) => typeof citation === 'string')));
+    && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every((citation) => typeof citation === 'string')))
+    && (value.citationTargets === undefined || (Array.isArray(value.citationTargets) && value.citationTargets.every((target) => typeof target === 'string')));
 }
 
 function parseLessonWorkspace(value: unknown): LessonWorkspace | undefined {
