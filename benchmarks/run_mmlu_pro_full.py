@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -222,6 +223,69 @@ def record_interruption(
     write_json(manifest_path, manifest)
 
 
+def reconcile_interrupted_entries(manifest: dict[str, Any], manifest_path: Path) -> None:
+    """Close active entries left behind when a previous process was terminated."""
+    changed = False
+    recovered_at = utc_now()
+    for entry in manifest.get("categories", {}).values():
+        if entry.get("status") == "running":
+            entry.update(
+                {
+                    "status": "interrupted",
+                    "interrupted_at": recovered_at,
+                    "reason": "Previous benchmark process did not reach a terminal manifest state.",
+                }
+            )
+            changed = True
+        for chunk in entry.get("chunks", []):
+            if chunk.get("status") == "running":
+                chunk.update(
+                    {
+                        "status": "interrupted",
+                        "interrupted_at": recovered_at,
+                    }
+                )
+                changed = True
+    if changed:
+        manifest["updated_at"] = recovered_at
+        write_json(manifest_path, manifest)
+
+
+def run_benchmark_subprocess(
+    command: list[str],
+    environment: dict[str, str],
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    category: str,
+    chunk_entry: dict[str, Any] | None = None,
+) -> tuple[subprocess.CompletedProcess[Any] | None, bool]:
+    """Run one harness process and persist console interruptions before unwinding."""
+    interruption_recorded = False
+
+    def handle_console_interrupt(signum: int, frame: Any) -> None:
+        nonlocal interruption_recorded
+        if not interruption_recorded:
+            record_interruption(manifest, manifest_path, category, chunk_entry)
+            interruption_recorded = True
+        raise KeyboardInterrupt
+
+    previous_handlers: dict[Any, Any] = {}
+    for signal_name in ("SIGINT", "SIGBREAK"):
+        signal_value = getattr(signal, signal_name, None)
+        if signal_value is not None and signal_value not in previous_handlers:
+            previous_handlers[signal_value] = signal.getsignal(signal_value)
+            signal.signal(signal_value, handle_console_interrupt)
+    try:
+        return subprocess.run(command, env=environment, check=False), False
+    except KeyboardInterrupt:
+        if not interruption_recorded:
+            record_interruption(manifest, manifest_path, category, chunk_entry)
+        return None, True
+    finally:
+        for signal_value, previous_handler in previous_handlers.items():
+            signal.signal(signal_value, previous_handler)
+
+
 def parse_categories(value: str) -> list[str]:
     categories = [item.strip() for item in value.split(",") if item.strip()]
     unknown = sorted(set(categories) - set(CATEGORY_ITEM_COUNTS))
@@ -289,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
         "seed": args.seed,
         "chunk_size": args.chunk_size,
     }
+    reconcile_interrupted_entries(manifest, manifest_path)
 
     if args.chunk_size < 0:
         print("--chunk-size must be zero or positive", file=sys.stderr)
@@ -364,16 +429,22 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 environment = os.environ.copy()
                 environment["PYTHONUTF8"] = "1"
-                try:
-                    completed = subprocess.run(chunk_command, env=environment, check=False)
-                except KeyboardInterrupt:
-                    record_interruption(manifest, manifest_path, category, chunk_entry)
+                completed, interrupted = run_benchmark_subprocess(
+                    chunk_command,
+                    environment,
+                    manifest,
+                    manifest_path,
+                    category,
+                    chunk_entry,
+                )
+                if interrupted:
                     print(f"{task_name}[{start}:{end}]: interrupted", file=sys.stderr)
                     return 130
                 chunk_receipt = latest_receipt_for_output(output_dir, chunk_output_path)
                 chunk_data = load_json(chunk_receipt) if chunk_receipt else None
                 chunk_complete = (
-                    completed.returncode == 0
+                    completed is not None
+                    and completed.returncode == 0
                     and chunk_data is not None
                     and receipt_is_complete(chunk_data, category)
                     and receipt_sample_len(chunk_data, category) == end - start
@@ -436,15 +507,24 @@ def main(argv: list[str] | None = None) -> int:
 
         environment = os.environ.copy()
         environment["PYTHONUTF8"] = "1"
-        try:
-            completed = subprocess.run(command, env=environment, check=False)
-        except KeyboardInterrupt:
-            record_interruption(manifest, manifest_path, category)
+        completed, interrupted = run_benchmark_subprocess(
+            command,
+            environment,
+            manifest,
+            manifest_path,
+            category,
+        )
+        if interrupted:
             print(f"{task_name}: interrupted", file=sys.stderr)
             return 130
         receipt = latest_category_receipt(output_dir, category)
         receipt_data = load_json(receipt) if receipt else None
-        complete = completed.returncode == 0 and receipt_data is not None and receipt_is_complete(receipt_data, category)
+        complete = (
+            completed is not None
+            and completed.returncode == 0
+            and receipt_data is not None
+            and receipt_is_complete(receipt_data, category)
+        )
         manifest["categories"][category].update(
             {
                 "status": "complete" if complete else "failed",
