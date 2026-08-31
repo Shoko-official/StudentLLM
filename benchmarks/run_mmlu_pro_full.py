@@ -115,6 +115,18 @@ def latest_category_receipt(output_dir: Path, category: str) -> Path | None:
     return None
 
 
+def latest_receipt_for_output(output_dir: Path, output_path: Path) -> Path | None:
+    candidates = sorted(
+        output_dir.glob(f"{output_path.stem}_*.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for candidate in candidates:
+        if load_json(candidate) is not None:
+            return candidate
+    return None
+
+
 def receipt_is_complete(receipt: dict[str, Any], category: str) -> bool:
     task_name = f"mmlu_pro_{category}"
     results = receipt.get("results")
@@ -281,8 +293,9 @@ def main(argv: list[str] | None = None) -> int:
             chunk_receipts: list[tuple[tuple[int, int], Path, dict[str, Any]]] = []
             chunk_manifest: list[dict[str, Any]] = []
             for start, end in build_chunk_ranges(CATEGORY_ITEM_COUNTS[category], args.chunk_size):
-                chunk_path = output_dir / f"mmlu_pro_{category}_chunk_{start:05d}_{end:05d}.json"
-                chunk_data = load_json(chunk_path)
+                chunk_output_path = output_dir / f"mmlu_pro_{category}_chunk_{start:05d}_{end:05d}.json"
+                chunk_receipt = latest_receipt_for_output(output_dir, chunk_output_path)
+                chunk_data = load_json(chunk_receipt) if chunk_receipt else None
                 chunk_complete = (
                     chunk_data is not None
                     and receipt_is_complete(chunk_data, category)
@@ -292,7 +305,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.python_executable,
                     args.benchmark_script,
                     category,
-                    chunk_path,
+                    chunk_output_path,
                     args.model,
                     args.base_url,
                     args.num_concurrent,
@@ -308,7 +321,7 @@ def main(argv: list[str] | None = None) -> int:
                     "end": end,
                     "expected_items": end - start,
                     "status": "reused" if chunk_complete else ("planned" if args.dry_run else "running"),
-                    "receipt": str(chunk_path) if chunk_complete else None,
+                    "receipt": str(chunk_receipt) if chunk_complete else None,
                     "command": chunk_command,
                 }
                 chunk_manifest.append(chunk_entry)
@@ -320,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
                 }
                 write_json(manifest_path, manifest)
                 if chunk_complete:
-                    chunk_receipts.append(((start, end), chunk_path, chunk_data))
+                    chunk_receipts.append(((start, end), chunk_receipt, chunk_data))
                     continue
                 print(f"{task_name}[{start}:{end}]: {' '.join(chunk_command)}")
                 if args.dry_run:
@@ -328,7 +341,8 @@ def main(argv: list[str] | None = None) -> int:
                 environment = os.environ.copy()
                 environment["PYTHONUTF8"] = "1"
                 completed = subprocess.run(chunk_command, env=environment, check=False)
-                chunk_data = load_json(chunk_path)
+                chunk_receipt = latest_receipt_for_output(output_dir, chunk_output_path)
+                chunk_data = load_json(chunk_receipt) if chunk_receipt else None
                 chunk_complete = (
                     completed.returncode == 0
                     and chunk_data is not None
@@ -339,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "status": "complete" if chunk_complete else "failed",
                         "exit_code": completed.returncode,
-                        "receipt": str(chunk_path) if chunk_complete else None,
+                        "receipt": str(chunk_receipt) if chunk_complete else None,
                         "completed_at": utc_now(),
                     }
                 )
@@ -349,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
                     write_json(manifest_path, manifest)
                     print(f"{task_name}[{start}:{end}]: no complete chunk receipt was produced", file=sys.stderr)
                     return 1
-                chunk_receipts.append(((start, end), chunk_path, chunk_data))
+                chunk_receipts.append(((start, end), chunk_receipt, chunk_data))
             if args.dry_run:
                 continue
             aggregate_path = output_dir / f"mmlu_pro_{category}_chunked_aggregate.json"
