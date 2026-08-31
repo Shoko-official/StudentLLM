@@ -198,6 +198,30 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def record_interruption(
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    category: str,
+    chunk_entry: dict[str, Any] | None = None,
+) -> None:
+    interrupted_at = utc_now()
+    if chunk_entry is not None:
+        chunk_entry.update(
+            {
+                "status": "interrupted",
+                "interrupted_at": interrupted_at,
+            }
+        )
+    manifest["categories"][category].update(
+        {
+            "status": "interrupted",
+            "interrupted_at": interrupted_at,
+            "reason": "Benchmark subprocess interrupted before a complete receipt was produced.",
+        }
+    )
+    write_json(manifest_path, manifest)
+
+
 def parse_categories(value: str) -> list[str]:
     categories = [item.strip() for item in value.split(",") if item.strip()]
     unknown = sorted(set(categories) - set(CATEGORY_ITEM_COUNTS))
@@ -340,7 +364,12 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 environment = os.environ.copy()
                 environment["PYTHONUTF8"] = "1"
-                completed = subprocess.run(chunk_command, env=environment, check=False)
+                try:
+                    completed = subprocess.run(chunk_command, env=environment, check=False)
+                except KeyboardInterrupt:
+                    record_interruption(manifest, manifest_path, category, chunk_entry)
+                    print(f"{task_name}[{start}:{end}]: interrupted", file=sys.stderr)
+                    return 130
                 chunk_receipt = latest_receipt_for_output(output_dir, chunk_output_path)
                 chunk_data = load_json(chunk_receipt) if chunk_receipt else None
                 chunk_complete = (
@@ -407,7 +436,12 @@ def main(argv: list[str] | None = None) -> int:
 
         environment = os.environ.copy()
         environment["PYTHONUTF8"] = "1"
-        completed = subprocess.run(command, env=environment, check=False)
+        try:
+            completed = subprocess.run(command, env=environment, check=False)
+        except KeyboardInterrupt:
+            record_interruption(manifest, manifest_path, category)
+            print(f"{task_name}: interrupted", file=sys.stderr)
+            return 130
         receipt = latest_category_receipt(output_dir, category)
         receipt_data = load_json(receipt) if receipt else None
         complete = completed.returncode == 0 and receipt_data is not None and receipt_is_complete(receipt_data, category)
