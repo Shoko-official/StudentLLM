@@ -4,9 +4,12 @@ from pathlib import Path
 
 from benchmarks.run_mmlu_pro_full import (
     CATEGORY_ITEM_COUNTS,
+    aggregate_chunk_receipts,
     build_category_command,
+    build_chunk_ranges,
     parse_categories,
     receipt_is_complete,
+    summary_scope,
 )
 
 
@@ -48,6 +51,42 @@ class MMLUProFullRunnerTest(unittest.TestCase):
             )
         )
         self.assertFalse(receipt_is_complete({"results": {}}, "biology"))
+
+    def test_chunk_ranges_cover_category_without_overlap(self):
+        self.assertEqual(build_chunk_ranges(7, 3), [(0, 3), (3, 6), (6, 7)])
+
+    def test_sample_selection_is_encoded_for_chunked_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            command = build_category_command(
+                "python",
+                "benchmarks/run_mmlu_pro.py",
+                "biology",
+                Path(directory) / "biology.json",
+                "openai/gpt-oss-20b",
+                "https://example.test/v1/chat/completions",
+                1,
+                3,
+                0,
+                512,
+                "low",
+                42,
+                [3, 4, 5],
+            )
+        command_text = " ".join(command)
+        self.assertIn('--samples {"mmlu_pro_biology":[3,4,5]}', command_text)
+
+    def test_partial_category_summary_is_not_called_complete_group(self):
+        self.assertEqual(summary_scope(["biology"]), "selected public category set")
+        self.assertEqual(summary_scope(list(CATEGORY_ITEM_COUNTS)), "complete public test group")
+
+    def test_chunk_aggregate_is_weighted_by_scored_items(self):
+        chunks = [
+            ((0, 2), Path("first.json"), {"results": {"mmlu_pro_biology": {"sample_len": 2, "exact_match,custom-extract": 1.0}}}),
+            ((2, 3), Path("second.json"), {"results": {"mmlu_pro_biology": {"sample_len": 1, "exact_match,custom-extract": 0.0}}}),
+        ]
+        aggregate = aggregate_chunk_receipts("biology", chunks)
+        self.assertEqual(aggregate["results"]["mmlu_pro_biology"]["sample_len"], 3)
+        self.assertAlmostEqual(aggregate["results"]["mmlu_pro_biology"]["exact_match,custom-extract"], 2 / 3)
 
 
 if __name__ == "__main__":

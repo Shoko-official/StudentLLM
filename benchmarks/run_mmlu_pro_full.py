@@ -52,8 +52,9 @@ def build_category_command(
     max_gen_toks: int,
     reasoning_effort: str,
     seed: int,
+    sample_indices: list[int] | None = None,
 ) -> list[str]:
-    return [
+    command = [
         python_executable,
         benchmark_script,
         "run",
@@ -79,6 +80,16 @@ def build_category_command(
         str(output_path),
         "--log_samples",
     ]
+    if sample_indices is not None:
+        command.insert(
+            command.index("--log_samples"),
+            "--samples",
+        )
+        command.insert(
+            command.index("--log_samples"),
+            json.dumps({f"mmlu_pro_{category}": sample_indices}, separators=(",", ":")),
+        )
+    return command
 
 
 def load_json(path: Path) -> dict[str, Any] | None:
@@ -112,10 +123,62 @@ def receipt_is_complete(receipt: dict[str, Any], category: str) -> bool:
     task_result = results[task_name]
     if not isinstance(task_result, dict):
         return False
-    return any(
-        key.startswith("exact_match")
-        for key in task_result
-    )
+    return any(key.startswith("exact_match,") for key in task_result)
+
+
+def receipt_sample_len(receipt: dict[str, Any], category: str) -> int | None:
+    task_name = f"mmlu_pro_{category}"
+    task_result = receipt.get("results", {}).get(task_name)
+    if not isinstance(task_result, dict):
+        return None
+    value = task_result.get("sample_len")
+    return value if isinstance(value, int) else None
+
+
+def build_chunk_ranges(total_items: int, chunk_size: int) -> list[tuple[int, int]]:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    return [
+        (start, min(start + chunk_size, total_items))
+        for start in range(0, total_items, chunk_size)
+    ]
+
+
+def summary_scope(categories: list[str]) -> str:
+    if set(categories) == set(CATEGORY_ITEM_COUNTS) and len(categories) == len(CATEGORY_ITEM_COUNTS):
+        return "complete public test group"
+    return "selected public category set"
+
+
+def aggregate_chunk_receipts(
+    category: str,
+    chunks: list[tuple[tuple[int, int], Path, dict[str, Any]]],
+) -> dict[str, Any]:
+    task_name = f"mmlu_pro_{category}"
+    total_items = sum(receipt_sample_len(receipt, category) or 0 for _, _, receipt in chunks)
+    weighted_score = 0.0
+    for _, _, receipt in chunks:
+        task_result = receipt["results"][task_name]
+        score_key = next(key for key in task_result if key.startswith("exact_match,"))
+        weighted_score += float(task_result[score_key]) * int(task_result["sample_len"])
+    score = weighted_score / total_items if total_items else 0.0
+    return {
+        "results": {
+            task_name: {
+                "name": task_name,
+                "alias": category,
+                "sample_len": total_items,
+                "exact_match,custom-extract": score,
+                "aggregation": "weighted mean of contiguous lm-evaluation-harness chunk receipts",
+            }
+        },
+        "benchmark": "MMLU-Pro",
+        "category": category,
+        "chunks": [
+            {"start": start, "end": end, "receipt": str(path)}
+            for (start, end), path, _ in chunks
+        ],
+    }
 
 
 def write_json(path: Path, value: dict[str, Any]) -> None:
@@ -149,6 +212,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-retries", type=int, default=3)
     parser.add_argument("--num-fewshot", type=int, default=0)
     parser.add_argument("--max-gen-toks", type=int, default=512)
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=0,
+        help="Split each category into contiguous --samples ranges for item-level resume; 0 keeps one subprocess per category.",
+    )
     parser.add_argument("--reasoning-effort", choices=("low", "medium", "high"), default="low")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--force", action="store_true")
@@ -182,12 +251,23 @@ def main(argv: list[str] | None = None) -> int:
         "max_gen_toks": args.max_gen_toks,
         "reasoning_effort": args.reasoning_effort,
         "seed": args.seed,
+        "chunk_size": args.chunk_size,
     }
+
+    if args.chunk_size < 0:
+        print("--chunk-size must be zero or positive", file=sys.stderr)
+        return 2
 
     for category in categories:
         task_name = f"mmlu_pro_{category}"
         receipt = latest_category_receipt(output_dir, category)
-        if not args.force and receipt and receipt_is_complete(load_json(receipt) or {}, category):
+        receipt_data = load_json(receipt) if receipt else None
+        if (
+            not args.force
+            and receipt_data
+            and receipt_is_complete(receipt_data, category)
+            and receipt_sample_len(receipt_data, category) == CATEGORY_ITEM_COUNTS[category]
+        ):
             manifest["categories"][category] = {
                 "status": "reused",
                 "expected_items": CATEGORY_ITEM_COUNTS[category],
@@ -195,6 +275,95 @@ def main(argv: list[str] | None = None) -> int:
             }
             write_json(manifest_path, manifest)
             print(f"{task_name}: reused {receipt}")
+            continue
+
+        if args.chunk_size:
+            chunk_receipts: list[tuple[tuple[int, int], Path, dict[str, Any]]] = []
+            chunk_manifest: list[dict[str, Any]] = []
+            for start, end in build_chunk_ranges(CATEGORY_ITEM_COUNTS[category], args.chunk_size):
+                chunk_path = output_dir / f"mmlu_pro_{category}_chunk_{start:05d}_{end:05d}.json"
+                chunk_data = load_json(chunk_path)
+                chunk_complete = (
+                    chunk_data is not None
+                    and receipt_is_complete(chunk_data, category)
+                    and receipt_sample_len(chunk_data, category) == end - start
+                )
+                chunk_command = build_category_command(
+                    args.python_executable,
+                    args.benchmark_script,
+                    category,
+                    chunk_path,
+                    args.model,
+                    args.base_url,
+                    args.num_concurrent,
+                    args.max_retries,
+                    args.num_fewshot,
+                    args.max_gen_toks,
+                    args.reasoning_effort,
+                    args.seed,
+                    list(range(start, end)),
+                )
+                chunk_entry = {
+                    "start": start,
+                    "end": end,
+                    "expected_items": end - start,
+                    "status": "reused" if chunk_complete else ("planned" if args.dry_run else "running"),
+                    "receipt": str(chunk_path) if chunk_complete else None,
+                    "command": chunk_command,
+                }
+                chunk_manifest.append(chunk_entry)
+                manifest["categories"][category] = {
+                    "status": "planned" if args.dry_run else "running",
+                    "expected_items": CATEGORY_ITEM_COUNTS[category],
+                    "chunk_size": args.chunk_size,
+                    "chunks": chunk_manifest,
+                }
+                write_json(manifest_path, manifest)
+                if chunk_complete:
+                    chunk_receipts.append(((start, end), chunk_path, chunk_data))
+                    continue
+                print(f"{task_name}[{start}:{end}]: {' '.join(chunk_command)}")
+                if args.dry_run:
+                    continue
+                environment = os.environ.copy()
+                environment["PYTHONUTF8"] = "1"
+                completed = subprocess.run(chunk_command, env=environment, check=False)
+                chunk_data = load_json(chunk_path)
+                chunk_complete = (
+                    completed.returncode == 0
+                    and chunk_data is not None
+                    and receipt_is_complete(chunk_data, category)
+                    and receipt_sample_len(chunk_data, category) == end - start
+                )
+                chunk_entry.update(
+                    {
+                        "status": "complete" if chunk_complete else "failed",
+                        "exit_code": completed.returncode,
+                        "receipt": str(chunk_path) if chunk_complete else None,
+                        "completed_at": utc_now(),
+                    }
+                )
+                write_json(manifest_path, manifest)
+                if not chunk_complete:
+                    manifest["categories"][category]["status"] = "failed"
+                    write_json(manifest_path, manifest)
+                    print(f"{task_name}[{start}:{end}]: no complete chunk receipt was produced", file=sys.stderr)
+                    return 1
+                chunk_receipts.append(((start, end), chunk_path, chunk_data))
+            if args.dry_run:
+                continue
+            aggregate_path = output_dir / f"mmlu_pro_{category}_chunked_aggregate.json"
+            aggregate = aggregate_chunk_receipts(category, chunk_receipts)
+            write_json(aggregate_path, aggregate)
+            manifest["categories"][category].update(
+                {
+                    "status": "complete",
+                    "receipt": str(aggregate_path),
+                    "completed_at": utc_now(),
+                }
+            )
+            write_json(manifest_path, manifest)
+            print(f"{task_name}: chunked aggregate written to {aggregate_path}")
             continue
 
         output_path = output_dir / f"mmlu_pro_{category}.json"
@@ -255,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = {
         "benchmark": "MMLU-Pro",
-        "scope": "complete public test group",
+        "scope": summary_scope(categories),
         "categories": categories,
         "total_items": sum(CATEGORY_ITEM_COUNTS[category] for category in categories),
         "results": category_results,
