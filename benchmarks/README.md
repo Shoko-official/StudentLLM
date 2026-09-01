@@ -172,6 +172,23 @@ The service exposes `GET /health` and accepts an audio body at `POST /transcribe
 
 The observed 100-image run returned `0.8600` normalized answer visibility across multiple public question types. It is labeled partial and must not be presented as a full DocVQA result.
 
+## OmniDocBench text OCR diagnostic
+
+`run_omnidocbench_ocr.py` evaluates RapidOCR on the public `rwood-97/english_OmniDocBench_with_eval` derivative, which provides document images and OmniDocBench-style text annotations in the same dataset rows. It reports two clearly separated normalized character edit-similarity metrics:
+
+- full-page similarity, which includes OCR reading order and detection;
+- oracle-span similarity, which assigns detections inside each annotated text polygon and isolates recognition quality from layout detection.
+
+The oracle-span protocol is intentionally labeled as a diagnostic. It is not the overall official OmniDocBench score and does not measure tables, formulas, layout, or document-level parsing.
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_omnidocbench_ocr.py `
+  --limit 100 `
+  --output artifacts\benchmarks\omnidocbench\rapidocr-english-100.json
+```
+
+The observed 100-page public run returned full-page edit similarity `0.389089` and oracle-span text-recognition similarity `0.650826` in `783.930` seconds. The receipt is local and ignored by Git; the complete official OmniDocBench evaluation remains open.
+
 ## DocVQA ANLS vision evaluation
 
 `run_docvqa_anls.py` evaluates an OpenAI-compatible vision model against the
