@@ -189,6 +189,29 @@ The oracle-span protocol is intentionally labeled as a diagnostic. It is not the
 
 The observed 100-page public run returned full-page edit similarity `0.389089` and oracle-span text-recognition similarity `0.650826` in `783.930` seconds. The receipt is local and ignored by Git; the complete official OmniDocBench evaluation remains open.
 
+## PubTabNet TEDS table reconstruction
+
+`run_pubtabnet_teds.py` evaluates a multimodal provider against the public `apoidea/pubtabnet-html` validation derivative. Each request asks for one HTML table, and the first returned `<table>` element is scored with the APTED tree-edit-distance implementation used by the public PubTabNet metric. The receipt stores every prediction and provider/scorer error.
+
+Install the optional scorer dependency in the benchmark environment:
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe -m pip install apted lxml
+```
+
+Run the NVIDIA evaluation with the Windows User credential:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_pubtabnet_teds.py `
+  --split validation `
+  --limit 100 `
+  --concurrency 4 `
+  --output artifacts\benchmarks\pubtabnet\nvidia-llama-11b-validation-100.json
+```
+
+The observed 100-table public run scored raw TEDS `-0.220134` and structure-only TEDS `0.724814` with `meta/llama-3.2-11b-vision-instruct` in `829.855` seconds. All 100 provider responses were scored. This is a partial validation evaluation; the structure-only score does not replace content-sensitive TEDS, and the target remains unmet.
+
 ## DocVQA ANLS vision evaluation
 
 `run_docvqa_anls.py` evaluates an OpenAI-compatible vision model against the
