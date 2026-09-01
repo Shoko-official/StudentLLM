@@ -156,6 +156,14 @@ examples, with 498/500 successful calls in `388.186` seconds. This larger
 sample supersedes the 100-image result as the selected partial baseline. Its
 receipt is `artifacts/benchmarks/docvqa/nvidia-llama-11b-vision-validation-500.json`.
 
+The largest measured run with the same model scored ANLS `0.8321` on 1,000
+public validation examples, with 988/1,000 successful calls in `504.538`
+seconds. Twelve provider calls returned HTTP 429 after retries; those failures
+are retained in the receipt and are included as zero-scored rows in the
+aggregate. This remains a partial public subset, not a full validation-set
+score. Its receipt is
+`artifacts/benchmarks/docvqa/nvidia-llama-11b-vision-validation-1000.json`.
+
 ## MMLU-Pro through LM Studio
 
 `run_mmlu_pro.py` uses the public MMLU-Pro task from the [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) project. The adapter appends `/no_think` to the final user message for Qwen3 models so scoring evaluates the final answer channel.
