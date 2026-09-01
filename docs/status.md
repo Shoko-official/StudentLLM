@@ -44,6 +44,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | MBPP+ | Complete public 378-problem EvalPlus evaluation through NVIDIA NIM | MBPP base `pass@1` `85.71%` (324/378); MBPP+ `pass@1` `68.52%` (259/378); three non-compilable sanitised samples retained as failures |
 | DocVQA | Public 100-image OCR diagnostic plus matched 100/500/1,000-image vision QA comparisons | OCR answer visibility 86.00%; NVIDIA 11B official ANLS `0.8321` on 988/1,000 responses in the largest measured subset, with the 500-image result at `0.8297` and the 100-image result at `0.8591`; matched NVIDIA 90B ANLS `0.8203` on 99/100 responses; all remain partial public subsets and the 11B 1,000-image run is the selected baseline |
 | OmniDocBench text OCR | 100 public pages from the English image/annotation derivative | RapidOCR full-page edit similarity `0.3891`; oracle-span text-recognition similarity `0.6508`; 783.930 seconds; partial text diagnostic, with the official full benchmark still open |
+| PubTabNet table reconstruction | 100 public validation tables through NVIDIA `meta/llama-3.2-11b-vision-instruct` | Raw TEDS `-0.2201`; structure-only TEDS `0.7248`; 100/100 scored in 829.855 seconds; content-fidelity target unmet |
 
 Detailed commands, model versions, hardware, validity labels, and local receipt paths are maintained in [`benchmarks.md`](./benchmarks.md). Raw receipts stay local and ignored by Git.
 
@@ -56,7 +57,7 @@ The following targets are not yet complete product evidence:
 - AMI far-field WER, DER, and SA-WER;
 - MUSAN noise robustness by SNR;
 - DIHARD and VoxConverse diarization metrics;
-- Official OmniDocBench parsing metrics, full official DocVQA ANLS, and PubTabNet TEDS; a 100-page public OmniDocBench-derived OCR diagnostic now records full-page similarity `0.3891` and oracle-span similarity `0.6508`, but the official full document benchmark remains incomplete;
+- Official OmniDocBench parsing metrics, full official DocVQA ANLS, and the full public PubTabNet TEDS campaign; current partial diagnostics record OmniDocBench-derived OCR similarity `0.3891`/`0.6508` and PubTabNet raw/structure-only TEDS `-0.2201`/`0.7248`, with the required content-fidelity thresholds unmet;
 - full MTEB, BEIR, BFCL, and Ragas evaluation suites; the official NVIDIA MMLU-Pro fourteen-category campaign is now complete at 12,032/12,032 items and `27.2939%` weighted exact match, while a separate LM Studio run also covers all 798 `psychology` items; the BFCL memory-case wrapper now resolves prerequisite closures, but the NVIDIA `memory_kv` diagnostic remains unscored because generation produced repeated empty responses and exceeded the practical runtime budget;
 - versioned LectureBench held-out classroom and document scenarios;
 - additional code-generation protocols;
