@@ -96,7 +96,7 @@ The validated local CUDA quality profile uses the same complete split with `larg
 
 Observed on 2026-09-01: WER `0.054124`, CER `0.028423`, and RTF `0.020460` over all 2,426 public examples and 36,241.89 seconds of audio. The run took 741.52 seconds on an RTX 5080 and is the selected local quality profile.
 
-For large public splits, pass `--streaming` to iterate examples without materializing the complete dataset. This mode was used for the AMI meeting-speech comparison:
+For large public splits, pass `--streaming` to iterate examples without materializing the complete dataset. This mode was used for the complete AMI meeting-speech SDM evaluation:
 
 ```powershell
 .\.venv-bench-sys\Scripts\python.exe benchmarks\run_asr_hf.py `
@@ -106,14 +106,13 @@ For large public splits, pass `--streaming` to iterate examples without material
   --reference-field text `
   --language en `
   --model large-v3-turbo `
-  --limit 200 `
   --streaming `
   --device cuda `
   --compute-type float16 `
-  --output artifacts\benchmarks\asr\ami-sdm-en-large-v3-turbo-cuda-200.json
+  --output artifacts\benchmarks\asr\ami-sdm-en-large-v3-turbo-cuda-full.json
 ```
 
-The first 200 public SDM segments returned WER `0.571429`, CER `0.460989`, and RTF `0.096657`. The matched IHM run returned WER `0.236176`, CER `0.163377`, and RTF `0.088667`. These partial measurements are recorded in [`docs/benchmarks.md`](../docs/benchmarks.md); they demonstrate the far-field meeting gap and do not represent a complete AMI score.
+The complete public `sdm/test` split returned WER `0.408331`, CER `0.314221`, and RTF `0.068351` over 12,643 examples and 31,253.32 seconds of audio. The matched first-200 `ihm/test` comparison returned WER `0.236176`, CER `0.163377`, and RTF `0.088667`. The full SDM result and partial IHM comparison are recorded in [`docs/benchmarks.md`](../docs/benchmarks.md); they demonstrate the far-field meeting gap and do not include diarization scoring.
 
 ## FLEURS plus MUSAN robustness
 
