@@ -490,9 +490,18 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   useEffect(() => {
     if (!packagedIpcSmokeRequested || !nativeStorageReady) return;
 
-    void runPackagedIpcSmoke().catch((error) => {
-      console.error(`[packaged-ipc-smoke] ${error instanceof Error ? error.message : error}`);
-    });
+    void (async () => {
+      try {
+        await saveWorkspaceAsync(
+          { activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces },
+          undefined,
+          { onError: reportStorageError },
+        );
+        await runPackagedIpcSmoke();
+      } catch (error) {
+        console.error(`[packaged-ipc-smoke] ${error instanceof Error ? error.message : error}`);
+      }
+    })();
   }, [nativeStorageReady]);
 
   useEffect(() => {
