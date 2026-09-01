@@ -529,6 +529,8 @@ The observed TREC-COVID run evaluated 171,332 documents, 50 public test queries,
 
 Dense and BM25 results share the same public corpus, queries, test qrels, metrics, and `top_k=10`, which makes the comparison reproducible. Observed full-split results are recorded in `docs/benchmarks.md`. A dense retrieval result is still a retrieval metric; it does not establish answer faithfulness or citation correctness.
 
+The 2026-09-01 CUDA encoder comparison on the complete SciFact test split measured BGE-base at nDCG@10 `0.737626`, Recall@10 `0.865889`, and MRR@10 `0.700366` in `34.958` seconds. BGE-large measured nDCG@10 `0.734632`, Recall@10 `0.859222`, and MRR@10 `0.701276` in `83.342` seconds. BGE-base is the best of the measured small/base/large variants for nDCG and Recall, but all remain below the target; these are benchmark candidates, not an automatic app-model switch.
+
 The observed ArguAna run evaluated 8,674 documents and 1,406 public test queries with `BAAI/bge-small-en-v1.5` on CPU. It returned nDCG@10 `0.4287`, Recall@10 `0.8414`, and MRR@10 `0.2956`, compared with the BM25 baseline of `0.3132`, `0.6636`, and `0.2030`.
 
 The observed SCIDOCS run evaluated 25,657 documents and 1,000 public test queries with the same model and settings. It returned nDCG@10 `0.1973`, Recall@10 `0.2091`, and MRR@10 `0.3344`, compared with the BM25 baseline of `0.1528`, `0.1584`, and `0.2736`.
