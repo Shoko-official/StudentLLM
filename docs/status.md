@@ -25,6 +25,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | FLEURS French ASR | Complete public `fr_fr` test split, 676 examples | Selected CUDA `large-v3-turbo` profile: WER 6.5594%, CER 2.1253%, RTF 0.0235; CPU `small` baseline remains WER 13.5677% |
 | MLS French ASR | Complete public French test split, 2,426 examples | Selected CUDA `large-v3-turbo` profile: WER 5.4124%, CER 2.8423%, RTF 0.0205; CPU `small` baseline remains WER 13.0395% |
 | AMI meeting speech ASR | Complete public `sdm/test` and `ihm/test` splits, 12,643 segments each | CUDA `large-v3-turbo`: SDM WER 40.8331% / CER 31.4221% / RTF 0.0684; IHM WER 20.9307% / CER 13.4698% / RTF 0.0682; both complete, far-field quality target unmet |
+| Earnings-22 long-form ASR | 1,000 public `chunked/test` segments from the 57,391-segment public split | CUDA `large-v3-turbo`: WER 17.2654% / CER 11.4494% / RTF 0.0659 over 6,767.08 seconds of audio; robust partial public sample, target unmet |
 | FLEURS plus MUSAN robustness | 100 public FLEURS examples, clean plus four MUSAN source categories at 10 dB and 0 dB | Composite public-data check; WER 15.7592% clean and 17.3696%-84.4709% across noisy conditions |
 | BEIR retrieval | Complete public test splits for SciFact, NFCorpus, ArguAna, SCIDOCS, FiQA, and TREC-COVID | BM25 and dense receipts plus comparisons recorded in [`benchmarks.md`](./benchmarks.md); SciFact BGE-base is the strongest measured encoder at nDCG@10 0.7376 / Recall@10 0.8659, while local-CUDA BGE-small runs measured NFCorpus 0.3393 / 0.1583, ArguAna 0.4287 / 0.8414, SCIDOCS 0.1973 / 0.2091, FiQA 0.3848 / 0.4396, and TREC-COVID 0.6438 / 0.0183; target thresholds remain unmet |
 | MTEB | Complete public STSBenchmark v2, STS22 v2, Banking77Classification v2, NQ, and HotpotQA tasks | STS results and per-subset scores are recorded in [`benchmarks.md`](./benchmarks.md); STS22 v2 has complete CPU and local-CUDA receipts with descriptive macro-averages `0.469262` and `0.469258`; Banking77Classification v2 has a complete CUDA receipt with accuracy `0.817555` and macro F1 `0.808097` across 3,076 test items; NQ has a complete CUDA receipt with nDCG@10 `0.501790`, Recall@10 `0.708290`, and MRR@10 `0.451624` across 3,452 questions and 2,681,468 passages; HotpotQA has a complete CUDA receipt with nDCG@10 `0.699310`, Recall@10 `0.727890`, and MRR@10 `0.841258` across 14,810 questions and 5,233,329 passages |
@@ -54,6 +55,7 @@ The following targets are not yet complete product evidence:
 
 - Common Voice French WER by accent and noise;
 - CoVoST 2 speech translation BLEU and COMET;
+- complete Earnings-22 long-form ASR evaluation; the current 1,000-segment public sample measures WER 17.2654% and remains above target;
 - AMI DER and SA-WER; both public AMI ASR splits now have complete WER/CER/RTF measurements;
 - MUSAN noise robustness by SNR;
 - DIHARD and VoxConverse diarization metrics;
