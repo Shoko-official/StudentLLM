@@ -114,6 +114,30 @@ For large public splits, pass `--streaming` to iterate examples without material
 
 The complete public `sdm/test` split returned WER `0.408331`, CER `0.314221`, and RTF `0.068351` over 12,643 examples and 31,253.32 seconds of audio. The complete public `ihm/test` split returned WER `0.209307`, CER `0.134698`, and RTF `0.068221` over the same 12,643 segments and 31,253.32 seconds of audio. The full SDM and IHM results are recorded in [`docs/benchmarks.md`](../docs/benchmarks.md); they demonstrate the far-field meeting gap and do not include diarization scoring.
 
+## Earnings-22 long-form ASR
+
+Earnings-22 is a public English benchmark built from real corporate earnings calls with varied accents and spontaneous speech. The [`distil-whisper/earnings22`](https://huggingface.co/datasets/distil-whisper/earnings22) dataset exposes a `chunked` configuration with timestamped `audio` and `transcription` fields. The public `test` split contains 57,391 segments.
+
+Run a reproducible local CUDA sample with:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_asr_hf.py `
+  --dataset distil-whisper/earnings22 `
+  --config chunked `
+  --split test `
+  --reference-field transcription `
+  --language en `
+  --model large-v3-turbo `
+  --limit 1000 `
+  --streaming `
+  --device cuda `
+  --compute-type float16 `
+  --output artifacts\benchmarks\asr\earnings22-en-large-v3-turbo-cuda-1000.json
+```
+
+Observed on 2026-09-01: the first 1,000 public segments returned WER `0.172654`, CER `0.114494`, and RTF `0.065921` over 6,767.08 seconds of audio. The run took 446.09 seconds on an RTX 5080. This is a robust partial public sample, not a full split score; the complete split remains an open evaluation because the current segment-level adapter would require several hours at the observed throughput. The receipt is `artifacts\benchmarks\asr\earnings22-en-large-v3-turbo-cuda-1000.json` and is ignored by Git.
+
 ## FLEURS plus MUSAN robustness
 
 `run_asr_musan.py` evaluates a public FLEURS French sample in clean form and after deterministic mixing with public [MUSAN](https://www.openslr.org/17/) noise, music, and speech sources. It reports WER, CER, RTF, condition, seed, source paths, and hardware. The protocol is a composite public-data robustness check, not an official MUSAN leaderboard metric.

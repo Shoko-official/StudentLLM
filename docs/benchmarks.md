@@ -21,6 +21,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | MLS French ASR | Full public test split from `facebook/multilingual_librispeech`, faster-whisper small on CPU | `benchmarks/run_asr_hf.py --dataset facebook/multilingual_librispeech --config french --split test --reference-field transcript --language fr --device cpu --compute-type int8` | WER 0.1304, CER 0.0569, RTF 0.1648 |
 | MLS French ASR, CUDA profile | Full public test split from `facebook/multilingual_librispeech`, faster-whisper large-v3-turbo on local CUDA | `benchmarks/run_asr_hf.py --dataset facebook/multilingual_librispeech --config french --split test --reference-field transcript --language fr --model large-v3-turbo --device cuda --compute-type float16` | WER 0.0541, CER 0.0284, RTF 0.0205; 2,426 examples; selected quality profile |
 | AMI meeting speech ASR | Complete public `sdm/test` and `ihm/test` splits, faster-whisper large-v3-turbo on local CUDA | `benchmarks/run_asr_hf.py --dataset edinburghcstr/ami --config sdm --split test --reference-field text --language en --model large-v3-turbo --streaming --device cuda --compute-type float16` and the same command with `--config ihm` | SDM WER 0.4083 / CER 0.3142 / RTF 0.0684; IHM WER 0.2093 / CER 0.1347 / RTF 0.0682; both complete, far-field quality target unmet |
+| Earnings-22 long-form ASR | 1,000 public `distil-whisper/earnings22` `chunked/test` segments, faster-whisper large-v3-turbo on local CUDA | `benchmarks/run_asr_hf.py --dataset distil-whisper/earnings22 --config chunked --split test --reference-field transcription --language en --model large-v3-turbo --limit 1000 --streaming --device cuda --compute-type float16` | WER 0.1727 / CER 0.1145 / RTF 0.0659; 6,767.08 seconds of audio; partial public sample, target unmet |
 | FLEURS plus MUSAN robustness | 100 public FLEURS test examples mixed with four public MUSAN sources at 10 dB and 0 dB | `benchmarks/run_asr_musan.py --musan-root artifacts\\benchmarks\\musan --limit 100 --snrs 10,0` | Clean WER 0.1576; noisy WER 0.1737-0.8447 at 10/0 dB across public MUSAN categories |
 | Local ASR sidecar | Python service plus public FLEURS request | `npm run asr:server` with `POST /transcribe` | PASS observed on 2026-08-27; public sample returned timestamped output |
 | Local ASR browser recording | Playwright browser, durable recording, public FLEURS audio, and running faster-whisper sidecar | Manual live UI check | PASS observed on 2026-08-27; one French review segment rendered, 0 page errors |
@@ -699,6 +700,16 @@ The generic Hugging Face adapter evaluated the complete public `sdm/test` and `i
 
 Both complete AMI measurements remain above the current ASR quality target. The close-mic IHM condition is materially better than distant SDM audio, but still remains above the target. Diarization and speaker-attributed WER metrics remain outstanding.
 
+## Observed public result: Earnings-22 long-form ASR
+
+The generic Hugging Face ASR adapter evaluated the public [Earnings-22](https://arxiv.org/abs/2203.15591) corpus through the [`distil-whisper/earnings22`](https://huggingface.co/datasets/distil-whisper/earnings22) dataset card. The `chunked/test` configuration contains 57,391 timestamped segments from real corporate earnings calls. The run used `faster-whisper large-v3-turbo`, CUDA `float16`, beam size 5, VAD filtering, and streaming iteration over the public dataset.
+
+| Run | Model and backend | Evaluation set | Result | Hardware and validity |
+| --- | --- | --- | --- | --- |
+| 2026-09-01 | `large-v3-turbo` / faster-whisper, CUDA `float16` | First 1,000 public `chunked/test` segments, 18,262 reference words, 6,767.08 seconds of audio | WER `17.2654%`, CER `11.4494%`, RTF `0.0659`, elapsed `446.09s` | Windows 11, RTX 5080, 16,303 MiB VRAM; robust partial public sample, not a full split score |
+
+The sample is materially harder than read-speech benchmarks and remains above the current ASR quality target. A complete 57,391-segment run is not recorded as complete because the current segment-level adapter would require several hours of local GPU time at the observed throughput. The local receipt is `artifacts/benchmarks/asr/earnings22-en-large-v3-turbo-cuda-1000.json` and is ignored by Git.
+
 ## Observed public result: FLEURS plus MUSAN robustness
 
 The robustness adapter combines public `google/fleurs` French test speech with four public files from the [MUSAN corpus](https://www.openslr.org/17/). It evaluates clean audio and deterministic mixtures at 10 dB and 0 dB SNR with `faster-whisper small`, CPU `int8` execution, beam size 5, VAD filtering, and seed 42. This is a reproducible composite robustness protocol built from public corpora, not an official MUSAN leaderboard score.
@@ -779,6 +790,7 @@ The 2026-08-31 TREC-COVID CUDA rerun used the same complete public split and qre
 | French ASR | [Common Voice](https://commonvoice.mozilla.org/datasets) | WER by accent and noise |
 | Speech translation | [CoVoST 2](https://github.com/facebookresearch/fairseq/tree/main/examples/speech_to_text) | BLEU, COMET |
 | Far-field speech | [AMI](https://groups.inf.ed.ac.uk/ami/corpus/) | WER, DER, SA-WER |
+| Long-form accented speech | [Earnings-22](https://arxiv.org/abs/2203.15591) | WER, CER, RTF by public split |
 | Noise robustness | [MUSAN](https://www.openslr.org/17/) | WER by SNR |
 | Diarization | [DIHARD](https://dihardchallenge.github.io/dihard3/) | DER, JER |
 | Document parsing | [OmniDocBench](https://github.com/opendatalab/OmniDocBench) | TextEdit, TEDS, CDM |
