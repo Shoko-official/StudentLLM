@@ -72,7 +72,8 @@ export class OpenAICompatibleProvider implements LLMProvider {
 }
 
 export function createLocalLLMProvider(env: Record<string, string | undefined> = import.meta.env) {
-  const baseUrl = env.VITE_LM_STUDIO_BASE_URL?.trim();
+  if (env.VITE_LM_STUDIO_AUTO_CONNECT?.trim().toLowerCase() === 'false') return null;
+  const baseUrl = env.VITE_LM_STUDIO_BASE_URL?.trim() || (env.MODE === 'development' ? '/lm-studio/v1' : undefined);
   if (!baseUrl) return null;
   return new OpenAICompatibleProvider({
     baseUrl,
