@@ -1,6 +1,9 @@
+import argparse
+import tempfile
 import unittest
+from pathlib import Path
 
-from benchmarks.run_asr_hf import prepare_examples
+from benchmarks.run_asr_hf import checkpoint_metadata, load_checkpoint, prepare_examples, save_checkpoint
 
 
 class FakeDataset:
@@ -35,6 +38,56 @@ class RunAsrHfTests(unittest.TestCase):
 
         self.assertEqual(list(examples), ["a", "b"])
         self.assertIsNone(expected)
+
+    def test_resume_skips_processed_examples(self):
+        examples, expected = prepare_examples(FakeDataset(["a", "b", "c"]), 3, streaming=False, skip=2)
+
+        self.assertEqual(list(examples), ["c"])
+        self.assertEqual(expected, 3)
+
+    def test_checkpoint_round_trip_is_atomic(self):
+        arguments = argparse.Namespace(
+            dataset="dataset",
+            config="config",
+            split="test",
+            reference_field="transcript",
+            language="en",
+            model="small",
+            streaming=True,
+            device="cuda",
+            compute_type="float16",
+            limit=None,
+        )
+        metadata = checkpoint_metadata(arguments)
+        state = {"processed_examples": 100, "audio_seconds": 12.5}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            save_checkpoint(path, metadata, state)
+
+            self.assertEqual(load_checkpoint(path, metadata), state)
+            self.assertFalse(path.with_name(".run.json.tmp").exists())
+
+    def test_checkpoint_rejects_different_evaluation(self):
+        arguments = argparse.Namespace(
+            dataset="dataset",
+            config="config",
+            split="test",
+            reference_field="transcript",
+            language="en",
+            model="small",
+            streaming=False,
+            device="cpu",
+            compute_type="int8",
+            limit=10,
+        )
+        metadata = checkpoint_metadata(arguments)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "run.json"
+            save_checkpoint(path, metadata, {"processed_examples": 1})
+            mismatched = dict(metadata, split="validation")
+
+            with self.assertRaisesRegex(ValueError, "metadata"):
+                load_checkpoint(path, mismatched)
 
 
 if __name__ == "__main__":
