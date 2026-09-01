@@ -136,7 +136,26 @@ $env:PYTHONUTF8 = '1'
   --output artifacts\benchmarks\asr\earnings22-en-large-v3-turbo-cuda-1000.json
 ```
 
-Observed on 2026-09-01: the first 1,000 public segments returned WER `0.172654`, CER `0.114494`, and RTF `0.065921` over 6,767.08 seconds of audio. The run took 446.09 seconds on an RTX 5080. This is a robust partial public sample, not a full split score; the complete split remains an open evaluation because the current segment-level adapter would require several hours at the observed throughput. The receipt is `artifacts\benchmarks\asr\earnings22-en-large-v3-turbo-cuda-1000.json` and is ignored by Git.
+Observed on 2026-09-01: the first 1,000 public segments returned WER `0.172654`, CER `0.114494`, and RTF `0.065921` over 6,767.08 seconds of audio. The run took 446.09 seconds on an RTX 5080. This is a robust partial public sample, not a full split score; the receipt is `artifacts\benchmarks\asr\earnings22-en-large-v3-turbo-cuda-1000.json` and is ignored by Git.
+
+Run the complete public split with the same local CUDA profile:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_asr_hf.py `
+  --dataset distil-whisper/earnings22 `
+  --config chunked `
+  --split test `
+  --reference-field transcription `
+  --language en `
+  --model large-v3-turbo `
+  --streaming `
+  --device cuda `
+  --compute-type float16 `
+  --output artifacts\benchmarks\asr\earnings22-large-v3-turbo-cuda-full.json
+```
+
+Observed on 2026-09-02: all 57,391 public segments completed with WER `0.205965`, CER `0.142776`, and RTF `0.032013` over 415,566.96 seconds of audio. The run took 13,303.49 seconds on an RTX 5080. The receipt is `artifacts\benchmarks\asr\earnings22-large-v3-turbo-cuda-full.json`; its SHA-256 is `73D771877B4F6397E1FA83D56B3AEC30A09247E30CDC3AB5D9A866CCE135EA2B`.
 
 ## FLEURS plus MUSAN robustness
 

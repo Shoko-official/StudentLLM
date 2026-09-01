@@ -1,6 +1,6 @@
 # Project status
 
-Last validated: 2026-09-01
+Last validated: 2026-09-02
 
 StudentLLM is an active local-first learning workspace. The application workflow is covered by automated tests and live integration checks. Public benchmark coverage is growing, but the evidence below is intentionally separated by scope.
 
@@ -8,7 +8,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 
 | Area | Evidence | Current result |
 | --- | --- | --- |
-| Application verification | `npm run verify`, packaged desktop WebDriver, and live Python Playwright smoke | TypeScript, benchmark adapter checks, 90 Vitest tests, Vite production build, 32 Playwright tests, and the live Vite smoke pass; the live smoke also opens and dismisses the new-course dialog with Escape and records zero page or console errors. The packaged Linux/Windows/macOS desktop UI jobs passed course creation, native reload persistence, Studio artifact persistence, and browser dialog focus restoration |
+| Application verification | `npm run verify`, packaged desktop WebDriver, and live Python Playwright smoke | TypeScript, benchmark adapter checks, 92 Vitest tests, Vite production build, 33 Playwright tests, and the live Vite smoke pass; the live smoke also opens and dismisses the new-course dialog with Escape and records zero page or console errors. The packaged Linux/Windows/macOS desktop UI jobs passed course creation, native reload persistence, Studio artifact persistence, and browser dialog focus restoration |
 | Browser accessibility | Playwright plus axe | No serious or critical violations observed; mobile overflow, navigation, and Escape dismissal regressions pass |
 | Local persistence | Vitest and Playwright | Course isolation, reload recovery, corrupted export rejection, source blob fidelity, local source previews, audio recovery, recording finalization feedback, source-linked imported and recorded transcript cleanup, course deletion cleanup, locally persisted Settings preferences, and native storage failure fallback feedback pass |
 | LM Studio integration | Existing `llama-server` process, live provider smoke, browser chat, and public DROP probe | The existing `openai/gpt-oss-20b` process is reachable through the LM Studio router on `127.0.0.1:1234`; the 2026-09-01 live smoke returned HTTP 200 with `LM Studio smoke pass.` and the process was not restarted. Earlier browser chat evidence returned HTTP 200 with an 886-character answer. A larger local DROP run was interrupted before writing a receipt and is not counted as a score |
@@ -25,7 +25,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | FLEURS French ASR | Complete public `fr_fr` test split, 676 examples | Selected CUDA `large-v3-turbo` profile: WER 6.5594%, CER 2.1253%, RTF 0.0235; CPU `small` baseline remains WER 13.5677% |
 | MLS French ASR | Complete public French test split, 2,426 examples | Selected CUDA `large-v3-turbo` profile: WER 5.4124%, CER 2.8423%, RTF 0.0205; CPU `small` baseline remains WER 13.0395% |
 | AMI meeting speech ASR | Complete public `sdm/test` and `ihm/test` splits, 12,643 segments each | CUDA `large-v3-turbo`: SDM WER 40.8331% / CER 31.4221% / RTF 0.0684; IHM WER 20.9307% / CER 13.4698% / RTF 0.0682; both complete, far-field quality target unmet |
-| Earnings-22 long-form ASR | 1,000 public `chunked/test` segments from the 57,391-segment public split | CUDA `large-v3-turbo`: WER 17.2654% / CER 11.4494% / RTF 0.0659 over 6,767.08 seconds of audio; robust partial public sample, target unmet |
+| Earnings-22 long-form ASR | Complete public `chunked/test` split, 57,391 segments | CUDA `large-v3-turbo`: WER 20.5965% / CER 14.2776% / RTF 0.0320 over 415,566.96 seconds of audio; complete public split, target unmet. The earlier 1,000-segment sample remains recorded separately |
 | CoVoST 2 speech translation | Complete public `fixie-ai/covost2` `fr_en/test` split, 14,760 examples | Official `facebook/s2t-small-covost2-fr-en-st` on CUDA FP32: BLEU 26.3113% / chrF 53.5307% / RTF 0.0633 over 83,894.74 seconds of audio; full BLEU/chrF coverage complete. Separate 1,000-example COMET diagnostic: 0.6689 |
 | FLEURS plus MUSAN robustness | 100 public FLEURS examples, clean plus four MUSAN source categories at 10 dB and 0 dB | Composite public-data check; WER 15.7592% clean and 17.3696%-84.4709% across noisy conditions |
 | BEIR retrieval | Complete public test splits for SciFact, NFCorpus, ArguAna, SCIDOCS, FiQA, and TREC-COVID | BM25 and dense receipts plus comparisons recorded in [`benchmarks.md`](./benchmarks.md); SciFact BGE-base is the strongest measured encoder at nDCG@10 0.7376 / Recall@10 0.8659, while local-CUDA BGE-small runs measured NFCorpus 0.3393 / 0.1583, ArguAna 0.4287 / 0.8414, SCIDOCS 0.1973 / 0.2091, FiQA 0.3848 / 0.4396, and TREC-COVID 0.6438 / 0.0183; target thresholds remain unmet |
@@ -56,7 +56,7 @@ The following targets are not yet complete product evidence:
 
 - Common Voice French WER by accent and noise;
 - full-split CoVoST 2 COMET coverage; the complete public `fr_en/test` split now measures BLEU 26.3113% and chrF 53.5307%, while a separate 1,000-example diagnostic measures COMET 0.6689;
-- complete Earnings-22 long-form ASR evaluation; the current 1,000-segment public sample measures WER 17.2654% and remains above target;
+- Earnings-22 long-form ASR is now complete on the full 57,391-segment public split at WER 20.5965%, CER 14.2776%, and RTF 0.0320; the quality target remains unmet;
 - AMI DER and SA-WER; both public AMI ASR splits now have complete WER/CER/RTF measurements;
 - MUSAN noise robustness by SNR;
 - DIHARD and VoxConverse diarization metrics;
