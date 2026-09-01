@@ -17,7 +17,9 @@ Regression checks complement the public benchmark results below. Each reported s
 | Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 32 tests |
 | Live web smoke | Python Playwright against the running Vite interface | `$env:PYTHONUTF8='1'; python scripts/live_web_smoke.py` | PASS observed on 2026-09-01; page load, new-course dialog, Escape dismissal, and zero page or console errors |
 | FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
+| FLEURS French ASR, CUDA profile | Full public test split, faster-whisper large-v3-turbo on local CUDA | `benchmarks/run_asr_fleurs.py --model large-v3-turbo --config fr_fr --split test --device cuda --compute-type float16` | WER 0.0656, CER 0.0213, RTF 0.0235; 676 examples; selected quality profile |
 | MLS French ASR | Full public test split from `facebook/multilingual_librispeech`, faster-whisper small on CPU | `benchmarks/run_asr_hf.py --dataset facebook/multilingual_librispeech --config french --split test --reference-field transcript --language fr --device cpu --compute-type int8` | WER 0.1304, CER 0.0569, RTF 0.1648 |
+| MLS French ASR, CUDA profile | Full public test split from `facebook/multilingual_librispeech`, faster-whisper large-v3-turbo on local CUDA | `benchmarks/run_asr_hf.py --dataset facebook/multilingual_librispeech --config french --split test --reference-field transcript --language fr --model large-v3-turbo --device cuda --compute-type float16` | WER 0.0541, CER 0.0284, RTF 0.0205; 2,426 examples; selected quality profile |
 | FLEURS plus MUSAN robustness | 100 public FLEURS test examples mixed with four public MUSAN sources at 10 dB and 0 dB | `benchmarks/run_asr_musan.py --musan-root artifacts\\benchmarks\\musan --limit 100 --snrs 10,0` | Clean WER 0.1576; noisy WER 0.1737-0.8447 at 10/0 dB across public MUSAN categories |
 | Local ASR sidecar | Python service plus public FLEURS request | `npm run asr:server` with `POST /transcribe` | PASS observed on 2026-08-27; public sample returned timestamped output |
 | Local ASR browser recording | Playwright browser, durable recording, public FLEURS audio, and running faster-whisper sidecar | Manual live UI check | PASS observed on 2026-08-27; one French review segment rendered, 0 page errors |
@@ -662,21 +664,23 @@ Raw outputs are local and ignored by Git. A partial or full run is not promoted 
 
 ## Observed public result: FLEURS French ASR
 
-The ASR adapter ran the complete public `google/fleurs` `fr_fr` test split with `faster-whisper small`, CPU `int8` execution, beam size 5, and VAD filtering. The receipt is stored locally at `artifacts/benchmarks/asr/fleurs-fr-small-cpu-full.json` and is ignored by Git.
+The ASR adapter ran the complete public `google/fleurs` `fr_fr` test split with `faster-whisper small`, CPU `int8` execution, beam size 5, and VAD filtering. The receipt is stored locally at `artifacts/benchmarks/asr/fleurs-fr-small-cpu-full.json` and is ignored by Git. A second complete run measured the validated local CUDA profile with `large-v3-turbo` and `float16`.
 
 | Run | Model and backend | Evaluation set | Result | Hardware and validity |
 | --- | --- | --- | --- | --- |
 | 2026-08-27 | `small` / faster-whisper, CPU | 676 examples, 17,151 reference words, 7,024.08 seconds of public audio | WER `13.5677%`, CER `4.9086%`, RTF `0.1840`, elapsed `1,292.36s` | Windows, Intel Core Ultra 7 270K Plus, 63.4 GB RAM, RTX 5080 host; full public split, reproducible CPU baseline |
+| 2026-09-01 | `large-v3-turbo` / faster-whisper, CUDA `float16` | 676 examples, 17,151 reference words, 7,024.08 seconds of public audio | WER `6.5594%`, CER `2.1253%`, RTF `0.0235`, elapsed `165.38s` | Windows, RTX 5080, 16,303 MiB VRAM; full public split, selected quality profile |
 
 This is an ASR baseline for the public French split. It is not a lecture-domain score, not a diarization result, and not evidence that the product meets the stricter V1 targets.
 
 ## Observed public result: MLS French ASR
 
-The generic Hugging Face ASR adapter evaluated the complete public `facebook/multilingual_librispeech` French test split with `faster-whisper small`, CPU `int8` execution, beam size 5, and VAD filtering. The receipt is stored locally at `artifacts/benchmarks/asr/mls-fr-small-cpu-full.json` and is ignored by Git.
+The generic Hugging Face ASR adapter evaluated the complete public `facebook/multilingual_librispeech` French test split with `faster-whisper small`, CPU `int8` execution, beam size 5, and VAD filtering. The receipt is stored locally at `artifacts/benchmarks/asr/mls-fr-small-cpu-full.json` and is ignored by Git. A second complete run measured the validated local CUDA profile with `large-v3-turbo` and `float16`.
 
 | Run | Model and backend | Evaluation set | Result | Hardware and validity |
 | --- | --- | --- | --- | --- |
 | 2026-08-27 | `small` / faster-whisper, CPU | 2,426 examples, 94,283 reference words, 36,241.89 seconds of public audio | WER `13.0395%`, CER `5.6910%`, RTF `0.1648`, elapsed `5,972.70s` | Windows 11, 24 logical CPUs, 63.4 GB RAM, RTX 5080 host; complete public test split, reproducible CPU baseline |
+| 2026-09-01 | `large-v3-turbo` / faster-whisper, CUDA `float16` | 2,426 examples, 94,283 reference words, 36,241.89 seconds of public audio | WER `5.4124%`, CER `2.8423%`, RTF `0.0205`, elapsed `741.52s` | Windows 11, RTX 5080, 16,303 MiB VRAM; complete public test split, selected quality profile |
 
 This is a public MLS French ASR baseline. It is not a lecture-domain score, not a diarization result, and not evidence that the product meets the stricter V1 targets.
 

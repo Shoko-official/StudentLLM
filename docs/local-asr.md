@@ -18,6 +18,14 @@ The service listens on `http://127.0.0.1:8765` and exposes:
 
 The default CPU configuration is intentionally safe for a machine that is already running LM Studio. Use `--device cuda` only when GPU scheduling is explicitly available.
 
+For the validated local GPU quality profile, use `large-v3-turbo` with CUDA `float16`:
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe scripts/local_asr_server.py --model large-v3-turbo --language fr --device cuda --compute-type float16
+```
+
+This profile was measured on the complete public FLEURS French test split at 6.5594% WER and the complete public MLS French test split at 5.4124% WER on an RTX 5080. It requires the GPU and leaves the existing LM Studio process untouched.
+
 ## Connect the web app
 
 Before starting Vite, configure the optional endpoint:
