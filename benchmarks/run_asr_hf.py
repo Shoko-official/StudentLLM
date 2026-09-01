@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import itertools
 import json
 import sys
 import time
@@ -24,10 +25,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--language", required=True, help="Language code passed to faster-whisper")
     parser.add_argument("--model", default="small", help="faster-whisper model name or local path")
     parser.add_argument("--limit", type=int, help="Evaluate only the first N public examples")
+    parser.add_argument("--streaming", action="store_true", help="Stream the public split instead of materializing it locally")
     parser.add_argument("--device", default="cpu", choices=("cpu", "cuda"))
     parser.add_argument("--compute-type", default="int8")
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
+
+
+def prepare_examples(dataset, limit: int | None, streaming: bool):
+    """Return an iterable and the expected count when it is known."""
+    if streaming:
+        return (itertools.islice(dataset, limit) if limit is not None else dataset), limit
+    if limit is None:
+        return dataset, len(dataset)
+    selected = dataset.select(range(min(limit, len(dataset))))
+    return selected, len(selected)
 
 
 def main() -> None:
@@ -36,8 +48,13 @@ def main() -> None:
     from datasets import Audio, load_dataset
     from faster_whisper import WhisperModel
 
-    dataset = load_dataset(arguments.dataset, arguments.config, split=arguments.split).cast_column("audio", Audio(decode=False))
-    examples = dataset if arguments.limit is None else dataset.select(range(min(arguments.limit, len(dataset))))
+    dataset = load_dataset(
+        arguments.dataset,
+        arguments.config,
+        split=arguments.split,
+        streaming=arguments.streaming,
+    ).cast_column("audio", Audio(decode=False))
+    examples, expected_examples = prepare_examples(dataset, arguments.limit, arguments.streaming)
     model = WhisperModel(arguments.model, device=arguments.device, compute_type=arguments.compute_type)
 
     word_errors = word_count = character_errors = character_count = 0
@@ -54,10 +71,11 @@ def main() -> None:
         character_errors += character_error
         character_count += characters
         audio_seconds += info.duration
-        if index % 100 == 0 or index == len(examples):
+        if index % 100 == 0 or (expected_examples is not None and index == expected_examples):
             elapsed_seconds = time.perf_counter() - started_at
+            expected_label = expected_examples if expected_examples is not None else "?"
             print(
-                f"processed={index}/{len(examples)} audio_seconds={audio_seconds:.2f} "
+                f"processed={index}/{expected_label} audio_seconds={audio_seconds:.2f} "
                 f"elapsed_seconds={elapsed_seconds:.2f}",
                 flush=True,
             )
@@ -69,12 +87,13 @@ def main() -> None:
         "split": arguments.split,
         "reference_field": arguments.reference_field,
         "language": arguments.language,
-        "evaluation_scope": "full public split" if arguments.limit is None else f"first {len(examples)} examples of the public split",
+        "evaluation_scope": "full public split" if arguments.limit is None else f"first {arguments.limit} examples of the public split",
         "partial": arguments.limit is not None,
+        "streaming": arguments.streaming,
         "model": arguments.model,
         "device": arguments.device,
         "compute_type": arguments.compute_type,
-        "examples": len(examples),
+        "examples": index if "index" in locals() else 0,
         "reference_words": word_count,
         "reference_characters": character_count,
         "wer": word_errors / word_count if word_count else None,
