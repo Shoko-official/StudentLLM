@@ -3,6 +3,13 @@ import AxeBuilder from '@axe-core/playwright';
 import { readFile } from 'node:fs/promises';
 
 test.describe('StudentLLM workspace', () => {
+  test('serves the application icon without a browser error', async ({ page }) => {
+    const response = await page.request.get('/favicon.svg');
+
+    expect(response.ok()).toBe(true);
+    expect(response.headers()['content-type']).toContain('image/svg+xml');
+  });
+
   test('has no serious or critical automated accessibility violations', async ({ page }) => {
     test.setTimeout(60_000);
     await page.goto('/', { timeout: 60_000 });
