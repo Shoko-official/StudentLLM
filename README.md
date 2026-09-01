@@ -119,6 +119,7 @@ benchmarks/
   run_mmlu_pro.py            lm-evaluation-harness adapter for MMLU-Pro
   run_beir_bm25.py           full public BEIR BM25 baselines
   run_docvqa_ocr.py          public DocVQA OCR extractability diagnostic
+  run_docvqa_anls.py         public DocVQA vision ANLS evaluation
   run_beir_dense.py          full public BEIR dense baseline
   run_mteb.py                official MTEB task wrapper
 tests/e2e/

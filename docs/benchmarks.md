@@ -24,6 +24,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | Local document sidecar | PyMuPDF and RapidOCR service plus public arXiv source | `npm run document:server` with `POST /extract` | PASS observed on 2026-08-27; PDF 15/15 pages, rasterized page 69 OCR blocks |
 | Local document browser import | Playwright UI plus the running PyMuPDF sidecar and public arXiv PDF | Manual live UI check | PASS observed on 2026-08-27; source stored, 15 pages indexed, `Page 1` visible, 0 page errors |
 | DocVQA OCR diagnostic | Public DocVQA validation images plus RapidOCR | `benchmarks/run_docvqa_ocr.py --split validation --limit 100` | Normalized reference-answer visibility `0.8600` on 100 samples; partial diagnostic |
+| DocVQA ANLS vision evaluation | Public DocVQA validation images through NVIDIA `meta/llama-3.2-11b-vision-instruct` | `benchmarks/run_docvqa_anls.py --split validation --limit 100 --concurrency 4` | Official ANLS `0.8591` on 100/100 successful public validation examples; partial subset |
 | RAG unanswerable guard | Provider call suppression with no retrieved passage | App integration test | PASS; unsupported questions return a refusal without a provider request |
 | NVIDIA generation | Live API, runtime credential from the Windows User environment | `npm run providers:smoke` | PASS observed on 2026-08-30 with `openai/gpt-oss-20b`, 1,374 ms |
 | LM Studio generation | Live local server, existing process | `npm run providers:smoke` | PASS observed on 2026-08-30 with `qwen/qwen3-4b`, 20,199 ms; the existing model process was not restarted |
@@ -762,9 +763,11 @@ The 2026-08-31 TREC-COVID CUDA rerun used the same complete public split and qre
 | Mathematical reasoning | [MATH-500](https://huggingface.co/datasets/HuggingFaceH4/MATH-500) | exact match, math_verify |
 | Competition mathematics | [AIME 2024 and AIME 2025](https://huggingface.co/datasets/math-ai/aime25) | exact match by year |
 
-The DocVQA adapter reports normalized reference-answer visibility in OCR text. This is a real public-set extractability diagnostic, not the official DocVQA ANLS result, because no question-answering model is included in this baseline.
+The DocVQA OCR adapter reports normalized reference-answer visibility in OCR text. This is a real public-set extractability diagnostic, not the official DocVQA ANLS result, because no question-answering model is included in that baseline.
 
 Observed run on 2026-08-27: RapidOCR exposed at least one normalized reference answer in 86 of 100 public validation images. The sample included form, free-text, layout, table/list, image/photo, figure/diagram, handwritten, and other question types. The local receipt is `artifacts/benchmarks/docvqa/rapidocr-validation-100.json`; it is ignored by Git and is not a full validation-set score.
+
+The vision adapter runs an OpenAI-compatible multimodal endpoint and computes the official DocVQA ANLS formula from the model prediction and reference answers. Observed run on 2026-09-01: NVIDIA `meta/llama-3.2-11b-vision-instruct` scored ANLS `0.8591` on 100 public validation examples, with 100 successful responses and no provider failures. The local receipt is `artifacts/benchmarks/docvqa/nvidia-llama-vision-validation-100.json`; it is ignored by Git and remains a partial subset.
 
 ## LectureBench
 
