@@ -1,6 +1,6 @@
 # Project status
 
-Last validated: 2026-08-31
+Last validated: 2026-09-01
 
 StudentLLM is an active local-first learning workspace. The application workflow is covered by automated tests and live integration checks. Public benchmark coverage is growing, but the evidence below is intentionally separated by scope.
 
@@ -8,10 +8,10 @@ StudentLLM is an active local-first learning workspace. The application workflow
 
 | Area | Evidence | Current result |
 | --- | --- | --- |
-| Application verification | `npm run verify`, packaged desktop WebDriver | TypeScript, benchmark adapter checks, 90 Vitest tests, Vite production build, and 32 Playwright tests pass; the packaged Linux/Windows/macOS desktop UI jobs passed course creation, native reload persistence, Studio artifact persistence, and browser dialog focus restoration |
+| Application verification | `npm run verify`, packaged desktop WebDriver, and live Python Playwright smoke | TypeScript, benchmark adapter checks, 90 Vitest tests, Vite production build, 32 Playwright tests, and the live Vite smoke pass; the live smoke also opens and dismisses the new-course dialog with Escape and records zero page or console errors. The packaged Linux/Windows/macOS desktop UI jobs passed course creation, native reload persistence, Studio artifact persistence, and browser dialog focus restoration |
 | Browser accessibility | Playwright plus axe | No serious or critical violations observed; mobile overflow, navigation, and Escape dismissal regressions pass |
 | Local persistence | Vitest and Playwright | Course isolation, reload recovery, corrupted export rejection, source blob fidelity, local source previews, audio recovery, recording finalization feedback, source-linked imported and recorded transcript cleanup, course deletion cleanup, locally persisted Settings preferences, and native storage failure fallback feedback pass |
-| LM Studio integration | Existing `llama-server` process, live provider smoke, browser chat, and public DROP probe | The existing `openai/gpt-oss-20b` process is reachable through the LM Studio router on `127.0.0.1:1234`; live browser chat returned HTTP 200 and rendered an 886-character answer with no page or console errors. A larger local DROP run was interrupted before writing a receipt and is not counted as a score |
+| LM Studio integration | Existing `llama-server` process, live provider smoke, browser chat, and public DROP probe | Earlier live evidence showed the existing `openai/gpt-oss-20b` process reachable through the LM Studio router on `127.0.0.1:1234`, with browser chat returning HTTP 200 and an 886-character answer. The latest local check on 2026-09-01 found the endpoint unavailable; no restart was attempted. A larger local DROP run was interrupted before writing a receipt and is not counted as a score |
 | NVIDIA integration | Live provider smoke and official BFCL, BIG-Bench Hard, ARC-Challenge, IFEval, TruthfulQA, HumanEval, HumanEval+, MBPP+, GSM8K, MATH-500, and AIME evaluations | NIM requests pass using the Windows User `NVIDIA_API_KEY` environment variable; the 2026-08-30 smoke observed `openai/gpt-oss-20b` at 1,374 ms with the expected source-grounding response; sixteen BFCL public category samples, the complete 27-configuration BBH zero-shot group, complete ARC-Challenge, IFEval, TruthfulQA, HumanEval, HumanEval+, and MBPP+ tasks, the complete GSM8K and MATH-500 test splits, and complete AIME 2024 and AIME 2025 samples completed |
 | Local speech pipeline | Public FLEURS sample, sidecar, browser recording, incremental preview, and readiness probe | Incremental preview and authoritative post-recording timestamped transcription render as review segments; Settings can report ASR sidecar readiness without interrupting local services |
 | Local document pipeline | Public arXiv PDF, sidecar, browser import, and readiness probe | 15/15 pages indexed and page-level review content rendered; Settings can report document sidecar readiness |

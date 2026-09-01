@@ -15,6 +15,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 90 tests |
 | Production artifact | Vite | `npm run build` | PASS |
 | Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 32 tests |
+| Live web smoke | Python Playwright against the running Vite interface | `$env:PYTHONUTF8='1'; python scripts/live_web_smoke.py` | PASS observed on 2026-09-01; page load, new-course dialog, Escape dismissal, and zero page or console errors |
 | FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
 | MLS French ASR | Full public test split from `facebook/multilingual_librispeech`, faster-whisper small on CPU | `benchmarks/run_asr_hf.py --dataset facebook/multilingual_librispeech --config french --split test --reference-field transcript --language fr --device cpu --compute-type int8` | WER 0.1304, CER 0.0569, RTF 0.1648 |
 | FLEURS plus MUSAN robustness | 100 public FLEURS test examples mixed with four public MUSAN sources at 10 dB and 0 dB | `benchmarks/run_asr_musan.py --musan-root artifacts\\benchmarks\\musan --limit 100 --snrs 10,0` | Clean WER 0.1576; noisy WER 0.1737-0.8447 at 10/0 dB across public MUSAN categories |
