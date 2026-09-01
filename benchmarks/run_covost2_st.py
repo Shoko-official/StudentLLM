@@ -50,18 +50,51 @@ def score_translations(references: list[str], hypotheses: list[str]) -> dict[str
     return {"bleu": bleu.score / 100.0, "chrf": chrf.score / 100.0}
 
 
+def score_comet(
+    sources: list[str],
+    references: list[str],
+    hypotheses: list[str],
+    model_name: str,
+    device: str,
+    batch_size: int,
+    predictor=None,
+) -> float | None:
+    """Score translations with an optional COMET checkpoint from Unbabel."""
+    if not hypotheses:
+        return None
+    data = [
+        {"src": source, "mt": hypothesis, "ref": reference}
+        for source, hypothesis, reference in zip(sources, hypotheses, references, strict=True)
+    ]
+    if predictor is None:
+        from comet import download_model, load_from_checkpoint
+
+        checkpoint = download_model(model_name)
+        predictor = load_from_checkpoint(checkpoint).predict
+    predictions = predictor(
+        data,
+        batch_size=batch_size,
+        gpus=1 if device == "cuda" else 0,
+    )
+    scores = getattr(predictions, "scores", predictions[0] if isinstance(predictions, tuple) else predictions)
+    return sum(float(score) for score in scores) / len(scores)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", default="fixie-ai/covost2")
     parser.add_argument("--config", default="fr_en")
     parser.add_argument("--split", default="test")
     parser.add_argument("--reference-field", default="translation")
+    parser.add_argument("--source-field", default="sentence")
     parser.add_argument("--model", default="facebook/s2t-small-covost2-fr-en-st")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--device", default="cuda", choices=("cpu", "cuda"))
     parser.add_argument("--compute-type", default="float32", choices=("float32", "float16"))
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument("--num-beams", type=int, default=5)
+    parser.add_argument("--comet-model")
+    parser.add_argument("--comet-batch-size", type=int, default=8)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 
@@ -88,6 +121,7 @@ def main() -> None:
     examples = prepare_examples(dataset, arguments.limit)
     references: list[str] = []
     hypotheses: list[str] = []
+    sources: list[str] = []
     audio_seconds = 0.0
     started_at = time.perf_counter()
     for index, example in enumerate(examples, start=1):
@@ -108,6 +142,7 @@ def main() -> None:
                 num_beams=arguments.num_beams,
             )
         hypothesis = processor.batch_decode(generated, skip_special_tokens=True)[0].strip()
+        sources.append(str(example[arguments.source_field]).strip())
         references.append(str(example[arguments.reference_field]).strip())
         hypotheses.append(hypothesis)
         audio_seconds += len(samples) / sample_rate
@@ -117,11 +152,24 @@ def main() -> None:
 
     elapsed_seconds = time.perf_counter() - started_at
     scores = score_translations(references, hypotheses)
+    comet_score = (
+        score_comet(
+            sources,
+            references,
+            hypotheses,
+            arguments.comet_model,
+            arguments.device,
+            arguments.comet_batch_size,
+        )
+        if arguments.comet_model
+        else None
+    )
     result = {
         "dataset": arguments.dataset,
         "config": arguments.config,
         "split": arguments.split,
         "reference_field": arguments.reference_field,
+        "source_field": arguments.source_field,
         "evaluation_scope": "full public split" if arguments.limit is None else f"first {len(references)} examples of the public split",
         "partial": arguments.limit is not None,
         "dataset_provenance": "Public CoVoST 2 parquet mirror with Common Voice audio and CoVoST translations",
@@ -132,6 +180,8 @@ def main() -> None:
         "examples": len(references),
         "bleu": scores["bleu"],
         "chrf": scores["chrf"],
+        "comet_model": arguments.comet_model,
+        "comet": comet_score,
         "audio_seconds": audio_seconds,
         "elapsed_seconds": elapsed_seconds,
         "rtf": elapsed_seconds / audio_seconds if audio_seconds else None,
