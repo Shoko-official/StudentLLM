@@ -151,6 +151,11 @@ it scored higher and completed substantially faster; the 90B receipt is kept
 as a negative comparison at
 `artifacts/benchmarks/docvqa/nvidia-llama-90b-vision-validation-100.json`.
 
+A larger run with the 11B model scored ANLS `0.8297` on 500 public validation
+examples, with 498/500 successful calls in `388.186` seconds. This larger
+sample supersedes the 100-image result as the selected partial baseline. Its
+receipt is `artifacts/benchmarks/docvqa/nvidia-llama-11b-vision-validation-500.json`.
+
 ## MMLU-Pro through LM Studio
 
 `run_mmlu_pro.py` uses the public MMLU-Pro task from the [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) project. The adapter appends `/no_think` to the final user message for Qwen3 models so scoring evaluates the final answer channel.
