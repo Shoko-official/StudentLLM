@@ -144,6 +144,13 @@ The observed 100-image public subset returned ANLS `0.8591` with 100/100
 successful provider calls. This is official metric computation on a public
 subset, not a full validation-set score or a claim against a leaderboard.
 
+A matched NVIDIA `meta/llama-3.2-90b-vision-instruct` comparison on the same
+100 examples returned ANLS `0.8203` with 99/100 successful calls in
+`1722.917` seconds. The measured 11B run remains the selected baseline because
+it scored higher and completed substantially faster; the 90B receipt is kept
+as a negative comparison at
+`artifacts/benchmarks/docvqa/nvidia-llama-90b-vision-validation-100.json`.
+
 ## MMLU-Pro through LM Studio
 
 `run_mmlu_pro.py` uses the public MMLU-Pro task from the [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) project. The adapter appends `/no_think` to the final user message for Qwen3 models so scoring evaluates the final answer channel.
