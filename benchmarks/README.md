@@ -837,3 +837,24 @@ The observed NVIDIA NIM runs on 2026-08-28 used `openai/gpt-oss-20b`, `temperatu
 These are official category scores on public samples, not global BFCL scores. The `simple_java`, `simple_javascript`, and `parallel` runs used isolated ignored roots and produced 20 unique public result rows each; the JavaScript run retained three empty result arrays. The corrected `live_simple` run selected the official compound IDs and produced 20 unique rows with no empty result arrays. The multi-turn runs produced empty responses, malformed tool calls, failed decodes, and non-exploitable provider responses during generation; the failures remain in the local ignored result and score directories. An initial legacy NVIDIA handler attempt returned an HTTP 404 before scoring and is not counted as a benchmark result.
 
 The memory-case selector was validated against the official BFCL dataset on 2026-08-29. An NVIDIA `memory_kv` run then generated nine of ten required prerequisite entries before repeated empty responses made the remaining runtime exceed 90 minutes. The runner was stopped before any scored target case or aggregate score was produced. The artifact root `artifacts\\benchmarks\\bfcl-nvidia-memory-kv-20-fixed` is retained locally as an unscored diagnostic and must not be interpreted as a memory accuracy result.
+
+## Resumable long-form ASR runs
+
+Long public ASR evaluations can be resumed without repeating completed examples. Add `--checkpoint-path` to persist aggregate state atomically during the run:
+
+```powershell
+python benchmarks/run_asr_hf.py `
+  --dataset distil-whisper/earnings22 `
+  --config chunked `
+  --split test `
+  --reference-field transcription `
+  --language en `
+  --model large-v3-turbo `
+  --streaming `
+  --device cuda `
+  --compute-type float16 `
+  --checkpoint-path artifacts/benchmarks/asr/earnings22.checkpoint.json `
+  --output artifacts/benchmarks/asr/earnings22.json
+```
+
+The checkpoint is automatically loaded when it already exists. Its run metadata is validated before any examples are skipped, so a checkpoint cannot silently resume a different dataset, split, model, or runtime configuration. A `KeyboardInterrupt` also saves the latest aggregate state before exiting. Keep the checkpoint next to the raw result until the final result has been independently reviewed.
