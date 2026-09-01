@@ -19,6 +19,21 @@ python benchmarks\run_asr_fleurs.py `
 
 The command above evaluates all 676 examples in the public French test split. A partial run can be requested with `--limit`, but it must be labeled partial in the resulting receipt.
 
+The validated local CUDA quality profile uses the same complete split with `large-v3-turbo`:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_asr_fleurs.py `
+  --model large-v3-turbo `
+  --config fr_fr `
+  --split test `
+  --device cuda `
+  --compute-type float16 `
+  --output artifacts\benchmarks\asr\fleurs-fr-large-v3-turbo-cuda-full.json
+```
+
+Observed on 2026-09-01: WER `0.065594`, CER `0.021253`, and RTF `0.023544` over all 676 public examples and 7,024.08 seconds of audio. The run took 165.38 seconds on an RTX 5080 and is the selected local quality profile; it does not replace the CPU baseline used for low-resource deployment.
+
 ## DROP reading comprehension through NVIDIA NIM
 
 The official `drop` task from `lm-evaluation-harness` evaluates discrete and passage-based reading comprehension with exact-match and token-level F1 scoring. The following run used the public validation split, the NVIDIA NIM OpenAI-compatible endpoint, four concurrent requests, and an explicit 512-example public sample:
@@ -63,6 +78,23 @@ $env:PYTHONUTF8 = '1'
 ```
 
 The run returned WER `0.130395`, CER `0.056910`, and RTF `0.164801` over 36,241.89 seconds of public audio and 2,426 examples. This is a reproducible public MLS baseline, not a lecture-domain score or a product-level quality claim.
+
+The validated local CUDA quality profile uses the same complete split with `large-v3-turbo`:
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_asr_hf.py `
+  --dataset facebook/multilingual_librispeech `
+  --config french `
+  --split test `
+  --reference-field transcript `
+  --language fr `
+  --model large-v3-turbo `
+  --device cuda `
+  --compute-type float16 `
+  --output artifacts\benchmarks\asr\mls-fr-large-v3-turbo-cuda-full.json
+```
+
+Observed on 2026-09-01: WER `0.054124`, CER `0.028423`, and RTF `0.020460` over all 2,426 public examples and 36,241.89 seconds of audio. The run took 741.52 seconds on an RTX 5080 and is the selected local quality profile.
 
 ## FLEURS plus MUSAN robustness
 
