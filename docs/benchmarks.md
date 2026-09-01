@@ -102,8 +102,9 @@ The first generation benchmark uses the official [EleutherAI lm-evaluation-harne
 | 2026-08-31 | `openai/gpt-oss-20b` / NVIDIA NIM | official categories, zero-shot, seed 42, `max_gen_toks=512`, `reasoning_effort=low`, two concurrent requests; 13 complete categories | weighted exact match `0.2655` (2,983/11,234), across 13 complete categories | Complete public receipts for biology, business, chemistry, computer science, economics, engineering, health, history, law, math, other, philosophy, and physics; `psychology` interrupted at 34/798 after provider timeouts and has no score; not a complete fourteen-category result |
 | 2026-08-31 | `openai/gpt-oss-20b` / NVIDIA NIM | `psychology[50:100]` contiguous resume chunk, zero-shot, seed 42, `max_gen_toks=256`, `reasoning_effort=low`, one concurrent request, one retry | no score; 6/50 requests observed before interruption while provider latency rose to approximately 69.5 seconds per item | Rejected transport attempt; no complete receipt or benchmark score; the runner now records console interruption and stale-process recovery as terminal manifest states |
 | 2026-08-31 | `qwen/qwen3-4b` / LM Studio, RTX 5080 | official psychology category, all 798 test items, zero-shot, seed 42, `temperature=0`, `max_gen_toks=256`, 16 contiguous receipts of 48-50 items | exact match `0.2431` (194/798) | Complete public category through the local OpenAI-compatible endpoint; weighted aggregate from 16 official harness receipts; receipt set and aggregate are under `artifacts/benchmarks/mmlu-pro/lmstudio-psychology/`; this is a separate LM Studio result and does not complete the NVIDIA fourteen-category score |
+| 2026-09-01 | `openai/gpt-oss-20b` / NVIDIA NIM | all 14 official categories, zero-shot, seed 42, `max_gen_toks=256`, `reasoning_effort=low`, four concurrent requests, contiguous resumable chunks of 50 | weighted exact match `0.2729` (3,284/12,032) | Complete public fourteen-category result; 12,032/12,032 items scored; psychology completed at `0.3772` (301/798); full receipt `artifacts/benchmarks/mmlu-pro/full/mmlu_pro_full_summary.json` |
 
-The 13-category campaign produced the following complete per-category receipts:
+The complete fourteen-category campaign produced the following public per-category receipts:
 
 | Category | Items | Exact match |
 | --- | ---: | ---: |
@@ -120,8 +121,11 @@ The 13-category campaign produced the following complete per-category receipts:
 | Other | 924 | `26.52%` (245/924) |
 | Philosophy | 499 | `18.24%` (91/499) |
 | Physics | 1,299 | `19.09%` (248/1,299) |
+| Psychology | 798 | `37.72%` (301/798) |
 
-The weighted aggregate is descriptive of these 11,234 completed questions only. It is not a full MMLU-Pro score, leaderboard result, or model-strength claim. The manifest records both the initial interrupted `psychology` run and the later rejected chunk retry with their exact provider failure states.
+The weighted aggregate is `27.2939%` exact match, or 3,284 correct answers out of 12,032. It is a complete public MMLU-Pro result for this model and protocol; it remains far below the product target of 99%.
+
+The earlier weighted aggregate was descriptive of 11,234 completed questions only. The resumed campaign now covers all 12,032 questions and is the complete MMLU-Pro result for this model and protocol. The manifest retains the initial interrupted `psychology` run, the rejected chunk retry, and the successful contiguous completion chunks with their exact provider states.
 
 The separate LM Studio campaign completed all 798 public `psychology` questions on `qwen/qwen3-4b`. Its weighted exact match is `0.2431` (194/798), calculated from 16 contiguous `lm-evaluation-harness` receipts with no missing chunk and no malformed receipt. The campaign ran against `http://127.0.0.1:1234/v1/chat/completions` and took approximately 19 minutes including chunk orchestration. It is valid category-level evidence for that local model and endpoint; it must not be combined with the NVIDIA results because the model, backend, and generation budget differ.
 
