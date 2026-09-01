@@ -62,6 +62,10 @@ describe('OpenAI-compatible LLM provider', () => {
     expect(createLocalLLMProvider({})).toBeNull();
   });
 
+  it('uses the same-origin development proxy by default', () => {
+    expect(createLocalLLMProvider({ MODE: 'development' })).toBeInstanceOf(OpenAICompatibleProvider);
+  });
+
   it('surfaces provider HTTP failures', async () => {
     const provider = new OpenAICompatibleProvider({
       baseUrl: 'http://127.0.0.1:1234/v1',
