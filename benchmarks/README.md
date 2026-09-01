@@ -237,7 +237,23 @@ $env:HF_HUB_DISABLE_XET = '1'
   --output artifacts\benchmarks\covost2\facebook-s2t-small-fr-en-cuda-float32-comet-100.json
 ```
 
-Observed on 2026-09-01: the 100-example diagnostic returned COMET `0.651932`, BLEU `0.223430`, chrF `0.476032`, and RTF `0.058232` on an RTX 5080. This is a partial COMET diagnostic; a full-split COMET result remains open because the current runner does not persist all hypotheses for a second scoring pass.
+Observed on 2026-09-01: the 100-example diagnostic returned COMET `0.651932`, BLEU `0.223430`, chrF `0.476032`, and RTF `0.058232` on an RTX 5080. A larger 1,000-example diagnostic returned COMET `0.668898`, BLEU `0.228565`, chrF `0.488345`, and RTF `0.066166`, with 1,000/1,000 provider evaluations completed. Both are partial COMET diagnostics; a full-split COMET result remains open because the current runner does not persist all hypotheses for a second scoring pass.
+
+The larger diagnostic is reproducible by changing the sample limit and receipt name:
+
+```powershell
+$env:USE_TF = '0'
+$env:HF_HUB_DISABLE_XET = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_covost2_st.py `
+  --dataset fixie-ai/covost2 `
+  --config fr_en `
+  --split test `
+  --limit 1000 `
+  --device cuda `
+  --compute-type float32 `
+  --comet-model Unbabel/wmt22-comet-da `
+  --output artifacts\benchmarks\covost2\facebook-s2t-small-fr-en-cuda-float32-comet-1000.json
+```
 
 ## Local ASR sidecar
 
