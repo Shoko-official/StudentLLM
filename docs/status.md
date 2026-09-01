@@ -41,7 +41,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | HumanEval | Complete public `openai/openai_humaneval` test split, 164 problems through NVIDIA NIM with the official Linux scorer | Legacy `humaneval_instruct` and `humaneval` protocols scored `0.00%` because their explanation-first output was incompatible with the continuation filters; the separate code-only protocol scored `87.80%` (144/164, stderr `2.56%`) with one empty response retained |
 | HumanEval+ | Complete public 164-problem EvalPlus evaluation through NVIDIA NIM | Base `pass@1` `89.63%` (147/164); HumanEval+ `pass@1` `82.32%` (135/164); one non-compilable sanitised sample retained as a failure |
 | MBPP+ | Complete public 378-problem EvalPlus evaluation through NVIDIA NIM | MBPP base `pass@1` `85.71%` (324/378); MBPP+ `pass@1` `68.52%` (259/378); three non-compilable sanitised samples retained as failures |
-| DocVQA | Public 100-image OCR extractability diagnostic | Normalized answer visibility 86.00%; not official ANLS |
+| DocVQA | Public 100-image OCR diagnostic plus 100-image vision QA subset | OCR answer visibility 86.00%; official ANLS `0.8591` on 100/100 successful NVIDIA vision responses; both are partial public subsets |
 
 Detailed commands, model versions, hardware, validity labels, and local receipt paths are maintained in [`benchmarks.md`](./benchmarks.md). Raw receipts stay local and ignored by Git.
 
@@ -54,7 +54,7 @@ The following targets are not yet complete product evidence:
 - AMI far-field WER, DER, and SA-WER;
 - MUSAN noise robustness by SNR;
 - DIHARD and VoxConverse diarization metrics;
-- OmniDocBench parsing metrics, official DocVQA ANLS, and PubTabNet TEDS;
+- OmniDocBench parsing metrics, full official DocVQA ANLS, and PubTabNet TEDS; the first 100-image NVIDIA vision subset now computes official ANLS `0.8591` with no failed calls;
 - full MTEB, BEIR, BFCL, MMLU-Pro, and Ragas evaluation suites; the NVIDIA MMLU-Pro campaign has 13 categories complete, while a separate LM Studio run now covers all 798 `psychology` items; the complete fourteen-category NVIDIA result remains unscored because provider latency interrupted that category; the BFCL memory-case wrapper now resolves prerequisite closures, but the NVIDIA `memory_kv` diagnostic remains unscored because generation produced repeated empty responses and exceeded the practical runtime budget;
 - versioned LectureBench held-out classroom and document scenarios;
 - additional code-generation protocols;

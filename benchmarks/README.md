@@ -122,6 +122,28 @@ The service exposes `GET /health` and accepts an audio body at `POST /transcribe
 
 The observed 100-image run returned `0.8600` normalized answer visibility across multiple public question types. It is labeled partial and must not be presented as a full DocVQA result.
 
+## DocVQA ANLS vision evaluation
+
+`run_docvqa_anls.py` evaluates an OpenAI-compatible vision model against the
+public DocVQA validation split. It uses the official ANLS calculation: the
+best normalized Levenshtein similarity against the reference answers, with
+scores below `0.5` set to zero. Every prediction and provider error is stored
+in the receipt.
+
+```powershell
+$env:NVIDIA_API_KEY=[Environment]::GetEnvironmentVariable('NVIDIA_API_KEY','User')
+python benchmarks\run_docvqa_anls.py `
+  --model meta/llama-3.2-11b-vision-instruct `
+  --split validation `
+  --limit 100 `
+  --concurrency 4 `
+  --output artifacts\benchmarks\docvqa\nvidia-llama-vision-validation-100.json
+```
+
+The observed 100-image public subset returned ANLS `0.8591` with 100/100
+successful provider calls. This is official metric computation on a public
+subset, not a full validation-set score or a claim against a leaderboard.
+
 ## MMLU-Pro through LM Studio
 
 `run_mmlu_pro.py` uses the public MMLU-Pro task from the [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) project. The adapter appends `/no_think` to the final user message for Qwen3 models so scoring evaluates the final answer channel.
