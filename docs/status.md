@@ -41,7 +41,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | HumanEval | Complete public `openai/openai_humaneval` test split, 164 problems through NVIDIA NIM with the official Linux scorer | Legacy `humaneval_instruct` and `humaneval` protocols scored `0.00%` because their explanation-first output was incompatible with the continuation filters; the separate code-only protocol scored `87.80%` (144/164, stderr `2.56%`) with one empty response retained |
 | HumanEval+ | Complete public 164-problem EvalPlus evaluation through NVIDIA NIM | Base `pass@1` `89.63%` (147/164); HumanEval+ `pass@1` `82.32%` (135/164); one non-compilable sanitised sample retained as a failure |
 | MBPP+ | Complete public 378-problem EvalPlus evaluation through NVIDIA NIM | MBPP base `pass@1` `85.71%` (324/378); MBPP+ `pass@1` `68.52%` (259/378); three non-compilable sanitised samples retained as failures |
-| DocVQA | Public 100-image OCR diagnostic plus matched 100/500-image vision QA comparisons | OCR answer visibility 86.00%; NVIDIA 11B official ANLS `0.8297` on 498/500 responses in the larger subset, with the 100-image result at `0.8591`; matched NVIDIA 90B ANLS `0.8203` on 99/100 responses; all remain partial public subsets and the 11B 500-image run is the selected baseline |
+| DocVQA | Public 100-image OCR diagnostic plus matched 100/500/1,000-image vision QA comparisons | OCR answer visibility 86.00%; NVIDIA 11B official ANLS `0.8321` on 988/1,000 responses in the largest measured subset, with the 500-image result at `0.8297` and the 100-image result at `0.8591`; matched NVIDIA 90B ANLS `0.8203` on 99/100 responses; all remain partial public subsets and the 11B 1,000-image run is the selected baseline |
 
 Detailed commands, model versions, hardware, validity labels, and local receipt paths are maintained in [`benchmarks.md`](./benchmarks.md). Raw receipts stay local and ignored by Git.
 
@@ -54,7 +54,7 @@ The following targets are not yet complete product evidence:
 - AMI far-field WER, DER, and SA-WER;
 - MUSAN noise robustness by SNR;
 - DIHARD and VoxConverse diarization metrics;
-- OmniDocBench parsing metrics, full official DocVQA ANLS, and PubTabNet TEDS; the first 100-image NVIDIA vision subset now computes official ANLS `0.8591` with no failed calls;
+- OmniDocBench parsing metrics, full official DocVQA ANLS, and PubTabNet TEDS; the largest measured NVIDIA vision subset now computes official ANLS `0.8321` on 988/1,000 responses, but the full validation split remains incomplete;
 - full MTEB, BEIR, BFCL, and Ragas evaluation suites; the official NVIDIA MMLU-Pro fourteen-category campaign is now complete at 12,032/12,032 items and `27.2939%` weighted exact match, while a separate LM Studio run also covers all 798 `psychology` items; the BFCL memory-case wrapper now resolves prerequisite closures, but the NVIDIA `memory_kv` diagnostic remains unscored because generation produced repeated empty responses and exceeded the practical runtime budget;
 - versioned LectureBench held-out classroom and document scenarios;
 - additional code-generation protocols;
