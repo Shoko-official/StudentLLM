@@ -178,10 +178,11 @@ The observed run evaluated 100 public FLEURS examples across clean, 10 dB, and 0
 Install the optional COMET scorer when a learned translation-quality metric is required:
 
 ```powershell
+$env:USE_TF = '0'
 .\.venv-bench-sys\Scripts\python.exe -m pip install -r requirements-speech-translation.txt
 ```
 
-Add `--comet-model Unbabel/wmt22-comet-da` to a run to score each source, hypothesis, and reference triplet with COMET. The receipt records the model name and aggregate score. COMET is optional because it downloads a separate checkpoint and is not needed for SacreBLEU/chrF-only runs.
+Set `USE_TF=0` in this Windows benchmark environment before importing the scorer. Add `--comet-model Unbabel/wmt22-comet-da` to a run to score each source, hypothesis, and reference triplet with COMET. The receipt records the model name and aggregate score. COMET is optional because it downloads a separate checkpoint and is not needed for SacreBLEU/chrF-only runs.
 
 Install the benchmark dependencies in the isolated benchmark environment:
 
@@ -204,6 +205,39 @@ $env:PYTHONUTF8 = '1'
 ```
 
 Observed on 2026-09-01: the first 1,000 public `fr_en/test` examples returned BLEU `0.228565` and chrF `0.488345` over 5,861.93 seconds of audio. The run took 306.67 seconds on an RTX 5080 (RTF `0.052315`). This is a partial public sample, not a complete CoVoST 2 score; the full split remains open.
+
+Run the complete public test split with the selected CUDA FP32 profile:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_covost2_st.py `
+  --dataset fixie-ai/covost2 `
+  --config fr_en `
+  --split test `
+  --device cuda `
+  --compute-type float32 `
+  --output artifacts\benchmarks\covost2\facebook-s2t-small-fr-en-cuda-float32-full.json
+```
+
+Observed on 2026-09-01: all 14,760 public `fr_en/test` examples returned BLEU `0.263113` and chrF `0.535307` over 83,894.74 seconds of audio. The run took 5,313.33 seconds on an RTX 5080 (RTF `0.063333`). The full receipt SHA-256 is `D4A17B74133AD626EF33D800188460D7B2779A790344FD94B67FCF3DF9107AD2`.
+
+The first COMET diagnostic used the same public split and model on 100 examples:
+
+```powershell
+$env:USE_TF = '0'
+$env:HF_HUB_DISABLE_XET = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_covost2_st.py `
+  --dataset fixie-ai/covost2 `
+  --config fr_en `
+  --split test `
+  --limit 100 `
+  --device cuda `
+  --compute-type float32 `
+  --comet-model Unbabel/wmt22-comet-da `
+  --output artifacts\benchmarks\covost2\facebook-s2t-small-fr-en-cuda-float32-comet-100.json
+```
+
+Observed on 2026-09-01: the 100-example diagnostic returned COMET `0.651932`, BLEU `0.223430`, chrF `0.476032`, and RTF `0.058232` on an RTX 5080. This is a partial COMET diagnostic; a full-split COMET result remains open because the current runner does not persist all hypotheses for a second scoring pass.
 
 ## Local ASR sidecar
 
