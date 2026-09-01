@@ -112,7 +112,7 @@ For large public splits, pass `--streaming` to iterate examples without material
   --output artifacts\benchmarks\asr\ami-sdm-en-large-v3-turbo-cuda-full.json
 ```
 
-The complete public `sdm/test` split returned WER `0.408331`, CER `0.314221`, and RTF `0.068351` over 12,643 examples and 31,253.32 seconds of audio. The matched first-200 `ihm/test` comparison returned WER `0.236176`, CER `0.163377`, and RTF `0.088667`. The full SDM result and partial IHM comparison are recorded in [`docs/benchmarks.md`](../docs/benchmarks.md); they demonstrate the far-field meeting gap and do not include diarization scoring.
+The complete public `sdm/test` split returned WER `0.408331`, CER `0.314221`, and RTF `0.068351` over 12,643 examples and 31,253.32 seconds of audio. The complete public `ihm/test` split returned WER `0.209307`, CER `0.134698`, and RTF `0.068221` over the same 12,643 segments and 31,253.32 seconds of audio. The full SDM and IHM results are recorded in [`docs/benchmarks.md`](../docs/benchmarks.md); they demonstrate the far-field meeting gap and do not include diarization scoring.
 
 ## FLEURS plus MUSAN robustness
 
