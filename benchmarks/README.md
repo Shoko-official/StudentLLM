@@ -171,6 +171,32 @@ $env:PYTHONUTF8 = '1'
 
 The observed run evaluated 100 public FLEURS examples across clean, 10 dB, and 0 dB conditions for four MUSAN source categories. Clean WER was `0.157592`; noisy WER ranged from `0.173696` to `0.844709` at 10/0 dB depending on the source category. The full condition table is recorded in [`docs/benchmarks.md`](../docs/benchmarks.md).
 
+## CoVoST 2 speech translation
+
+`run_covost2_st.py` evaluates French-to-English speech translation on the public CoVoST 2 `fr_en/test` split. The runner uses the public `fixie-ai/covost2` parquet mirror, decodes its embedded Common Voice audio with PyAV, and scores model output with SacreBLEU and chrF. The default model is the official `facebook/s2t-small-covost2-fr-en-st` checkpoint and the default local CUDA precision is FP32. FP16 is available for comparison but is not the selected profile because the observed RTX 5080 run produced degenerate output in that mode.
+
+Install the benchmark dependencies in the isolated benchmark environment:
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe -m pip install datasets transformers sacrebleu av torch
+```
+
+Run a reproducible public sample:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_covost2_st.py `
+  --dataset fixie-ai/covost2 `
+  --config fr_en `
+  --split test `
+  --limit 1000 `
+  --device cuda `
+  --compute-type float32 `
+  --output artifacts\benchmarks\covost2\facebook-s2t-small-fr-en-cuda-float32-1000.json
+```
+
+Observed on 2026-09-01: the first 1,000 public `fr_en/test` examples returned BLEU `0.228565` and chrF `0.488345` over 5,861.93 seconds of audio. The run took 306.67 seconds on an RTX 5080 (RTF `0.052315`). This is a partial public sample, not a complete CoVoST 2 score; the full split remains open.
+
 ## Local ASR sidecar
 
 The app-side speech contract can be exercised with the local `faster-whisper` service:
