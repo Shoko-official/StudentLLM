@@ -266,16 +266,6 @@ def main() -> None:
         dataset = load_dataset(arguments.dataset, arguments.config, split=arguments.split, streaming=True)
     else:
         dataset = load_dataset(arguments.dataset, split=arguments.split, streaming=True)
-    samples: list[dict[str, Any]] = []
-    for index, sample in enumerate(dataset):
-        if index < arguments.offset:
-            continue
-        samples.append(sample)
-        if len(samples) >= arguments.limit:
-            break
-    if not samples:
-        raise SystemExit("The selected PubTabNet range returned no samples")
-
     config = ProviderConfig(arguments.base_url, arguments.model, api_key, arguments.timeout_seconds, arguments.max_retries)
     metadata = checkpoint_metadata(arguments)
     rows, saved_elapsed_seconds = (
@@ -284,39 +274,61 @@ def main() -> None:
         else ([], 0.0)
     )
     completed_ids = {row["image_id"] for row in rows}
-    remaining_samples = [sample for sample in samples if sample_image_id(sample) not in completed_ids]
     started = time.perf_counter() - saved_elapsed_seconds
+
+    def evaluate_batch(batch: list[dict[str, Any]], executor: ThreadPoolExecutor) -> None:
+        futures = {executor.submit(request_prediction, sample, config): sample for sample in batch}
+        for future in as_completed(futures):
+            sample = futures[future]
+            reference = str(sample["html_table"])
+            try:
+                raw_prediction = future.result()
+                prediction = extract_table_markup(raw_prediction)
+                error = None
+                score = teds_score(prediction, reference)
+                structure_score = teds_score(prediction, reference, structure_only=True)
+            except Exception as exception:  # Retain provider and scorer failures in the receipt.
+                raw_prediction = ""
+                prediction = ""
+                score = 0.0
+                structure_score = 0.0
+                error = f"{type(exception).__name__}: {exception}"
+            rows.append(
+                {
+                    "image_id": sample_image_id(sample),
+                    "table_type": str(sample.get("type", "")),
+                    "prediction": prediction,
+                    "raw_prediction_characters": len(raw_prediction),
+                    "teds": score,
+                    "teds_structure_only": structure_score,
+                    "error": error,
+                }
+            )
+            completed_ids.add(sample_image_id(sample))
+            if arguments.checkpoint_path and len(rows) % arguments.checkpoint_every == 0:
+                save_checkpoint(arguments.checkpoint_path, metadata, rows, time.perf_counter() - started)
+
     try:
         with ThreadPoolExecutor(max_workers=arguments.concurrency) as executor:
-            futures = {executor.submit(request_prediction, sample, config): sample for sample in remaining_samples}
-            for future in as_completed(futures):
-                sample = futures[future]
-                reference = str(sample["html_table"])
-                try:
-                    raw_prediction = future.result()
-                    prediction = extract_table_markup(raw_prediction)
-                    error = None
-                    score = teds_score(prediction, reference)
-                    structure_score = teds_score(prediction, reference, structure_only=True)
-                except Exception as exception:  # Retain provider and scorer failures in the receipt.
-                    raw_prediction = ""
-                    prediction = ""
-                    score = 0.0
-                    structure_score = 0.0
-                    error = f"{type(exception).__name__}: {exception}"
-                rows.append(
-                    {
-                        "image_id": sample_image_id(sample),
-                        "table_type": str(sample.get("type", "")),
-                        "prediction": prediction,
-                        "raw_prediction_characters": len(raw_prediction),
-                        "teds": score,
-                        "teds_structure_only": structure_score,
-                        "error": error,
-                    }
-                )
-                if arguments.checkpoint_path and len(rows) % arguments.checkpoint_every == 0:
-                    save_checkpoint(arguments.checkpoint_path, metadata, rows, time.perf_counter() - started)
+            selected = 0
+            batch: list[dict[str, Any]] = []
+            batch_size = max(arguments.concurrency * 4, arguments.checkpoint_every)
+            for index, sample in enumerate(dataset):
+                if index < arguments.offset:
+                    continue
+                if selected >= arguments.limit:
+                    break
+                selected += 1
+                if sample_image_id(sample) in completed_ids:
+                    continue
+                batch.append(sample)
+                if len(batch) >= batch_size:
+                    evaluate_batch(batch, executor)
+                    batch = []
+            if batch:
+                evaluate_batch(batch, executor)
+            if selected == 0:
+                raise SystemExit("The selected PubTabNet range returned no samples")
     except KeyboardInterrupt:
         if arguments.checkpoint_path:
             save_checkpoint(arguments.checkpoint_path, metadata, rows, time.perf_counter() - started)
