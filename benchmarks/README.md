@@ -338,6 +338,8 @@ The observed 100-page public run returned full-page edit similarity `0.389089` a
 
 `run_pubtabnet_teds.py` evaluates a multimodal provider against the public `apoidea/pubtabnet-html` validation derivative. Each request asks for one HTML table, and the first returned `<table>` element is scored with the APTED tree-edit-distance implementation used by the public PubTabNet metric. The receipt stores every prediction and provider/scorer error.
 
+For long evaluations, add `--checkpoint-path` and optionally `--checkpoint-every` to persist completed rows atomically. Reusing the same command loads the checkpoint, validates its dataset, split, model, endpoint, and range metadata, and skips completed image IDs. Add `--expected-samples` when the public split cardinality is known so the final receipt can distinguish a complete split from a selected range.
+
 Install the optional scorer dependency in the benchmark environment:
 
 ```powershell
