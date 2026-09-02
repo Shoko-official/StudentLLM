@@ -399,6 +399,29 @@ aggregate. This remains a partial public subset, not a full validation-set
 score. Its receipt is
 `artifacts/benchmarks/docvqa/nvidia-llama-11b-vision-validation-1000.json`.
 
+Run the complete public validation split with the selected NVIDIA profile:
+
+```powershell
+$env:HF_HUB_DISABLE_XET = '1'
+$env:USE_TF = '0'
+python benchmarks\run_docvqa_anls.py `
+  --dataset lmms-lab/DocVQA `
+  --config DocVQA `
+  --split validation `
+  --limit 5349 `
+  --model meta/llama-3.2-11b-vision-instruct `
+  --base-url https://integrate.api.nvidia.com/v1 `
+  --concurrency 4 `
+  --timeout-seconds 180 `
+  --max-retries 2 `
+  --output artifacts\benchmarks\docvqa\nvidia-llama-11b-vision-validation-full.json
+```
+
+Observed full-split result: ANLS `0.829761` across all 5,349 public validation
+images, with 5,295 successful responses and 54 provider failures retained as
+zero-scored rows. The run took `3258.636` seconds. The receipt SHA-256 is
+`8B547D326CCE456C56059ABE5363C169DF975015299C3E88BAFE857A5A69611A`.
+
 ## MMLU-Pro through LM Studio
 
 `run_mmlu_pro.py` uses the public MMLU-Pro task from the [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) project. The adapter appends `/no_think` to the final user message for Qwen3 models so scoring evaluates the final answer channel.
