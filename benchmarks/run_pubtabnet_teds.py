@@ -46,6 +46,16 @@ def levenshtein_distance(left: str, right: str) -> int:
 
 
 def image_data_url(image: Any) -> str:
+    if isinstance(image, dict):
+        from PIL import Image
+
+        image_bytes = image.get("bytes")
+        if image_bytes is not None:
+            image = Image.open(io.BytesIO(image_bytes))
+        elif image.get("path"):
+            image = Image.open(image["path"])
+        else:
+            raise ValueError("PubTabNet image metadata has neither bytes nor a path")
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
@@ -266,6 +276,9 @@ def main() -> None:
         dataset = load_dataset(arguments.dataset, arguments.config, split=arguments.split, streaming=True)
     else:
         dataset = load_dataset(arguments.dataset, split=arguments.split, streaming=True)
+    from datasets.features import Image
+
+    dataset = dataset.cast_column("image", Image(decode=False))
     config = ProviderConfig(arguments.base_url, arguments.model, api_key, arguments.timeout_seconds, arguments.max_retries)
     metadata = checkpoint_metadata(arguments)
     rows, saved_elapsed_seconds = (
