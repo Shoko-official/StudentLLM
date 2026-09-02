@@ -23,6 +23,10 @@ def extract_table_markup(value: str) -> str:
     return match.group(0).strip() if match else ""
 
 
+def sample_image_id(sample: dict[str, Any]) -> str:
+    return str(sample.get("imgid", sample.get("__key__", "")))
+
+
 def levenshtein_distance(left: str, right: str) -> int:
     if len(left) < len(right):
         left, right = right, left
@@ -178,14 +182,80 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--timeout-seconds", type=float, default=180)
     parser.add_argument("--max-retries", type=int, default=2)
+    parser.add_argument(
+        "--checkpoint-path",
+        type=Path,
+        help="Persist completed predictions so an interrupted run can resume",
+    )
+    parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=100,
+        help="Save a checkpoint after this many completed examples (default: 100)",
+    )
+    parser.add_argument(
+        "--expected-samples",
+        type=int,
+        help="Expected public split size used to label a complete evaluation",
+    )
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
+
+
+def checkpoint_metadata(arguments: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "dataset": arguments.dataset,
+        "config": arguments.config,
+        "split": arguments.split,
+        "limit": arguments.limit,
+        "offset": arguments.offset,
+        "model": arguments.model,
+        "base_url": arguments.base_url,
+        "api_key_env": arguments.api_key_env,
+        "expected_samples": arguments.expected_samples,
+    }
+
+
+def save_checkpoint(path: Path, metadata: dict[str, Any], rows: list[dict[str, Any]], elapsed_seconds: float) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "metadata": metadata,
+        "state": {
+            "completed_examples": len(rows),
+            "elapsed_seconds": elapsed_seconds,
+            "rows": rows,
+        },
+    }
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def load_checkpoint(path: Path, metadata: dict[str, Any]) -> tuple[list[dict[str, Any]], float]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("metadata") != metadata:
+        raise ValueError(f"checkpoint metadata does not match this evaluation: {path}")
+    state = payload.get("state")
+    rows = state.get("rows") if isinstance(state, dict) else None
+    elapsed_seconds = state.get("elapsed_seconds") if isinstance(state, dict) else None
+    if not isinstance(rows, list) or not isinstance(elapsed_seconds, (int, float)):
+        raise ValueError(f"checkpoint state is invalid: {path}")
+    if any(not isinstance(row, dict) for row in rows):
+        raise ValueError(f"checkpoint rows are invalid: {path}")
+    image_ids = [row.get("image_id") for row in rows]
+    if len(image_ids) != len(set(image_ids)):
+        raise ValueError(f"checkpoint contains duplicate image ids: {path}")
+    return rows, float(elapsed_seconds)
 
 
 def main() -> None:
     arguments = parse_args()
     if arguments.limit <= 0 or arguments.offset < 0 or arguments.concurrency <= 0:
         raise SystemExit("--limit and --concurrency must be positive; --offset cannot be negative")
+    if arguments.checkpoint_every <= 0:
+        raise SystemExit("--checkpoint-every must be positive")
+    if arguments.expected_samples is not None and arguments.expected_samples <= 0:
+        raise SystemExit("--expected-samples must be positive")
     api_key = os.environ.get(arguments.api_key_env)
     if not api_key:
         raise SystemExit(f"{arguments.api_key_env} is required in the process environment")
@@ -207,38 +277,53 @@ def main() -> None:
         raise SystemExit("The selected PubTabNet range returned no samples")
 
     config = ProviderConfig(arguments.base_url, arguments.model, api_key, arguments.timeout_seconds, arguments.max_retries)
-    started = time.perf_counter()
-    rows: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=arguments.concurrency) as executor:
-        futures = {executor.submit(request_prediction, sample, config): sample for sample in samples}
-        for future in as_completed(futures):
-            sample = futures[future]
-            reference = str(sample["html_table"])
-            try:
-                raw_prediction = future.result()
-                prediction = extract_table_markup(raw_prediction)
-                error = None
-                score = teds_score(prediction, reference)
-                structure_score = teds_score(prediction, reference, structure_only=True)
-            except Exception as exception:  # Retain provider and scorer failures in the receipt.
-                raw_prediction = ""
-                prediction = ""
-                score = 0.0
-                structure_score = 0.0
-                error = f"{type(exception).__name__}: {exception}"
-            rows.append(
-                {
-                    "image_id": str(sample.get("imgid", sample.get("__key__", ""))),
-                    "table_type": str(sample.get("type", "")),
-                    "prediction": prediction,
-                    "raw_prediction_characters": len(raw_prediction),
-                    "teds": score,
-                    "teds_structure_only": structure_score,
-                    "error": error,
-                }
-            )
+    metadata = checkpoint_metadata(arguments)
+    rows, saved_elapsed_seconds = (
+        load_checkpoint(arguments.checkpoint_path, metadata)
+        if arguments.checkpoint_path and arguments.checkpoint_path.exists()
+        else ([], 0.0)
+    )
+    completed_ids = {row["image_id"] for row in rows}
+    remaining_samples = [sample for sample in samples if sample_image_id(sample) not in completed_ids]
+    started = time.perf_counter() - saved_elapsed_seconds
+    try:
+        with ThreadPoolExecutor(max_workers=arguments.concurrency) as executor:
+            futures = {executor.submit(request_prediction, sample, config): sample for sample in remaining_samples}
+            for future in as_completed(futures):
+                sample = futures[future]
+                reference = str(sample["html_table"])
+                try:
+                    raw_prediction = future.result()
+                    prediction = extract_table_markup(raw_prediction)
+                    error = None
+                    score = teds_score(prediction, reference)
+                    structure_score = teds_score(prediction, reference, structure_only=True)
+                except Exception as exception:  # Retain provider and scorer failures in the receipt.
+                    raw_prediction = ""
+                    prediction = ""
+                    score = 0.0
+                    structure_score = 0.0
+                    error = f"{type(exception).__name__}: {exception}"
+                rows.append(
+                    {
+                        "image_id": sample_image_id(sample),
+                        "table_type": str(sample.get("type", "")),
+                        "prediction": prediction,
+                        "raw_prediction_characters": len(raw_prediction),
+                        "teds": score,
+                        "teds_structure_only": structure_score,
+                        "error": error,
+                    }
+                )
+                if arguments.checkpoint_path and len(rows) % arguments.checkpoint_every == 0:
+                    save_checkpoint(arguments.checkpoint_path, metadata, rows, time.perf_counter() - started)
+    except KeyboardInterrupt:
+        if arguments.checkpoint_path:
+            save_checkpoint(arguments.checkpoint_path, metadata, rows, time.perf_counter() - started)
+        raise
     rows.sort(key=lambda row: row["image_id"])
     scored = [row for row in rows if row["error"] is None]
+    complete_split = arguments.expected_samples is not None and len(rows) == arguments.expected_samples and arguments.offset == 0
     receipt = {
         "benchmark": "PubTabNet",
         "dataset": arguments.dataset,
@@ -248,6 +333,8 @@ def main() -> None:
         "samples": len(rows),
         "scored_samples": len(scored),
         "failed_samples": len(rows) - len(scored),
+        "evaluation_scope": "complete public split" if complete_split else f"selected public range: offset {arguments.offset}, limit {arguments.limit}",
+        "partial": not complete_split,
         "protocol": "Public PubTabNet TEDS using APTED tree edit distance; structure-only TEDS is reported alongside content-sensitive TEDS",
         "model": arguments.model,
         "endpoint": arguments.base_url,
@@ -258,6 +345,8 @@ def main() -> None:
         "predictions": rows,
         "validity": "public PubTabNet-derived validation split; partial provider evaluation, not a full leaderboard result",
     }
+    if complete_split:
+        receipt["validity"] = "complete public PubTabNet-derived validation split; official metric and model predictions; provider failures retained and scored as zero"
     encoded = json.dumps(receipt, indent=2, ensure_ascii=False)
     print(encoded)
     if arguments.output:
