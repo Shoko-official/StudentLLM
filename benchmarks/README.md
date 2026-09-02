@@ -223,7 +223,7 @@ $env:PYTHONUTF8 = '1'
   --output artifacts\benchmarks\covost2\facebook-s2t-small-fr-en-cuda-float32-1000.json
 ```
 
-Observed on 2026-09-01: the first 1,000 public `fr_en/test` examples returned BLEU `0.228565` and chrF `0.488345` over 5,861.93 seconds of audio. The run took 306.67 seconds on an RTX 5080 (RTF `0.052315`). This is a partial public sample, not a complete CoVoST 2 score; the full split remains open.
+Observed on 2026-09-01: the first 1,000 public `fr_en/test` examples returned BLEU `0.228565` and chrF `0.488345` over 5,861.93 seconds of audio. The run took 306.67 seconds on an RTX 5080 (RTF `0.052315`). This is a partial public sample; the complete split result is recorded below.
 
 Run the complete public test split with the selected CUDA FP32 profile:
 
@@ -239,6 +239,24 @@ $env:PYTHONUTF8 = '1'
 ```
 
 Observed on 2026-09-01: all 14,760 public `fr_en/test` examples returned BLEU `0.263113` and chrF `0.535307` over 83,894.74 seconds of audio. The run took 5,313.33 seconds on an RTX 5080 (RTF `0.063333`). The full receipt SHA-256 is `D4A17B74133AD626EF33D800188460D7B2779A790344FD94B67FCF3DF9107AD2`.
+
+Run the complete split with COMET scoring:
+
+```powershell
+$env:USE_TF = '0'
+$env:HF_HUB_DISABLE_XET = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_covost2_st.py `
+  --dataset fixie-ai/covost2 `
+  --config fr_en `
+  --split test `
+  --device cuda `
+  --compute-type float32 `
+  --comet-model Unbabel/wmt22-comet-da `
+  --comet-batch-size 8 `
+  --output artifacts\benchmarks\covost2\facebook-s2t-small-fr-en-cuda-float32-comet-full.json
+```
+
+Observed on 2026-09-02: all 14,760 public examples returned COMET `0.706765`, BLEU `0.263113`, and chrF `0.535308` over 83,894.74 seconds of audio. The run took 4,557.37 seconds on an RTX 5080 (RTF `0.054322`). The full receipt SHA-256 is `69A2FB77CE05E3B46ABDDA9C0B9907A01BABC68DFE85602CF8944D0FDFB656AD`.
 
 The first COMET diagnostic used the same public split and model on 100 examples:
 
@@ -256,7 +274,7 @@ $env:HF_HUB_DISABLE_XET = '1'
   --output artifacts\benchmarks\covost2\facebook-s2t-small-fr-en-cuda-float32-comet-100.json
 ```
 
-Observed on 2026-09-01: the 100-example diagnostic returned COMET `0.651932`, BLEU `0.223430`, chrF `0.476032`, and RTF `0.058232` on an RTX 5080. A larger 1,000-example diagnostic returned COMET `0.668898`, BLEU `0.228565`, chrF `0.488345`, and RTF `0.066166`, with 1,000/1,000 provider evaluations completed. Both are partial COMET diagnostics; a full-split COMET result remains open because the current runner does not persist all hypotheses for a second scoring pass.
+Observed on 2026-09-01: the 100-example diagnostic returned COMET `0.651932`, BLEU `0.223430`, chrF `0.476032`, and RTF `0.058232` on an RTX 5080. A larger 1,000-example diagnostic returned COMET `0.668898`, BLEU `0.228565`, chrF `0.488345`, and RTF `0.066166`, with 1,000/1,000 provider evaluations completed. Both remain partial diagnostics; the complete COMET result is recorded above.
 
 The larger diagnostic is reproducible by changing the sample limit and receipt name:
 
