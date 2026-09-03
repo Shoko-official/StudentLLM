@@ -238,7 +238,14 @@ def save_checkpoint(path: Path, metadata: dict[str, Any], rows: list[dict[str, A
     }
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    for attempt in range(5):
+        try:
+            temporary.replace(path)
+            break
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(2**attempt)
 
 
 def load_checkpoint(path: Path, metadata: dict[str, Any]) -> tuple[list[dict[str, Any]], float]:
