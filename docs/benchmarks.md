@@ -43,6 +43,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | BEIR SciFact retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset scifact` | nDCG@10 0.6593, Recall@10 0.7809, MRR@10 0.6252 |
 | BEIR SciFact dense retrieval | Full public test split, BGE-small normalized embeddings on local CUDA | `benchmarks/run_beir_dense.py --dataset scifact --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | nDCG@10 0.7200, Recall@10 0.8452, MRR@10 0.6845; 14.873 seconds |
 | BEIR SciFact encoder comparison | Full public test split, BGE-base and BGE-large normalized embeddings on local CUDA | `benchmarks/run_beir_dense.py --dataset scifact --model BAAI/bge-base-en-v1.5 --device cuda --batch-size 64` and `BAAI/bge-large-en-v1.5` | BGE-base nDCG@10 0.7376 / Recall@10 0.8659 / MRR@10 0.7004; BGE-large 0.7346 / 0.8592 / 0.7013; neither reaches the target |
+| BEIR SciFact hybrid retrieval | Full public test split, fixed BM25 plus BGE-base reciprocal-rank fusion | `benchmarks/run_beir_hybrid.py --dataset scifact --model BAAI/bge-base-en-v1.5 --device cuda --batch-size 64 --candidate-k 100` | nDCG@10 0.7214, Recall@10 0.8361, MRR@10 0.6914; below dense-only BGE-base, so hybrid is not promoted |
 | BEIR NFCorpus retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset nfcorpus` | nDCG@10 0.3037, Recall@10 0.1423, MRR@10 0.5137 |
 | BEIR NFCorpus dense retrieval | Full public test split, BGE-small normalized embeddings on local CUDA | `benchmarks/run_beir_dense.py --dataset nfcorpus --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | nDCG@10 0.3393, Recall@10 0.1583, MRR@10 0.5299; 64.003 seconds |
 | BEIR ArguAna BM25 retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset arguana --output_path artifacts/benchmarks/beir-arguana-bm25.json` | nDCG@10 0.3132, Recall@10 0.6636, MRR@10 0.2030; 1,406/1,406 queries, 8,674 corpus documents, 178.241 seconds |
@@ -54,6 +55,8 @@ Regression checks complement the public benchmark results below. Each reported s
 | BEIR FiQA dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset fiqa --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.3848, Recall@10 0.4396, MRR@10 0.4650 |
 | BEIR TREC-COVID dense retrieval on CUDA | Full public test split, BGE-small normalized embeddings on local CUDA | `benchmarks/run_beir_dense.py --dataset trec-covid --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | nDCG@10 0.6438, Recall@10 0.0183, MRR@10 0.8779; 221.038 seconds |
 | BEIR TREC-COVID retrieval | Full public test split, deterministic BM25 and BGE-small dense retrieval | `benchmarks/run_beir_bm25.py --dataset trec-covid` and `benchmarks/run_beir_dense.py --dataset trec-covid --model BAAI/bge-small-en-v1.5 --device cpu` | BM25 nDCG@10 0.5537, Recall@10 0.0157, MRR@10 0.7906; dense nDCG@10 0.6438, Recall@10 0.0184, MRR@10 0.8779 |
+| MTRAG human retrieval | Official IBM retrieval tasks, rewrite variant, four collections, 777 scored queries | `benchmarks/run_mtrag_retrieval.py --variant rewrite --retriever dense --model BAAI/bge-base-en-v1.5 --device cuda --batch-size 64 --candidate-k 100` | BGE-base dense nDCG@10 `0.3542`, Recall@10 `0.4470`; BM25 rewrite nDCG@10 `0.2403`, Recall@10 `0.3168`; complete public retrieval qrels |
+| CRAG Task 1/2 generation | Official public CRAG validation smoke, 10 of 1,371 examples, NVIDIA `openai/gpt-oss-20b` | `benchmarks/run_crag.py --split 0 --limit 10 --judge-model openai/gpt-oss-20b` | Judge score `-0.2000` after 10 examples; partial diagnostic only, full validation and public evaluation remain open |
 | MTEB STSBenchmark v2 | Official public test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STSBenchmark.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | Spearman main score 0.857289 |
 | MTEB STS22 v2 | Official public multilingual test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | 18 subsets, unweighted descriptive macro-average 0.469262; language spread 0.181685-0.740204 |
 | MTEB STS22 v2 on CUDA | Official public multilingual test task, BGE-small sentence embeddings on local CUDA | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | 18 subsets, unweighted descriptive macro-average 0.469258; 17.278 seconds; language spread 0.181685-0.740204 |
@@ -789,6 +792,65 @@ The 2026-08-31 SCIDOCS CUDA rerun used the same complete public split and qrels 
 The 2026-08-31 FiQA CUDA rerun used the same complete public split and qrels with BGE-small, batch size 64, normalized embeddings, cosine similarity, and `top_k=10`. It wrote `artifacts/benchmarks/beir-fiqa-bge-small-cuda.json` with nDCG@10 `0.3848`, Recall@10 `0.4396`, MRR@10 `0.4650`, and elapsed time `57.480` seconds. The metrics match the CPU receipt while providing an independently verified local-GPU timing point.
 
 The 2026-08-31 TREC-COVID CUDA rerun used the same complete public split and qrels with BGE-small, batch size 64, normalized embeddings, cosine similarity, and `top_k=10`. It wrote `artifacts/benchmarks/beir-trec-covid-bge-small-cuda.json` with nDCG@10 `0.6438`, Recall@10 `0.0183`, MRR@10 `0.8779`, and elapsed time `221.038` seconds. The result is consistent with the CPU receipt within floating-point and execution variation while providing an independently verified local-GPU timing point.
+
+The 2026-09-04 hybrid experiment combined the same SciFact BM25 scores with BGE-base dense scores using fixed reciprocal-rank fusion. It returned nDCG@10 `0.721434`, Recall@10 `0.836056`, and MRR@10 `0.691434`, below the BGE-base dense-only result of `0.737626` / `0.865889` / `0.700366`. The hybrid adapter is retained for reproducibility, but this configuration is not promoted as the default retriever.
+
+## MTRAG human retrieval
+
+`run_mtrag_retrieval.py` evaluates the official [IBM MTRAG benchmark](https://github.com/IBM/mt-rag-benchmark) retrieval layout. It reads the versioned passage-level corpora, human rewrite queries, and public development qrels for the ClapNQ, IBM Cloud, FiQA, and Government collections. It reports the evaluator-compatible nDCG and Recall metrics at ranks 1, 3, 5, and 10 and can emit prediction JSONL for the official evaluator.
+
+The complete 2026-09-04 rewrite run evaluated 777 scored queries across all four collections with `BAAI/bge-base-en-v1.5`, normalized cosine retrieval on local CUDA, `candidate_k=100`, and `top_k=10`:
+
+| Retriever | nDCG@10 | Recall@10 | Queries | Scope |
+| --- | ---: | ---: | ---: | --- |
+| BM25, rewrite | `0.240306` | `0.316811` | 777 | Complete public retrieval qrels |
+| BM25, last turn | `0.201893` | `0.263341` | 777 | Complete public retrieval qrels |
+| BGE-base dense, rewrite | `0.354194` | `0.446961` | 777 | Complete public retrieval qrels |
+
+The dense run is the strongest measured MTRAG retrieval configuration in this repository. The fixed BM25 plus dense reciprocal-rank-fusion experiment was also tested on the ClapNQ collection and scored nDCG@10 `0.418262` and Recall@10 `0.527667`, below the matched dense-only result of `0.459707` and `0.571646`; it is therefore not promoted without further evidence.
+
+The full receipt is `artifacts/benchmarks/mtrag/bge-base-rewrite-all.json`, and the official-compatible predictions are in `artifacts/benchmarks/mtrag/bge-base-rewrite-all-predictions.jsonl`. Both files are local benchmark artifacts and remain ignored by Git.
+
+Example command:
+
+```powershell
+$env:USE_TF = '0'
+$env:TRANSFORMERS_NO_TF = '1'
+$env:HF_HUB_DISABLE_XET = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_mtrag_retrieval.py `
+  --dataset-root C:\path\to\mt-rag-benchmark `
+  --variant rewrite `
+  --retriever dense `
+  --model BAAI/bge-base-en-v1.5 `
+  --device cuda `
+  --batch-size 64 `
+  --candidate-k 100 `
+  --collections clapnq cloud fiqa govt `
+  --predictions-path artifacts\benchmarks\mtrag\predictions.jsonl `
+  --output-path artifacts\benchmarks\mtrag\receipt.json
+```
+
+## CRAG Task 1/2 generation
+
+`run_crag.py` is an OpenAI-compatible runner for the official [CRAG benchmark](https://github.com/facebookresearch/CRAG) Task 1 and Task 2 development file. The generator receives the question and retrieved page evidence only; the gold answer is retained for scoring after generation. The optional judge follows the public CRAG scoring convention: correct answers score `1`, missing answers score `0`, and incorrect answers score `-1`.
+
+The official file contains 1,371 validation examples and 1,335 public examples. The first bounded validation smoke on 2026-09-04 evaluated 10 examples with NVIDIA `openai/gpt-oss-20b`, bounded provider timeouts, and the optional judge. It produced zero generation failures, one correct answer, six missing answers, three incorrect answers, and a conservative judge score of `-0.2000`. This is useful integration evidence but not a final CRAG score; full validation and public evaluation remain required before model selection.
+
+Example command using the NVIDIA API key from the Windows User environment:
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_crag.py `
+  --data-path C:\path\to\crag_task_1_and_2_dev_v4.jsonl.bz2 `
+  --split 0 `
+  --model openai/gpt-oss-20b `
+  --base-url https://integrate.api.nvidia.com/v1 `
+  --api-key-env NVIDIA_API_KEY `
+  --judge-model openai/gpt-oss-20b `
+  --workers 4 `
+  --output-path artifacts\benchmarks\crag\validation-smoke.json
+```
+
+The smoke receipt is local and ignored by Git. It must not be used as a leaderboard claim or as evidence that the full CRAG target has been met.
 
 ## Public benchmarks to integrate
 

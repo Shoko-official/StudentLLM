@@ -774,6 +774,66 @@ The observed FiQA run evaluated 57,638 documents and 648 public test queries wit
 
 The observed TREC-COVID dense run evaluated 171,332 documents and 50 public test queries with the same model and settings. It returned nDCG@10 `0.6438`, Recall@10 `0.0184`, and MRR@10 `0.8779`, compared with the BM25 baseline of `0.5537`, `0.0157`, and `0.7906`. The CPU run completed in 3,002.23 seconds.
 
+## BEIR hybrid retrieval
+
+`run_beir_hybrid.py` combines deterministic BM25 and normalized dense retrieval with fixed reciprocal-rank fusion. It exists to test whether lexical and semantic retrieval are complementary on a public split; it is not assumed to improve the dense baseline.
+
+```powershell
+$env:USE_TF = '0'
+$env:TRANSFORMERS_NO_TF = '1'
+$env:HF_HUB_DISABLE_XET = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_hybrid.py `
+  --dataset scifact `
+  --model BAAI/bge-base-en-v1.5 `
+  --device cuda `
+  --batch-size 64 `
+  --candidate-k 100 `
+  --output-path artifacts\benchmarks\beir\scifact-bge-base-hybrid.json
+```
+
+The complete SciFact test split returned nDCG@10 `0.721434`, Recall@10 `0.836056`, and MRR@10 `0.691434`. The matched BGE-base dense run was higher at `0.737626`, `0.865889`, and `0.700366`, so the tested hybrid configuration is not the selected default.
+
+## MTRAG human retrieval
+
+`run_mtrag_retrieval.py` evaluates the official [IBM MTRAG benchmark](https://github.com/IBM/mt-rag-benchmark) retrieval tasks across the public passage-level corpora. It supports the human `lastturn`, `rewrite`, and `questions` variants and `bm25`, `dense`, and fixed `hybrid` retrievers. The output metrics are compatible with the official evaluator and the optional prediction JSONL can be passed to it directly.
+
+```powershell
+$env:USE_TF = '0'
+$env:TRANSFORMERS_NO_TF = '1'
+$env:HF_HUB_DISABLE_XET = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_mtrag_retrieval.py `
+  --dataset-root C:\path\to\mt-rag-benchmark `
+  --variant rewrite `
+  --retriever dense `
+  --model BAAI/bge-base-en-v1.5 `
+  --device cuda `
+  --batch-size 64 `
+  --candidate-k 100 `
+  --collections clapnq cloud fiqa govt `
+  --predictions-path artifacts\benchmarks\mtrag\predictions.jsonl `
+  --output-path artifacts\benchmarks\mtrag\receipt.json
+```
+
+The complete measured rewrite run covered 777 public qrels-scored queries across all four collections. BGE-base dense scored nDCG@10 `0.354194` and Recall@10 `0.446961`; BM25 rewrite scored `0.240306` and `0.316811`. Full evidence is recorded in `docs/benchmarks.md`.
+
+## CRAG Task 1/2 generation
+
+`run_crag.py` evaluates the official [Facebook Research CRAG](https://github.com/facebookresearch/CRAG) Task 1 and Task 2 development file through any OpenAI-compatible endpoint. The gold answer is used only after generation by the optional public-style judge. The runner supports bounded requests, concurrent workers, split selection, and JSON receipts that retain every response and failure.
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_crag.py `
+  --data-path C:\path\to\crag_task_1_and_2_dev_v4.jsonl.bz2 `
+  --split 0 `
+  --model openai/gpt-oss-20b `
+  --base-url https://integrate.api.nvidia.com/v1 `
+  --api-key-env NVIDIA_API_KEY `
+  --judge-model openai/gpt-oss-20b `
+  --workers 4 `
+  --output-path artifacts\benchmarks\crag\validation.json
+```
+
+The first bounded validation smoke covered 10 of 1,371 examples and scored `-0.2000` under the public-style judge. It is integration evidence only; the full validation and public campaigns remain open.
+
 ## MTEB embedding task
 
 `run_mteb.py` wraps the official MTEB Python API and writes a compact receipt while MTEB keeps its native task output in its cache. It is intended for one explicit public task at a time so the model, split, device, and batch size remain visible:
