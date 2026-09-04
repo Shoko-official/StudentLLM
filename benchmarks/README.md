@@ -857,9 +857,9 @@ The complete measured rewrite run covered 777 public qrels-scored queries across
   --output-path artifacts\benchmarks\crag\validation.json
 ```
 
-The first bounded validation smoke covered 10 of 1,371 examples and scored `-0.2000` under the public-style judge. It is integration evidence only; the full validation and public campaigns remain open.
+The first bounded validation smoke covered 10 of 1,371 examples and scored `-0.2000` under the public-style judge. The runner now follows the official judge rules more closely by checking accepted answer variants independently, handling exact matches before judge calls, and retrying transient provider failures.
 
-The same ten-example slice was also run with a 4,000-character page budget and 512 maximum output tokens. It scored `-0.4000`, below the 1,000-character and 256-token smoke profile, so the larger context configuration is not selected. The NVIDIA catalog-listed `meta/llama-3.3-70b-instruct` and `nvidia/llama-3.1-nemotron-70b-instruct` profiles returned HTTP 404 for direct calls with the configured account and are not counted as benchmark results.
+The same ten-example slice was also run with a 4,000-character page budget and 512 maximum output tokens. It scored `-0.4000`, below the 1,000-character and 256-token smoke profile, so the larger context configuration is not selected. A 20-example comparison of `nvidia/nemotron-3-super-120b-a12b` scored `-0.2000` with two generation failures and visible reasoning truncation, so `openai/gpt-oss-20b` remains the selected profile. A separate 50-example public sample with the corrected protocol scored `0.1200` (17 correct, 22 missing, 11 incorrect; zero generation failures). The full validation and public campaigns remain open.
 
 ## MTEB embedding task
 
