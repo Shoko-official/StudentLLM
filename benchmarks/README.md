@@ -359,6 +359,31 @@ $env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'U
 
 The observed 100-table public run scored raw TEDS `-0.220134` and structure-only TEDS `0.724814` with `meta/llama-3.2-11b-vision-instruct` in `829.855` seconds. All 100 provider responses were scored. This is a partial validation evaluation; the structure-only score does not replace content-sensitive TEDS, and the target remains unmet.
 
+The complete public validation run used the same model and protocol with bounded batches and atomic checkpoints:
+
+```powershell
+$env:HF_HUB_DISABLE_XET = '1'
+$env:USE_TF = '0'
+$env:PYTHONIOENCODING = 'utf-8'
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+python benchmarks\run_pubtabnet_teds.py `
+  --dataset apoidea/pubtabnet-html `
+  --split validation `
+  --limit 9115 `
+  --expected-samples 9115 `
+  --model meta/llama-3.2-11b-vision-instruct `
+  --base-url https://integrate.api.nvidia.com/v1 `
+  --api-key-env NVIDIA_API_KEY `
+  --concurrency 8 `
+  --timeout-seconds 180 `
+  --max-retries 2 `
+  --checkpoint-path artifacts\benchmarks\pubtabnet\nvidia-llama-11b-validation-full.checkpoint.json `
+  --checkpoint-every 100 `
+  --output artifacts\benchmarks\pubtabnet\nvidia-llama-11b-validation-full.json
+```
+
+The observed complete public split contains 9,115 tables, with 9,114 successful responses and one retained provider failure. Content-sensitive TEDS was `-0.196956`, structure-only TEDS was `0.712401`, and elapsed time was `32695.114` seconds. The final receipt is local and ignored by Git at `artifacts/benchmarks/pubtabnet/nvidia-llama-11b-validation-full.json`; its SHA-256 is `7776F95F20890B1165F7A9F17949FB252820945489EE5E8DBD224B4604244202`. This is complete public-split coverage, but the content-fidelity target remains unmet.
+
 ## DocVQA ANLS vision evaluation
 
 `run_docvqa_anls.py` evaluates an OpenAI-compatible vision model against the
