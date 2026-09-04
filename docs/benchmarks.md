@@ -35,7 +35,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | DocVQA ANLS vision evaluation, complete validation split | Complete public DocVQA `validation` split, 5,349 images through NVIDIA `meta/llama-3.2-11b-vision-instruct` | `benchmarks/run_docvqa_anls.py --split validation --limit 5349 --concurrency 4` | Official ANLS `0.8298` on 5,295/5,349 successful responses; 54 provider failures retained and scored as zero; complete public split, target unmet |
 | DocVQA ANLS vision comparison | Same public validation subset through NVIDIA `meta/llama-3.2-90b-vision-instruct` | `benchmarks/run_docvqa_anls.py --split validation --limit 100 --concurrency 4 --model meta/llama-3.2-90b-vision-instruct` | Official ANLS `0.8203` on 99/100 successful responses; slower and lower than the measured 11B baseline |
 | OmniDocBench text OCR diagnostic | 100 public pages from the English image/annotation derivative, RapidOCR | `benchmarks/run_omnidocbench_ocr.py --limit 100` | Full-page edit similarity `0.3891`; oracle-span text-recognition similarity `0.6508`; 783.930 seconds; partial diagnostic, not the overall official score |
-| PubTabNet table reconstruction | 100 public validation tables through NVIDIA `meta/llama-3.2-11b-vision-instruct` | `benchmarks/run_pubtabnet_teds.py --split validation --limit 100 --concurrency 4` | Raw TEDS `-0.2201`; structure-only TEDS `0.7248`; 100/100 scored in 829.855 seconds; partial provider evaluation and target unmet |
+| PubTabNet table reconstruction | Complete public `validation` split, 9,115 tables through NVIDIA `meta/llama-3.2-11b-vision-instruct` | `benchmarks/run_pubtabnet_teds.py --split validation --limit 9115 --expected-samples 9115 --concurrency 8` | Official content-sensitive TEDS `-0.1970`; structure-only TEDS `0.7124`; 9,114/9,115 scored, one provider failure retained as zero; 32,695.114 seconds; complete split, content-fidelity target unmet |
 | RAG unanswerable guard | Provider call suppression with no retrieved passage | App integration test | PASS; unsupported questions return a refusal without a provider request |
 | NVIDIA generation | Live API, runtime credential from the Windows User environment | `npm run providers:smoke` | PASS observed on 2026-08-30 with `openai/gpt-oss-20b`, 1,374 ms |
 | LM Studio generation | Live local server, existing process | `npm run providers:smoke` | PASS observed on 2026-08-30 with `qwen/qwen3-4b`, 20,199 ms; the existing model process was not restarted |
@@ -812,19 +812,13 @@ The 2026-08-31 TREC-COVID CUDA rerun used the same complete public split and qre
 | Mathematical reasoning | [MATH-500](https://huggingface.co/datasets/HuggingFaceH4/MATH-500) | exact match, math_verify |
 | Competition mathematics | [AIME 2024 and AIME 2025](https://huggingface.co/datasets/math-ai/aime25) | exact match by year |
 
+## DocVQA
+
 The DocVQA OCR adapter reports normalized reference-answer visibility in OCR text. This is a real public-set extractability diagnostic, not the official DocVQA ANLS result, because no question-answering model is included in that baseline.
 
 Observed run on 2026-08-27: RapidOCR exposed at least one normalized reference answer in 86 of 100 public validation images. The sample included form, free-text, layout, table/list, image/photo, figure/diagram, handwritten, and other question types. The local receipt is `artifacts/benchmarks/docvqa/rapidocr-validation-100.json`; it is ignored by Git and is not a full validation-set score.
 
 The vision adapter runs an OpenAI-compatible multimodal endpoint and computes the official DocVQA ANLS formula from the model prediction and reference answers. Observed run on 2026-09-01: NVIDIA `meta/llama-3.2-11b-vision-instruct` scored ANLS `0.8591` on 100 public validation examples, with 100 successful responses and no provider failures. The local receipt is `artifacts/benchmarks/docvqa/nvidia-llama-vision-validation-100.json`; it is ignored by Git and remains a partial subset.
-
-The OmniDocBench text runner uses `rwood-97/english_OmniDocBench_with_eval`, a public derivative that packages document images with OmniDocBench-style text annotations. It compares RapidOCR's full-page output against the annotated text spans using normalized character edit similarity. The oracle-span score assigns OCR detections whose centers fall inside the annotated span polygons, isolating text recognition from layout detection. This is a real public OCR diagnostic, but it is not the overall official OmniDocBench result and does not cover layout, table, formula, or document-level metrics.
-
-Observed run on 2026-09-01: 100 public pages returned full-page edit similarity `0.389089` and oracle-span text-recognition similarity `0.650826` in `783.930` seconds. The local receipt is `artifacts/benchmarks/omnidocbench/rapidocr-english-100.json`; it is ignored by Git and remains a partial diagnostic. The official OmniDocBench evaluation remains outstanding.
-
-The PubTabNet runner uses the public `apoidea/pubtabnet-html` validation derivative, sends each table image to an OpenAI-compatible vision endpoint, extracts the first returned `<table>` element, and evaluates it with the public APTED TEDS formulation. It reports content-sensitive TEDS and structure-only TEDS separately. Install the optional scorer dependency with `python -m pip install apted lxml` before running it.
-
-Observed run on 2026-09-01: NVIDIA `meta/llama-3.2-11b-vision-instruct` scored raw TEDS `-0.220134` and structure-only TEDS `0.724814` on 100/100 public validation tables in `829.855` seconds. The local receipt is `artifacts/benchmarks/pubtabnet/nvidia-llama-11b-validation-100.json`; it is ignored by Git and remains a partial provider evaluation. The structure score is not a substitute for content-sensitive table fidelity, and the PubTabNet target remains unmet.
 
 A larger run with the same model and protocol scored ANLS `0.8297` on 500 public validation examples, with 498 successful responses and two retained provider failures, in `388.186` seconds. This larger result is the selected partial baseline because it reduces the uncertainty of the 100-image estimate. The local receipt is `artifacts/benchmarks/docvqa/nvidia-llama-11b-vision-validation-500.json`; it is ignored by Git.
 
@@ -833,6 +827,20 @@ The largest measured subset with the same model and protocol scored ANLS `0.8321
 A matched comparison with NVIDIA `meta/llama-3.2-90b-vision-instruct` scored ANLS `0.8203` on the same 100 examples, with 99 successful responses and one retained provider failure. It took `1722.917` seconds, compared with `126.495` seconds for the 11B run, so the 90B result is recorded as a negative comparison and is not the selected baseline. The local receipt is `artifacts/benchmarks/docvqa/nvidia-llama-90b-vision-validation-100.json`; it is ignored by Git.
 
 The complete public validation split contains 5,349 images. A full run with the same model and concurrency scored ANLS `0.829761` on 5,295 successful responses, with 54 provider failures retained and included as zero-scored rows. It took `3258.636` seconds on the NVIDIA endpoint. The full receipt is `artifacts/benchmarks/docvqa/nvidia-llama-11b-vision-validation-full.json`; its SHA-256 is `8B547D326CCE456C56059ABE5363C169DF975015299C3E88BAFE857A5A69611A`. This closes full validation-set coverage while the target remains unmet.
+
+## OmniDocBench OCR diagnostic
+
+The OmniDocBench text runner uses `rwood-97/english_OmniDocBench_with_eval`, a public derivative that packages document images with OmniDocBench-style text annotations. It compares RapidOCR's full-page output against the annotated text spans using normalized character edit similarity. The oracle-span score assigns OCR detections whose centers fall inside the annotated span polygons, isolating text recognition from layout detection. This is a real public OCR diagnostic, but it is not the overall official OmniDocBench result and does not cover layout, table, formula, or document-level metrics.
+
+Observed run on 2026-09-01: 100 public pages returned full-page edit similarity `0.389089` and oracle-span text-recognition similarity `0.650826` in `783.930` seconds. The local receipt is `artifacts/benchmarks/omnidocbench/rapidocr-english-100.json`; it is ignored by Git and remains a partial diagnostic. The official OmniDocBench evaluation remains outstanding.
+
+## PubTabNet TEDS table reconstruction
+
+The PubTabNet runner uses the public `apoidea/pubtabnet-html` validation derivative, sends each table image to an OpenAI-compatible vision endpoint, extracts the first returned `<table>` element, and evaluates it with the public APTED TEDS formulation. It reports content-sensitive TEDS and structure-only TEDS separately. Install the optional scorer dependency with `python -m pip install apted lxml` before running it.
+
+The earlier 100-table public run scored raw TEDS `-0.220134` and structure-only TEDS `0.724814` in `829.855` seconds. It remains a partial comparison; structure-only TEDS is not a substitute for content-sensitive table fidelity.
+
+Observed run on 2026-09-04: NVIDIA `meta/llama-3.2-11b-vision-instruct` evaluated the complete public validation split of 9,115 tables. It scored content-sensitive TEDS `-0.196956` and structure-only TEDS `0.712401` across 9,114 successful responses; one provider failure was retained and scored as zero. The run took `32695.114` seconds. The local receipt is `artifacts/benchmarks/pubtabnet/nvidia-llama-11b-validation-full.json`; its SHA-256 is `7776F95F20890B1165F7A9F17949FB252820945489EE5E8DBD224B4604244202`. This closes full public-split coverage while the content-fidelity target remains unmet.
 
 ## LectureBench
 
