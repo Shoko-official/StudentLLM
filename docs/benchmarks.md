@@ -839,11 +839,15 @@ $env:HF_HUB_DISABLE_XET = '1'
 
 The official file contains 1,371 validation examples and 1,335 public examples. The first bounded validation smoke on 2026-09-04 evaluated 10 examples with NVIDIA `openai/gpt-oss-20b`, bounded provider timeouts, and the optional judge. It produced zero generation failures, one correct answer, six missing answers, three incorrect answers, and a conservative judge score of `-0.2000`. This is useful integration evidence but not a final CRAG score; full validation and public evaluation remain required before model selection.
 
+The same ten-example validation slice was used for a controlled context comparison. Increasing the per-page evidence budget from 1,000 to 4,000 characters, increasing the generation budget from 256 to 512 tokens, and reducing concurrency from four to two produced zero generation failures but a lower judge score of `-0.4000` (one correct, four missing, five incorrect). The smaller context profile remains the selected smoke baseline. This comparison is too small for a quality claim and is retained only as configuration evidence.
+
+The NVIDIA model catalog returned 81 identifiers for the configured account. Direct generation calls for `meta/llama-3.3-70b-instruct` and `nvidia/llama-3.1-nemotron-70b-instruct` returned HTTP 404 `Function not found`; those profiles are unavailable on this key and are not scored or used for model selection. `openai/gpt-oss-20b` remains the only CRAG generation profile verified on this endpoint.
+
 Example command using the NVIDIA API key from the Windows User environment:
 
 ```powershell
 .\.venv-bench-sys\Scripts\python.exe benchmarks\run_crag.py `
-  --data-path C:\path\to\crag_task_1_and_2_dev_v4.jsonl.bz2 `
+  --dataset-path C:\path\to\crag_task_1_and_2_dev_v4.jsonl.bz2 `
   --split 0 `
   --model openai/gpt-oss-20b `
   --base-url https://integrate.api.nvidia.com/v1 `
