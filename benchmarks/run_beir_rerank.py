@@ -27,6 +27,8 @@ def run(
     rerank_batch_size: int,
     candidate_k: int,
     output_path: Path | None,
+    query_prefix: str = "",
+    max_seq_length: int | None = None,
 ) -> dict[str, object]:
     import numpy as np
     from datasets import load_dataset
@@ -46,6 +48,8 @@ def run(
             relevance[str(row["query-id"])][str(row["corpus-id"])] = int(row["score"])
 
     encoder = SentenceTransformer(encoder_name, device=device)
+    if max_seq_length is not None:
+        encoder.max_seq_length = max_seq_length
     document_embeddings = encoder.encode(
         document_text,
         batch_size=batch_size,
@@ -55,7 +59,7 @@ def run(
     )
     query_ids = [query_id for query_id in relevance if query_id in query_text]
     query_embeddings = encoder.encode(
-        [query_text[query_id] for query_id in query_ids],
+        [query_prefix + query_text[query_id] for query_id in query_ids],
         batch_size=batch_size,
         convert_to_numpy=True,
         normalize_embeddings=True,
@@ -69,7 +73,7 @@ def run(
     for query_id, query_embedding in zip(query_ids, query_embeddings):
         similarities = document_embeddings @ query_embedding
         candidate_indices = np.argpartition(-similarities, candidate_count - 1)[:candidate_count]
-        pairs = [[query_text[query_id], document_text[index]] for index in candidate_indices]
+        pairs = [[query_prefix + query_text[query_id], document_text[index]] for index in candidate_indices]
         rerank_scores = [float(score) for score in reranker.predict(pairs, batch_size=rerank_batch_size, show_progress_bar=False)]
         ranked_order = stable_rank([document_ids[index] for index in candidate_indices], rerank_scores, top_k)
         retrieved = [document_ids[candidate_indices[index]] for index in ranked_order]
@@ -93,6 +97,8 @@ def run(
             "candidate_k": candidate_count,
             "top_k": top_k,
             "normalize_embeddings": True,
+            "query_prefix": query_prefix,
+            "max_seq_length": encoder.max_seq_length,
         },
         "corpus_documents": len(document_ids),
         "query_rows": len(query_text),
@@ -116,10 +122,12 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--rerank-batch-size", type=int, default=32)
     parser.add_argument("--candidate-k", type=int, default=100)
+    parser.add_argument("--query-prefix", default="", help="Optional model-specific instruction prepended to every query.")
+    parser.add_argument("--max-seq-length", type=int, help="Optional encoder token limit for long-context embedding models.")
     parser.add_argument("--output-path", type=Path)
     args = parser.parse_args()
-    if args.batch_size <= 0 or args.rerank_batch_size <= 0 or args.candidate_k <= 0:
-        raise SystemExit("batch sizes and candidate-k must be positive")
+    if args.batch_size <= 0 or args.rerank_batch_size <= 0 or args.candidate_k <= 0 or (args.max_seq_length is not None and args.max_seq_length <= 0):
+        raise SystemExit("batch sizes, candidate-k, and max-seq-length must be positive")
     print(json.dumps(run(
         args.dataset,
         args.model,
@@ -129,6 +137,8 @@ def main() -> None:
         args.rerank_batch_size,
         args.candidate_k,
         args.output_path,
+        args.query_prefix,
+        args.max_seq_length,
     ), indent=2))
 
 
