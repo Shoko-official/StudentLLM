@@ -793,6 +793,27 @@ $env:HF_HUB_DISABLE_XET = '1'
 
 The complete SciFact test split returned nDCG@10 `0.721434`, Recall@10 `0.836056`, and MRR@10 `0.691434`. The matched BGE-base dense run was higher at `0.737626`, `0.865889`, and `0.700366`, so the tested hybrid configuration is not the selected default.
 
+## BEIR CrossEncoder reranking
+
+`run_beir_rerank.py` performs dense BGE retrieval into a fixed top-100 candidate set and reranks those candidates with a public SentenceTransformers CrossEncoder. This is an evaluation adapter, not an automatic runtime switch.
+
+```powershell
+$env:USE_TF = '0'
+$env:TRANSFORMERS_NO_TF = '1'
+$env:HF_HUB_DISABLE_XET = '1'
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_beir_rerank.py `
+  --dataset scifact `
+  --model BAAI/bge-base-en-v1.5 `
+  --reranker-model BAAI/bge-reranker-base `
+  --device cuda `
+  --batch-size 64 `
+  --rerank-batch-size 32 `
+  --candidate-k 100 `
+  --output-path artifacts\benchmarks\beir\scifact-reranked.json
+```
+
+On the complete SciFact test split, `BAAI/bge-reranker-base` scored nDCG@10 `0.713320`, Recall@10 `0.840111`, and MRR@10 `0.679505`; `cross-encoder/ms-marco-MiniLM-L-6-v2` scored `0.694969`, `0.822222`, and `0.663997`. Both are below dense-only BGE-base (`0.737626`, `0.865889`, `0.700366`) and are therefore not promoted.
+
 ## MTRAG human retrieval
 
 `run_mtrag_retrieval.py` evaluates the official [IBM MTRAG benchmark](https://github.com/IBM/mt-rag-benchmark) retrieval tasks across the public passage-level corpora. It supports the human `lastturn`, `rewrite`, and `questions` variants and `bm25`, `dense`, and fixed `hybrid` retrievers. The output metrics are compatible with the official evaluator and the optional prediction JSONL can be passed to it directly.
