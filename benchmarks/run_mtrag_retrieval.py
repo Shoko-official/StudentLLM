@@ -100,7 +100,7 @@ def evaluate_results(results: dict[str, dict[str, float]], qrels: dict[str, dict
     return metrics
 
 
-def run(root: Path, variant: str, retriever: str, model_name: str, device: str, batch_size: int, top_k: int, candidate_k: int, collections: list[str], predictions_path: Path | None = None) -> dict[str, object]:
+def run(root: Path, variant: str, retriever: str, model_name: str, device: str, batch_size: int, top_k: int, candidate_k: int, collections: list[str], predictions_path: Path | None = None, query_prefix: str = "", max_seq_length: int | None = None) -> dict[str, object]:
     if retriever not in {"bm25", "dense", "hybrid"}:
         raise ValueError(f"Unknown retriever: {retriever}")
     started_at = time.perf_counter()
@@ -117,6 +117,8 @@ def run(root: Path, variant: str, retriever: str, model_name: str, device: str, 
         from sentence_transformers import SentenceTransformer
 
         encoder = SentenceTransformer(model_name, device=device)
+        if max_seq_length is not None:
+            encoder.max_seq_length = max_seq_length
 
     for collection in collections:
         documents, queries, qrels = load_collection(root, collection, variant)
@@ -137,7 +139,7 @@ def run(root: Path, variant: str, retriever: str, model_name: str, device: str, 
         if encoder is not None:
             query_ids = list(query_rows)
             query_embeddings = encoder.encode(
-                [query_rows[query_id] for query_id in query_ids],
+                [query_prefix + query_rows[query_id] for query_id in query_ids],
                 batch_size=batch_size,
                 convert_to_numpy=True,
                 normalize_embeddings=True,
@@ -179,7 +181,7 @@ def run(root: Path, variant: str, retriever: str, model_name: str, device: str, 
         "variant": variant,
         "retriever": retriever,
         "model": model_name if retriever in {"dense", "hybrid"} else None,
-        "parameters": {"device": device, "batch_size": batch_size, "top_k": top_k, "candidate_k": candidate_k, "rrf_k": 60},
+        "parameters": {"device": device, "batch_size": batch_size, "top_k": top_k, "candidate_k": candidate_k, "rrf_k": 60, "query_prefix": query_prefix, "max_seq_length": encoder.max_seq_length if encoder is not None else None},
         "collections": collection_receipts,
         "queries": len(all_results),
         "metrics": metrics,
@@ -203,10 +205,12 @@ def main() -> None:
     parser.add_argument("--collections", nargs="+", choices=sorted(COLLECTIONS), default=sorted(COLLECTIONS))
     parser.add_argument("--output-path", type=Path)
     parser.add_argument("--predictions-path", type=Path)
+    parser.add_argument("--query-prefix", default="", help="Optional model-specific instruction prepended to every query.")
+    parser.add_argument("--max-seq-length", type=int, help="Optional encoder token limit for long-context embedding models.")
     args = parser.parse_args()
-    if args.batch_size <= 0 or args.top_k <= 0 or args.candidate_k < args.top_k:
-        raise SystemExit("Require batch-size > 0, top-k > 0, and candidate-k >= top-k")
-    result = run(args.dataset_root, args.variant, args.retriever, args.model, args.device, args.batch_size, args.top_k, args.candidate_k, args.collections, args.predictions_path)
+    if args.batch_size <= 0 or args.top_k <= 0 or args.candidate_k < args.top_k or (args.max_seq_length is not None and args.max_seq_length <= 0):
+        raise SystemExit("Require positive batch-size, top-k, and max-seq-length, with candidate-k >= top-k")
+    result = run(args.dataset_root, args.variant, args.retriever, args.model, args.device, args.batch_size, args.top_k, args.candidate_k, args.collections, args.predictions_path, args.query_prefix, args.max_seq_length)
     if args.output_path:
         args.output_path.parent.mkdir(parents=True, exist_ok=True)
         args.output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

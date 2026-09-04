@@ -42,7 +42,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | LM Studio browser chat | Playwright UI path through the built-in Vite same-origin proxy to the existing process | Manual live UI check | PASS observed on 2026-08-28; HTTP 200, 886-character model answer, 0 page or console errors |
 | BEIR SciFact retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset scifact` | nDCG@10 0.6593, Recall@10 0.7809, MRR@10 0.6252 |
 | BEIR SciFact dense retrieval | Full public test split, BGE-small normalized embeddings on local CUDA | `benchmarks/run_beir_dense.py --dataset scifact --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | nDCG@10 0.7200, Recall@10 0.8452, MRR@10 0.6845; 14.873 seconds |
-| BEIR SciFact encoder comparison | Full public test split, BGE-base and BGE-large normalized embeddings on local CUDA | `benchmarks/run_beir_dense.py --dataset scifact --model BAAI/bge-base-en-v1.5 --device cuda --batch-size 64` and `BAAI/bge-large-en-v1.5` | BGE-base nDCG@10 0.7376 / Recall@10 0.8659 / MRR@10 0.7004; BGE-large 0.7346 / 0.8592 / 0.7013; neither reaches the target |
+| BEIR SciFact encoder comparison | Full public test split, BGE-base, BGE-large, and BGE-M3 normalized embeddings on local CUDA | `benchmarks/run_beir_dense.py --dataset scifact --model <model> --device cuda --batch-size 64` | BGE-base with the official query instruction is strongest: nDCG@10 0.7404 / Recall@10 0.8742 / MRR@10 0.7034; BGE-M3 at 512 tokens scored 0.6415 / 0.7751 / 0.6080; BGE-large without instruction scored 0.7346 / 0.8592 / 0.7013 |
 | BEIR SciFact hybrid retrieval | Full public test split, fixed BM25 plus BGE-base reciprocal-rank fusion | `benchmarks/run_beir_hybrid.py --dataset scifact --model BAAI/bge-base-en-v1.5 --device cuda --batch-size 64 --candidate-k 100` | nDCG@10 0.7214, Recall@10 0.8361, MRR@10 0.6914; below dense-only BGE-base, so hybrid is not promoted |
 | BEIR SciFact reranking comparison | Full public test split, BGE-base top-100 retrieval plus public CrossEncoder reranking | `benchmarks/run_beir_rerank.py --dataset scifact --model BAAI/bge-base-en-v1.5 --reranker-model <model> --device cuda --candidate-k 100` | `cross-encoder/ms-marco-MiniLM-L-6-v2`: nDCG@10 0.6950 / Recall@10 0.8222; `BAAI/bge-reranker-base`: 0.7133 / 0.8401; both below dense-only BGE-base and not promoted |
 | BEIR NFCorpus retrieval | Full public test split, deterministic BM25 | `benchmarks/run_beir_bm25.py --dataset nfcorpus` | nDCG@10 0.3037, Recall@10 0.1423, MRR@10 0.5137 |
@@ -56,7 +56,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | BEIR FiQA dense retrieval | Full public test split, BGE-small normalized embeddings | `benchmarks/run_beir_dense.py --dataset fiqa --model BAAI/bge-small-en-v1.5 --device cpu` | nDCG@10 0.3848, Recall@10 0.4396, MRR@10 0.4650 |
 | BEIR TREC-COVID dense retrieval on CUDA | Full public test split, BGE-small normalized embeddings on local CUDA | `benchmarks/run_beir_dense.py --dataset trec-covid --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | nDCG@10 0.6438, Recall@10 0.0183, MRR@10 0.8779; 221.038 seconds |
 | BEIR TREC-COVID retrieval | Full public test split, deterministic BM25 and BGE-small dense retrieval | `benchmarks/run_beir_bm25.py --dataset trec-covid` and `benchmarks/run_beir_dense.py --dataset trec-covid --model BAAI/bge-small-en-v1.5 --device cpu` | BM25 nDCG@10 0.5537, Recall@10 0.0157, MRR@10 0.7906; dense nDCG@10 0.6438, Recall@10 0.0184, MRR@10 0.8779 |
-| MTRAG human retrieval | Official IBM retrieval tasks, rewrite variant, four collections, 777 scored queries | `benchmarks/run_mtrag_retrieval.py --variant rewrite --retriever dense --model BAAI/bge-base-en-v1.5 --device cuda --batch-size 64 --candidate-k 100` | BGE-base dense nDCG@10 `0.3542`, Recall@10 `0.4470`; BM25 rewrite nDCG@10 `0.2403`, Recall@10 `0.3168`; complete public retrieval qrels |
+| MTRAG human retrieval | Official IBM retrieval tasks, rewrite and last-turn variants, four collections, 777 scored queries each | `benchmarks/run_mtrag_retrieval.py --variant <variant> --retriever dense --model BAAI/bge-base-en-v1.5 --device cuda --batch-size 64 --candidate-k 100 --max-seq-length 512 --query-prefix "Represent this sentence for searching relevant passages: "` | BGE-base with the official query instruction: rewrite nDCG@10 `0.3905` / Recall@10 `0.4815`; last-turn `0.3341` / `0.4082`; both complete public retrieval-qrels runs |
 | CRAG Task 1/2 generation | Official public CRAG validation smoke, 10 of 1,371 examples, NVIDIA `openai/gpt-oss-20b` | `benchmarks/run_crag.py --split 0 --limit 10 --judge-model openai/gpt-oss-20b` | Judge score `-0.2000` after 10 examples; partial diagnostic only, full validation and public evaluation remain open |
 | MTEB STSBenchmark v2 | Official public test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STSBenchmark.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | Spearman main score 0.857289 |
 | MTEB STS22 v2 | Official public multilingual test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | 18 subsets, unweighted descriptive macro-average 0.469262; language spread 0.181685-0.740204 |
@@ -786,7 +786,9 @@ The 2026-08-31 NFCorpus CUDA rerun used the same complete public split and qrels
 
 The 2026-08-31 SciFact CUDA rerun used the same complete public split and qrels with BGE-small, batch size 64, normalized embeddings, cosine similarity, and `top_k=10`. It wrote `artifacts/benchmarks/beir-scifact-bge-small-cuda.json` with nDCG@10 `0.7200`, Recall@10 `0.8452`, MRR@10 `0.6845`, and elapsed time `14.873` seconds. The deterministic result matches the earlier CPU receipt while providing an independently verified local-GPU timing point.
 
-The 2026-09-01 encoder comparison kept the same complete SciFact split, qrels, normalized cosine scoring, and `top_k=10`. BGE-base (`BAAI/bge-base-en-v1.5`) scored nDCG@10 `0.737626`, Recall@10 `0.865889`, and MRR@10 `0.700366` in `34.958` seconds. BGE-large (`BAAI/bge-large-en-v1.5`) scored nDCG@10 `0.734632`, Recall@10 `0.859222`, and MRR@10 `0.701276` in `83.342` seconds. BGE-base is the strongest measured encoder in this comparison, but it remains below the retrieval target and is not promoted as the app's runtime model by this benchmark alone.
+The 2026-09-01 encoder comparison kept the same complete SciFact split, qrels, normalized cosine scoring, and `top_k=10`. BGE-base (`BAAI/bge-base-en-v1.5`) scored nDCG@10 `0.737626`, Recall@10 `0.865889`, and MRR@10 `0.700366` in `34.958` seconds. BGE-large (`BAAI/bge-large-en-v1.5`) scored nDCG@10 `0.734632`, Recall@10 `0.859222`, and MRR@10 `0.701276` in `83.342` seconds. The 2026-09-05 BGE-base rerun added the model-card retrieval instruction `Represent this sentence for searching relevant passages: ` to queries and scored nDCG@10 `0.740391`, Recall@10 `0.874222`, and MRR@10 `0.703386` in `22.213` seconds. The same run used the explicit `max_seq_length=512` receipt field. This is the strongest measured SciFact profile, but it remains a benchmark candidate rather than an automatic app-model switch.
+
+The same 2026-09-05 comparison evaluated `BAAI/bge-m3` on the complete SciFact split with `max_seq_length=512`; it scored nDCG@10 `0.641498`, Recall@10 `0.775111`, and MRR@10 `0.607993` in `69.028` seconds. The model's native 8,194-token window was not used for the full corpus because it made the initial unbounded run impractical; the bounded receipt is the reproducible result.
 
 The 2026-08-31 SCIDOCS CUDA rerun used the same complete public split and qrels with BGE-small, batch size 64, normalized embeddings, cosine similarity, and `top_k=10`. It wrote `artifacts/benchmarks/beir-scidocs-bge-small-cuda.json` with nDCG@10 `0.1973`, Recall@10 `0.2091`, MRR@10 `0.3344`, and elapsed time `38.282` seconds. The metrics match the CPU receipt while providing an independently verified local-GPU timing point.
 
@@ -810,9 +812,18 @@ The complete 2026-09-04 rewrite run evaluated 777 scored queries across all four
 | BM25, last turn | `0.201893` | `0.263341` | 777 | Complete public retrieval qrels |
 | BGE-base dense, rewrite | `0.354194` | `0.446961` | 777 | Complete public retrieval qrels |
 
+The 2026-09-05 instruction-following rerun used the BGE model-card query prefix `Represent this sentence for searching relevant passages: ` and `max_seq_length=512` on every encoder input:
+
+| Retriever | nDCG@10 | Recall@10 | Queries | Scope |
+| --- | ---: | ---: | ---: | --- |
+| BGE-base dense, rewrite, instructed | `0.390503` | `0.481504` | 777 | Complete public retrieval qrels |
+| BGE-base dense, last turn, instructed | `0.334113` | `0.408164` | 777 | Complete public retrieval qrels |
+
+The instructed rewrite run is the strongest MTRAG retrieval profile measured here. It improves over the matched no-instruction rewrite run by `0.036309` nDCG@10 and `0.034542` Recall@10. Rewrite remains stronger than last turn, so it is the selected query variant for retrieval experiments. The receipts are `artifacts/benchmarks/mtrag/bge-base-instruct-rewrite-all.json` and `artifacts/benchmarks/mtrag/bge-base-instruct-lastturn-all.json`; their official-compatible prediction files are stored alongside them.
+
 The dense run is the strongest measured MTRAG retrieval configuration in this repository. The fixed BM25 plus dense reciprocal-rank-fusion experiment was also tested on the ClapNQ collection and scored nDCG@10 `0.418262` and Recall@10 `0.527667`, below the matched dense-only result of `0.459707` and `0.571646`; it is therefore not promoted without further evidence.
 
-The full receipt is `artifacts/benchmarks/mtrag/bge-base-rewrite-all.json`, and the official-compatible predictions are in `artifacts/benchmarks/mtrag/bge-base-rewrite-all-predictions.jsonl`. Both files are local benchmark artifacts and remain ignored by Git.
+The original no-instruction receipt is `artifacts/benchmarks/mtrag/bge-base-rewrite-all.json`. The selected instructed receipt is `artifacts/benchmarks/mtrag/bge-base-instruct-rewrite-all.json`, with the matching last-turn comparison in `artifacts/benchmarks/mtrag/bge-base-instruct-lastturn-all.json`. Each receipt has an official-compatible prediction file stored alongside it; all files are local benchmark artifacts and remain ignored by Git.
 
 Example command:
 
@@ -828,6 +839,8 @@ $env:HF_HUB_DISABLE_XET = '1'
   --device cuda `
   --batch-size 64 `
   --candidate-k 100 `
+  --max-seq-length 512 `
+  --query-prefix "Represent this sentence for searching relevant passages: " `
   --collections clapnq cloud fiqa govt `
   --predictions-path artifacts\benchmarks\mtrag\predictions.jsonl `
   --output-path artifacts\benchmarks\mtrag\receipt.json
