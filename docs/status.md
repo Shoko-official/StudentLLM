@@ -1,6 +1,6 @@
 # Project status
 
-Last validated: 2026-09-02
+Last validated: 2026-09-04
 
 StudentLLM is an active local-first learning workspace. The application workflow is covered by automated tests and live integration checks. Public benchmark coverage is growing, but the evidence below is intentionally separated by scope.
 
@@ -46,7 +46,7 @@ StudentLLM is an active local-first learning workspace. The application workflow
 | MBPP+ | Complete public 378-problem EvalPlus evaluation through NVIDIA NIM | MBPP base `pass@1` `85.71%` (324/378); MBPP+ `pass@1` `68.52%` (259/378); three non-compilable sanitised samples retained as failures |
 | DocVQA | Public OCR diagnostic, matched vision comparisons, and complete 5,349-image validation split | OCR answer visibility 86.00%; NVIDIA 11B official ANLS `0.8298` on 5,295/5,349 complete validation responses, with 54 retained provider failures; earlier 1,000-image ANLS `0.8321` and matched NVIDIA 90B ANLS `0.8203` remain recorded; full split complete, target unmet |
 | OmniDocBench text OCR | 100 public pages from the English image/annotation derivative | RapidOCR full-page edit similarity `0.3891`; oracle-span text-recognition similarity `0.6508`; 783.930 seconds; partial text diagnostic, with the official full benchmark still open |
-| PubTabNet table reconstruction | 100 public validation tables through NVIDIA `meta/llama-3.2-11b-vision-instruct` | Raw TEDS `-0.2201`; structure-only TEDS `0.7248`; 100/100 scored in 829.855 seconds; content-fidelity target unmet |
+| PubTabNet table reconstruction | Complete public `validation` split, 9,115 tables through NVIDIA `meta/llama-3.2-11b-vision-instruct` | Content-sensitive TEDS `-0.1970`; structure-only TEDS `0.7124`; 9,114/9,115 scored, one provider failure retained as zero; complete public split, content-fidelity target unmet |
 
 Detailed commands, model versions, hardware, validity labels, and local receipt paths are maintained in [`benchmarks.md`](./benchmarks.md). Raw receipts stay local and ignored by Git.
 
@@ -59,7 +59,7 @@ The following targets are not yet complete product evidence:
 - AMI DER and SA-WER; both public AMI ASR splits now have complete WER/CER/RTF measurements;
 - MUSAN noise robustness by SNR;
 - DIHARD and VoxConverse diarization metrics;
-- Official OmniDocBench parsing metrics and the full public PubTabNet TEDS campaign; DocVQA full validation coverage is complete at ANLS `0.8298`, while current partial diagnostics record OmniDocBench-derived OCR similarity `0.3891`/`0.6508` and PubTabNet raw/structure-only TEDS `-0.2201`/`0.7248`, with the required content-fidelity thresholds unmet;
+- Official OmniDocBench parsing metrics; DocVQA full validation coverage is complete at ANLS `0.8298`, and the complete public PubTabNet validation split is now measured at content-sensitive/structure-only TEDS `-0.1970`/`0.7124`, with the required content-fidelity thresholds unmet;
 - full MTEB, BEIR, BFCL, and Ragas evaluation suites; the official NVIDIA MMLU-Pro fourteen-category campaign is now complete at 12,032/12,032 items and `27.2939%` weighted exact match, while a separate LM Studio run also covers all 798 `psychology` items; the BFCL memory-case wrapper now resolves prerequisite closures, but the NVIDIA `memory_kv` diagnostic remains unscored because generation produced repeated empty responses and exceeded the practical runtime budget;
 - versioned LectureBench held-out classroom and document scenarios;
 - additional code-generation protocols;
