@@ -21,6 +21,20 @@ TAG_PATTERN = re.compile(r"<[^>]+>")
 SPACE_PATTERN = re.compile(r"\s+")
 
 
+CRAG_JUDGE_INSTRUCTIONS = """Assume you are a human expert in grading predictions given by a model. You are given a question and a model prediction. Judge if the prediction matches the ground truth answer by following these steps:
+1. Take it as granted that the Ground Truth is always correct.
+2. If the Prediction indicates it is not sure about the answer, score 0.
+3. If the Prediction exactly matches the Ground Truth, score 1.
+4. If the Ground Truth is a number, score 1 only when the Prediction gives an almost exact number.
+5. If the Prediction is self-contradictory, score 0.
+6. If the Prediction is not answering the question, score 0.
+7. If the Prediction is a concise and correct summary of the Ground Truth, score 1.
+8. If the Ground Truth contains a set of items, the Prediction must contain exactly the same items for score 1.
+9. Otherwise, score 0.
+
+Return a JSON object with an explanation field and a score field whose value is 1 or 0."""
+
+
 def normalize(value: str) -> str:
     value = html.unescape(value).lower()
     value = re.sub(r"[^\w\s]", " ", value, flags=re.UNICODE)
@@ -57,7 +71,7 @@ def build_messages(item: dict[str, object], page_chars: int) -> list[dict[str, s
     return [
         {
             "role": "system",
-            "content": "Answer the user's question using only the supplied search evidence. Be concise, precise, and do not invent facts. If the evidence is insufficient, say I don't know.",
+            "content": "Answer the user's question using only the supplied search evidence. Return only a concise final answer, with every requested item when the question asks for a list. Do not show reasoning, do not invent facts, and say I don't know when the evidence is insufficient.",
         },
         {"role": "user", "content": f"Question: {item['query']}\n\nSearch evidence:\n{context}\n/no_think"},
     ]
@@ -66,7 +80,7 @@ def build_messages(item: dict[str, object], page_chars: int) -> list[dict[str, s
 def make_client(base_url: str, api_key: str):
     from openai import OpenAI
 
-    return OpenAI(base_url=base_url, api_key=api_key, max_retries=0, timeout=90.0)
+    return OpenAI(base_url=base_url, api_key=api_key, max_retries=2, timeout=90.0)
 
 
 def generate_one(item: dict[str, object], model: str, base_url: str, api_key: str, page_chars: int, max_tokens: int) -> str:
@@ -93,19 +107,32 @@ def parse_judge(value: str) -> int:
 def judge_one(question: str, gold_answers: list[str], prediction: str, model: str, base_url: str, api_key: str, max_tokens: int) -> int:
     if not prediction or "i don't know" in prediction.lower() or "i do not know" in prediction.lower():
         return 0
+    prediction = " ".join(prediction.split()[:75]).strip()
+    normalized_prediction = normalize(prediction)
+    if any(normalized_prediction == normalize(answer) for answer in gold_answers):
+        return 1
     client = make_client(base_url, api_key)
-    ground_truth = "\n".join(gold_answers)
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": "Judge whether the prediction correctly answers the question. Treat the ground truth as correct. Return JSON only: {\"score\": 1 or 0, \"explanation\": \"short reason\"}. Score 1 for an exact answer, a correct concise summary, or an equivalent rounded numeric answer; score 0 for omissions, contradictions, unsupported additions, or incorrect answers."},
-            {"role": "user", "content": f"Question: {question}\nGround truth: {ground_truth}\nPrediction: {prediction}\n/no_think"},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.0,
-        max_tokens=max_tokens,
-    )
-    return parse_judge(str(response.choices[0].message.content or ""))
+    parsed_scores: list[int] = []
+    for ground_truth in gold_answers:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": CRAG_JUDGE_INSTRUCTIONS},
+                    {"role": "user", "content": f"Question: {question}\nGround truth: {ground_truth}\nPrediction: {prediction}\n/no_think"},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.0,
+                max_tokens=max_tokens,
+            )
+        except Exception:
+            parsed_scores.append(-1)
+            continue
+        score = parse_judge(str(response.choices[0].message.content or ""))
+        parsed_scores.append(score)
+        if score == 1:
+            return 1
+    return -1 if parsed_scores and all(score < 0 for score in parsed_scores) else 0
 
 
 def run(path: Path, split: int, limit: int | None, model: str, base_url: str, api_key: str, workers: int, page_chars: int, max_tokens: int, judge_model: str | None, output_path: Path | None) -> dict[str, object]:
