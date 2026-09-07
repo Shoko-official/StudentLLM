@@ -12,9 +12,9 @@ Regression checks complement the public benchmark results below. Each reported s
 | --- | --- | --- | --- |
 | TypeScript | TypeScript project check | `npm run check` | PASS |
 | Benchmark adapters | Python bytecode compilation | `npm run benchmarks:check` | PASS |
-| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 90 tests |
+| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 93 tests |
 | Production artifact | Vite | `npm run build` | PASS |
-| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 32 tests |
+| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 33 tests |
 | Live web smoke | Python Playwright against the running Vite interface | `$env:PYTHONUTF8='1'; python scripts/live_web_smoke.py` | PASS observed on 2026-09-01; page load, new-course dialog, Escape dismissal, and zero page or console errors |
 | FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
 | FLEURS French ASR, CUDA profile | Full public test split, faster-whisper large-v3-turbo on local CUDA | `benchmarks/run_asr_fleurs.py --model large-v3-turbo --config fr_fr --split test --device cuda --compute-type float16` | WER 0.0656, CER 0.0213, RTF 0.0235; 676 examples; selected quality profile |
@@ -37,6 +37,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | OmniDocBench text OCR diagnostic | 100 public pages from the English image/annotation derivative, RapidOCR | `benchmarks/run_omnidocbench_ocr.py --limit 100` | Full-page edit similarity `0.3891`; oracle-span text-recognition similarity `0.6508`; 783.930 seconds; partial diagnostic, not the overall official score |
 | PubTabNet table reconstruction | Complete public `validation` split, 9,115 tables through NVIDIA `meta/llama-3.2-11b-vision-instruct` | `benchmarks/run_pubtabnet_teds.py --split validation --limit 9115 --expected-samples 9115 --concurrency 8` | Official content-sensitive TEDS `-0.1970`; structure-only TEDS `0.7124`; 9,114/9,115 scored, one provider failure retained as zero; 32,695.114 seconds; complete split, content-fidelity target unmet |
 | RAG unanswerable guard | Provider call suppression with no retrieved passage | App integration test | PASS; unsupported questions return a refusal without a provider request |
+| Rich text and formula rendering | Local LaTeX-aware formatter, accessible labels, and provider-state UI | Vitest plus live Python Playwright smoke | PASS; inline and block formulas render in transcript, chat, and artifact surfaces; the live smoke observed exactly one provider state and zero page or console errors |
 | NVIDIA generation | Live API, runtime credential from the Windows User environment | `npm run providers:smoke` | PASS observed on 2026-08-30 with `openai/gpt-oss-20b`, 1,374 ms |
 | LM Studio generation | Live local server, existing process | `npm run providers:smoke` | PASS observed on 2026-08-30 with `qwen/qwen3-4b`, 20,199 ms; the existing model process was not restarted |
 | LM Studio browser chat | Playwright UI path through the built-in Vite same-origin proxy to the existing process | Manual live UI check | PASS observed on 2026-08-28; HTTP 200, 886-character model answer, 0 page or console errors |
