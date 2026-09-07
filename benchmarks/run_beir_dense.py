@@ -11,7 +11,7 @@ from pathlib import Path
 from run_beir_bm25 import DATASETS, ndcg_at_k, recall_at_k, reciprocal_rank_at_k
 
 
-def run(dataset_name: str, model_name: str, device: str, batch_size: int, output_path: Path | None, query_prefix: str = "", max_seq_length: int | None = None) -> dict[str, object]:
+def run(dataset_name: str, model_name: str, device: str, batch_size: int, output_path: Path | None, query_prefix: str = "", document_prefix: str = "", max_seq_length: int | None = None) -> dict[str, object]:
     import numpy as np
     from datasets import load_dataset
     from sentence_transformers import SentenceTransformer
@@ -22,7 +22,7 @@ def run(dataset_name: str, model_name: str, device: str, batch_size: int, output
     queries = load_dataset(dataset_info["dataset"], "queries", split="queries")
     qrels = load_dataset(dataset_info["qrels"], "default", split="test")
     document_ids = [str(row["_id"]) for row in corpus]
-    document_text = [f"{row['title']} {row['text']}" for row in corpus]
+    document_text = [document_prefix + f"{row['title']} {row['text']}" for row in corpus]
     query_text = {str(row["_id"]): row["text"] for row in queries}
     relevance: dict[str, dict[str, int]] = defaultdict(dict)
     for row in qrels:
@@ -67,7 +67,7 @@ def run(dataset_name: str, model_name: str, device: str, batch_size: int, output
         "split": "test",
         "retriever": "SentenceTransformers dense cosine similarity",
         "model": model_name,
-        "parameters": {"device": device, "batch_size": batch_size, "normalize_embeddings": True, "top_k": 10, "query_prefix": query_prefix, "max_seq_length": encoder.max_seq_length},
+        "parameters": {"device": device, "batch_size": batch_size, "normalize_embeddings": True, "top_k": 10, "query_prefix": query_prefix, "document_prefix": document_prefix, "max_seq_length": encoder.max_seq_length},
         "corpus_documents": len(document_ids),
         "query_rows": len(query_text),
         "qrel_rows": len(qrels),
@@ -88,12 +88,13 @@ def main() -> None:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--query-prefix", default="", help="Optional model-specific instruction prepended to every query.")
+    parser.add_argument("--document-prefix", default="", help="Optional model-specific prefix prepended to every document.")
     parser.add_argument("--max-seq-length", type=int, help="Optional encoder token limit; useful for long-context embedding models.")
     parser.add_argument("--output-path", type=Path)
     args = parser.parse_args()
     if args.batch_size <= 0 or (args.max_seq_length is not None and args.max_seq_length <= 0):
         raise SystemExit("batch-size and max-seq-length must be positive")
-    print(json.dumps(run(args.dataset, args.model, args.device, args.batch_size, args.output_path, args.query_prefix, args.max_seq_length), indent=2))
+    print(json.dumps(run(args.dataset, args.model, args.device, args.batch_size, args.output_path, args.query_prefix, args.document_prefix, args.max_seq_length), indent=2))
 
 
 if __name__ == "__main__":
