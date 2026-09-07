@@ -751,7 +751,7 @@ The observed TREC-COVID run evaluated 171,332 documents, 50 public test queries,
 
 ## BEIR dense baseline
 
-`run_beir_dense.py` evaluates the same complete public BEIR splits with normalized SentenceTransformers embeddings and cosine similarity. The default model is `BAAI/bge-small-en-v1.5`, which is practical on CPU. Use `--query-prefix` for model-specific retrieval instructions and `--max-seq-length` to bound long-context encoders such as `BAAI/bge-m3`.
+`run_beir_dense.py` evaluates the same complete public BEIR splits with normalized SentenceTransformers embeddings and cosine similarity. The default model is `BAAI/bge-small-en-v1.5`, which is practical on CPU. Use `--query-prefix` and `--document-prefix` for model-specific retrieval instructions such as E5's `query: ` and `passage: ` prefixes, and use `--max-seq-length` to bound long-context encoders such as `BAAI/bge-m3`.
 
 ```powershell
 .\.venv-bench-sys\Scripts\python.exe -m pip install sentence-transformers datasets
@@ -762,7 +762,7 @@ The observed TREC-COVID run evaluated 171,332 documents, 50 public test queries,
   --output-path artifacts\benchmarks\beir\scifact-bge-small.json
 ```
 
-Dense and BM25 results share the same public corpus, queries, test qrels, metrics, and `top_k=10`, which makes the comparison reproducible. Observed full-split results are recorded in `docs/benchmarks.md`. A dense retrieval result is still a retrieval metric; it does not establish answer faithfulness or citation correctness.
+Dense and BM25 results share the same public corpus, queries, test qrels, metrics, and `top_k=10`, which makes the comparison reproducible. For example, an E5-large run uses `--query-prefix "query: " --document-prefix "passage: "`. Observed full-split results are recorded in `docs/benchmarks.md`. A dense retrieval result is still a retrieval metric; it does not establish answer faithfulness or citation correctness.
 
 The 2026-09-01 CUDA encoder comparison on the complete SciFact test split measured BGE-base at nDCG@10 `0.737626`, Recall@10 `0.865889`, and MRR@10 `0.700366` in `34.958` seconds. BGE-large measured nDCG@10 `0.734632`, Recall@10 `0.859222`, and MRR@10 `0.701276` in `83.342` seconds. BGE-base is the best of the measured small/base/large variants for nDCG and Recall, but all remain below the target; these are benchmark candidates, not an automatic app-model switch.
 
@@ -839,7 +839,7 @@ $env:HF_HUB_DISABLE_XET = '1'
   --output-path artifacts\benchmarks\mtrag\receipt.json
 ```
 
-The complete measured rewrite run covered 777 public qrels-scored queries across all four collections. BGE-base with the model-card query instruction scored nDCG@10 `0.390503` and Recall@10 `0.481504`; the instructed last-turn variant scored `0.334113` and `0.408164`. The no-instruction BGE-base rewrite comparison scored `0.354194` and `0.446961`; BM25 rewrite scored `0.240306` and `0.316811`. Full evidence is recorded in `docs/benchmarks.md`.
+The complete measured rewrite run covered 777 public qrels-scored queries across all four collections. BGE-base with the model-card query instruction scored nDCG@10 `0.390503` and Recall@10 `0.481504`; the instructed last-turn variant scored `0.334113` and `0.408164`. A complete instructed BGE-large rewrite comparison scored `0.364793` and `0.443833`, below BGE-base. The no-instruction BGE-base rewrite comparison scored `0.354194` and `0.446961`; BM25 rewrite scored `0.240306` and `0.316811`. Full evidence is recorded in `docs/benchmarks.md`.
 
 ## CRAG Task 1/2 generation
 
