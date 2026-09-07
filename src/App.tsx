@@ -265,6 +265,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [newCourseSubject, setNewCourseSubject] = useState('Machine Learning');
   const recorderRef = useRef<RecorderSession | null>(null);
   const liveTranscriptionInFlight = useRef(false);
+  const liveTranscriptFeedRef = useRef<HTMLDivElement | null>(null);
   const storageIssueRef = useRef<WorkspaceStorageError['operation'] | null>(null);
   const resourcePreviewRequest = useRef(0);
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
@@ -584,6 +585,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const visibleLiveTranscript = liveRecordingLessonId === activeLessonId
     ? liveTranscript
     : [];
+  const courseTranscript = isRecording ? visibleTranscript : [...visibleTranscript, ...visibleLiveTranscript];
+
+  useEffect(() => {
+    if (!isRecording || !liveTranscriptFeedRef.current) return;
+    liveTranscriptFeedRef.current.scrollTop = liveTranscriptFeedRef.current.scrollHeight;
+  }, [activeLessonId, isRecording, liveRecordingLessonId, liveTranscript]);
 
   const shareCourse = async () => {
     const shareText = `${activeLesson.title}\n${activeLesson.subject} / ${activeLesson.chapter}\n${activeLesson.teacher}`;
@@ -1335,8 +1342,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
               <section className="transcript-section">
                 <div className="section-toolbar"><div><span className="section-kicker">Live transcript {visibleLiveTranscript.length > 0 && <span className="review-badge">Live preview</span>}</span><h2>The course, source by source</h2></div><button className="text-action" onClick={() => setShowTranscriptPanel(true)}>View all <ArrowUpRight size={13} /></button></div>
+                {isRecording && <section className="live-transcript-panel" aria-label="Live course transcription">
+                  <div className="live-transcript-heading"><div><span className="section-kicker"><span className="recording-pulse" /> Live now</span><h3>{visibleLiveTranscript.length ? 'Notes arriving from your course' : 'Listening for the next passage'}</h3></div><span className="live-transcript-count" aria-live="polite">{visibleLiveTranscript.length} {visibleLiveTranscript.length === 1 ? 'segment' : 'segments'}</span></div>
+                  <div className="live-transcript-feed" ref={liveTranscriptFeedRef} aria-live="polite">{visibleLiveTranscript.length ? visibleLiveTranscript.map(renderTranscriptSegment) : <p className="live-transcript-empty" role="status">The first timestamped passage will appear here as the course continues.</p>}</div>
+                </section>}
                 <div className={`transcript-list ${compactTranscript ? 'compact' : ''}`}>
-                  {visibleTranscript.length || visibleLiveTranscript.length ? [...visibleTranscript, ...visibleLiveTranscript].map(renderTranscriptSegment) : <p className="empty-state">No transcript segments match the current display settings.</p>}
+                  {courseTranscript.length ? courseTranscript.map(renderTranscriptSegment) : <p className="empty-state">No transcript segments match the current display settings.</p>}
                 </div>
               </section>
 
