@@ -31,6 +31,10 @@ class MtragRetrievalTests(unittest.TestCase):
             self.assertEqual(queries[0]["_id"], "q-1")
             self.assertEqual(qrels, {"q-1": {"doc-1": 1}})
 
+            prefixed_documents, _, _ = load_collection(root, "clapnq", "rewrite", "passage: ")
+
+            self.assertEqual(prefixed_documents, [("doc-1", "passage: Title Body")])
+
 
 if __name__ == "__main__":
     unittest.main()

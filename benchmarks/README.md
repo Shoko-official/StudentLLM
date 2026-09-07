@@ -836,10 +836,11 @@ $env:HF_HUB_DISABLE_XET = '1'
   --predictions-path artifacts\benchmarks\mtrag\predictions.jsonl `
   --max-seq-length 512 `
   --query-prefix "Represent this sentence for searching relevant passages: " `
+  --document-prefix "passage: " `
   --output-path artifacts\benchmarks\mtrag\receipt.json
 ```
 
-The complete measured rewrite run covered 777 public qrels-scored queries across all four collections. BGE-base with the model-card query instruction scored nDCG@10 `0.390503` and Recall@10 `0.481504`; the instructed last-turn variant scored `0.334113` and `0.408164`. A complete instructed BGE-large rewrite comparison scored `0.364793` and `0.443833`, below BGE-base. The no-instruction BGE-base rewrite comparison scored `0.354194` and `0.446961`; BM25 rewrite scored `0.240306` and `0.316811`. Full evidence is recorded in `docs/benchmarks.md`.
+For E5-style encoders, pass `--query-prefix "query: " --document-prefix "passage: "`; the receipt records both prefixes. The complete measured rewrite run covered 777 public qrels-scored queries across all four collections. BGE-base with the model-card query instruction scored nDCG@10 `0.390503` and Recall@10 `0.481504`; the instructed last-turn variant scored `0.334113` and `0.408164`. A complete instructed BGE-large rewrite comparison scored `0.364793` and `0.443833`, below BGE-base. The no-instruction BGE-base rewrite comparison scored `0.354194` and `0.446961`; BM25 rewrite scored `0.240306` and `0.316811`. Full evidence is recorded in `docs/benchmarks.md`.
 
 ## CRAG Task 1/2 generation
 

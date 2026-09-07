@@ -47,7 +47,7 @@ def read_zipped_jsonl(path: Path) -> list[dict[str, object]]:
             return [json.loads(line) for line in handle if line.strip()]
 
 
-def load_collection(root: Path, collection: str, variant: str) -> tuple[list[tuple[str, str]], list[dict[str, object]], dict[str, dict[str, int]]]:
+def load_collection(root: Path, collection: str, variant: str, document_prefix: str = "") -> tuple[list[tuple[str, str]], list[dict[str, object]], dict[str, dict[str, int]]]:
     if collection not in COLLECTIONS:
         raise ValueError(f"Unknown collection: {collection}")
     if variant not in VARIANTS:
@@ -63,7 +63,7 @@ def load_collection(root: Path, collection: str, variant: str) -> tuple[list[tup
         for line in handle:
             query_id, document_id, score = line.rstrip("\n").split("\t")
             qrels[query_id][document_id] = int(score)
-    documents = [(str(row.get("_id") or row.get("id")), str(row.get("title", "")) + " " + str(row.get("text", ""))) for row in corpus]
+    documents = [(str(row.get("_id") or row.get("id")), document_prefix + str(row.get("title", "")) + " " + str(row.get("text", ""))) for row in corpus]
     return documents, queries, qrels
 
 
@@ -100,7 +100,7 @@ def evaluate_results(results: dict[str, dict[str, float]], qrels: dict[str, dict
     return metrics
 
 
-def run(root: Path, variant: str, retriever: str, model_name: str, device: str, batch_size: int, top_k: int, candidate_k: int, collections: list[str], predictions_path: Path | None = None, query_prefix: str = "", max_seq_length: int | None = None) -> dict[str, object]:
+def run(root: Path, variant: str, retriever: str, model_name: str, device: str, batch_size: int, top_k: int, candidate_k: int, collections: list[str], predictions_path: Path | None = None, query_prefix: str = "", max_seq_length: int | None = None, document_prefix: str = "") -> dict[str, object]:
     if retriever not in {"bm25", "dense", "hybrid"}:
         raise ValueError(f"Unknown retriever: {retriever}")
     started_at = time.perf_counter()
@@ -121,7 +121,7 @@ def run(root: Path, variant: str, retriever: str, model_name: str, device: str, 
             encoder.max_seq_length = max_seq_length
 
     for collection in collections:
-        documents, queries, qrels = load_collection(root, collection, variant)
+        documents, queries, qrels = load_collection(root, collection, variant, document_prefix)
         document_ids = [document_id for document_id, _ in documents]
         rankings_by_query: dict[str, list[tuple[str, float]]] = {}
         bm25 = BM25(documents) if retriever in {"bm25", "hybrid"} else None
@@ -181,7 +181,7 @@ def run(root: Path, variant: str, retriever: str, model_name: str, device: str, 
         "variant": variant,
         "retriever": retriever,
         "model": model_name if retriever in {"dense", "hybrid"} else None,
-        "parameters": {"device": device, "batch_size": batch_size, "top_k": top_k, "candidate_k": candidate_k, "rrf_k": 60, "query_prefix": query_prefix, "max_seq_length": encoder.max_seq_length if encoder is not None else None},
+        "parameters": {"device": device, "batch_size": batch_size, "top_k": top_k, "candidate_k": candidate_k, "rrf_k": 60, "query_prefix": query_prefix, "document_prefix": document_prefix, "max_seq_length": encoder.max_seq_length if encoder is not None else None},
         "collections": collection_receipts,
         "queries": len(all_results),
         "metrics": metrics,
@@ -206,11 +206,12 @@ def main() -> None:
     parser.add_argument("--output-path", type=Path)
     parser.add_argument("--predictions-path", type=Path)
     parser.add_argument("--query-prefix", default="", help="Optional model-specific instruction prepended to every query.")
+    parser.add_argument("--document-prefix", default="", help="Optional model-specific prefix prepended to every document.")
     parser.add_argument("--max-seq-length", type=int, help="Optional encoder token limit for long-context embedding models.")
     args = parser.parse_args()
     if args.batch_size <= 0 or args.top_k <= 0 or args.candidate_k < args.top_k or (args.max_seq_length is not None and args.max_seq_length <= 0):
         raise SystemExit("Require positive batch-size, top-k, and max-seq-length, with candidate-k >= top-k")
-    result = run(args.dataset_root, args.variant, args.retriever, args.model, args.device, args.batch_size, args.top_k, args.candidate_k, args.collections, args.predictions_path, args.query_prefix, args.max_seq_length)
+    result = run(args.dataset_root, args.variant, args.retriever, args.model, args.device, args.batch_size, args.top_k, args.candidate_k, args.collections, args.predictions_path, args.query_prefix, args.max_seq_length, args.document_prefix)
     if args.output_path:
         args.output_path.parent.mkdir(parents=True, exist_ok=True)
         args.output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
