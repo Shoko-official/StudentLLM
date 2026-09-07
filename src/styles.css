@@ -233,6 +233,13 @@ kbd { color: var(--faint); font-family: var(--mono); font-size: 9px; }
 .message-role { color: var(--faint); font-size: 9px; font-weight: 800; }
 .message-content p { margin: 6px 0 0; color: #bdc7cd; font-size: 12px; line-height: 1.65; }
 .chat-message.user .message-content p { padding: 10px 13px; color: var(--text); background: var(--surface-3); border-radius: 14px 4px 14px 14px; }
+.provider-status { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--faint); font-size: 10px; letter-spacing: .04em; }
+.provider-status.ready { color: var(--accent-strong); }
+.provider-status .status-dot { width: 6px; height: 6px; }
+.latex-inline, .latex-block { color: var(--accent-strong); font-family: 'Cambria Math', 'STIX Two Math', 'Times New Roman', serif; }
+.latex-inline { display: inline-block; padding: 0 4px; font-style: italic; white-space: nowrap; }
+.latex-block { display: block; margin: 12px 0; padding: 10px 12px; overflow-x: auto; color: var(--text); background: rgba(125, 216, 192, .06); border: 1px solid rgba(125, 216, 192, .16); border-radius: 8px; text-align: center; }
+.latex-source { letter-spacing: .02em; }
 .citation-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
 .citation-list button { display: flex; align-items: center; gap: 5px; padding: 6px 8px; color: var(--accent); background: rgba(142, 208, 193, .07); border-radius: 7px; font-size: 9px; }
 .chat-composer { display: flex; align-items: center; gap: 8px; padding: 9px 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 11px; }
