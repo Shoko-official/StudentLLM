@@ -427,19 +427,21 @@ describe('StudentLLM workspace', () => {
     };
     const transcribe = vi.fn(async () => ({
       model: 'faster-whisper-small',
-      segments: [{ id: 'live-asr-1', timestamp: '00:00:01', speaker: 'Speaker', text: 'Live lecture preview.', status: 'review' as const }],
+      segments: [{ id: 'live-asr-1', timestamp: '00:00:01', speaker: 'Speaker', text: 'Live lecture preview. $E = mc^2$', status: 'review' as const }],
     }));
 
     render(<App recorderSessionFactory={async () => session} speechEngine={{ transcribe }} />);
 
     await user.click(screen.getByRole('button', { name: 'Start recording' }));
     await waitFor(() => expect(screen.getAllByText('Live preview').length).toBeGreaterThan(0));
-    expect(screen.getByText('Live lecture preview.')).toBeInTheDocument();
+    expect(screen.getByText('Live lecture preview.', { exact: false })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Live course transcription' })).toHaveTextContent('Notes arriving from your course');
+    expect(screen.getByRole('img', { name: 'LaTeX formula: E = mc^2' })).toBeInTheDocument();
     expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
 
     await user.click(screen.getByRole('button', { name: 'View all' }));
     const transcriptDialog = screen.getByRole('dialog', { name: 'Full transcript 3' });
-    expect(within(transcriptDialog).getByText('Live lecture preview.')).toBeInTheDocument();
+    expect(within(transcriptDialog).getByText('Live lecture preview.', { exact: false })).toBeInTheDocument();
     expect(within(transcriptDialog).getAllByText('Live preview')).toHaveLength(2);
     await user.click(within(transcriptDialog).getByRole('button', { name: 'Close full transcript' }));
 
