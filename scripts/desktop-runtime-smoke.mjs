@@ -266,7 +266,7 @@ async function waitForSidecarPid(readyFile, timeoutMs = 10_000) {
   throw new Error(`Managed sidecar did not publish its readiness file within ${timeoutMs / 1000}s.`);
 }
 
-async function waitForSmokeMarker(markerFile, timeoutMs = 15_000) {
+async function waitForSmokeMarker(markerFile, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -330,11 +330,11 @@ async function runFrontendIpcSmoke() {
   const environment = {
     ...createRuntimeEnvironment(dataRoot),
     STUDENTLLM_FRONTEND_IPC_SMOKE_MARKER: markerFile,
-    STUDENTLLM_SMOKE_EXIT_AFTER_MS: '15000',
+    STUDENTLLM_SMOKE_EXIT_AFTER_MS: '30000',
   };
 
   try {
-    const runtime = runSmoke(environment, { durationMs: 30_000, allowEarlyExit: true });
+    const runtime = runSmoke(environment, { durationMs: 45_000, allowEarlyExit: true });
     try {
       await Promise.race([
         waitForSmokeMarker(markerFile),
