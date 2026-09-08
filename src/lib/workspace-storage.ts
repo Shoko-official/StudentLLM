@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { Artifact, ChatMessage, Lesson, LessonWorkspace, Resource, TranscriptSegment } from '../types';
+import { Artifact, ChatMessage, CourseNote, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from '../types';
 
 export const WORKSPACE_STORAGE_KEY = 'studentllm.workspace.v1';
 
@@ -89,6 +89,41 @@ function isArtifact(value: unknown): value is Artifact {
     && (value.citationTargets === undefined || (Array.isArray(value.citationTargets) && value.citationTargets.every((target) => typeof target === 'string')));
 }
 
+function isCourseNoteBlock(value: unknown): value is CourseNoteBlock {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.type !== 'string') return false;
+  if (value.type === 'heading') return (value.level === 1 || value.level === 2) && typeof value.text === 'string';
+  if (value.type === 'paragraph') return typeof value.text === 'string'
+    && (value.timestamp === undefined || typeof value.timestamp === 'string')
+    && (value.speaker === undefined || typeof value.speaker === 'string')
+    && (value.sourceId === undefined || typeof value.sourceId === 'string');
+  if (value.type === 'formula') return typeof value.latex === 'string'
+    && (value.caption === undefined || typeof value.caption === 'string')
+    && (value.sourceId === undefined || typeof value.sourceId === 'string');
+  if (value.type === 'code') return typeof value.language === 'string' && typeof value.code === 'string'
+    && (value.sourceId === undefined || typeof value.sourceId === 'string');
+  if (value.type === 'chart') return typeof value.label === 'string' && Array.isArray(value.values)
+    && value.values.every((item) => isRecord(item) && typeof item.label === 'string' && typeof item.value === 'number' && Number.isFinite(item.value));
+  if (value.type === 'schema') return Array.isArray(value.nodes) && value.nodes.every((node) => typeof node === 'string')
+    && Array.isArray(value.edges) && value.edges.every((edge) => isRecord(edge) && typeof edge.from === 'string' && typeof edge.to === 'string');
+  return false;
+}
+
+function isCourseNote(value: unknown): value is CourseNote {
+  if (!isRecord(value)) return false;
+  return typeof value.id === 'string'
+    && typeof value.title === 'string'
+    && typeof value.subject === 'string'
+    && typeof value.chapter === 'string'
+    && Array.isArray(value.folderPath) && value.folderPath.every((item) => typeof item === 'string')
+    && typeof value.fileName === 'string'
+    && typeof value.updatedAt === 'string'
+    && isRecord(value.detection)
+    && (value.detection.method === 'active course' || value.detection.method === 'transcript signals' || value.detection.method === 'LM Studio')
+    && typeof value.detection.confidence === 'number'
+    && typeof value.detection.basis === 'string'
+    && Array.isArray(value.blocks) && value.blocks.every(isCourseNoteBlock);
+}
+
 function isChatMessage(value: unknown): value is ChatMessage {
   if (!isRecord(value)) return false;
   return typeof value.id === 'string'
@@ -105,6 +140,7 @@ function parseLessonWorkspace(value: unknown): LessonWorkspace | undefined {
     transcript: Array.isArray(value.transcript) ? value.transcript.filter(isTranscriptSegment) : [],
     chat: Array.isArray(value.chat) ? value.chat.filter(isChatMessage) : [],
     artifacts: Array.isArray(value.artifacts) ? value.artifacts.filter(isArtifact) : [],
+    ...(isCourseNote(value.courseNote) ? { courseNote: value.courseNote } : {}),
   };
 }
 

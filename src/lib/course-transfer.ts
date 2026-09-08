@@ -1,5 +1,5 @@
 import type { AudioChunkRecord } from './recording-storage';
-import type { Artifact, ChatMessage, Lesson, LessonWorkspace, Resource, TranscriptSegment } from '../types';
+import type { Artifact, ChatMessage, CourseNote, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from '../types';
 
 const EXPORT_FORMAT = 'studentllm-course';
 const EXPORT_VERSION = 1;
@@ -153,12 +153,39 @@ function isArtifact(value: unknown): value is Artifact {
     && (value.citationTargets === undefined || (Array.isArray(value.citationTargets) && value.citationTargets.every(isString)));
 }
 
+function isCourseNoteBlock(value: unknown): value is CourseNoteBlock {
+  if (!isRecord(value) || !isString(value.id) || !isString(value.type)) return false;
+  if (value.type === 'heading') return (value.level === 1 || value.level === 2) && isString(value.text);
+  if (value.type === 'paragraph') return isString(value.text)
+    && (value.timestamp === undefined || isString(value.timestamp))
+    && (value.speaker === undefined || isString(value.speaker))
+    && (value.sourceId === undefined || isString(value.sourceId));
+  if (value.type === 'formula') return isString(value.latex) && (value.caption === undefined || isString(value.caption)) && (value.sourceId === undefined || isString(value.sourceId));
+  if (value.type === 'code') return isString(value.language) && isString(value.code) && (value.sourceId === undefined || isString(value.sourceId));
+  if (value.type === 'chart') return isString(value.label) && Array.isArray(value.values)
+    && value.values.every((item) => isRecord(item) && isString(item.label) && typeof item.value === 'number' && Number.isFinite(item.value));
+  if (value.type === 'schema') return Array.isArray(value.nodes) && value.nodes.every(isString)
+    && Array.isArray(value.edges) && value.edges.every((edge) => isRecord(edge) && isString(edge.from) && isString(edge.to));
+  return false;
+}
+
+function isCourseNote(value: unknown): value is CourseNote {
+  if (!isRecord(value)) return false;
+  return isString(value.id) && isString(value.title) && isString(value.subject) && isString(value.chapter)
+    && Array.isArray(value.folderPath) && value.folderPath.every(isString) && isString(value.fileName) && isString(value.updatedAt)
+    && isRecord(value.detection)
+    && ['active course', 'transcript signals', 'LM Studio'].includes(String(value.detection.method))
+    && typeof value.detection.confidence === 'number' && isString(value.detection.basis)
+    && Array.isArray(value.blocks) && value.blocks.every(isCourseNoteBlock);
+}
+
 function isWorkspace(value: unknown): value is LessonWorkspace {
   if (!isRecord(value)) return false;
   return Array.isArray(value.resources) && value.resources.every(isResource)
     && Array.isArray(value.transcript) && value.transcript.every(isTranscriptSegment)
     && Array.isArray(value.chat) && value.chat.every(isChatMessage)
-    && Array.isArray(value.artifacts) && value.artifacts.every(isArtifact);
+    && Array.isArray(value.artifacts) && value.artifacts.every(isArtifact)
+    && (value.courseNote === undefined || isCourseNote(value.courseNote));
 }
 
 function isExportAsset(value: unknown): value is CourseExportAsset {
@@ -214,6 +241,16 @@ export async function readCourseExport(input: Blob | string, idFactory: CourseId
         ...segment,
         ...(segment.sourceId ? { sourceId: resourceIds.get(segment.sourceId) ?? segment.sourceId } : {}),
       })),
+      ...(parsed.workspace.courseNote ? {
+        courseNote: {
+          ...parsed.workspace.courseNote,
+          blocks: parsed.workspace.courseNote.blocks.map((block) => (
+            'sourceId' in block && block.sourceId
+              ? { ...block, sourceId: resourceIds.get(block.sourceId) ?? block.sourceId }
+              : block
+          )),
+        },
+      } : {}),
     },
     assets,
   };

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Live course notes now turn the incremental transcript into a persisted, routed document with formulas, code, schemas, and compact data visualizations when appropriate; LM Studio can refine the detected subject, chapter, title, and Markdown filename.
 - A flat, minimal workspace visual system with compact artifact rows and no decorative gradients, shadows, or complex motion.
 - React and TypeScript learning workspace;
 - course navigation, transcript review, recording controls, chat, and Studio artifact actions;
