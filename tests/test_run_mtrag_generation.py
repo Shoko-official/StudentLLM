@@ -16,6 +16,22 @@ class MtragGenerationTests(unittest.TestCase):
         self.assertEqual(replace.call_count, 3)
         self.assertEqual(sleep.call_count, 2)
 
+    @patch("benchmarks.run_mtrag_generation.generate_one", return_value=("", 12.5))
+    def test_empty_provider_response_is_counted_as_generation_failure(self, _generate_one):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "tasks.jsonl"
+            output_path = root / "predictions.jsonl"
+            task = {"task_id": "task-1", "input": [{"speaker": "user", "text": "Question"}], "contexts": []}
+            input_path.write_text(json.dumps(task) + "\n", encoding="utf-8")
+
+            receipt = run(input_path, output_path, None, "test-model", "http://localhost/v1", "key", 1)
+
+            record = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(receipt["completed_predictions"], 0)
+            self.assertEqual(receipt["generation_failures"], 1)
+            self.assertEqual(record["generation_error"], "ValueError")
+
     def test_build_messages_preserves_conversation_and_bounds_context(self):
         task = {
             "task_id": "task-1",

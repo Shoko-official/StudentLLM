@@ -112,6 +112,8 @@ def generate_one(
         max_tokens=max_tokens,
     )
     content = str(response.choices[0].message.content or "").strip()
+    if not content:
+        raise ValueError("provider returned an empty prediction")
     return content, round((time.perf_counter() - started) * 1000, 3)
 
 
@@ -165,6 +167,13 @@ def _metadata(
     }
 
 
+def _has_prediction(record: dict[str, Any]) -> bool:
+    predictions = record.get("predictions")
+    if not isinstance(predictions, list) or not predictions or not isinstance(predictions[0], dict):
+        return False
+    return bool(str(predictions[0].get("text") or "").strip())
+
+
 def _load_checkpoint(path: Path, expected_metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
     if not path.exists():
         return {}
@@ -172,7 +181,11 @@ def _load_checkpoint(path: Path, expected_metadata: dict[str, Any]) -> dict[str,
     if checkpoint.get("metadata") != expected_metadata:
         raise ValueError("checkpoint metadata does not match the requested MTRAG run")
     records = checkpoint.get("records", [])
-    return {str(record["task_id"]): record for record in records if isinstance(record, dict) and record.get("task_id")}
+    return {
+        str(record["task_id"]): record
+        for record in records
+        if isinstance(record, dict) and record.get("task_id") and "generation_error" not in record and _has_prediction(record)
+    }
 
 
 def run(
@@ -194,7 +207,11 @@ def run(
     tasks = read_tasks(input_path, start, limit)
     metadata = _metadata(input_path, model, base_url, start, limit, max_tokens, max_context_chars)
     existing = _load_checkpoint(checkpoint_path, metadata) if checkpoint_path else {}
-    records: dict[str, dict[str, Any]] = {str(task["task_id"]): existing[str(task["task_id"])] for task in tasks if str(task["task_id"]) in existing and not existing[str(task["task_id"])].get("generation_error")}
+    records: dict[str, dict[str, Any]] = {
+        str(task["task_id"]): existing[str(task["task_id"])]
+        for task in tasks
+        if str(task["task_id"]) in existing
+    }
     pending = [task for task in tasks if str(task["task_id"]) not in records]
 
     def save_checkpoint() -> None:
@@ -213,6 +230,8 @@ def run(
             record = dict(task)
             try:
                 content, latency_ms = future.result()
+                if not content.strip():
+                    raise ValueError("provider returned an empty prediction")
                 record["predictions"] = [{"text": content}]
                 record["generation_latency_ms"] = latency_ms
             except Exception as exc:  # Preserve failed public tasks in the output.
