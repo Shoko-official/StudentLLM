@@ -1260,6 +1260,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   const renderCourseNoteBlock = (block: CourseNoteBlock) => {
     if (block.type === 'heading') {
+      if (block.id === 'note-title') return null;
       const Heading = block.level === 1 ? 'h2' : 'h3';
       return <Heading key={block.id}>{block.text}</Heading>;
     }
@@ -1401,7 +1402,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             <div className="course-view">
               <section className={`recording-card ${isRecording ? 'recording' : ''} ${isFinalizingRecording ? 'finalizing' : ''}`} aria-label="Course recording">
                 <div className="recording-topline">
-                  <div className="recording-label"><span className="recording-pulse" /> {isRecording ? 'Recording in progress' : isFinalizingRecording ? 'Saving recording' : 'Session ready'}</div>
+                  <div className="recording-label">{isRecording ? 'Recording in progress' : isFinalizingRecording ? 'Saving recording' : 'Session ready'}</div>
                   <span className="local-badge"><span className="status-dot" /> On this device</span>
                 </div>
                 <div className="recording-core">
@@ -1409,7 +1410,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                     <span className="muted-label">Session duration</span>
                     <strong className="recording-time">{isRecording ? formatElapsed(recordingSeconds) : activeLesson.duration}</strong>
                   </div>
-                  <div className="signal-rail" aria-hidden="true">{Array.from({ length: 42 }, (_, index) => <span key={index} style={{ height: `${14 + ((index * 17) % 28)}%` }} />)}</div>
+                  <div className="recording-context"><span>Local capture</span><strong>Transcript appears below</strong></div>
                   <div className="recording-actions">
                     <button className={`record-button ${isRecording ? 'stop' : ''}`} onClick={toggleRecording} disabled={isFinalizingRecording} aria-label={isRecording ? 'Stop recording' : isFinalizingRecording ? 'Finishing recording' : 'Start recording'}>
                       {isRecording ? <Square size={17} fill="currentColor" /> : <Mic size={18} />}
@@ -1425,7 +1426,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <section className="transcript-section">
                 <div className="section-toolbar"><div><span className="section-kicker">Live transcript {visibleLiveTranscript.length > 0 && <span className="review-badge">Live preview</span>}</span><h2>The course, source by source</h2></div><button className="text-action" onClick={() => setShowTranscriptPanel(true)}>View all <ArrowUpRight size={13} /></button></div>
                 {isRecording && <section className="live-transcript-panel" aria-label="Live course transcription">
-                  <div className="live-transcript-heading"><div><span className="section-kicker"><span className="recording-pulse" /> Live now</span><h3>{visibleLiveTranscript.length ? 'Notes arriving from your course' : 'Listening for the next passage'}</h3></div><span className="live-transcript-count" aria-live="polite">{visibleLiveTranscript.length} {visibleLiveTranscript.length === 1 ? 'segment' : 'segments'}</span></div>
+                  <div className="live-transcript-heading"><div><span className="section-kicker">Live transcription</span><h3>{visibleLiveTranscript.length ? 'Notes arriving from your course' : 'Listening for the next passage'}</h3></div><span className="live-transcript-count" aria-live="polite">{visibleLiveTranscript.length} {visibleLiveTranscript.length === 1 ? 'segment' : 'segments'}</span></div>
                   <div className="live-transcript-feed" ref={liveTranscriptFeedRef} aria-live="polite">{visibleLiveTranscript.length ? visibleLiveTranscript.map(renderTranscriptSegment) : <p className="live-transcript-empty" role="status">The first timestamped passage will appear here as the course continues.</p>}</div>
                 </section>}
                 <section className="course-note-document" aria-label="Course notes document">
