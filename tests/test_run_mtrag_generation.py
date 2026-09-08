@@ -4,10 +4,18 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from benchmarks.run_mtrag_generation import build_messages, run
+from benchmarks.run_mtrag_generation import _replace_with_retry, build_messages, run
 
 
 class MtragGenerationTests(unittest.TestCase):
+    @patch("benchmarks.run_mtrag_generation.os.replace", side_effect=[PermissionError(), PermissionError(), None])
+    @patch("benchmarks.run_mtrag_generation.time.sleep")
+    def test_checkpoint_replace_retries_transient_permission_error(self, sleep, replace):
+        _replace_with_retry(Path("source"), Path("destination"), attempts=3)
+
+        self.assertEqual(replace.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
     def test_build_messages_preserves_conversation_and_bounds_context(self):
         task = {
             "task_id": "task-1",
