@@ -121,7 +121,7 @@ def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
         temporary_path = Path(handle.name)
         json.dump(value, handle, indent=2)
         handle.write("\n")
-    os.replace(temporary_path, path)
+    _replace_with_retry(temporary_path, path)
 
 
 def _atomic_write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
@@ -130,7 +130,18 @@ def _atomic_write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
         temporary_path = Path(handle.name)
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-    os.replace(temporary_path, path)
+    _replace_with_retry(temporary_path, path)
+
+
+def _replace_with_retry(source: Path, destination: Path, attempts: int = 8) -> None:
+    for attempt in range(attempts):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.25 * (attempt + 1))
 
 
 def _metadata(
