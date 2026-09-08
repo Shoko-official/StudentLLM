@@ -24,6 +24,9 @@ StudentLLM is built around three principles:
 - Interrupted durable recordings are recovered into the owning course on the next launch.
 - Optional local faster-whisper sidecar transcription after durable recording, with timestamped review segments.
 - Configured local ASR can also show an incremental transcript preview while recording; the post-recording transcription remains authoritative.
+- The live lesson is assembled at the same time into a Word-like course note with timestamped paragraphs, readable formulas, code blocks, concept schemas, and small data visualizations when the transcript contains the relevant signals.
+- Course routing keeps notes under `Courses/<subject>/<chapter>/<lesson>/` in the persisted workspace, uses transcript signals as a fallback, and can refine the route through LM Studio JSON classification.
+- Course notes can be saved as a clean Markdown document using the detected course filename.
 - Imported audio can use the same local ASR path, with transcript segments linked back to the audio source.
 - Optional local PDF text extraction and RapidOCR for images or scanned PDF pages, with page-level review segments.
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.

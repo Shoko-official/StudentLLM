@@ -81,9 +81,10 @@ test.describe('StudentLLM workspace', () => {
 
     await page.getByRole('button', { name: /Settings/ }).click();
     const settings = page.getByRole('dialog', { name: 'Settings' });
+    const transcriptPreview = page.getByRole('region', { name: 'Transcript preview' });
     await settings.getByRole('checkbox', { name: /Show verified transcript segments/ }).uncheck();
-    await expect(page.getByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).toBeHidden();
-    await expect(page.getByText('Without this normalization, dot products grow with the key dimension.')).toBeVisible();
+    await expect(transcriptPreview.getByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).toBeHidden();
+    await expect(transcriptPreview.getByText('Without this normalization, dot products grow with the key dimension.')).toBeVisible();
   });
 
   test('traps keyboard focus in dialogs and restores the trigger', async ({ page }) => {
@@ -115,7 +116,7 @@ test.describe('StudentLLM workspace', () => {
     const reloadedSettings = page.getByRole('dialog', { name: 'Settings' });
     await expect(reloadedSettings.getByRole('checkbox', { name: /Show verified transcript segments/ })).not.toBeChecked();
     await expect(reloadedSettings.getByRole('checkbox', { name: /Compact transcript spacing/ })).toBeChecked();
-    await expect(page.getByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).toBeHidden();
+    await expect(page.getByRole('region', { name: 'Transcript preview' }).getByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).toBeHidden();
   });
 
   test('supports transcript review state changes', async ({ page }) => {
@@ -144,13 +145,13 @@ test.describe('StudentLLM workspace', () => {
     await page.getByLabel('Course title').fill('Isolated course');
     await page.getByRole('button', { name: /Create and prepare/ }).click();
     await page.getByRole('button', { name: 'Bookmark this passage' }).click();
-    await expect(page.getByText('Student bookmark: review this point in the course.')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Transcript preview' }).getByText('Student bookmark: review this point in the course.')).toBeVisible();
 
     await page.getByRole('button', { name: /Attention & Scaled Dot-Product/ }).last().click();
-    await expect(page.getByText('Student bookmark: review this point in the course.')).toBeHidden();
+    await expect(page.getByRole('region', { name: 'Transcript preview' }).getByText('Student bookmark: review this point in the course.')).toBeHidden();
 
     await page.getByRole('button', { name: /Isolated course/ }).last().click();
-    await expect(page.getByText('Student bookmark: review this point in the course.')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Transcript preview' }).getByText('Student bookmark: review this point in the course.')).toBeVisible();
   });
 
   test('supports chat questions and responsive navigation', async ({ page }) => {
@@ -333,7 +334,7 @@ test.describe('StudentLLM workspace', () => {
 
     await page.getByRole('button', { name: 'Start recording' }).click();
     await expect(page.getByText('Microphone active, local transcription ready.')).toBeVisible();
-    await expect(page.getByText('Preview from the recording.')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('region', { name: 'Live course transcription' }).getByText('Preview from the recording.', { exact: true })).toBeVisible({ timeout: 10_000 });
 
     await page.getByRole('button', { name: 'View all' }).click();
     const transcriptDialog = page.getByRole('dialog', { name: 'Full transcript 3' });
@@ -343,7 +344,7 @@ test.describe('StudentLLM workspace', () => {
     await page.getByRole('button', { name: 'Stop recording' }).click();
     await expect(page.getByText('Session ready')).toBeVisible();
     await expect(page.getByText('Live preview')).toBeHidden();
-    await expect(page.getByText('Preview from the recording.')).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Transcript preview' }).getByText('Preview from the recording.', { exact: true })).toBeVisible();
   });
 
   test('removes a recorded audio source and its persisted chunks', async ({ page }) => {

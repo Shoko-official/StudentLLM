@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event';
 import App from './App';
 import { listPendingRecordings, RECORDING_RECOVERY_STORAGE_KEY, savePendingRecording } from './lib/recording-recovery';
 
+const transcriptPreview = () => within(screen.getByRole('region', { name: 'Transcript preview' }));
+
 describe('StudentLLM workspace', () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => {
@@ -76,8 +78,8 @@ describe('StudentLLM workspace', () => {
     const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
     await user.click(within(settingsDialog).getByRole('checkbox', { name: /Show verified transcript segments/ }));
 
-    expect(screen.queryByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).not.toBeInTheDocument();
-    expect(screen.getByText('Without this normalization, dot products grow with the key dimension.')).toBeInTheDocument();
+    expect(transcriptPreview().queryByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).not.toBeInTheDocument();
+    expect(transcriptPreview().getByText('Without this normalization, dot products grow with the key dimension.')).toBeInTheDocument();
   });
 
   it('restores transcript display preferences from local storage', async () => {
@@ -96,7 +98,7 @@ describe('StudentLLM workspace', () => {
     const reloadedSettings = screen.getByRole('dialog', { name: 'Settings' });
     expect(within(reloadedSettings).getByRole('checkbox', { name: /Show verified transcript segments/ })).not.toBeChecked();
     expect(within(reloadedSettings).getByRole('checkbox', { name: /Compact transcript spacing/ })).toBeChecked();
-    expect(screen.queryByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).not.toBeInTheDocument();
+    expect(transcriptPreview().queryByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).not.toBeInTheDocument();
   });
 
   it('traps focus inside dialogs and restores the trigger after closing', async () => {
@@ -270,7 +272,7 @@ describe('StudentLLM workspace', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Bookmark this passage' }));
 
-    expect(screen.getByText('Student bookmark: review this point in the course.')).toBeInTheDocument();
+    expect(transcriptPreview().getByText('Student bookmark: review this point in the course.')).toBeInTheDocument();
     expect(screen.getByText(/Bookmark added at/)).toBeInTheDocument();
   });
 
@@ -281,7 +283,7 @@ describe('StudentLLM workspace', () => {
 
     await user.click(screen.getByRole('button', { name: 'Mark segment 01:15:02 verified' }));
 
-    const segment = screen.getByText('Without this normalization, dot products grow with the key dimension.').closest('article');
+    const segment = transcriptPreview().getByText('Without this normalization, dot products grow with the key dimension.').closest('article');
     expect(segment).toBeTruthy();
     expect(within(segment as HTMLElement).queryByText('Needs review')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Mark segment 01:15:02 for review' })).toBeInTheDocument();
@@ -374,12 +376,12 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Start recording' }));
     await user.click(screen.getByRole('button', { name: 'Stop recording' }));
 
-    expect(await screen.findByText('The local transcript.')).toBeInTheDocument();
+    expect(await within(screen.getByRole('region', { name: 'Transcript preview' })).findByText('The local transcript.')).toBeInTheDocument();
     expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
     expect(await screen.findByText('Local transcription added 1 segments.')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Remove source Attention & Scaled Dot-Product audio.webm' }));
-    expect(screen.queryByText('The local transcript.')).not.toBeInTheDocument();
+    expect(transcriptPreview().queryByText('The local transcript.')).not.toBeInTheDocument();
   });
 
   it('shows recording finalization state until audio processing completes', async () => {
@@ -434,9 +436,15 @@ describe('StudentLLM workspace', () => {
 
     await user.click(screen.getByRole('button', { name: 'Start recording' }));
     await waitFor(() => expect(screen.getAllByText('Live preview').length).toBeGreaterThan(0));
-    expect(screen.getByText('Live lecture preview.', { exact: false })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Live course transcription' })).toHaveTextContent('Notes arriving from your course');
-    expect(screen.getByRole('img', { name: 'LaTeX formula: E = mc^2' })).toBeInTheDocument();
+    const liveRegion = screen.getByRole('region', { name: 'Live course transcription' });
+    expect(within(liveRegion).getByText('Live lecture preview.', { exact: false })).toBeInTheDocument();
+    expect(liveRegion).toHaveTextContent('Notes arriving from your course');
+    const courseNote = screen.getByRole('region', { name: 'Course notes document' });
+    expect(courseNote).toHaveTextContent('Attention & Scaled Dot-Product');
+    expect(courseNote).toHaveTextContent('Courses / Machine Learning / Transformers');
+    expect(courseNote).toHaveTextContent('E = mc^2');
+    expect(within(liveRegion).getByRole('img', { name: 'LaTeX formula: E = mc^2' })).toBeInTheDocument();
+    expect(within(courseNote).getByRole('img', { name: 'LaTeX formula: E = mc^2' })).toBeInTheDocument();
     expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
 
     await user.click(screen.getByRole('button', { name: 'View all' }));
@@ -493,13 +501,13 @@ describe('StudentLLM workspace', () => {
     await user.type(screen.getByLabelText('Course title'), 'Isolated course');
     await user.click(screen.getByRole('button', { name: /Create and prepare/ }));
     await user.click(screen.getByRole('button', { name: 'Bookmark this passage' }));
-    expect(screen.getByText('Student bookmark: review this point in the course.')).toBeInTheDocument();
+    expect(transcriptPreview().getByText('Student bookmark: review this point in the course.')).toBeInTheDocument();
 
     await user.click(screen.getAllByRole('button', { name: /Attention & Scaled Dot-Product/ }).at(-1)!);
-    expect(screen.queryByText('Student bookmark: review this point in the course.')).not.toBeInTheDocument();
+    expect(transcriptPreview().queryByText('Student bookmark: review this point in the course.')).not.toBeInTheDocument();
 
     await user.click(screen.getAllByRole('button', { name: /Isolated course/ }).at(-1)!);
-    expect(screen.getByText('Student bookmark: review this point in the course.')).toBeInTheDocument();
+    expect(transcriptPreview().getByText('Student bookmark: review this point in the course.')).toBeInTheDocument();
   });
 
   it('imports a local source and restores its fingerprint after remounting', async () => {
@@ -534,8 +542,8 @@ describe('StudentLLM workspace', () => {
       { type: 'application/pdf' },
     ));
 
-    expect(await screen.findByText('Gradient descent updates parameters.')).toBeInTheDocument();
-    expect(screen.getByText('The learning rate controls the step size.')).toBeInTheDocument();
+    expect(await transcriptPreview().findByText('Gradient descent updates parameters.')).toBeInTheDocument();
+    expect(transcriptPreview().getByText('The learning rate controls the step size.')).toBeInTheDocument();
     expect(screen.getByText('optimization.pdf indexed 2 pages locally.')).toBeInTheDocument();
     expect(extract).toHaveBeenCalledWith(expect.any(Blob));
   });
@@ -555,7 +563,7 @@ describe('StudentLLM workspace', () => {
       { type: 'image/png' },
     ));
 
-    expect(await screen.findByText('A photographed formula.')).toBeInTheDocument();
+    expect(await transcriptPreview().findByText('A photographed formula.')).toBeInTheDocument();
     expect(screen.getByText('board.png indexed 1 page locally.')).toBeInTheDocument();
     expect(extract).toHaveBeenCalledWith(expect.any(Blob));
   });
@@ -591,13 +599,13 @@ describe('StudentLLM workspace', () => {
       { type: 'audio/webm' },
     ));
 
-    expect(await screen.findByText('Imported lecture audio.')).toBeInTheDocument();
+    expect(await transcriptPreview().findByText('Imported lecture audio.')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Remove source imported-lecture.webm' })).toBeEnabled());
     expect(transcribe).toHaveBeenCalledWith(expect.any(File));
 
     await user.click(screen.getByRole('button', { name: 'Remove source imported-lecture.webm' }));
 
-    expect(screen.queryByText('Imported lecture audio.')).not.toBeInTheDocument();
+    expect(transcriptPreview().queryByText('Imported lecture audio.')).not.toBeInTheDocument();
     expect(screen.getByText('imported-lecture.webm removed from this course.')).toBeInTheDocument();
   });
 
@@ -658,11 +666,11 @@ describe('StudentLLM workspace', () => {
       'derived.pdf',
       { type: 'application/pdf' },
     ));
-    expect(await screen.findByText('Derived page content.')).toBeInTheDocument();
+    expect(await transcriptPreview().findByText('Derived page content.')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Remove source derived.pdf' }));
 
-    expect(screen.queryByText('Derived page content.')).not.toBeInTheDocument();
+    expect(transcriptPreview().queryByText('Derived page content.')).not.toBeInTheDocument();
     expect(screen.getByText('derived.pdf removed from this course.')).toBeInTheDocument();
   });
 

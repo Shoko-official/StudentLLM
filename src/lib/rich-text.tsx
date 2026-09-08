@@ -11,6 +11,9 @@ function unwrapMath(token: string) {
 
 function formatMathSource(source: string) {
   return source
+    .replace(/\\operatorname\s*\{([^{}]*)\}/g, '$1')
+    .replace(/\\left|\\right/g, '')
+    .replace(/\\top/g, 'ᵀ')
     .replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, '($1) / ($2)')
     .replace(/\\sqrt\s*\{([^{}]*)\}/g, '√($1)')
     .replace(/\\text\s*\{([^{}]*)\}/g, '$1')
