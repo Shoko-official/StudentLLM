@@ -845,7 +845,17 @@ $env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'U
   --max-tokens 512
 ```
 
-The resulting prediction file is passed to IBM's official `scripts/evaluation/run_generation_eval.py` from the checked-out benchmark repository. No generation score is claimed until the complete selected file has been evaluated by that official implementation. The full MTRAG generation campaign remains open.
+The resulting prediction file is passed to IBM's official evaluation scripts from the checked-out benchmark repository. No generation score is claimed until the complete selected file has been evaluated by that implementation. The official algorithmic evaluator completed the full 842-task RAG split on 2026-09-08 for `openai/gpt-oss-20b` through NVIDIA NIM:
+
+| Metric | Aggregate | Tasks | Non-empty predictions | Generation errors |
+| --- | ---: | ---: | ---: | ---: |
+| Recall | `0.362946` | 842 | 839 | 3 |
+| ROUGE-L (unstemmed) | `0.218473` | 842 | 839 | 3 |
+| BERTScore precision | `0.095510` | 842 | 839 | 3 |
+| BERTScore recall | `0.211188` | 842 | 839 | 3 |
+| RB aggregate | `0.360065` | 842 | 839 | 3 |
+
+The run used the public `mtrag-human/generation_tasks/RAG.jsonl` file and IBM's algorithmic evaluation output. The local generation artifact is `artifacts/benchmarks/mtrag/rag-gpt-oss-20b-full.jsonl` with SHA-256 `8560AD97FC101DA51F4494B02D32AB5D4BA71AA2078637E1D44CA6603F734125`; the evaluated output is `artifacts/benchmarks/mtrag/rag-gpt-oss-20b-official-algorithmic.jsonl` with SHA-256 `B89F137E130030EACD6E5F632776D0F31E0821E8CC3F500A3F5435182BBD6D0B`. These are complete public-split measurements for this model and protocol, not a frontier or leaderboard claim. The separate reference-only and reference-plus-RAG campaigns remain open.
 
 Example command:
 
