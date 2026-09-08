@@ -47,6 +47,33 @@ export interface LessonWorkspace {
   transcript: TranscriptSegment[];
   chat: ChatMessage[];
   artifacts: Artifact[];
+  courseNote?: CourseNote;
+}
+
+export type CourseNoteBlock =
+  | { id: string; type: 'heading'; level: 1 | 2; text: string }
+  | { id: string; type: 'paragraph'; text: string; timestamp?: string; speaker?: string; sourceId?: string }
+  | { id: string; type: 'formula'; latex: string; caption?: string; sourceId?: string }
+  | { id: string; type: 'code'; language: string; code: string; sourceId?: string }
+  | { id: string; type: 'chart'; label: string; values: Array<{ label: string; value: number }>; sourceId?: string }
+  | { id: string; type: 'schema'; nodes: string[]; edges: Array<{ from: string; to: string }>; sourceId?: string };
+
+export interface CourseDetection {
+  method: 'active course' | 'transcript signals' | 'LM Studio';
+  confidence: number;
+  basis: string;
+}
+
+export interface CourseNote {
+  id: string;
+  title: string;
+  subject: string;
+  chapter: string;
+  folderPath: string[];
+  fileName: string;
+  updatedAt: string;
+  detection: CourseDetection;
+  blocks: CourseNoteBlock[];
 }
 
 export interface Artifact {
