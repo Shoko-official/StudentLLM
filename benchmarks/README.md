@@ -842,6 +842,25 @@ $env:HF_HUB_DISABLE_XET = '1'
 
 For E5-style encoders, pass `--query-prefix "query: " --document-prefix "passage: "`; the receipt records both prefixes. The complete measured rewrite run covered 777 public qrels-scored queries across all four collections. BGE-base with the model-card query instruction scored nDCG@10 `0.390503` and Recall@10 `0.481504`; the instructed last-turn variant scored `0.334113` and `0.408164`. A complete instructed BGE-large rewrite comparison scored `0.364793` and `0.443833`, below BGE-base. The no-instruction BGE-base rewrite comparison scored `0.354194` and `0.446961`; BM25 rewrite scored `0.240306` and `0.316811`. Full evidence is recorded in `docs/benchmarks.md`.
 
+## MTRAG human generation
+
+`run_mtrag_generation.py` generates predictions for the official IBM MTRAG human generation files without exposing target answers to the model. It preserves the source task records, adds the evaluator-compatible `predictions` field, supports concurrent OpenAI-compatible providers, and writes an atomic checkpoint after every completed task. Use the official `RAG.jsonl`, `reference.jsonl`, or `reference+RAG.jsonl` file from the IBM repository.
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_mtrag_generation.py `
+  --input C:\path\to\mt-rag-benchmark\mtrag-human\generation_tasks\RAG.jsonl `
+  --output artifacts\benchmarks\mtrag\rag-predictions.jsonl `
+  --checkpoint artifacts\benchmarks\mtrag\rag-checkpoint.json `
+  --model openai/gpt-oss-20b `
+  --base-url https://integrate.api.nvidia.com/v1 `
+  --api-key-env NVIDIA_API_KEY `
+  --workers 4 `
+  --max-tokens 512
+```
+
+The generated JSONL can be scored with IBM's official evaluator from the checked-out `mt-rag-benchmark` repository. Generation metrics are not recorded until the full input file has completed and the official evaluator has returned its result.
+
 ## CRAG Task 1/2 generation
 
 `run_crag.py` evaluates the official [Facebook Research CRAG](https://github.com/facebookresearch/CRAG) Task 1 and Task 2 development file through any OpenAI-compatible endpoint. The gold answer is used only after generation by the optional public-style judge. The runner supports bounded requests, concurrent workers, split selection, and JSON receipts that retain every response and failure.
