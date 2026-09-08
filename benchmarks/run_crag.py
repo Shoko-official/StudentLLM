@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import argparse
 import bz2
+import hashlib
 import html
 import json
+import os
 import re
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 
 TAG_PATTERN = re.compile(r"<[^>]+>")
@@ -54,6 +58,66 @@ def read_examples(path: Path, split: int, limit: int | None = None) -> list[dict
     return examples
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def atomic_write_json(path: Path, value: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+        temporary_path = Path(handle.name)
+        json.dump(value, handle, indent=2)
+        handle.write("\n")
+    try:
+        os.replace(temporary_path, path)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def checkpoint_metadata(
+    path: Path,
+    split: int,
+    limit: int | None,
+    model: str,
+    base_url: str,
+    page_chars: int,
+    max_tokens: int,
+    judge_model: str | None,
+) -> dict[str, object]:
+    return {
+        "benchmark": "CRAG Task 1/2 development file",
+        "dataset_sha256": file_sha256(path),
+        "split": split,
+        "limit": limit,
+        "model": model,
+        "base_url": base_url,
+        "page_chars": page_chars,
+        "max_tokens": max_tokens,
+        "judge_model": judge_model,
+    }
+
+
+def load_checkpoint(path: Path, expected_metadata: dict[str, object]) -> dict[str, dict[str, object]]:
+    if not path.exists():
+        return {}
+    checkpoint = json.loads(path.read_text(encoding="utf-8"))
+    if checkpoint.get("metadata") != expected_metadata:
+        raise ValueError("checkpoint metadata does not match the requested CRAG run")
+    records = checkpoint.get("records")
+    if not isinstance(records, list):
+        raise ValueError("checkpoint records are invalid")
+    return {
+        str(record["interaction_id"]): record
+        for record in records
+        if isinstance(record, dict) and record.get("interaction_id")
+    }
+
+
 def page_text(page: dict[str, object], max_chars: int) -> str:
     snippet = str(page.get("page_snippet") or "")
     raw_result = str(page.get("page_result") or "")
@@ -91,7 +155,10 @@ def generate_one(item: dict[str, object], model: str, base_url: str, api_key: st
         temperature=0.0,
         max_tokens=max_tokens,
     )
-    return str(response.choices[0].message.content or "").strip()
+    prediction = str(response.choices[0].message.content or "").strip()
+    if not prediction:
+        raise ValueError("provider returned an empty prediction")
+    return prediction
 
 
 def parse_judge(value: str) -> int:
@@ -135,24 +202,58 @@ def judge_one(question: str, gold_answers: list[str], prediction: str, model: st
     return -1 if parsed_scores and all(score < 0 for score in parsed_scores) else 0
 
 
-def run(path: Path, split: int, limit: int | None, model: str, base_url: str, api_key: str, workers: int, page_chars: int, max_tokens: int, judge_model: str | None, output_path: Path | None) -> dict[str, object]:
+def run(
+    path: Path,
+    split: int,
+    limit: int | None,
+    model: str,
+    base_url: str,
+    api_key: str,
+    workers: int,
+    page_chars: int,
+    max_tokens: int,
+    judge_model: str | None,
+    output_path: Path | None,
+    checkpoint_path: Path | None = None,
+) -> dict[str, object]:
     if workers <= 0 or page_chars <= 0 or max_tokens <= 0:
         raise ValueError("workers, page_chars, and max_tokens must be positive")
+    if checkpoint_path and output_path and checkpoint_path.resolve() == output_path.resolve():
+        raise ValueError("checkpoint_path and output_path must be different files")
     started_at = time.perf_counter()
     examples = read_examples(path, split, limit)
-    records: list[dict[str, object]] = [{} for _ in examples]
+    metadata = checkpoint_metadata(path, split, limit, model, base_url, page_chars, max_tokens, judge_model)
+    existing = load_checkpoint(checkpoint_path, metadata) if checkpoint_path else {}
+    records: dict[str, dict[str, object]] = {
+        str(item["interaction_id"]): existing[str(item["interaction_id"])]
+        for item in examples
+        if str(item["interaction_id"]) in existing
+        and existing[str(item["interaction_id"])].get("error") is None
+        and bool(str(existing[str(item["interaction_id"])].get("prediction") or "").strip())
+    }
+
+    def ordered_records() -> list[dict[str, object]]:
+        return [records[str(item["interaction_id"])] for item in examples if str(item["interaction_id"]) in records]
+
+    def save_checkpoint() -> None:
+        if checkpoint_path:
+            atomic_write_json(checkpoint_path, {"metadata": metadata, "records": ordered_records()})
+
+    pending = [item for item in examples if str(item["interaction_id"]) not in records]
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(generate_one, item, model, base_url, api_key, page_chars, max_tokens): index for index, item in enumerate(examples)}
+        futures = {
+            executor.submit(generate_one, item, model, base_url, api_key, page_chars, max_tokens): item
+            for item in pending
+        }
         for future in as_completed(futures):
-            index = futures[future]
-            item = examples[index]
+            item = futures[future]
             try:
                 prediction = future.result()
                 error = None
             except Exception as exc:  # Preserve failed public examples in the receipt.
                 prediction = ""
                 error = type(exc).__name__
-            records[index] = {
+            records[str(item["interaction_id"])] = {
                 "interaction_id": item["interaction_id"],
                 "query": item["query"],
                 "domain": item["domain"],
@@ -161,33 +262,45 @@ def run(path: Path, split: int, limit: int | None, model: str, base_url: str, ap
                 "error": error,
                 "gold_answers": [str(item["answer"])] + [str(answer) for answer in item.get("alt_ans", [])],
             }
+            save_checkpoint()
 
     n_correct = 0
     n_missing = 0
     n_incorrect = 0
     judge_scores: list[int] = []
     if judge_model:
+        pending_judges = [
+            record
+            for record in ordered_records()
+            if not isinstance(record.get("judge_score"), int) or int(record["judge_score"]) not in {0, 1}
+        ]
         with ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
                 executor.submit(judge_one, str(record["query"]), list(record["gold_answers"]), str(record["prediction"]), judge_model, base_url, api_key, max_tokens): index
-                for index, record in enumerate(records)
+                for index, record in enumerate(pending_judges)
             }
             for future in as_completed(futures):
                 index = futures[future]
+                record = pending_judges[index]
                 try:
                     score = future.result()
                 except Exception:
                     score = -1
-                records[index]["judge_score"] = score
-                judge_scores.append(score)
-                if score == 1:
-                    n_correct += 1
-                elif not records[index]["prediction"] or "i don't know" in str(records[index]["prediction"]).lower() or "i do not know" in str(records[index]["prediction"]).lower():
-                    n_missing += 1
-                else:
-                    n_incorrect += 1
+                record["judge_score"] = score
+                save_checkpoint()
 
-    exact_matches = sum(any(normalize(str(record["prediction"])) == normalize(answer) for answer in record["gold_answers"]) for record in records)
+        for record in ordered_records():
+            score = int(record.get("judge_score", -1))
+            judge_scores.append(score)
+            if score == 1:
+                n_correct += 1
+            elif not record["prediction"] or "i don't know" in str(record["prediction"]).lower() or "i do not know" in str(record["prediction"]).lower():
+                n_missing += 1
+            else:
+                n_incorrect += 1
+
+    final_records = ordered_records()
+    exact_matches = sum(any(normalize(str(record["prediction"])) == normalize(answer) for answer in record["gold_answers"]) for record in final_records)
     result: dict[str, object] = {
         "benchmark": "CRAG Task 1/2 development file",
         "source": "facebookresearch/CRAG",
@@ -198,10 +311,11 @@ def run(path: Path, split: int, limit: int | None, model: str, base_url: str, ap
         "model": model,
         "judge_model": judge_model,
         "parameters": {"base_url": base_url, "workers": workers, "page_chars": page_chars, "max_tokens": max_tokens},
-        "examples": len(records),
-        "generation_failures": sum(record["error"] is not None for record in records),
-        "deterministic_exact_match": exact_matches / len(records) if records else 0.0,
+        "examples": len(final_records),
+        "generation_failures": sum(record["error"] is not None for record in final_records),
+        "deterministic_exact_match": exact_matches / len(final_records) if final_records else 0.0,
         "elapsed_seconds": round(time.perf_counter() - started_at, 3),
+        "checkpoint_path": str(checkpoint_path) if checkpoint_path else None,
     }
     if judge_model:
         result["judge"] = {
@@ -210,11 +324,10 @@ def run(path: Path, split: int, limit: int | None, model: str, base_url: str, ap
             "correct": n_correct,
             "missing": n_missing,
             "incorrect": n_incorrect,
-            "score": (2 * n_correct + n_missing) / len(records) - 1 if records else 0.0,
+            "score": (2 * n_correct + n_missing) / len(final_records) - 1 if final_records else 0.0,
         }
     if output_path:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps({"receipt": result, "records": records}, indent=2) + "\n", encoding="utf-8")
+        atomic_write_json(output_path, {"receipt": result, "records": final_records})
     return result
 
 
@@ -230,6 +343,7 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--page-chars", type=int, default=2000)
     parser.add_argument("--max-tokens", type=int, default=256)
+    parser.add_argument("--checkpoint-path", type=Path, help="Persist completed generations and judge scores for resumption")
     parser.add_argument("--output-path", type=Path)
     args = parser.parse_args()
     if args.limit is not None and args.limit <= 0:
@@ -239,7 +353,7 @@ def main() -> None:
     api_key = os.environ.get(args.api_key_env, "")
     if not api_key:
         raise SystemExit(f"Missing API key environment variable: {args.api_key_env}")
-    result = run(args.dataset_path, args.split, args.limit, args.model, args.base_url, api_key, args.workers, args.page_chars, args.max_tokens, args.judge_model, args.output_path)
+    result = run(args.dataset_path, args.split, args.limit, args.model, args.base_url, api_key, args.workers, args.page_chars, args.max_tokens, args.judge_model, args.output_path, args.checkpoint_path)
     print(json.dumps(result, indent=2))
 
 

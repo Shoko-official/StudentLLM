@@ -863,7 +863,7 @@ The generated JSONL can be scored with IBM's official evaluator from the checked
 
 ## CRAG Task 1/2 generation
 
-`run_crag.py` evaluates the official [Facebook Research CRAG](https://github.com/facebookresearch/CRAG) Task 1 and Task 2 development file through any OpenAI-compatible endpoint. The gold answer is used only after generation by the optional public-style judge. The runner supports bounded requests, concurrent workers, split selection, and JSON receipts that retain every response and failure.
+`run_crag.py` evaluates the official [Facebook Research CRAG](https://github.com/facebookresearch/CRAG) Task 1 and Task 2 development file through any OpenAI-compatible endpoint. The gold answer is used only after generation by the optional public-style judge. The runner supports bounded requests, concurrent workers, split selection, and JSON receipts that retain every response and failure. For long campaigns, `--checkpoint-path` atomically persists completed non-empty generations and valid judge decisions. Reusing the same command verifies the dataset hash and run settings before resuming, then retries failed or unparsed entries instead of silently treating them as complete.
 
 ```powershell
 .\.venv-bench-sys\Scripts\python.exe benchmarks\run_crag.py `
@@ -874,6 +874,7 @@ The generated JSONL can be scored with IBM's official evaluator from the checked
   --api-key-env NVIDIA_API_KEY `
   --judge-model openai/gpt-oss-20b `
   --workers 4 `
+  --checkpoint-path artifacts\benchmarks\crag\validation.checkpoint.json `
   --output-path artifacts\benchmarks\crag\validation.json
 ```
 
