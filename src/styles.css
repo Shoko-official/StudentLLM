@@ -186,6 +186,9 @@ kbd { color: var(--faint); font-family: var(--mono); font-size: 9px; }
 .context-card dl div { display: grid; gap: 3px; }
 .context-card dt { color: var(--faint); font-size: 9px; }
 .context-card dd { margin: 0; color: var(--muted); font-family: var(--mono); font-size: 9px; }
+.note-routing { display: grid; gap: 4px; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--line); }
+.note-routing span, .note-routing small { color: var(--faint); font-size: 9px; }
+.note-routing strong { overflow: hidden; color: var(--muted); font: 9px/1.4 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .transfer-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 12px 0 15px; }
 .transfer-action { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; padding: 8px 5px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; font-size: 9px; font-weight: 700; cursor: pointer; }
 .transfer-action:hover { color: var(--text); border-color: var(--line-strong); }
@@ -246,6 +249,35 @@ kbd { color: var(--faint); font-family: var(--mono); font-size: 9px; }
 .latex-inline { display: inline-block; padding: 0 4px; font-style: italic; white-space: nowrap; }
 .latex-block { display: block; margin: 12px 0; padding: 10px 12px; overflow-x: auto; color: var(--text); background: rgba(125, 216, 192, .06); border: 1px solid rgba(125, 216, 192, .16); border-radius: 8px; text-align: center; }
 .latex-source { letter-spacing: .02em; }
+.course-note-document { display: grid; gap: 10px; padding: 18px; margin: 18px 0 22px; color: var(--text); background: #f5f6f4; border: 1px solid #d5d9d6; border-radius: 3px; }
+.course-note-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid #d5d9d6; }
+.course-note-toolbar .section-kicker { color: #68736f; }
+.course-note-toolbar h3 { margin: 4px 0 0; color: #17201d; font: 600 17px/1.25 Georgia, 'Times New Roman', serif; letter-spacing: -.02em; }
+.course-note-toolbar .text-action { color: #426b60; }
+.course-note-path { display: flex; flex-wrap: wrap; gap: 4px 7px; color: #77817d; font: 9px var(--mono); }
+.course-note-path span:not(:last-of-type)::after { content: ' /'; color: #a1a9a5; }
+.course-note-path strong { color: #426b60; font-weight: 600; }
+.course-note-content { display: grid; gap: 11px; padding: 5px 4px 2px; }
+.course-note-content h2 { margin: 0; color: #17201d; font: 700 22px/1.2 Georgia, 'Times New Roman', serif; }
+.course-note-content h3 { margin: 8px 0 -2px; color: #31413b; font: 700 14px/1.3 Georgia, 'Times New Roman', serif; }
+.course-note-paragraph { margin: 0; color: #2c3733; font: 13px/1.62 Georgia, 'Times New Roman', serif; white-space: pre-wrap; }
+.course-note-meta { display: block; margin-bottom: 3px; color: #718079; font: 9px var(--mono); }
+.course-note-formula { display: grid; gap: 4px; padding: 11px; color: #17201d; background: #eaf0ed; border-left: 3px solid #6aa594; font: 19px/1.4 'Cambria Math', 'STIX Two Math', 'Times New Roman', serif; text-align: center; }
+.course-note-formula .latex-block { margin: 0; padding: 0; color: #17201d; background: transparent; border: 0; }
+.course-note-formula .latex-source { color: #17201d; }
+.course-note-formula small { color: #64716c; font: 10px 'Segoe UI Variable', 'Segoe UI', sans-serif; }
+.course-note-code { position: relative; margin: 0; padding: 14px 12px 11px; overflow-x: auto; color: #e8edf1; background: #1a232d; font: 11px/1.6 var(--mono); }
+.course-note-code-language { display: block; margin-bottom: 5px; color: #8ed0c1; font-size: 9px; text-transform: uppercase; }
+.course-note-schema { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px; color: #31413b; background: #f0f3f1; border: 1px solid #d5d9d6; font: 11px 'Segoe UI Variable', 'Segoe UI', sans-serif; }
+.course-note-schema span { padding: 5px 7px; background: #fff; border: 1px solid #c9d1cc; }
+.course-note-chart { display: grid; gap: 7px; margin: 0; padding: 11px; background: #f0f3f1; border: 1px solid #d5d9d6; }
+.course-note-chart figcaption { color: #31413b; font: 600 11px 'Segoe UI Variable', 'Segoe UI', sans-serif; }
+.course-note-chart-row { display: grid; grid-template-columns: 78px minmax(0, 1fr) 42px; align-items: center; gap: 7px; color: #65736d; font: 10px var(--mono); }
+.course-note-chart-row i { height: 7px; overflow: hidden; background: #d5d9d6; }
+.course-note-chart-row em { display: block; height: 100%; background: #6aa594; }
+.course-note-chart-row strong { color: #31413b; font-weight: 600; text-align: right; }
+.course-note-footer { display: flex; flex-wrap: wrap; gap: 7px 14px; padding-top: 10px; color: #718079; border-top: 1px solid #d5d9d6; font: 9px var(--mono); }
+.course-note-footer span + span::before { content: '·'; margin-right: 14px; color: #a1a9a5; }
 .citation-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
 .citation-list button { display: flex; align-items: center; gap: 5px; padding: 6px 8px; color: var(--accent); background: rgba(142, 208, 193, .07); border-radius: 7px; font-size: 9px; }
 .chat-composer { display: flex; align-items: center; gap: 8px; padding: 9px 10px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 11px; }

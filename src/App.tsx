@@ -55,7 +55,8 @@ import { buildCourseExport, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
-import { Artifact, ArtifactKind, ChatMessage, Lesson, LessonWorkspace, Resource, TranscriptSegment, ViewMode } from './types';
+import { buildCourseNote, courseNoteMarkdown, detectCourseWithProvider } from './lib/course-notes';
+import { Artifact, ArtifactKind, ChatMessage, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment, ViewMode } from './types';
 
 const initialLessons: Lesson[] = [
   {
@@ -293,11 +294,31 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const updateLessonWorkspace = (lessonId: string, update: (current: LessonWorkspace) => LessonWorkspace) => {
     setLessonWorkspaces((current) => ({
       ...current,
-      [lessonId]: update(current[lessonId] ?? emptyLessonWorkspace),
+      [lessonId]: (() => {
+        const previous = current[lessonId] ?? emptyLessonWorkspace;
+        const next = update(previous);
+        const lesson = lessons.find((item) => item.id === lessonId);
+        return lesson && next.transcript !== previous.transcript
+          ? { ...next, courseNote: buildCourseNote(lesson, next.transcript) }
+          : next;
+      })(),
     }));
   };
 
   const updateActiveWorkspace = (update: (current: LessonWorkspace) => LessonWorkspace) => updateLessonWorkspace(activeLessonId, update);
+
+  const refreshCourseRouting = (lessonId: string, lesson: Lesson, segments: TranscriptSegment[]) => {
+    if (!localProvider || !segments.length) return;
+    void detectCourseWithProvider(lesson, segments, localProvider).then((note) => {
+      if (!note) return;
+      setLessonWorkspaces((current) => {
+        const workspace = current[lessonId] ?? emptyLessonWorkspace;
+        const latest = buildCourseNote(lesson, workspace.transcript);
+        return { ...current, [lessonId]: { ...workspace, courseNote: { ...latest, title: note.title, subject: note.subject, chapter: note.chapter, folderPath: note.folderPath, fileName: note.fileName, detection: note.detection, blocks: latest.blocks.map((block) => block.id === 'note-title' && block.type === 'heading' ? { ...block, text: note.title } : block), updatedAt: latest.updatedAt } } };
+      });
+      if (lessonId === activeLessonId) notify(`Course routed to ${note.folderPath.slice(1).join(' / ')}.`);
+    }).catch(() => undefined);
+  };
 
   const visibleLessons = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
@@ -586,6 +607,29 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     ? liveTranscript
     : [];
   const courseTranscript = isRecording ? visibleTranscript : [...visibleTranscript, ...visibleLiveTranscript];
+  const noteTranscript = [...visibleTranscript, ...visibleLiveTranscript];
+  const activeCourseNote = useMemo(() => {
+    const note = activeWorkspace.courseNote ?? buildCourseNote(activeLesson, transcript);
+    if (isRecording || visibleTranscript.length !== transcript.length || visibleLiveTranscript.length) {
+      return buildCourseNote(activeLesson, noteTranscript);
+    }
+    return note;
+  }, [activeLesson, activeWorkspace.courseNote, isRecording, noteTranscript, transcript, visibleLiveTranscript.length, visibleTranscript.length]);
+
+  useEffect(() => {
+    setLessonWorkspaces((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const lesson of lessons) {
+        const lessonWorkspace = next[lesson.id] ?? emptyLessonWorkspace;
+        if (!lessonWorkspace.courseNote) {
+          next[lesson.id] = { ...lessonWorkspace, courseNote: buildCourseNote(lesson, lessonWorkspace.transcript) };
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [lessons]);
 
   useEffect(() => {
     if (!isRecording || !liveTranscriptFeedRef.current) return;
@@ -790,6 +834,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               sourceId: session.recordingId,
             }))],
           }));
+          refreshCourseRouting(recordingLessonId, lessons.find((lesson) => lesson.id === recordingLessonId) ?? activeLesson, transcription.segments);
           notify(`Local transcription added ${transcription.segments.length} segments.`);
         } catch {
           notify('Audio saved locally; local transcription needs review.');
@@ -1125,6 +1170,22 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
   };
 
+  const exportCourseNote = () => {
+    try {
+      const noteBlob = new Blob([courseNoteMarkdown(activeCourseNote)], { type: 'text/markdown;charset=utf-8' });
+      if (typeof URL.createObjectURL !== 'function') throw new Error('Downloads are unavailable in this browser.');
+      const url = URL.createObjectURL(noteBlob);
+      const link = window.document.createElement('a');
+      link.href = url;
+      link.download = activeCourseNote.fileName;
+      link.click();
+      URL.revokeObjectURL(url);
+      notify(`Course notes saved as ${activeCourseNote.fileName}.`);
+    } catch {
+      notify('The course notes could not be saved.');
+    }
+  };
+
   const importCourse = async (event: ChangeEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
     const file = input.files?.[0];
@@ -1196,6 +1257,27 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       {!segment.provisional && <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => toggleTranscriptReview(segment.id)}>...</button>}
     </article>
   );
+
+  const renderCourseNoteBlock = (block: CourseNoteBlock) => {
+    if (block.type === 'heading') {
+      const Heading = block.level === 1 ? 'h2' : 'h3';
+      return <Heading key={block.id}>{block.text}</Heading>;
+    }
+    if (block.type === 'paragraph') {
+      return <p className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp} · {block.speaker ?? 'Lecture'}</span>}<RichText content={block.text} /></p>;
+    }
+    if (block.type === 'formula') {
+      return <div className="course-note-formula" key={block.id}><RichText content={block.latex} />{block.caption && <small>{block.caption}</small>}</div>;
+    }
+    if (block.type === 'code') {
+      return <pre className="course-note-code" key={block.id}><code><span className="course-note-code-language">{block.language}</span>{block.code}</code></pre>;
+    }
+    if (block.type === 'schema') {
+      return <div className="course-note-schema" key={block.id} aria-label="Course concept schema">{block.edges.map((edge) => <span key={`${block.id}-${edge.from}-${edge.to}`}><b>{edge.from}</b><span aria-hidden="true"> → </span><b>{edge.to}</b></span>)}</div>;
+    }
+    const maximum = Math.max(...block.values.map((item) => Math.abs(item.value)), 1);
+    return <figure className="course-note-chart" key={block.id}><figcaption>{block.label}</figcaption>{block.values.map((item) => <div className="course-note-chart-row" key={`${block.id}-${item.label}`}><span>{item.label}</span><i><em style={{ width: `${Math.max(4, Math.round(Math.abs(item.value) / maximum * 100))}%` }} /></i><strong>{item.value}</strong></div>)}</figure>;
+  };
 
   return (
     <div className="app-shell">
@@ -1346,7 +1428,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                   <div className="live-transcript-heading"><div><span className="section-kicker"><span className="recording-pulse" /> Live now</span><h3>{visibleLiveTranscript.length ? 'Notes arriving from your course' : 'Listening for the next passage'}</h3></div><span className="live-transcript-count" aria-live="polite">{visibleLiveTranscript.length} {visibleLiveTranscript.length === 1 ? 'segment' : 'segments'}</span></div>
                   <div className="live-transcript-feed" ref={liveTranscriptFeedRef} aria-live="polite">{visibleLiveTranscript.length ? visibleLiveTranscript.map(renderTranscriptSegment) : <p className="live-transcript-empty" role="status">The first timestamped passage will appear here as the course continues.</p>}</div>
                 </section>}
-                <div className={`transcript-list ${compactTranscript ? 'compact' : ''}`}>
+                <section className="course-note-document" aria-label="Course notes document">
+                  <div className="course-note-toolbar"><div><span className="section-kicker">Course notes</span><h3>{activeCourseNote.title}</h3></div><button className="text-action" type="button" onClick={exportCourseNote}><Download size={13} /> Save note</button></div>
+                  <div className="course-note-path" aria-label="Course notes folder">{activeCourseNote.folderPath.map((part, index) => <span key={`${part}-${index}`}>{index > 0 && ' / '}{part}</span>)}<strong>{activeCourseNote.fileName}</strong></div>
+                  <div className="course-note-content">{activeCourseNote.blocks.map(renderCourseNoteBlock)}</div>
+                  <div className="course-note-footer"><span>{activeCourseNote.blocks.length} structured blocks</span><span>Auto-saved to this course</span><span>{activeCourseNote.detection.method} · {Math.round(activeCourseNote.detection.confidence * 100)}%</span></div>
+                </section>
+                <div className={`transcript-list ${compactTranscript ? 'compact' : ''}`} role="region" aria-label="Transcript preview">
                   {courseTranscript.length ? courseTranscript.map(renderTranscriptSegment) : <p className="empty-state">No transcript segments match the current display settings.</p>}
                 </div>
               </section>
@@ -1373,7 +1461,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         {showRightSidebar && (
           <aside className="right-sidebar" aria-label="Course Studio">
             <div className="studio-heading"><div><span className="section-kicker">Studio</span><h2>Build for review</h2></div><button className="icon-button" aria-label="Close Studio" onClick={() => setShowRightSidebar(false)}><X size={16} /></button></div>
-            <section className="context-card"><div className="context-card-top"><span className="context-icon"><BookOpen size={15} /></span><span className="local-badge"><span className="status-dot" /> local</span></div><h3>{activeLesson.title}</h3><dl><div><dt>Sources</dt><dd>{activeResources.length + 2}</dd></div><div><dt>Duration</dt><dd>{activeLesson.duration}</dd></div><div><dt>State</dt><dd className="success-text">Indexed</dd></div></dl></section>
+            <section className="context-card"><div className="context-card-top"><span className="context-icon"><BookOpen size={15} /></span><span className="local-badge"><span className="status-dot" /> local</span></div><h3>{activeLesson.title}</h3><dl><div><dt>Sources</dt><dd>{activeResources.length + 2}</dd></div><div><dt>Duration</dt><dd>{activeLesson.duration}</dd></div><div><dt>State</dt><dd className="success-text">Indexed</dd></div></dl><div className="note-routing"><span>Notes folder</span><strong>{activeCourseNote.folderPath.slice(0, 3).join(' / ')}</strong><small>{activeCourseNote.detection.method} · {Math.round(activeCourseNote.detection.confidence * 100)}% match</small></div></section>
             <div className="transfer-actions" aria-label="Course transfer"><button className="transfer-action" type="button" onClick={() => void exportCourse()}><Download size={13} /> Export course</button><label className="transfer-action"><input className="visually-hidden" type="file" accept="application/json,.json" aria-label="Import course export" onChange={(event) => void importCourse(event)} /><Upload size={13} /> Import course</label></div>
             <section className="resources-section"><div className="sidebar-section-header"><span>Course sources</span><button className="mini-action" type="button" onClick={() => openSourcePicker(sourceAccept)}><Plus size={13} /> add</button></div><div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}><button className="resource-open" type="button" onClick={() => void openResource(resource)}><span className="resource-icon">{resourceIcon(resource.kind)}</span><span><strong>{resource.name}</strong><small>{transcribingResourceIds.has(resource.id) ? 'Transcribing locally...' : resource.meta}</small></span><ChevronRight size={14} /></button><button className="resource-remove" type="button" aria-label={`Remove source ${resource.name}`} onClick={() => void removeSource(resource)} disabled={transcribingResourceIds.has(resource.id)}><X size={13} /></button></div>)}</div>{resources.length > 3 && <button className="show-more" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`} <ChevronDown size={13} /></button>}</section>
             <section className="studio-actions"><div className="sidebar-section-header"><span>Create an artifact</span><span className="eyebrow-count">source-linked</span></div><div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" onClick={() => createArtifact(artifact.kind)}><span className={`artifact-icon ${artifact.kind}`}><ListChecks size={15} /></span><span><strong>{artifact.label}</strong><small>{artifact.description}</small></span></button>)}</div></section>
