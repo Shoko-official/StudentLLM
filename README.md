@@ -16,6 +16,7 @@ StudentLLM is built around three principles:
 ## Included today
 
 - Responsive three-panel workspace: Library, Course or Chat, and Studio.
+- Flat, minimal interface with compact controls and an information-first layout.
 - Course creation, navigation, search, bookmarks, transcript review states, and artifact creation.
 - Browser microphone access with a demonstration fallback.
 - Versioned local workspace persistence with course-isolated sources, transcript segments, chat history, and artifacts.

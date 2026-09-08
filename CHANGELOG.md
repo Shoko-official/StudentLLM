@@ -4,6 +4,7 @@
 
 ### Added
 
+- A flat, minimal workspace visual system with compact artifact rows and no decorative gradients, shadows, or complex motion.
 - React and TypeScript learning workspace;
 - course navigation, transcript review, recording controls, chat, and Studio artifact actions;
 - versioned local workspace persistence for lessons, sources, chat history, and artifacts, plus chunked `MediaRecorder` audio storage;
