@@ -826,6 +826,27 @@ The dense run is the strongest measured MTRAG retrieval configuration in this re
 
 The original no-instruction receipt is `artifacts/benchmarks/mtrag/bge-base-rewrite-all.json`. The selected instructed receipt is `artifacts/benchmarks/mtrag/bge-base-instruct-rewrite-all.json`, with the matching last-turn comparison in `artifacts/benchmarks/mtrag/bge-base-instruct-lastturn-all.json`. Each receipt has an official-compatible prediction file stored alongside it; all files are local benchmark artifacts and remain ignored by Git.
 
+## MTRAG human generation
+
+`benchmarks/run_mtrag_generation.py` is the generation adapter for the official [IBM MTRAG benchmark](https://github.com/IBM/mt-rag-benchmark). It reads the official human generation JSONL, sends only the conversation and retrieved contexts to an OpenAI-compatible provider, preserves each source task record, and adds one evaluator-compatible `predictions` entry. It never sends `targets` to the provider. A JSON checkpoint is atomically updated after each completed task so a full public evaluation can resume without repeating successful tasks.
+
+The official repository currently provides 842 `RAG.jsonl` tasks, 842 `reference.jsonl` tasks, and 436 `reference+RAG.jsonl` tasks. Example NVIDIA invocation, using the Windows User environment variable `NVIDIA_API_KEY`:
+
+```powershell
+$env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'User')
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_mtrag_generation.py `
+  --input C:\path\to\mt-rag-benchmark\mtrag-human\generation_tasks\RAG.jsonl `
+  --output artifacts\benchmarks\mtrag\rag-predictions.jsonl `
+  --checkpoint artifacts\benchmarks\mtrag\rag-checkpoint.json `
+  --model openai/gpt-oss-20b `
+  --base-url https://integrate.api.nvidia.com/v1 `
+  --api-key-env NVIDIA_API_KEY `
+  --workers 4 `
+  --max-tokens 512
+```
+
+The resulting prediction file is passed to IBM's official `scripts/evaluation/run_generation_eval.py` from the checked-out benchmark repository. No generation score is claimed until the complete selected file has been evaluated by that official implementation. The full MTRAG generation campaign remains open.
+
 Example command:
 
 ```powershell
