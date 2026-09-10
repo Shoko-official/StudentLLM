@@ -51,14 +51,8 @@ function preferredMimeType() {
 export async function requestRecorderSession(options: RecorderOptions = {}): Promise<RecorderSession> {
   const mediaDevices = options.mediaDevices ?? (typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined);
   const recordingId = options.recordingId ?? createRecordingId();
-  if (!mediaDevices?.getUserMedia) {
-    return {
-      stop: async () => ({ recordingId, chunksPersisted: 0, persistenceError: false }),
-      readChunks: async () => [],
-      stream: null,
-      recordingId,
-      durability: 'unavailable',
-    };
+  if (typeof mediaDevices?.getUserMedia !== 'function') {
+    throw new Error('Microphone access is unavailable in this browser. Use HTTPS or localhost and a browser that supports audio recording.');
   }
 
   const stream = await mediaDevices.getUserMedia({ audio: true });
@@ -123,7 +117,12 @@ export async function requestRecorderSession(options: RecorderOptions = {}): Pro
     return stopPromise;
   };
 
-  recorder.start(options.chunkIntervalMs ?? 1000);
+  try {
+    recorder.start(options.chunkIntervalMs ?? 1000);
+  } catch (error) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw error;
+  }
   return {
     stream,
     stop,

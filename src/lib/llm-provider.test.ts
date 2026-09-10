@@ -79,4 +79,22 @@ describe('OpenAI-compatible LLM provider', () => {
 
     await expect(provider.generate([{ role: 'user', content: 'Hello' }])).rejects.toThrow('Provider request failed (503): model unavailable');
   });
+
+  it('does not present a reasoning-only response as a final answer', async () => {
+    const provider = new OpenAICompatibleProvider({
+      baseUrl: '/lm-studio/v1', model: 'qwen/qwen3-4b',
+      fetchImpl: vi.fn(async () => response({ choices: [{ message: { content: '', reasoning_content: 'Unfinished reasoning' }, finish_reason: 'length' }] })),
+    });
+    await expect(provider.generate([{ role: 'user', content: 'Explain' }])).rejects.toThrow('no final answer');
+  });
+
+  it('requests a direct Qwen3 answer and removes its empty thinking wrapper', async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response({
+      choices: [{ message: { content: '<think>\n</think>\nPhotosynthesis converts light into chemical energy.' } }],
+    }));
+    const provider = new OpenAICompatibleProvider({ baseUrl: '/lm-studio/v1', model: 'qwen/qwen3-4b', fetchImpl });
+    await expect(provider.generate([{ role: 'user', content: 'Explain' }])).resolves.toMatchObject({ content: 'Photosynthesis converts light into chemical energy.' });
+    const sent = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
+    expect(sent.messages[0].content).toContain('/no_think');
+  });
 });

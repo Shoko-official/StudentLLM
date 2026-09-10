@@ -12,4 +12,5 @@ __pycache__/
 *.py[cod]
 playwright-report/
 test-results/
+debug.log
 *.local
