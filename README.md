@@ -15,10 +15,11 @@ StudentLLM is built around three principles:
 
 ## Included today
 
-- Responsive three-panel workspace: Library, Course or Chat, and Studio.
+- Responsive workspace with a course library and four focused views: Notes, Sources, Chat, and Study.
 - Flat, minimal interface with compact controls and an information-first layout.
 - Course creation, navigation, search, bookmarks, transcript review states, and artifact creation.
-- Browser microphone access with a demonstration fallback.
+- Empty library on first launch. Legacy demonstration content is removed with a recoverable backup; user recordings and imports are retained.
+- Real browser microphone capture, with explicit errors when capture is unavailable.
 - Versioned local workspace persistence with course-isolated sources, transcript segments, chat history, and artifacts.
 - Chunked `MediaRecorder` capture with IndexedDB persistence when supported by the browser.
 - Interrupted durable recordings are recovered into the owning course on the next launch.
@@ -39,7 +40,10 @@ StudentLLM is built around three principles:
 - Full public French FLEURS ASR baseline with WER, CER, RTF, and reproducibility receipt.
 - Public DocVQA OCR extractability diagnostic with a reproducible partial validation receipt.
 - Optional live LM Studio chat through a browser-safe OpenAI-compatible provider adapter; no remote API key is bundled in the client.
-- LaTeX-aware rendering for formulas in transcripts, chat answers, and study artifacts, with accessible formula labels and a live `Live via LM Studio` provider state when the local endpoint is available.
+- LaTeX-aware rendering for formulas in transcripts, chat answers, and study artifacts, with accessible formula labels.
+- Connection settings for LM Studio, speech recognition, and document extraction, with on-demand availability checks.
+- Text imports appear in course notes immediately. Saved audio can be transcribed or retried from Sources.
+- Study material is saved only after a model returns content; failed requests do not create placeholder artifacts.
 - Local lexical retrieval selects transcript or bounded imported text passages and preserves source-part citations before a live provider request.
 - Audio-derived transcript citations retain their source filename and timestamp, and removing the audio removes its derived segments.
 - Vitest unit and integration coverage, Playwright browser coverage, axe accessibility checks, and GitHub Actions CI.
@@ -55,7 +59,11 @@ npm ci
 npm run dev
 ```
 
-Open the local URL printed by Vite. To inspect the production build:
+Open the local URL printed by Vite. Create your first course, then use **Record** or **Import file**. Sources contains original files, Chat answers questions about them, and Study generates revision material. Export and transcript review are under **More**.
+
+Open **Settings** to configure AI services. In development, keep the LM Studio address at `/lm-studio/v1` and select a model available in your running LM Studio server. Speech and document services are configured separately; see [Provider configuration](docs/providers.md). Recording and text import do not require a model.
+
+To inspect the production build:
 
 ```bash
 npm run build

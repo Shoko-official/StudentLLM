@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AudioChunkRecord, AudioChunkStore } from './recording-storage';
 import { MediaRecorderLike, requestRecorderSession } from './recorder';
 
@@ -26,19 +26,43 @@ function createStore(chunks: AudioChunkRecord[], append = vi.fn(async (chunk: Au
 }
 
 describe('recorder sessions', () => {
-  it('returns an explicit unavailable session when microphone APIs are missing', async () => {
-    const session = await requestRecorderSession({
-      mediaDevices: {} as Pick<MediaDevices, 'getUserMedia'>,
-      recordingId: 'recording-unavailable',
-    });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
 
-    expect(session.stream).toBeNull();
-    expect(session.durability).toBe('unavailable');
-    await expect(session.stop()).resolves.toEqual({
+  it('rejects when supplied microphone APIs are missing', async () => {
+    const mediaRecorderFactory = vi.fn();
+
+    await expect(requestRecorderSession({
+      mediaDevices: {} as Pick<MediaDevices, 'getUserMedia'>,
+      mediaRecorderFactory,
       recordingId: 'recording-unavailable',
-      chunksPersisted: 0,
-      persistenceError: false,
-    });
+    })).rejects.toThrow('Microphone access is unavailable in this browser. Use HTTPS or localhost and a browser that supports audio recording.');
+
+    expect(mediaRecorderFactory).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['navigator is missing', undefined],
+    ['mediaDevices is missing', {}],
+    ['getUserMedia is missing', { mediaDevices: {} }],
+    ['getUserMedia is not callable', { mediaDevices: { getUserMedia: true } }],
+  ])('rejects when %s', async (_description, browserNavigator) => {
+    vi.stubGlobal('navigator', browserNavigator);
+
+    await expect(requestRecorderSession()).rejects.toThrow('Microphone access is unavailable in this browser.');
+  });
+
+  it('stops acquired tracks when the browser MediaRecorder API is missing', async () => {
+    vi.stubGlobal('MediaRecorder', undefined);
+    const track = { stop: vi.fn() };
+    const stream = { getTracks: () => [track] } as unknown as MediaStream;
+
+    await expect(requestRecorderSession({
+      mediaDevices: { getUserMedia: vi.fn(async () => stream) },
+    })).rejects.toThrow('MediaRecorder is unavailable in this browser.');
+
+    expect(track.stop).toHaveBeenCalledTimes(1);
   });
 
   it('stops acquired tracks when MediaRecorder is unavailable', async () => {
@@ -47,7 +71,7 @@ describe('recorder sessions', () => {
 
     await expect(requestRecorderSession({
       mediaDevices: { getUserMedia: vi.fn(async () => stream) },
-      mediaRecorderFactory: () => undefined as unknown as MediaRecorderLike,
+      mediaRecorderFactory: () => undefined,
     })).rejects.toThrow('MediaRecorder is unavailable in this browser.');
 
     expect(track.stop).toHaveBeenCalledTimes(1);
@@ -66,12 +90,78 @@ describe('recorder sessions', () => {
     expect(track.stop).toHaveBeenCalledTimes(1);
   });
 
+  it('stops every acquired track and preserves the error when recording fails to start', async () => {
+    const tracks = [{ stop: vi.fn() }, { stop: vi.fn() }];
+    const stream = { getTracks: () => tracks } as unknown as MediaStream;
+    const recorder = new FakeMediaRecorder();
+    const startError = new DOMException('The audio stream cannot be recorded.', 'NotSupportedError');
+    recorder.start.mockImplementation(() => { throw startError; });
+    const chunkStore = createStore([]);
+
+    await expect(requestRecorderSession({
+      mediaDevices: { getUserMedia: vi.fn(async () => stream) },
+      mediaRecorderFactory: () => recorder,
+      chunkStore,
+    })).rejects.toBe(startError);
+
+    for (const track of tracks) expect(track.stop).toHaveBeenCalledTimes(1);
+    expect(chunkStore.append).not.toHaveBeenCalled();
+    expect(recorder.stop).not.toHaveBeenCalled();
+  });
+
   it('propagates microphone permission failures to the caller', async () => {
     const permissionError = new Error('Permission denied.');
+    const mediaRecorderFactory = vi.fn();
 
     await expect(requestRecorderSession({
       mediaDevices: { getUserMedia: vi.fn(async () => { throw permissionError; }) },
-    })).rejects.toThrow('Permission denied.');
+      mediaRecorderFactory,
+    })).rejects.toBe(permissionError);
+
+    expect(mediaRecorderFactory).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('uses the browser recorder and persists its final chunk when Opus support is %s', async (supportsOpus) => {
+    const track = { stop: vi.fn() };
+    const stream = { getTracks: () => [track] } as unknown as MediaStream;
+    const getUserMedia = vi.fn(async () => stream);
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    const recorder = new FakeMediaRecorder();
+    const browserRecorder = Object.assign(vi.fn(function (_stream: MediaStream, _options?: MediaRecorderOptions) {
+      return recorder;
+    }), { isTypeSupported: vi.fn(() => supportsOpus) });
+    vi.stubGlobal('MediaRecorder', browserRecorder);
+    const chunks: AudioChunkRecord[] = [];
+    const finalChunk = new Blob(['final audio'], { type: supportsOpus ? 'audio/webm;codecs=opus' : 'audio/mp4' });
+    recorder.stop.mockImplementation(() => {
+      recorder.emit(finalChunk);
+      recorder.onstop?.(new Event('stop'));
+    });
+
+    const session = await requestRecorderSession({
+      chunkStore: createStore(chunks),
+      recordingId: 'browser-recording',
+    });
+
+    expect(getUserMedia).toHaveBeenCalledWith({ audio: true });
+    expect(browserRecorder.isTypeSupported).toHaveBeenCalledWith('audio/webm;codecs=opus');
+    if (supportsOpus) {
+      expect(browserRecorder).toHaveBeenCalledWith(stream, { mimeType: 'audio/webm;codecs=opus' });
+    } else {
+      expect(browserRecorder).toHaveBeenCalledWith(stream);
+    }
+    expect(recorder.start).toHaveBeenCalledWith(1000);
+    expect(session.stream).toBe(stream);
+    expect(session.durability).toBe('durable');
+    expect(track.stop).not.toHaveBeenCalled();
+
+    await expect(session.stop()).resolves.toEqual({
+      recordingId: 'browser-recording', chunksPersisted: 1, persistenceError: false,
+    });
+    expect(track.stop).toHaveBeenCalledTimes(1);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].blob).toBe(finalChunk);
+    await expect(session.readChunks()).resolves.toEqual(chunks);
   });
 
   it('persists non-empty MediaRecorder chunks in order and stops tracks once', async () => {
