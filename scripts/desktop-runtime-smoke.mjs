@@ -170,7 +170,7 @@ try:
     lessons_present = False
     if snapshot:
         try:
-        lessons_present = isinstance(json.loads(snapshot[0]).get('lessons'), list)
+            lessons_present = isinstance(json.loads(snapshot[0]).get('lessons'), list)
         except (AttributeError, TypeError, json.JSONDecodeError):
             lessons_present = False
     print('frontend-snapshot-present' if lessons_present else 'frontend-snapshot-missing')
