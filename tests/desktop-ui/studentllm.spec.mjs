@@ -57,6 +57,7 @@ describe('StudentLLM packaged desktop workflow', () => {
     await expect($$('.chat-message')).toBeElementsArrayOfSize(0);
     const composer = await visible('input[aria-label="Ask the course chat"]');
     const send = await visible('button[aria-label="Send"]');
+    await composer.clearValue();
     await expect(send).toBeDisabled();
     await composer.setValue('What material have I added?');
     await expect(send).toBeEnabled();
