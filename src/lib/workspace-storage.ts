@@ -49,6 +49,7 @@ function isLesson(value: unknown): value is Lesson {
     && typeof value.subject === 'string'
     && typeof value.chapter === 'string'
     && typeof value.title === 'string'
+    && (value.sublesson === undefined || typeof value.sublesson === 'string')
     && typeof value.teacher === 'string'
     && typeof value.duration === 'string'
     && typeof value.date === 'string'
@@ -120,6 +121,7 @@ function isCourseNote(value: unknown): value is CourseNote {
     && Array.isArray(value.folderPath) && value.folderPath.every((item) => typeof item === 'string')
     && typeof value.fileName === 'string'
     && typeof value.updatedAt === 'string'
+    && (value.sublesson === undefined || typeof value.sublesson === 'string')
     && isRecord(value.detection)
     && (value.detection.method === 'active course' || value.detection.method === 'transcript signals' || value.detection.method === 'LM Studio')
     && typeof value.detection.confidence === 'number'

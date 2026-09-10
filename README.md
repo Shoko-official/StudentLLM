@@ -18,6 +18,7 @@ StudentLLM is built around three principles:
 - Responsive workspace with a course library and four focused views: Notes, Sources, Chat, and Study.
 - Flat, minimal interface with compact controls and an information-first layout.
 - Course creation, navigation, search, bookmarks, transcript review states, and artifact creation.
+- Quick Start turns a lecture excerpt into an editable course, subject, lesson, and sublesson proposal, then places the material in an existing course or a new one after confirmation.
 - Empty library on first launch. Legacy demonstration content is removed with a recoverable backup; user recordings and imports are retained.
 - Real browser microphone capture, with explicit errors when capture is unavailable.
 - Versioned local workspace persistence with course-isolated sources, transcript segments, chat history, and artifacts.
@@ -59,7 +60,7 @@ npm ci
 npm run dev
 ```
 
-Open the local URL printed by Vite. Create your first course, then use **Record** or **Import file**. Sources contains original files, Chat answers questions about them, and Study generates revision material. Export and transcript review are under **More**.
+Open the local URL printed by Vite. Use **Quick start** to paste a lecture excerpt and let LM Studio propose the course hierarchy and destination; review the proposal before applying it. You can also create a course manually, then use **Record** or **Import file**. Sources contains original files, Chat answers questions about them, and Study generates revision material. Export and transcript review are under **More**.
 
 Open **Settings** to configure AI services. In development, keep the LM Studio address at `/lm-studio/v1` and select a model available in your running LM Studio server. Speech and document services are configured separately; see [Provider configuration](docs/providers.md). Recording and text import do not require a model.
 

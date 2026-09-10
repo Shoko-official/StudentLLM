@@ -90,6 +90,7 @@ export function buildCourseNote(lesson: Lesson, transcript: TranscriptSegment[],
   const subject = detection.method === 'transcript signals' && detection.basis.includes('matched')
     ? detection.basis.replace(/^\d+ transcript signals matched /, '').replace(/\.$/, '')
     : lesson.subject;
+  const sublesson = lesson.sublesson?.trim();
   return {
     id: `course-note:${lesson.id}`,
     title: lesson.title,
@@ -98,9 +99,11 @@ export function buildCourseNote(lesson: Lesson, transcript: TranscriptSegment[],
     folderPath: ['Courses', subject, lesson.chapter, lesson.title],
     fileName: `${slug(lesson.title)}-course-notes.md`,
     updatedAt: now(),
+    ...(sublesson ? { sublesson } : {}),
     detection,
     blocks: [
       { id: 'note-title', type: 'heading', level: 1, text: lesson.title },
+      ...(sublesson ? [{ id: 'note-sublesson', type: 'heading' as const, level: 2 as const, text: sublesson }] : []),
       { id: 'note-context', type: 'paragraph', text: `${subject} / ${lesson.chapter} · ${lesson.teacher}` },
       ...transcript.flatMap(blocksForSegment),
     ],

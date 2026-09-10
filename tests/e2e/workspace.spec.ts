@@ -139,6 +139,28 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByText('Why are attention logits scaled?')).toBeVisible();
   });
 
+  test('uses Quick Start to classify and append a source to the selected course', async ({ page }) => {
+    await page.goto('/');
+    await connectFixtureProvider(page, JSON.stringify({
+      placement: 'existing', targetCourseId: FIXTURE_LESSON_ID, course: 'Machine Learning',
+      lesson: 'Transformers', sublesson: 'Cross-attention', subject: 'Machine Learning',
+      confidence: 0.93, rationale: 'The excerpt describes decoder queries reading encoder keys.',
+    }));
+    await page.getByRole('button', { name: 'Quick start', exact: true }).click();
+    const quickStart = page.getByRole('dialog', { name: 'Quick start', exact: true });
+    await quickStart.getByLabel('Lecture excerpt or course description').fill('Cross-attention lets decoder queries read encoder keys and values.');
+    await quickStart.getByRole('button', { name: 'Analyze structure' }).click({ noWaitAfter: true });
+    await expect(quickStart.getByLabel('Sublesson optional')).toHaveValue('Cross-attention');
+    await expect(quickStart.getByLabel('Place this material in')).toHaveValue(FIXTURE_LESSON_ID);
+    await quickStart.getByRole('button', { name: 'Apply structure' }).click();
+
+    await expect(page.getByRole('region', { name: 'Course notes document' })).toContainText('Cross-attention lets decoder queries read encoder keys and values.');
+    const workspace = await savedWorkspace(page);
+    expect(workspace.lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ meta: 'Quick Start notes · text source', kind: 'transcript' }),
+    ]));
+  });
+
   test('searches course content and exposes the review queue', async ({ page }) => {
     await page.goto('/');
 
