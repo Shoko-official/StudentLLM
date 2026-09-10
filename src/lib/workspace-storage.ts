@@ -1,7 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { Artifact, ChatMessage, CourseNote, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from '../types';
+import { migrateLegacyDemoWorkspace } from './workspace-migration';
+import { RECORDING_RECOVERY_STORAGE_KEY } from './recording-recovery';
 
 export const WORKSPACE_STORAGE_KEY = 'studentllm.workspace.v1';
+export const WORKSPACE_MIGRATION_BACKUP_KEY = 'studentllm.workspace.v1.legacy-demo-backup';
 
 export interface WorkspaceSnapshot {
   activeLessonId: string;
@@ -135,12 +138,14 @@ function isChatMessage(value: unknown): value is ChatMessage {
 
 function parseLessonWorkspace(value: unknown): LessonWorkspace | undefined {
   if (!isRecord(value)) return undefined;
+  const { courseNote, ...fields } = value;
   return {
+    ...fields,
     resources: Array.isArray(value.resources) ? value.resources.filter(isResource) : [],
     transcript: Array.isArray(value.transcript) ? value.transcript.filter(isTranscriptSegment) : [],
     chat: Array.isArray(value.chat) ? value.chat.filter(isChatMessage) : [],
     artifacts: Array.isArray(value.artifacts) ? value.artifacts.filter(isArtifact) : [],
-    ...(isCourseNote(value.courseNote) ? { courseNote: value.courseNote } : {}),
+    ...(isCourseNote(courseNote) ? { courseNote } : {}),
   };
 }
 
@@ -150,7 +155,7 @@ function parseLessonWorkspaces(value: unknown, lessons: Lesson[]): Record<string
     const workspace = parseLessonWorkspace(value[lesson.id]);
     return workspace ? [[lesson.id, workspace]] : [];
   }));
-  return Object.keys(workspaces).length ? workspaces : undefined;
+  return Object.keys(workspaces).length || !lessons.length ? workspaces : undefined;
 }
 
 function getStorage(): Storage | undefined {
@@ -181,14 +186,14 @@ function parseWorkspaceRaw(raw: string | null, fallback: WorkspaceSnapshot): Wor
     if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.lessons)) return fallback;
 
     const lessons = parsed.lessons.filter(isLesson);
-    if (!lessons.length) return fallback;
+    if (parsed.lessons.length && !lessons.length) return fallback;
 
     const activeLessonId = typeof parsed.activeLessonId === 'string' && lessons.some((lesson) => lesson.id === parsed.activeLessonId)
       ? parsed.activeLessonId
-      : lessons[0].id;
-    const resources = Array.isArray(parsed.resources) ? parsed.resources.filter(isResource) : fallback.resources;
-    const transcript = Array.isArray(parsed.transcript) ? parsed.transcript.filter(isTranscriptSegment) : fallback.transcript;
-    const chat = Array.isArray(parsed.chat) ? parsed.chat.filter(isChatMessage) : fallback.chat;
+      : lessons[0]?.id ?? '';
+    const resources = Array.isArray(parsed.resources) ? parsed.resources.filter(isResource) : [];
+    const transcript = Array.isArray(parsed.transcript) ? parsed.transcript.filter(isTranscriptSegment) : [];
+    const chat = Array.isArray(parsed.chat) ? parsed.chat.filter(isChatMessage) : [];
     const artifacts = Array.isArray(parsed.artifacts) ? parsed.artifacts.filter(isArtifact) : [];
     const lessonWorkspaces = parseLessonWorkspaces(parsed.lessonWorkspaces, lessons);
 
@@ -196,6 +201,46 @@ function parseWorkspaceRaw(raw: string | null, fallback: WorkspaceSnapshot): Wor
   } catch {
     return fallback;
   }
+}
+
+function backUpBeforeMigration(raw: string, storage: Storage | undefined): boolean {
+  if (!storage) return false;
+  try {
+    // Browser and native snapshots can differ. Keep every distinct original;
+    // repeated loads reuse an identical backup without replacing earlier ones.
+    for (let index = 0; index <= storage.length; index += 1) {
+      const key = index === 0 ? WORKSPACE_MIGRATION_BACKUP_KEY : `${WORKSPACE_MIGRATION_BACKUP_KEY}.${index}`;
+      const existing = storage.getItem(key);
+      if (existing === raw) return true;
+      if (existing === null) {
+        storage.setItem(key, raw);
+        return storage.getItem(key) === raw;
+      }
+    }
+  } catch {
+    // Return the unmodified workspace when storage is blocked or full.
+  }
+  return false;
+}
+
+function migrateWithBackup(raw: string | null, snapshot: WorkspaceSnapshot, storage: Storage | undefined): WorkspaceSnapshot {
+  if (!raw || !storage) return snapshot;
+  let pendingLessonIds: Set<string>;
+  try {
+    const recoveryRaw = storage.getItem(RECORDING_RECOVERY_STORAGE_KEY);
+    const recovery: unknown = recoveryRaw ? JSON.parse(recoveryRaw) : { recordings: [] };
+    if (!isRecord(recovery) || !Array.isArray(recovery.recordings)) return snapshot;
+    pendingLessonIds = new Set();
+    for (const recording of recovery.recordings) {
+      if (!isRecord(recording) || typeof recording.lessonId !== 'string') return snapshot;
+      pendingLessonIds.add(recording.lessonId);
+    }
+  } catch {
+    // Unknown recovery state must not turn pending audio into an orphan.
+    return snapshot;
+  }
+  const migrated = migrateLegacyDemoWorkspace(snapshot, pendingLessonIds);
+  return migrated !== snapshot && backUpBeforeMigration(raw, storage) ? migrated : snapshot;
 }
 
 export function isNativeRuntime() {
@@ -217,7 +262,16 @@ export function isNativeRuntime() {
 
 export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): WorkspaceSnapshot {
   if (!storage) return fallback;
-  return parseWorkspaceRaw(storage.getItem(WORKSPACE_STORAGE_KEY), fallback);
+  try {
+    const raw = storage.getItem(WORKSPACE_STORAGE_KEY);
+    const snapshot = parseWorkspaceRaw(raw, fallback);
+    if (snapshot === fallback) return snapshot;
+    const migrated = migrateWithBackup(raw, snapshot, storage);
+    if (migrated !== snapshot) saveWorkspace(migrated, storage);
+    return migrated;
+  } catch {
+    return fallback;
+  }
 }
 
 export function saveWorkspace(snapshot: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): boolean {
@@ -240,8 +294,9 @@ export async function loadWorkspaceAsync(
 
   try {
     const raw = await invokeNative<string | null>('load_workspace');
-    const snapshot = parseWorkspaceRaw(raw, fallback);
-    if (raw === null || snapshot === fallback) {
+    const parsed = parseWorkspaceRaw(raw, fallback);
+    const snapshot = parsed === fallback ? parsed : migrateWithBackup(raw, parsed, storage);
+    if (raw === null || snapshot === fallback || snapshot !== parsed) {
       try {
         await invokeNative('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
       } catch (error) {
