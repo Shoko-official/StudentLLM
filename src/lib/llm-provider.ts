@@ -33,7 +33,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.baseUrl = options.baseUrl;
     this.model = options.model;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
-    this.timeoutMs = options.timeoutMs ?? 30_000;
+    this.timeoutMs = options.timeoutMs ?? 60_000;
   }
 
   async generate(messages: ProviderMessage[]): Promise<ProviderResponse> {
@@ -45,9 +45,11 @@ export class OpenAICompatibleProvider implements LLMProvider {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           model: this.model,
-          messages,
+          messages: /qwen3-/i.test(this.model)
+            ? [{ role: 'system', content: 'Return the final answer directly. /no_think' }, ...messages]
+            : messages,
           temperature: 0,
-          max_tokens: 512,
+          max_tokens: 1024,
           stream: false,
         }),
         signal: controller.signal,
@@ -59,8 +61,10 @@ export class OpenAICompatibleProvider implements LLMProvider {
       }
 
       const message = body?.choices?.[0]?.message ?? {};
-      const content = typeof message.content === 'string' ? message.content : message.reasoning_content;
-      if (typeof content !== 'string' || !content.trim()) throw new Error('Provider returned no answer content.');
+      const content = typeof message.content === 'string'
+        ? message.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+        : '';
+      if (!content || content.startsWith('<think>')) throw new Error('The model returned no final answer. Try again or choose another model in Settings.');
       return { content: content.trim(), model: typeof body.model === 'string' ? body.model : this.model };
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw new Error('Provider request timed out.');

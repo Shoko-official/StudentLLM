@@ -1,25 +1,64 @@
 import { afterEach, beforeEach, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 import { listPendingRecordings, RECORDING_RECOVERY_STORAGE_KEY, savePendingRecording } from './lib/recording-recovery';
+import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
+import { createFixtureWorkspace, FIXTURE_LESSON_ID } from './test/workspace-fixture';
 
 const transcriptPreview = () => within(screen.getByRole('region', { name: 'Transcript preview' }));
+type User = ReturnType<typeof userEvent.setup>;
+
+async function openTranscript(user: User) {
+  await user.click(screen.getByRole('tab', { name: 'Notes' }));
+  const summary = await screen.findByText(/^Transcript \(/, { selector: 'summary' });
+  if (!summary.closest('details')?.open) await user.click(summary);
+}
+
+async function openCourseActions(user: User) {
+  const summary = screen.getByLabelText('Course actions');
+  if (!summary.closest('details')?.open) await user.click(summary);
+}
+
+const openSources = (user: User) => user.click(screen.getByRole('tab', { name: /^Sources/ }));
+const savedWorkspace = () => JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY)!);
+
+function bookmarkRecorder() {
+  return {
+    recordingId: 'fixture-bookmark-recording',
+    stream: {} as MediaStream,
+    durability: 'memory-only' as const,
+    readChunks: vi.fn(async () => []),
+    stop: vi.fn(async () => ({ recordingId: 'fixture-bookmark-recording', chunksPersisted: 0, persistenceError: false })),
+  };
+}
 
 describe('StudentLLM workspace', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    vi.stubEnv('VITE_LM_STUDIO_AUTO_CONNECT', 'false');
+    localStorage.clear();
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(createFixtureWorkspace()));
+  });
   afterEach(() => {
     delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
-  it('renders the course workspace with sources and Studio actions', () => {
+  it('renders fixture notes, sources and Study actions in the course tabs', async () => {
+    const user = userEvent.setup();
     render(<App />);
 
     expect(screen.getAllByText('Attention & Scaled Dot-Product').length).toBeGreaterThan(0);
     expect(screen.getByRole('complementary', { name: 'Course navigation' })).toBeInTheDocument();
-    expect(screen.getByRole('complementary', { name: 'Course Studio' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Targeted quiz/ })).toBeInTheDocument();
+    expect(screen.queryByRole('complementary', { name: 'Course Studio' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('region', { name: 'Course notes document' })).toHaveTextContent('The square-root factor');
+    expect(screen.getByRole('region', { name: 'Transcript preview' })).not.toBeVisible();
+    await openSources(user);
     expect(screen.getByText('transcript.txt')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Study' }));
+    expect(screen.getByRole('button', { name: /Targeted quiz/ })).toBeInTheDocument();
   });
 
   it('searches indexed course content and opens the matching course', async () => {
@@ -40,6 +79,7 @@ describe('StudentLLM workspace', () => {
     const user = userEvent.setup();
     render(<App />);
 
+    await openCourseActions(user);
     await user.click(screen.getByRole('button', { name: /Needs review/ }));
 
     expect(screen.getByRole('dialog', { name: /Needs review/ })).toBeInTheDocument();
@@ -51,6 +91,7 @@ describe('StudentLLM workspace', () => {
     const user = userEvent.setup();
     render(<App />);
 
+    await openTranscript(user);
     await user.click(screen.getByRole('button', { name: 'View all' }));
     const transcriptDialog = screen.getByRole('dialog', { name: 'Full transcript 3' });
     expect(within(transcriptDialog).getByText('Without this normalization, dot products grow with the key dimension.')).toBeInTheDocument();
@@ -59,15 +100,17 @@ describe('StudentLLM workspace', () => {
     expect(within(transcriptDialog).getByRole('button', { name: 'Mark segment 01:15:02 for review' })).toBeInTheDocument();
   });
 
-  it('opens the full Studio editor and creates an artifact from it', async () => {
+  it('creates a summary from the Study tab using provider content', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    const generate = vi.fn().mockResolvedValue({ content: 'Attention combines normalized scores with values.', model: 'fixture-model' });
+    render(<App provider={{ generate }} />);
 
-    await user.click(screen.getByRole('button', { name: /Open full Studio/ }));
-    const studioDialog = screen.getByRole('dialog', { name: 'Full Studio' });
-    await user.click(within(studioDialog).getByRole('button', { name: /Quick summary/ }));
+    await user.click(screen.getByRole('tab', { name: 'Study' }));
+    await user.click(screen.getByRole('button', { name: /Quick summary/ }));
 
-    expect(within(studioDialog).getByText(/Draft quick summary for Attention & Scaled Dot-Product/)).toBeInTheDocument();
+    expect(await screen.findByText('Attention combines normalized scores with values.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open artifact Quick summary' })).toBeInTheDocument();
+    expect(generate).toHaveBeenCalledTimes(1);
   });
 
   it('applies transcript display preferences from Settings immediately', async () => {
@@ -78,6 +121,8 @@ describe('StudentLLM workspace', () => {
     const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
     await user.click(within(settingsDialog).getByRole('checkbox', { name: /Show verified transcript segments/ }));
 
+    await user.click(within(settingsDialog).getByRole('button', { name: 'Done' }));
+    await openTranscript(user);
     expect(transcriptPreview().queryByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).not.toBeInTheDocument();
     expect(transcriptPreview().getByText('Without this normalization, dot products grow with the key dimension.')).toBeInTheDocument();
   });
@@ -98,6 +143,9 @@ describe('StudentLLM workspace', () => {
     const reloadedSettings = screen.getByRole('dialog', { name: 'Settings' });
     expect(within(reloadedSettings).getByRole('checkbox', { name: /Show verified transcript segments/ })).not.toBeChecked();
     expect(within(reloadedSettings).getByRole('checkbox', { name: /Compact transcript spacing/ })).toBeChecked();
+    await user.click(within(reloadedSettings).getByRole('button', { name: 'Done' }));
+    await openTranscript(user);
+    expect(screen.getByRole('region', { name: 'Transcript preview' })).toHaveClass('compact');
     expect(transcriptPreview().queryByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).not.toBeInTheDocument();
   });
 
@@ -124,7 +172,8 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: /Matrices and Linear Maps/ }));
 
     expect(screen.getAllByRole('heading', { name: 'Matrices and Linear Maps' }).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Camille Roux/).length).toBeGreaterThan(0);
+    expect(screen.getByRole('region', { name: 'Course notes document' })).toHaveTextContent('A linear map preserves addition and scalar multiplication.');
+    expect(screen.getByRole('button', { name: 'Matrices and Linear Maps' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('creates a new course from the keyboard-accessible modal', async () => {
@@ -135,36 +184,45 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
     await user.type(screen.getByLabelText('Course title'), 'Distributed Systems');
-    await user.click(screen.getByRole('button', { name: /Create and prepare/ }));
+    await user.click(screen.getByRole('button', { name: 'Create course' }));
 
     expect(screen.getAllByRole('heading', { name: 'Distributed Systems' }).length).toBeGreaterThan(0);
     expect(screen.getByText('New course created. Ready to record.')).toBeInTheDocument();
   });
 
-  it('adds a generated artifact to the Studio', async () => {
+  it('saves a generated study guide and restores its content after remounting', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    const generate = vi.fn().mockResolvedValue({ content: 'Review scaling, softmax, and weighted values.', model: 'fixture-model' });
+    const firstRender = render(<App provider={{ generate }} />);
 
+    await user.click(screen.getByRole('tab', { name: 'Study' }));
     await user.click(screen.getByRole('button', { name: /Study guide/ }));
 
-    const recent = screen.getByText('Recently created').parentElement?.parentElement;
-    expect(recent).toBeTruthy();
-    expect(within(recent as HTMLElement).getByRole('button', { name: 'Open artifact Study guide' })).toBeInTheDocument();
-    expect(await screen.findByText(/Draft study guide for Attention & Scaled Dot-Product/)).toBeInTheDocument();
+    expect(await screen.findByText('Review scaling, softmax, and weighted values.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open artifact Study guide' })).toBeInTheDocument();
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].artifacts).toEqual([
+      expect.objectContaining({ kind: 'guide', content: 'Review scaling, softmax, and weighted values.' }),
+    ]);
+    firstRender.unmount();
+    render(<App provider={null} />);
+    await user.click(screen.getByRole('tab', { name: 'Study' }));
+    await user.click(screen.getByRole('button', { name: 'Open artifact Study guide' }));
+    expect(screen.getByText('Review scaling, softmax, and weighted values.')).toBeInTheDocument();
   });
 
-  it('replaces an offline artifact draft with provider content and citations', async () => {
+  it('saves provider artifact content with source citations', async () => {
     const user = userEvent.setup();
     const generate = vi.fn().mockResolvedValue({ content: 'A source-grounded quiz.', model: 'mock-local-model' });
 
     render(<App provider={{ generate }} />);
 
+    await user.click(screen.getByRole('tab', { name: 'Study' }));
     await user.click(screen.getByRole('button', { name: /Targeted quiz/ }));
 
     expect(await screen.findByText('A source-grounded quiz.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Transcript · 01:13:42' })).toBeInTheDocument();
     expect(generate).toHaveBeenCalledWith([
-      { role: 'system', content: expect.stringContaining('Create a concise targeted quiz') },
+      { role: 'system', content: expect.stringContaining('Create a targeted quiz') },
       { role: 'user', content: 'Generate the targeted quiz.' },
     ]);
   });
@@ -234,7 +292,7 @@ describe('StudentLLM workspace', () => {
 
     expect(await screen.findByText('The source explains gradient descent.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Source · optimization.md · part 1' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'LM Studio · mock-local-model' })).toBeInTheDocument();
+    expect(screen.getByText('LM Studio · mock-local-model')).toBeInTheDocument();
     expect(generate).toHaveBeenCalledWith([
       { role: 'system', content: expect.stringContaining('Gradient descent updates parameters using the learning rate.') },
       { role: 'user', content: 'What updates parameters using the learning rate?' },
@@ -268,12 +326,18 @@ describe('StudentLLM workspace', () => {
   });
 
   it('records a bookmark and exposes a review segment', async () => {
-    render(<App />);
+    const user = userEvent.setup();
+    const session = bookmarkRecorder();
+    render(<App recorderSessionFactory={async () => session} />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bookmark this passage' }));
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    await user.click(screen.getByRole('button', { name: 'Bookmark this passage' }));
+    await openTranscript(user);
 
     expect(transcriptPreview().getByText('Student bookmark: review this point in the course.')).toBeInTheDocument();
     expect(screen.getByText(/Bookmark added at/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Stop recording' }));
+    expect(session.stop).toHaveBeenCalledTimes(1);
   });
 
   it('toggles a transcript segment between review and verified', async () => {
@@ -281,6 +345,7 @@ describe('StudentLLM workspace', () => {
 
     render(<App />);
 
+    await openTranscript(user);
     await user.click(screen.getByRole('button', { name: 'Mark segment 01:15:02 verified' }));
 
     const segment = transcriptPreview().getByText('Without this normalization, dot products grow with the key dimension.').closest('article');
@@ -314,6 +379,7 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Start recording' }));
     await user.click(screen.getByRole('button', { name: 'Stop recording' }));
 
+    await openSources(user);
     expect(await screen.findByText('Attention & Scaled Dot-Product audio.webm')).toBeInTheDocument();
     expect(screen.getByText('Audio · 2 chunks')).toBeInTheDocument();
     expect(session.stop).toHaveBeenCalledTimes(1);
@@ -376,11 +442,14 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Start recording' }));
     await user.click(screen.getByRole('button', { name: 'Stop recording' }));
 
+    await openTranscript(user);
     expect(await within(screen.getByRole('region', { name: 'Transcript preview' })).findByText('The local transcript.')).toBeInTheDocument();
     expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
     expect(await screen.findByText('Local transcription added 1 segments.')).toBeInTheDocument();
 
+    await openSources(user);
     await user.click(screen.getByRole('button', { name: 'Remove source Attention & Scaled Dot-Product audio.webm' }));
+    await openTranscript(user);
     expect(transcriptPreview().queryByText('The local transcript.')).not.toBeInTheDocument();
   });
 
@@ -405,7 +474,7 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByRole('button', { name: 'Finishing recording' })).toBeDisabled();
 
     resolveStop({ recordingId: session.recordingId, chunksPersisted: 0, persistenceError: false });
-    await waitFor(() => expect(screen.getByText('Session ready')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled());
     expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled();
   });
 
@@ -435,13 +504,13 @@ describe('StudentLLM workspace', () => {
     render(<App recorderSessionFactory={async () => session} speechEngine={{ transcribe }} />);
 
     await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    await openTranscript(user);
     await waitFor(() => expect(screen.getAllByText('Live preview').length).toBeGreaterThan(0));
     const liveRegion = screen.getByRole('region', { name: 'Live course transcription' });
     expect(within(liveRegion).getByText('Live lecture preview.', { exact: false })).toBeInTheDocument();
-    expect(liveRegion).toHaveTextContent('Notes arriving from your course');
     const courseNote = screen.getByRole('region', { name: 'Course notes document' });
-    expect(courseNote).toHaveTextContent('Attention & Scaled Dot-Product');
-    expect(courseNote).toHaveTextContent('Courses / Machine Learning / Transformers');
+    expect(screen.getByRole('heading', { name: 'Attention & Scaled Dot-Product', level: 1 })).toBeInTheDocument();
+    expect(screen.getByText('Machine Learning / Transformers')).toBeInTheDocument();
     expect(courseNote).toHaveTextContent('E = mc^2');
     expect(within(liveRegion).getByRole('img', { name: 'LaTeX formula: E = mc^2' })).toBeInTheDocument();
     expect(within(courseNote).getByRole('img', { name: 'LaTeX formula: E = mc^2' })).toBeInTheDocument();
@@ -454,7 +523,7 @@ describe('StudentLLM workspace', () => {
     await user.click(within(transcriptDialog).getByRole('button', { name: 'Close full transcript' }));
 
     await user.click(screen.getByRole('button', { name: 'Stop recording' }));
-    await waitFor(() => expect(screen.getByText('Session ready')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled());
     expect(screen.queryByText('Live preview')).not.toBeInTheDocument();
   });
 
@@ -484,7 +553,7 @@ describe('StudentLLM workspace', () => {
 
     await user.click(screen.getByRole('button', { name: /New course/ }));
     await user.type(screen.getByLabelText('Course title'), 'Persistent course');
-    await user.click(screen.getByRole('button', { name: /Create and prepare/ }));
+    await user.click(screen.getByRole('button', { name: 'Create course' }));
     firstRender.unmount();
 
     render(<App />);
@@ -495,18 +564,24 @@ describe('StudentLLM workspace', () => {
 
   it('keeps new-course transcript changes isolated from the existing course', async () => {
     const user = userEvent.setup();
-    render(<App />);
+    render(<App recorderSessionFactory={async () => bookmarkRecorder()} />);
 
     await user.click(screen.getByRole('button', { name: /New course/ }));
     await user.type(screen.getByLabelText('Course title'), 'Isolated course');
-    await user.click(screen.getByRole('button', { name: /Create and prepare/ }));
+    await user.click(screen.getByRole('button', { name: 'Create course' }));
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
     await user.click(screen.getByRole('button', { name: 'Bookmark this passage' }));
+    await openTranscript(user);
     expect(transcriptPreview().getByText('Student bookmark: review this point in the course.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Stop recording' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled());
 
     await user.click(screen.getAllByRole('button', { name: /Attention & Scaled Dot-Product/ }).at(-1)!);
+    await openTranscript(user);
     expect(transcriptPreview().queryByText('Student bookmark: review this point in the course.')).not.toBeInTheDocument();
 
     await user.click(screen.getAllByRole('button', { name: /Isolated course/ }).at(-1)!);
+    await openTranscript(user);
     expect(transcriptPreview().getByText('Student bookmark: review this point in the course.')).toBeInTheDocument();
   });
 
@@ -516,12 +591,15 @@ describe('StudentLLM workspace', () => {
     const file = new File(['course notes'], 'week-1.md', { type: 'text/markdown', lastModified: 123 });
 
     await user.upload(screen.getByLabelText('Select course source'), file);
+    await openSources(user);
     expect(await screen.findByText('week-1.md')).toBeInTheDocument();
     firstRender.unmount();
 
     render(<App />);
 
+    await openSources(user);
     expect(screen.getByText('week-1.md')).toBeInTheDocument();
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].resources[0]).toMatchObject({ name: 'week-1.md', lastModified: 123, sizeBytes: 12, sha256: expect.any(String) });
   });
 
   it('indexes extracted PDF pages as reviewable transcript segments', async () => {
@@ -542,6 +620,7 @@ describe('StudentLLM workspace', () => {
       { type: 'application/pdf' },
     ));
 
+    await openTranscript(user);
     expect(await transcriptPreview().findByText('Gradient descent updates parameters.')).toBeInTheDocument();
     expect(transcriptPreview().getByText('The learning rate controls the step size.')).toBeInTheDocument();
     expect(screen.getByText('optimization.pdf indexed 2 pages locally.')).toBeInTheDocument();
@@ -563,6 +642,7 @@ describe('StudentLLM workspace', () => {
       { type: 'image/png' },
     ));
 
+    await openTranscript(user);
     expect(await transcriptPreview().findByText('A photographed formula.')).toBeInTheDocument();
     expect(screen.getByText('board.png indexed 1 page locally.')).toBeInTheDocument();
     expect(extract).toHaveBeenCalledWith(expect.any(Blob));
@@ -577,6 +657,7 @@ describe('StudentLLM workspace', () => {
       'remove-me.md',
       { type: 'text/markdown' },
     ));
+    await openSources(user);
     expect(await screen.findByText('remove-me.md')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Remove source remove-me.md' }));
@@ -599,12 +680,15 @@ describe('StudentLLM workspace', () => {
       { type: 'audio/webm' },
     ));
 
+    await openTranscript(user);
     expect(await transcriptPreview().findByText('Imported lecture audio.')).toBeInTheDocument();
+    await openSources(user);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Remove source imported-lecture.webm' })).toBeEnabled());
     expect(transcribe).toHaveBeenCalledWith(expect.any(File));
 
     await user.click(screen.getByRole('button', { name: 'Remove source imported-lecture.webm' }));
 
+    await openTranscript(user);
     expect(transcriptPreview().queryByText('Imported lecture audio.')).not.toBeInTheDocument();
     expect(screen.getByText('imported-lecture.webm removed from this course.')).toBeInTheDocument();
   });
@@ -626,6 +710,7 @@ describe('StudentLLM workspace', () => {
       'remove-recording.webm',
       { type: 'audio/webm' },
     ));
+    await openSources(user);
     expect(await screen.findByText('remove-recording.webm')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Remove source remove-recording.webm' }));
@@ -643,6 +728,7 @@ describe('StudentLLM workspace', () => {
       'preview-me.md',
       { type: 'text/markdown' },
     ));
+    await openSources(user);
     const sourceName = await screen.findByText('preview-me.md');
     const sourceButton = sourceName.closest('button');
     expect(sourceButton).not.toBeNull();
@@ -666,10 +752,13 @@ describe('StudentLLM workspace', () => {
       'derived.pdf',
       { type: 'application/pdf' },
     ));
+    await openTranscript(user);
     expect(await transcriptPreview().findByText('Derived page content.')).toBeInTheDocument();
 
+    await openSources(user);
     await user.click(screen.getByRole('button', { name: 'Remove source derived.pdf' }));
 
+    await openTranscript(user);
     expect(transcriptPreview().queryByText('Derived page content.')).not.toBeInTheDocument();
     expect(screen.getByText('derived.pdf removed from this course.')).toBeInTheDocument();
   });
@@ -683,6 +772,7 @@ describe('StudentLLM workspace', () => {
       'course-data.md',
       { type: 'text/markdown' },
     ));
+    await openCourseActions(user);
     await user.click(screen.getByRole('button', { name: 'Delete course' }));
     expect(screen.getByRole('dialog')).toHaveTextContent('Delete Attention & Scaled Dot-Product?');
     await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
@@ -706,11 +796,12 @@ describe('StudentLLM workspace', () => {
     await Promise.resolve();
     savePendingRecording({
       recordingId: 'orphaned-recording',
-      lessonId: 'transformers-06',
+      lessonId: FIXTURE_LESSON_ID,
       lessonTitle: 'Attention & Scaled Dot-Product',
       startedAt: 100,
     });
 
+    await openCourseActions(user);
     await user.click(screen.getByRole('button', { name: 'Delete course' }));
     await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
 
@@ -733,5 +824,147 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByRole('tab', { name: /Chat/ })).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: /Chat/ }));
     expect(screen.getByText('Persist this question')).toBeInTheDocument();
+  });
+
+  it('starts empty, creates a course, imports text into notes and persists it', async () => {
+    localStorage.clear();
+    const user = userEvent.setup();
+    const firstRender = render(<App provider={null} />);
+
+    expect(screen.getByRole('heading', { name: 'A place for your courses.' })).toBeInTheDocument();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.queryByText('Attention & Scaled Dot-Product')).not.toBeInTheDocument();
+    expect(savedWorkspace()).toMatchObject({ lessons: [], activeLessonId: '', resources: [], transcript: [], chat: [], artifacts: [] });
+
+    await user.click(screen.getByRole('button', { name: 'Create your first course' }));
+    await user.type(screen.getByLabelText('Course title'), 'Probability notes');
+    await user.click(screen.getByRole('button', { name: 'Create course' }));
+    expect(screen.getByRole('heading', { name: 'Your notes start here.' })).toBeInTheDocument();
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['Independent event probabilities multiply.'], 'probability.md', { type: 'text/markdown' },
+    ));
+    expect(await within(screen.getByRole('region', { name: 'Course notes document' })).findByText('Independent event probabilities multiply.')).toBeInTheDocument();
+    const snapshot = savedWorkspace();
+    expect(snapshot.lessons).toHaveLength(1);
+    expect(snapshot.lessonWorkspaces[snapshot.activeLessonId].transcript).toEqual([
+      expect.objectContaining({ text: 'Independent event probabilities multiply.', sourceId: expect.any(String) }),
+    ]);
+    firstRender.unmount();
+
+    render(<App provider={null} />);
+    expect(screen.getByRole('heading', { name: 'Probability notes', level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Course notes document' })).toHaveTextContent('Independent event probabilities multiply.');
+    await openSources(user);
+    expect(screen.getByRole('button', { name: /^probability\.md/ })).toBeInTheDocument();
+  });
+
+  it('keeps the workspace empty after deleting its last course and remounting', async () => {
+    const fixture = createFixtureWorkspace();
+    fixture.lessons = fixture.lessons.slice(0, 1);
+    fixture.lessonWorkspaces = { [FIXTURE_LESSON_ID]: fixture.lessonWorkspaces![FIXTURE_LESSON_ID] };
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(fixture));
+    const user = userEvent.setup();
+    const firstRender = render(<App provider={null} />);
+
+    await openCourseActions(user);
+    await user.click(screen.getByRole('button', { name: 'Delete course' }));
+    await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
+    expect(await screen.findByRole('heading', { name: 'A place for your courses.' })).toBeInTheDocument();
+    expect(savedWorkspace()).toMatchObject({ activeLessonId: '', lessons: [], resources: [], transcript: [], chat: [], artifacts: [], lessonWorkspaces: {} });
+    firstRender.unmount();
+
+    render(<App provider={null} />);
+    expect(screen.getByRole('heading', { name: 'A place for your courses.' })).toBeInTheDocument();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.queryByText('Attention & Scaled Dot-Product')).not.toBeInTheDocument();
+    expect(savedWorkspace().lessons).toEqual([]);
+  });
+
+  it('does not save any study material while offline', async () => {
+    const user = userEvent.setup();
+    const firstRender = render(<App provider={null} />);
+    await user.click(screen.getByRole('tab', { name: 'Study' }));
+
+    for (const name of ['Quick summary', 'Study guide', 'Targeted quiz', 'Flashcards', 'Concept map', 'Glossary']) {
+      await user.click(screen.getByRole('button', { name: new RegExp(`^${name}`) }));
+      expect(screen.getByRole('alert')).toHaveTextContent('Connect LM Studio in Settings to generate study material.');
+      expect(screen.queryByRole('button', { name: /^Open artifact/ })).not.toBeInTheDocument();
+      expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].artifacts).toEqual([]);
+    }
+    firstRender.unmount();
+    render(<App provider={null} />);
+    await user.click(screen.getByRole('tab', { name: 'Study' }));
+    expect(screen.queryByRole('heading', { name: 'Saved materials' })).not.toBeInTheDocument();
+    expect(savedWorkspace().artifacts).toEqual([]);
+  });
+
+  it.each([
+    { label: 'a provider failure', response: () => Promise.reject(new Error('Fixture provider unavailable.')), error: 'Fixture provider unavailable.' },
+    { label: 'an empty provider response', response: () => Promise.resolve({ content: '   ', model: 'fixture-model' }), error: 'The model returned no study material. Try again.' },
+  ])('does not save artifacts after $label', async ({ response, error }) => {
+    const user = userEvent.setup();
+    const generate = vi.fn(response);
+    const firstRender = render(<App provider={{ generate }} />);
+    await user.click(screen.getByRole('tab', { name: 'Study' }));
+    await user.click(screen.getByRole('button', { name: /Quick summary/ }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(error);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: /^Open artifact/ })).not.toBeInTheDocument();
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].artifacts).toEqual([]);
+    expect(screen.getByRole('button', { name: /Quick summary/ })).toBeEnabled();
+    firstRender.unmount();
+    render(<App provider={null} />);
+    await user.click(screen.getByRole('tab', { name: 'Study' }));
+    expect(screen.queryByRole('heading', { name: 'Saved materials' })).not.toBeInTheDocument();
+    expect(savedWorkspace().artifacts).toEqual([]);
+  });
+
+  it('does not save an artifact until generation has succeeded', async () => {
+    const user = userEvent.setup();
+    let resolveGeneration!: (response: { content: string; model: string }) => void;
+    const generate = vi.fn(() => new Promise<{ content: string; model: string }>((resolve) => { resolveGeneration = resolve; }));
+    render(<App provider={{ generate }} />);
+    await user.click(screen.getByRole('tab', { name: 'Study' }));
+    await user.click(screen.getByRole('button', { name: /Quick summary/ }));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: /Generating/ })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /^Open artifact/ })).not.toBeInTheDocument();
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].artifacts).toEqual([]);
+
+    resolveGeneration({ content: 'The completed summary.', model: 'fixture-model' });
+    expect(await screen.findByText('The completed summary.')).toBeInTheDocument();
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].artifacts).toEqual([
+      expect.objectContaining({ content: 'The completed summary.' }),
+    ]);
+  });
+
+  it('reports microphone unavailability without recording or adding fake content', async () => {
+    const user = userEvent.setup();
+    const recorderSessionFactory = vi.fn().mockRejectedValue(new Error('Microphone recording is unavailable in this browser.'));
+    render(<App recorderSessionFactory={recorderSessionFactory} provider={null} />);
+    const before = savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID];
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cannot start recording: Microphone recording is unavailable in this browser.');
+    expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Stop recording' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Demo (mode|session)/)).not.toBeInTheDocument();
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID]).toEqual(before);
+    expect(listPendingRecordings()).toEqual([]);
+  });
+
+  it.each(['Sources', 'Chat', 'Study'])('can stop a recording after switching to %s', async (tab) => {
+    const user = userEvent.setup();
+    const session = bookmarkRecorder();
+    render(<App recorderSessionFactory={async () => session} provider={null} />);
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    await user.click(screen.getByRole('tab', { name: new RegExp(`^${tab}`) }));
+    await user.click(screen.getByRole('button', { name: 'Stop recording' }));
+
+    await waitFor(() => expect(session.stop).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('button', { name: 'Stop recording' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Notes' }));
+    expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled();
   });
 });

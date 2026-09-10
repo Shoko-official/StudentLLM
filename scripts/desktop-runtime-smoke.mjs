@@ -135,7 +135,6 @@ const SQLITE_CHECK = `PRAGMA integrity_check;
         SELECT 1 FROM workspace
         WHERE id = 1 AND version = 1 AND json_valid(snapshot)
           AND json_type(snapshot, '$.lessons') = 'array'
-          AND json_array_length(json_extract(snapshot, '$.lessons')) > 0
       ) THEN 'frontend-snapshot-present' ELSE 'frontend-snapshot-missing' END;`;
 
 function validateWorkspaceDatabaseOutput(stdout, stderr, code, signal) {
@@ -171,7 +170,7 @@ try:
     lessons_present = False
     if snapshot:
         try:
-            lessons_present = isinstance(json.loads(snapshot[0]).get('lessons'), list) and bool(json.loads(snapshot[0]).get('lessons'))
+            lessons_present = isinstance(json.loads(snapshot[0]).get('lessons'), list)
         except (AttributeError, TypeError, json.JSONDecodeError):
             lessons_present = False
     print('frontend-snapshot-present' if lessons_present else 'frontend-snapshot-missing')
