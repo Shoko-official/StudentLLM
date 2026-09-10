@@ -25,7 +25,7 @@ describe('StudentLLM packaged desktop workflow', () => {
     await expect(await visible('.welcome h1')).toHaveText('A place for your courses.');
     await expect($$('button.tree-lesson')).toBeElementsArrayOfSize(0);
     await expect($$('[role="tab"]')).toBeElementsArrayOfSize(0);
-    await (await visible('.welcome button.primary-action')).click();
+    await (await visible('//section[contains(@class,"welcome")]//button[normalize-space(.)="Create your first course"]')).click();
 
     await expect(await visible('#new-course-title')).toHaveText('Start a course');
     const courseTitle = await visible('input[placeholder="e.g. Introduction to probability"]');

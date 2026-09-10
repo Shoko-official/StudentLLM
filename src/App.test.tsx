@@ -858,6 +858,58 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByRole('button', { name: /^probability\.md/ })).toBeInTheDocument();
   });
 
+  it('uses Quick Start to classify material into an existing course after confirmation', async () => {
+    const user = userEvent.setup();
+    const generate = vi.fn().mockResolvedValue({
+      model: 'fixture-model',
+      content: '{"placement":"existing","targetCourseId":"fixture-attention","course":"Machine Learning","lesson":"Transformers","sublesson":"Cross-attention","subject":"Machine Learning","confidence":0.92,"rationale":"The excerpt refers to queries, keys and values."}',
+    });
+    render(<App provider={{ generate }} />);
+
+    await user.click(screen.getByRole('button', { name: 'Quick start' }));
+    const dialog = screen.getByRole('dialog', { name: 'Quick start' });
+    await user.type(within(dialog).getByLabelText('Lecture excerpt or course description'), 'Cross-attention lets decoder queries read encoder keys and values.');
+    await user.click(within(dialog).getByRole('button', { name: 'Analyze structure' }));
+
+    expect(await within(dialog).findByDisplayValue('Cross-attention')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Place this material in')).toHaveValue(FIXTURE_LESSON_ID);
+    await user.click(within(dialog).getByRole('button', { name: 'Apply structure' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Quick start' })).not.toBeInTheDocument());
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].transcript).toEqual(expect.arrayContaining([
+      expect.objectContaining({ text: 'Cross-attention lets decoder queries read encoder keys and values.', sourceId: expect.stringMatching(/^quick-start-/) }),
+    ]));
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ meta: 'Quick Start notes · text source', kind: 'transcript' }),
+    ]));
+  });
+
+  it('uses Quick Start to create a structured course when no existing course is selected', async () => {
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify({
+      version: 1, activeLessonId: '', lessons: [], resources: [], transcript: [], chat: [], artifacts: [], lessonWorkspaces: {},
+    }));
+    const user = userEvent.setup();
+    const generate = vi.fn().mockResolvedValue({
+      model: 'fixture-model',
+      content: '{"placement":"new","targetCourseId":null,"course":"Machine Learning","lesson":"Attention","sublesson":"Scaled dot-product","subject":"Machine Learning","confidence":0.88,"rationale":"The text explains Q, K and V normalization."}',
+    });
+    render(<App provider={{ generate }} />);
+
+    await user.click(screen.getByRole('button', { name: 'Quick start with AI' }));
+    const dialog = screen.getByRole('dialog', { name: 'Quick start' });
+    await user.type(within(dialog).getByLabelText('Lecture excerpt or course description'), 'Attention scales QK before applying softmax to V.');
+    await user.click(within(dialog).getByRole('button', { name: 'Analyze structure' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Apply structure' }));
+
+    expect(await screen.findByRole('heading', { name: 'Scaled dot-product', level: 1 })).toBeInTheDocument();
+    expect(savedWorkspace().lessons).toEqual([expect.objectContaining({
+      subject: 'Machine Learning', chapter: 'Attention', title: 'Scaled dot-product', sublesson: 'Scaled dot-product',
+    })]);
+    expect(savedWorkspace().lessonWorkspaces[savedWorkspace().activeLessonId].transcript[0]).toEqual(expect.objectContaining({
+      text: 'Attention scales QK before applying softmax to V.',
+    }));
+  });
+
   it('keeps the workspace empty after deleting its last course and remounting', async () => {
     const fixture = createFixtureWorkspace();
     fixture.lessons = fixture.lessons.slice(0, 1);
