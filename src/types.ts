@@ -7,6 +7,7 @@ export interface Lesson {
   subject: string;
   chapter: string;
   title: string;
+  sublesson?: string;
   teacher: string;
   duration: string;
   date: string;
@@ -72,6 +73,7 @@ export interface CourseNote {
   folderPath: string[];
   fileName: string;
   updatedAt: string;
+  sublesson?: string;
   detection: CourseDetection;
   blocks: CourseNoteBlock[];
 }
