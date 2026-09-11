@@ -4,6 +4,7 @@ import type { LLMProvider } from './llm-provider';
 export interface QuickStartProposal {
   course: string;
   lesson: string;
+  title: string;
   sublesson: string;
   subject: string;
   placement: 'existing' | 'new';
@@ -37,7 +38,7 @@ export async function analyzeQuickStart(
   if (!provider) throw new Error('Connect LM Studio in Settings to use Quick Start.');
 
   const catalog = lessons.length
-    ? lessons.map((lesson) => `id=${lesson.id} | course=${lesson.subject} | lesson=${lesson.chapter} | sublesson=${lesson.title}`).join('\n')
+    ? lessons.map((lesson) => `id=${lesson.id} | course=${lesson.subject} | lesson=${lesson.chapter} | title=${lesson.title} | sublesson=${lesson.sublesson ?? ''}`).join('\n')
     : 'No existing courses.';
   const result = await provider.generate([
     {
@@ -45,10 +46,11 @@ export async function analyzeQuickStart(
       content: [
         'You organize study material into a small course tree.',
         'Return only valid JSON, with no markdown and no extra text.',
-        'Use exactly these fields: placement, targetCourseId, course, lesson, sublesson, subject, confidence, rationale.',
+        'Use exactly these fields: placement, targetCourseId, course, lesson, title, sublesson, subject, confidence, rationale.',
         'placement must be "existing" only when one existing course clearly matches; otherwise use "new".',
         'targetCourseId must be an existing catalog id when placement is "existing", otherwise null.',
-        'Keep names concise and in the language of the input. If a sublesson is not supported by the input, return an empty string.',
+        'course is the top-level course group, lesson is the chapter or lesson, title is the name of the note/session to create, and sublesson is an optional nested topic.',
+        'Keep names concise and in the language of the input. If a sublesson is not supported by the input, return an empty string. If title is not explicit, use the most specific supported topic name.',
         'confidence is a number from 0 to 1. Do not invent a teacher, date, facts, or hierarchy that is not supported by the input.',
         `Existing course catalog:\n${catalog}`,
       ].join('\n'),
@@ -63,6 +65,7 @@ export async function analyzeQuickStart(
   const course = clean(parsed.course) || clean(parsed.subject) || 'General';
   const lesson = clean(parsed.lesson) || 'General notes';
   const sublesson = clean(parsed.sublesson);
+  const title = clean(parsed.title) || sublesson || lesson || course;
   const confidence = typeof parsed.confidence === 'number' && Number.isFinite(parsed.confidence)
     ? Math.max(0, Math.min(1, parsed.confidence))
     : 0.6;
@@ -70,6 +73,7 @@ export async function analyzeQuickStart(
   return {
     course,
     lesson,
+    title,
     sublesson,
     subject: clean(parsed.subject) || course,
     placement,

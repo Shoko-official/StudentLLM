@@ -40,6 +40,7 @@ const workspace = (resources: Resource[], transcript: TranscriptSegment[]): Less
 const proposal = (overrides: Partial<QuickStartProposal>): QuickStartProposal => ({
   course: 'Mathematics',
   lesson: 'Optimization',
+  title: 'Gradient methods notes',
   sublesson: 'Gradient descent',
   subject: 'Mathematics',
   placement: 'existing',
@@ -94,12 +95,27 @@ describe('recording placement', () => {
       id: 'created-lesson',
       subject: 'Mathematics',
       chapter: 'Optimization',
-      title: 'Gradient descent',
+      title: 'Gradient methods notes',
       sublesson: 'Gradient descent',
     });
     expect(result.lessons.map((lesson) => lesson.id)).toEqual(['created-lesson', sourceLesson.id]);
     expect(result.lessonWorkspaces[sourceLesson.id].resources).toEqual([]);
     expect(result.lessonWorkspaces['created-lesson'].resources).toEqual([recording]);
     expect(result.lessonWorkspaces['created-lesson'].transcript).toEqual([segment]);
+  });
+
+  it('uses the explicit subject as the persisted top-level folder when it differs from the course group', () => {
+    const result = applyRecordingPlacement({
+      sourceLesson,
+      lessons: [sourceLesson],
+      lessonWorkspaces: { [sourceLesson.id]: workspace([recording], [segment]) },
+      proposal: proposal({ placement: 'new', targetCourseId: null, course: 'AI foundations', subject: 'Computer Science' }),
+      resource: recording,
+      segments: [segment],
+      idFactory: () => 'subject-mapped-lesson',
+    });
+
+    expect(result.targetLesson.subject).toBe('Computer Science');
+    expect(result.lessonWorkspaces['subject-mapped-lesson'].courseNote?.folderPath[1]).toBe('Computer Science');
   });
 });
