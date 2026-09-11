@@ -42,8 +42,9 @@ import { buildCourseExport, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
-import { buildCourseNote, courseNoteMarkdown, detectCourseWithProvider } from './lib/course-notes';
+import { buildCourseNote, courseNoteMarkdown } from './lib/course-notes';
 import { analyzeQuickStart } from './lib/quick-start';
+import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-routing';
 import type { QuickStartProposal } from './lib/quick-start';
 import { Artifact, ArtifactKind, ChatMessage, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from './types';
 
@@ -294,19 +295,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   };
 
   const updateActiveWorkspace = (update: (current: LessonWorkspace) => LessonWorkspace) => updateLessonWorkspace(activeLessonId, update);
-
-  const refreshCourseRouting = (lessonId: string, lesson: Lesson, segments: TranscriptSegment[]) => {
-    if (!localProvider || !segments.length) return;
-    void detectCourseWithProvider(lesson, segments, localProvider).then((note) => {
-      if (!note) return;
-      setLessonWorkspaces((current) => {
-        const workspace = current[lessonId] ?? emptyLessonWorkspace;
-        const latest = buildCourseNote(lesson, workspace.transcript);
-        return { ...current, [lessonId]: { ...workspace, courseNote: { ...latest, title: note.title, subject: note.subject, chapter: note.chapter, folderPath: note.folderPath, fileName: note.fileName, detection: note.detection, blocks: latest.blocks.map((block) => block.id === 'note-title' && block.type === 'heading' ? { ...block, text: note.title } : block), updatedAt: latest.updatedAt } } };
-      });
-      if (lessonId === activeLessonId) notify(`Course routed to ${note.folderPath.slice(1).join(' / ')}.`);
-    }).catch(() => undefined);
-  };
 
   const visibleLessons = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
@@ -926,18 +914,24 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         return;
       }
       void session.stop().then(async ({ chunksPersisted, persistenceError }) => {
-        if (session.stream && session.durability === 'durable' && chunksPersisted > 0) {
+        const recordingResource: Resource = {
+          id: session.recordingId,
+          name: `${recordingLessonTitle} audio.webm`,
+          meta: `Audio · ${chunksPersisted} chunk${chunksPersisted === 1 ? '' : 's'}`,
+          kind: 'audio',
+          mimeType: 'audio/webm',
+        };
+        const saveRecordingFallback = (segments: TranscriptSegment[] = []) => {
           updateLessonWorkspace(recordingLessonId, (current) => ({
             ...current,
-            resources: [{
-              id: session.recordingId,
-              name: `${recordingLessonTitle} audio.webm`,
-              meta: `Audio · ${chunksPersisted} chunk${chunksPersisted === 1 ? '' : 's'}`,
-              kind: 'audio',
-              mimeType: 'audio/webm',
-            }, ...current.resources],
+            resources: current.resources.some((resource) => resource.id === recordingResource.id)
+              ? current.resources
+              : [recordingResource, ...current.resources],
+            transcript: segments.length
+              ? [...current.transcript, ...segments.filter((segment) => !current.transcript.some((existing) => existing.id === segment.id))]
+              : current.transcript,
           }));
-        }
+        };
         setLessons((current) => current.map((lesson) => lesson.id === recordingLessonId ? { ...lesson, duration: formatElapsed(recordingSeconds) } : lesson));
         if (persistenceError) {
           notify(`${chunksPersisted} audio chunks preserved; persistence needs review.`);
@@ -947,7 +941,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           notify(`${chunksPersisted} audio chunks kept in memory only.`);
         }
 
-        if (!localSpeechEngine || !session.stream || session.durability !== 'durable' || chunksPersisted === 0) return;
+        if (!localSpeechEngine || !session.stream || session.durability !== 'durable' || chunksPersisted === 0) {
+          if (session.stream && session.durability === 'durable' && chunksPersisted > 0) saveRecordingFallback();
+          return;
+        }
         notify('Audio saved locally. Transcribing with local ASR...');
         try {
           const chunks = await session.readChunks();
@@ -955,20 +952,55 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           const audio = new Blob(chunks.map((chunk) => chunk.blob), { type: chunks[0].blob.type || 'audio/webm' });
           const transcription = await localSpeechEngine.transcribe(audio);
           if (!transcription.segments.length) {
+            saveRecordingFallback();
             notify('Audio saved locally; local ASR returned no speech.');
             return;
           }
-          updateLessonWorkspace(recordingLessonId, (current) => ({
-            ...current,
-            transcript: [...current.transcript, ...transcription.segments.map((segment, index) => ({
-              ...segment,
-              id: `${session.recordingId}:${segment.id || index}`,
-              sourceId: session.recordingId,
-            }))],
+          const segments = transcription.segments.map((segment, index) => ({
+            ...segment,
+            id: `${session.recordingId}:${segment.id || index}`,
+            sourceId: session.recordingId,
           }));
-          refreshCourseRouting(recordingLessonId, lessons.find((lesson) => lesson.id === recordingLessonId) ?? activeLesson, transcription.segments);
-          notify(`Local transcription added ${transcription.segments.length} segments.`);
+          const lessonsForRouting = lessons.map((lesson) => lesson.id === recordingLessonId
+            ? { ...lesson, duration: formatElapsed(recordingSeconds) }
+            : lesson);
+          const recordingLesson = lessonsForRouting.find((lesson) => lesson.id === recordingLessonId) ?? activeLesson;
+          if (localProvider) {
+            try {
+              const proposal = await analyzeQuickStart(
+                segments.map((segment) => `${segment.timestamp} ${segment.text}`).join('\n'),
+                lessonsForRouting,
+                localProvider,
+              );
+              if (!canAutoRouteRecording(proposal)) {
+                saveRecordingFallback(segments);
+                notify(`Local transcription added ${segments.length} segments. AI routing confidence was too low.`);
+                return;
+              }
+              const routed = applyRecordingPlacement({
+                sourceLesson: recordingLesson,
+                lessons: lessonsForRouting,
+                lessonWorkspaces,
+                proposal,
+                resource: recordingResource,
+                segments,
+                duration: formatElapsed(recordingSeconds),
+              });
+              setLessons(routed.lessons);
+              setLessonWorkspaces(routed.lessonWorkspaces);
+              setActiveLessonId(routed.targetLesson.id);
+              setSelectedArtifactId(routed.lessonWorkspaces[routed.targetLesson.id]?.artifacts[0]?.id ?? null);
+              setView('course');
+              notify(`Local transcription added and routed to ${routed.targetLesson.title}.`);
+              return;
+            } catch {
+              // Keep the recording in its selected course when the classifier is unavailable or uncertain.
+            }
+          }
+          saveRecordingFallback(segments);
+          notify(`Local transcription added ${segments.length} segments.`);
         } catch {
+          saveRecordingFallback();
           notify('Audio saved locally; local transcription needs review.');
         }
       }).catch(() => setRecordingError('The audio session could not be finalized correctly.'))
