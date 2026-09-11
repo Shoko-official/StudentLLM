@@ -453,6 +453,51 @@ describe('StudentLLM workspace', () => {
     expect(transcriptPreview().queryByText('The local transcript.')).not.toBeInTheDocument();
   });
 
+  it('routes a finalized recording to the existing course selected by LM Studio', async () => {
+    const user = userEvent.setup();
+    const session = {
+      recordingId: 'recording-routing-test',
+      stream: {} as MediaStream,
+      durability: 'durable' as const,
+      readChunks: vi.fn(async () => [{
+        recordingId: 'recording-routing-test',
+        sequence: 0,
+        blob: new Blob(['audio'], { type: 'audio/webm' }),
+        recordedAt: 123,
+      }]),
+      stop: vi.fn(async () => ({ recordingId: 'recording-routing-test', chunksPersisted: 1, persistenceError: false })),
+    };
+    const transcribe = vi.fn(async () => ({
+      model: 'faster-whisper-small',
+      segments: [{ id: 'routing-segment', timestamp: '00:00:01', speaker: 'Professor', text: 'Matrices and linear maps preserve structure.', status: 'review' as const }],
+    }));
+    const generate = vi.fn(async () => ({
+      model: 'fixture-model',
+      content: JSON.stringify({
+        placement: 'existing', targetCourseId: 'fixture-linear-algebra', course: 'Mathematics',
+        lesson: 'Linear Algebra', sublesson: 'Matrices and Linear Maps', subject: 'Mathematics',
+        confidence: 0.94, rationale: 'The transcript describes linear maps.',
+      }),
+    }));
+
+    render(<App recorderSessionFactory={async () => session} speechEngine={{ transcribe }} provider={{ generate }} />);
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    await user.click(screen.getByRole('button', { name: 'Stop recording' }));
+
+    expect(await screen.findByText('Local transcription added and routed to Matrices and Linear Maps.')).toBeInTheDocument();
+    const saved = savedWorkspace();
+    expect(saved.lessonWorkspaces['fixture-attention'].resources).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'recording-routing-test' }),
+    ]));
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'recording-routing-test' }),
+    ]));
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'recording-routing-test:routing-segment' }),
+    ]));
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
   it('shows recording finalization state until audio processing completes', async () => {
     const user = userEvent.setup();
     let resolveStop!: (summary: { recordingId: string; chunksPersisted: number; persistenceError: boolean }) => void;
