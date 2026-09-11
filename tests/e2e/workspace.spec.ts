@@ -143,14 +143,15 @@ test.describe('StudentLLM workspace', () => {
     await page.goto('/');
     await connectFixtureProvider(page, JSON.stringify({
       placement: 'existing', targetCourseId: FIXTURE_LESSON_ID, course: 'Machine Learning',
-      lesson: 'Transformers', sublesson: 'Cross-attention', subject: 'Machine Learning',
+      lesson: 'Transformers', title: 'Cross-attention notes', sublesson: 'Decoder context', subject: 'Machine Learning',
       confidence: 0.93, rationale: 'The excerpt describes decoder queries reading encoder keys.',
     }));
     await page.getByRole('button', { name: 'Quick start', exact: true }).click();
     const quickStart = page.getByRole('dialog', { name: 'Quick start', exact: true });
     await quickStart.getByLabel('Lecture excerpt or course description').fill('Cross-attention lets decoder queries read encoder keys and values.');
     await quickStart.getByRole('button', { name: 'Analyze structure' }).click({ noWaitAfter: true });
-    await expect(quickStart.getByLabel('Sublesson optional')).toHaveValue('Cross-attention');
+    await expect(quickStart.getByLabel('Title')).toHaveValue('Cross-attention notes');
+    await expect(quickStart.getByLabel('Sublesson optional')).toHaveValue('Decoder context');
     await expect(quickStart.getByLabel('Place this material in')).toHaveValue(FIXTURE_LESSON_ID);
     await quickStart.getByRole('button', { name: 'Apply structure' }).click();
 

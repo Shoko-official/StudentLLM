@@ -74,9 +74,9 @@ export function applyRecordingPlacement(input: RecordingPlacementInput): Recordi
     : undefined;
   const targetLesson = existingTarget ?? {
     id: idFactory(),
-    subject: proposal.course.trim() || proposal.subject.trim() || 'General',
+    subject: proposal.subject.trim() || proposal.course.trim() || 'General',
     chapter: proposal.lesson.trim() || 'General notes',
-    title: proposal.sublesson.trim() || proposal.lesson.trim() || proposal.course.trim() || 'Course notes',
+    title: proposal.title.trim() || proposal.sublesson.trim() || proposal.lesson.trim() || proposal.course.trim() || 'Course notes',
     ...(proposal.sublesson.trim() ? { sublesson: proposal.sublesson.trim() } : {}),
     teacher: '',
     duration,

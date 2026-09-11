@@ -11,13 +11,14 @@ describe('Quick Start analysis', () => {
   it('parses an AI proposal and accepts only a catalog course as an existing target', async () => {
     const generate = vi.fn().mockResolvedValue({
       model: 'fixture-model',
-      content: '```json\n{"placement":"existing","targetCourseId":"ml-transformers","course":"Machine Learning","lesson":"Transformers","sublesson":"Cross-attention","subject":"Machine Learning","confidence":0.91,"rationale":"The excerpt discusses queries, keys and values."}\n```',
+      content: '```json\n{"placement":"existing","targetCourseId":"ml-transformers","course":"Machine Learning","lesson":"Transformers","title":"Cross-attention notes","sublesson":"Decoder reads encoder context","subject":"Machine Learning","confidence":0.91,"rationale":"The excerpt discusses queries, keys and values."}\n```',
     });
 
     const proposal = await analyzeQuickStart('Queries attend to keys and values.', lessons, { generate });
 
     expect(proposal).toMatchObject({
-      placement: 'existing', targetCourseId: 'ml-transformers', sublesson: 'Cross-attention', confidence: 0.91,
+      placement: 'existing', targetCourseId: 'ml-transformers', title: 'Cross-attention notes',
+      lesson: 'Transformers', sublesson: 'Decoder reads encoder context', confidence: 0.91,
     });
     expect(generate).toHaveBeenCalledWith(expect.arrayContaining([
       expect.objectContaining({ role: 'user', content: 'Queries attend to keys and values.' }),

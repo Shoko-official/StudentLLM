@@ -907,7 +907,7 @@ describe('StudentLLM workspace', () => {
     const user = userEvent.setup();
     const generate = vi.fn().mockResolvedValue({
       model: 'fixture-model',
-      content: '{"placement":"existing","targetCourseId":"fixture-attention","course":"Machine Learning","lesson":"Transformers","sublesson":"Cross-attention","subject":"Machine Learning","confidence":0.92,"rationale":"The excerpt refers to queries, keys and values."}',
+      content: '{"placement":"existing","targetCourseId":"fixture-attention","course":"Machine Learning","lesson":"Transformers","title":"Cross-attention notes","sublesson":"Decoder context","subject":"Machine Learning","confidence":0.92,"rationale":"The excerpt refers to queries, keys and values."}',
     });
     render(<App provider={{ generate }} />);
 
@@ -916,7 +916,7 @@ describe('StudentLLM workspace', () => {
     await user.type(within(dialog).getByLabelText('Lecture excerpt or course description'), 'Cross-attention lets decoder queries read encoder keys and values.');
     await user.click(within(dialog).getByRole('button', { name: 'Analyze structure' }));
 
-    expect(await within(dialog).findByDisplayValue('Cross-attention')).toBeInTheDocument();
+    expect(await within(dialog).findByLabelText('Title')).toHaveValue('Cross-attention notes');
     expect(within(dialog).getByLabelText('Place this material in')).toHaveValue(FIXTURE_LESSON_ID);
     await user.click(within(dialog).getByRole('button', { name: 'Apply structure' }));
 
@@ -936,7 +936,7 @@ describe('StudentLLM workspace', () => {
     const user = userEvent.setup();
     const generate = vi.fn().mockResolvedValue({
       model: 'fixture-model',
-      content: '{"placement":"new","targetCourseId":null,"course":"Machine Learning","lesson":"Attention","sublesson":"Scaled dot-product","subject":"Machine Learning","confidence":0.88,"rationale":"The text explains Q, K and V normalization."}',
+      content: '{"placement":"new","targetCourseId":null,"course":"Machine Learning","lesson":"Attention","title":"Scaled dot-product notes","sublesson":"Scaled dot-product","subject":"Machine Learning","confidence":0.88,"rationale":"The text explains Q, K and V normalization."}',
     });
     render(<App provider={{ generate }} />);
 
@@ -946,9 +946,9 @@ describe('StudentLLM workspace', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Analyze structure' }));
     await user.click(within(dialog).getByRole('button', { name: 'Apply structure' }));
 
-    expect(await screen.findByRole('heading', { name: 'Scaled dot-product', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Scaled dot-product notes', level: 1 })).toBeInTheDocument();
     expect(savedWorkspace().lessons).toEqual([expect.objectContaining({
-      subject: 'Machine Learning', chapter: 'Attention', title: 'Scaled dot-product', sublesson: 'Scaled dot-product',
+      subject: 'Machine Learning', chapter: 'Attention', title: 'Scaled dot-product notes', sublesson: 'Scaled dot-product',
     })]);
     expect(savedWorkspace().lessonWorkspaces[savedWorkspace().activeLessonId].transcript[0]).toEqual(expect.objectContaining({
       text: 'Attention scales QK before applying softmax to V.',
