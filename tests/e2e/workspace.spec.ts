@@ -161,6 +161,48 @@ test.describe('StudentLLM workspace', () => {
     ]));
   });
 
+  test('routes a finalized recording to the course selected by the local model', async ({ page }) => {
+    await installRecorderFixture(page);
+    await page.route('**/fixture-asr/health', (route) => route.fulfill({ json: { status: 'ready', model: 'fixture-asr' } }));
+    await page.route('**/fixture-asr/transcribe', (route) => route.fulfill({
+      json: {
+        model: 'fixture-asr',
+        segments: [{ id: 'routing-segment', start: 1, speaker: 'Professor', text: 'Matrices and linear maps preserve structure.' }],
+      },
+    }));
+    await page.goto('/');
+    await connectFixtureProvider(page, JSON.stringify({
+      placement: 'existing', targetCourseId: 'fixture-linear-algebra', course: 'Mathematics',
+      lesson: 'Linear Algebra', sublesson: 'Matrices and Linear Maps', subject: 'Mathematics',
+      confidence: 0.94, rationale: 'The lecture explains a defining property of linear maps.',
+    }));
+
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+    await settings.getByLabel('Speech service address').fill('/fixture-asr');
+    await settings.getByRole('button', { name: 'Save connections' }).click();
+    await expect(settings.getByText('fixture-asr · ready')).toBeVisible();
+    await settings.getByRole('button', { name: 'Done' }).click();
+
+    await page.getByRole('button', { name: 'Start recording' }).click();
+    await page.getByRole('button', { name: 'Stop recording' }).click();
+    await expect(page.getByRole('status')).toContainText('Local transcription added and routed to Matrices and Linear Maps.', { timeout: 120_000 });
+
+    const workspace = await savedWorkspace(page);
+    expect(workspace.lessonWorkspaces[FIXTURE_LESSON_ID].resources).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'audio' }),
+    ]));
+    expect(workspace.lessonWorkspaces['fixture-linear-algebra'].resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'audio' }),
+    ]));
+    expect(workspace.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: expect.stringContaining(':routing-segment'), sourceId: expect.any(String) }),
+    ]));
+    expect(workspace.lessonWorkspaces['fixture-linear-algebra'].courseNote.folderPath).toEqual([
+      'Courses', 'Mathematics', 'Linear Algebra', 'Matrices and Linear Maps',
+    ]);
+  });
+
   test('searches course content and exposes the review queue', async ({ page }) => {
     await page.goto('/');
 
