@@ -1497,13 +1497,16 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       <div className={`workspace-grid ${showLeftSidebar ? 'with-navigation' : ''}`}>
         {showLeftSidebar && <>
           <button className="navigation-scrim" aria-label="Close navigation" onClick={() => setShowLeftSidebar(false)} />
-          <aside className="left-sidebar" aria-label="Course navigation">
+          <aside className="left-sidebar workspace-sidebar" aria-label="Course navigation">
+            <div className="sidebar-header">
+              <div className="sidebar-brand"><div><strong>StudentLLM</strong><ChevronDown size={13} aria-hidden="true" /></div><span>Workspace</span></div>
+            </div>
             <div className="sidebar-start-actions">
-              <button className="primary-action" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={openQuickStart}><Sparkles size={17} /> Quick start</button>
-              <button className="secondary-action" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={() => setShowNewCourse(true)}><Plus size={17} /> New course</button>
+              <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={openQuickStart}><Sparkles size={16} /><span>Quick start</span></button>
+              <button className="sidebar-row" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={() => setShowNewCourse(true)}><Plus size={16} /><span>New course</span></button>
             </div>
             {lessons.length > 0 && <label className="search-field"><Search size={16} /><input aria-label="Search courses" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Find a course" /></label>}
-            <div className="sidebar-section-header"><span>Your courses</span><span>{lessons.length}</span></div>
+            <div className="sidebar-section-header"><span>Courses</span><span>{lessons.length}</span></div>
             <nav className="course-tree">
               {courseTree.map(({ subject, chapters }) => (
                 <div className="tree-group" key={subject}>
@@ -1521,8 +1524,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               {!courseTree.length && <p className="empty-state">{lessons.length ? 'No matching courses.' : 'Your courses will appear here.'}</p>}
             </nav>
             <div className="sidebar-footer">
-              {lessons.length > 0 && <button className="ghost-row" onClick={() => setShowGlobalSearch(true)}><Search size={16} /> Global search</button>}
-              <label className="ghost-row file-label"><Upload size={16} /> Import course<input className="visually-hidden" type="file" accept="application/json,.json" aria-label="Import course export" onChange={(event) => void importCourse(event)} /></label>
+              {lessons.length > 0 && <button className="ghost-row sidebar-row" onClick={() => setShowGlobalSearch(true)}><Search size={16} /><span>Global search</span></button>}
+              <label className="ghost-row sidebar-row file-label"><Upload size={16} /><span>Import course</span><input className="visually-hidden" type="file" accept="application/json,.json" aria-label="Import course export" onChange={(event) => void importCourse(event)} /></label>
             </div>
           </aside>
         </>}
