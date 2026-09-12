@@ -58,7 +58,7 @@ Regression checks complement the public benchmark results below. Each reported s
 | BEIR TREC-COVID dense retrieval on CUDA | Full public test split, BGE-small normalized embeddings on local CUDA | `benchmarks/run_beir_dense.py --dataset trec-covid --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | nDCG@10 0.6438, Recall@10 0.0183, MRR@10 0.8779; 221.038 seconds |
 | BEIR TREC-COVID retrieval | Full public test split, deterministic BM25 and BGE-small dense retrieval | `benchmarks/run_beir_bm25.py --dataset trec-covid` and `benchmarks/run_beir_dense.py --dataset trec-covid --model BAAI/bge-small-en-v1.5 --device cpu` | BM25 nDCG@10 0.5537, Recall@10 0.0157, MRR@10 0.7906; dense nDCG@10 0.6438, Recall@10 0.0184, MRR@10 0.8779 |
 | MTRAG human retrieval | Official IBM retrieval tasks, rewrite and last-turn variants, four collections, 777 scored queries each | `benchmarks/run_mtrag_retrieval.py --variant <variant> --retriever dense --model <model> --device cuda --batch-size 32 --candidate-k 100 --max-seq-length 512 --query-prefix "Represent this sentence for searching relevant passages: "` | BGE-base with the official query instruction remains strongest: rewrite nDCG@10 `0.3905` / Recall@10 `0.4815`; last-turn `0.3341` / `0.4082`. A complete instructed BGE-large rewrite comparison scored `0.3648` / `0.4438`; it was not promoted |
-| CRAG Task 1/2 generation | Official public CRAG validation smoke, 10 of 1,371 examples, NVIDIA `openai/gpt-oss-20b` | `benchmarks/run_crag.py --split 0 --limit 10 --judge-model openai/gpt-oss-20b` | Judge score `-0.2000` after 10 examples; partial diagnostic only, full validation and public evaluation remain open |
+| CRAG Task 1/2 generation | Complete official public CRAG Task 1/2 development file, split 1, 1,335 examples, NVIDIA `openai/gpt-oss-20b` | `benchmarks/run_crag.py` with the full-split command below | Official-style judge score `0.039700` (406 correct, 576 missing, 353 incorrect, 12 unparsed) across all 1,335 records; 1,280 valid predictions and 55 generation failures; complete public split, target unmet |
 | MTEB STSBenchmark v2 | Official public test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STSBenchmark.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | Spearman main score 0.857289 |
 | MTEB STS22 v2 | Official public multilingual test task, BGE-small sentence embeddings | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cpu` | 18 subsets, unweighted descriptive macro-average 0.469262; language spread 0.181685-0.740204 |
 | MTEB STS22 v2 on CUDA | Official public multilingual test task, BGE-small sentence embeddings on local CUDA | `benchmarks/run_mteb.py --task STS22.v2 --model BAAI/bge-small-en-v1.5 --device cuda --batch-size 64` | 18 subsets, unweighted descriptive macro-average 0.469258; 17.278 seconds; language spread 0.181685-0.740204 |
@@ -888,9 +888,11 @@ The same ten-example validation slice was used for a controlled context comparis
 
 The NVIDIA model catalog returned 81 identifiers for the configured account. `nvidia/nemotron-3-super-120b-a12b` responded to a direct smoke request, but its 20-example validation comparison scored `-0.2000` with two generation failures and visible reasoning truncation, below the `openai/gpt-oss-20b` profile. `openai/gpt-oss-20b` is therefore the selected profile for the bounded public campaign. Direct calls for `meta/llama-3.3-70b-instruct` and `nvidia/llama-3.1-nemotron-70b-instruct` returned HTTP 404 `Function not found` and are not scored.
 
-The corrected runner uses the official CRAG judge rules, checks each accepted answer variant independently, performs deterministic exact-match scoring before a judge request, and retries transient provider failures. On 20 validation examples, `openai/gpt-oss-20b` produced one generation failure, five correct, nine missing, six incorrect, and judge score `-0.0500`. On a separate 50-example public split sample, it produced zero generation failures, 17 correct, 22 missing, 11 incorrect, and judge score `0.1200`. These are bounded public-data measurements, not full-split leaderboard claims; complete validation and public evaluation remain open.
+The corrected runner uses the official CRAG judge rules, checks each accepted answer variant independently, performs deterministic exact-match scoring before a judge request, and retries transient provider failures. On 20 validation examples, `openai/gpt-oss-20b` produced one generation failure, five correct, nine missing, six incorrect, and judge score `-0.0500`. On a separate 50-example public split sample, it produced zero generation failures, 17 correct, 22 missing, 11 incorrect, and judge score `0.1200`. These bounded measurements remain useful for smoke validation but are not full-split leaderboard claims.
 
-Example command using the NVIDIA API key from the Windows User environment:
+The complete public split 1 run was completed on 2026-09-12 with `openai/gpt-oss-20b` for both generation and judging through the NVIDIA OpenAI-compatible endpoint. It used one worker, a 4,000-character per-page evidence budget, and a 512-token generation budget. The run covered all 1,335 examples in 11,795.49 seconds, produced 1,280 valid predictions, and retained 55 generation failures. Deterministic exact match was `0.0404494382`. The official-style judge scored all 1,335 records: 406 correct, 576 missing, 353 incorrect, and 12 unparsed, for a final score of `0.0397003745`. This is complete public-split evidence for the selected configuration, and it does not meet the project's quality target. The local receipt is `artifacts/benchmarks/crag/gpt-oss-20b-context4000-workers1.json` (SHA-256 `79f81c8f76dcc3c777294f8b42c576f15d9229c532d8dafc90693d8b0251479f`).
+
+Bounded smoke command using the NVIDIA API key from the Windows User environment:
 
 ```powershell
 .\.venv-bench-sys\Scripts\python.exe benchmarks\run_crag.py `
@@ -902,6 +904,23 @@ Example command using the NVIDIA API key from the Windows User environment:
   --judge-model openai/gpt-oss-20b `
   --workers 4 `
   --output-path artifacts\benchmarks\crag\validation-smoke.json
+```
+
+Full public split reproduction for the selected one-worker, large-context profile:
+
+```powershell
+.\\.venv-bench-sys\\Scripts\\python.exe benchmarks\\run_crag.py `
+  --dataset-path C:\\path\\to\\crag_task_1_and_2_dev_v4.jsonl.bz2 `
+  --split 1 `
+  --model openai/gpt-oss-20b `
+  --base-url https://integrate.api.nvidia.com/v1 `
+  --api-key-env NVIDIA_API_KEY `
+  --judge-model openai/gpt-oss-20b `
+  --workers 1 `
+  --page-chars 4000 `
+  --max-tokens 512 `
+  --checkpoint-path artifacts\\benchmarks\\crag\\gpt-oss-20b-context4000-workers1.checkpoint.json `
+  --output-path artifacts\\benchmarks\\crag\\gpt-oss-20b-context4000-workers1.json
 ```
 
 The smoke receipt is local and ignored by Git. It must not be used as a leaderboard claim or as evidence that the full CRAG target has been met.
