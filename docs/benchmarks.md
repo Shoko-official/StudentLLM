@@ -12,9 +12,9 @@ Regression checks complement the public benchmark results below. Each reported s
 | --- | --- | --- | --- |
 | TypeScript | TypeScript project check | `npm run check` | PASS |
 | Benchmark adapters | Python bytecode compilation | `npm run benchmarks:check` | PASS |
-| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 93 tests |
+| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 233 tests |
 | Production artifact | Vite | `npm run build` | PASS |
-| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 33 tests |
+| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 41 tests |
 | Live web smoke | Python Playwright against the running Vite interface | `$env:PYTHONUTF8='1'; python scripts/live_web_smoke.py` | PASS observed on 2026-09-01; page load, new-course dialog, Escape dismissal, and zero page or console errors |
 | FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
 | FLEURS French ASR, CUDA profile | Full public test split, faster-whisper large-v3-turbo on local CUDA | `benchmarks/run_asr_fleurs.py --model large-v3-turbo --config fr_fr --split test --device cuda --compute-type float16` | WER 0.0656, CER 0.0213, RTF 0.0235; 676 examples; selected quality profile |
