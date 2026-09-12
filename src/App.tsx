@@ -119,7 +119,7 @@ type ServiceSettings = { llmUrl: string; model: string; asrUrl: string; document
 function loadServiceSettings(): ServiceSettings {
   const defaults = {
     llmUrl: import.meta.env.VITE_LM_STUDIO_BASE_URL?.trim() || (import.meta.env.DEV ? '/lm-studio/v1' : 'http://127.0.0.1:1234/v1'),
-    model: import.meta.env.VITE_LM_STUDIO_MODEL?.trim() || 'qwen/qwen3-4b',
+    model: import.meta.env.VITE_LM_STUDIO_MODEL?.trim() || 'openai/gpt-oss-20b',
     asrUrl: import.meta.env.VITE_LOCAL_ASR_BASE_URL?.trim() || '',
     documentsUrl: import.meta.env.VITE_LOCAL_DOCUMENT_BASE_URL?.trim() || '',
   };
