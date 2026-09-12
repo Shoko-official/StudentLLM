@@ -21,15 +21,15 @@ def main() -> None:
         print("BUTTONS=" + " | ".join(page.get_by_role("button").all_inner_texts()))
         print("INPUTS=" + str(page.locator("input").count()))
         print("TEXTAREAS=" + str(page.locator("textarea").count()))
-        page.get_by_text("New course", exact=True).click()
-        page.wait_for_timeout(200)
-        dialog_action = page.get_by_text("Create and prepare recording", exact=True)
-        if dialog_action.count() != 1:
+        page.get_by_role("button", name="New course", exact=True).click()
+        dialog = page.get_by_role("dialog", name="Start a course", exact=True)
+        dialog.wait_for(state="visible", timeout=5_000)
+        if dialog.count() != 1 or not dialog.is_visible():
             raise AssertionError("The new-course dialog did not open")
         print("AFTER_NEW_COURSE=" + page.locator("body").inner_text()[-400:])
         page.keyboard.press("Escape")
-        page.wait_for_timeout(200)
-        if dialog_action.count() != 0:
+        dialog.wait_for(state="hidden", timeout=5_000)
+        if dialog.count() != 0:
             raise AssertionError("Escape did not close the new-course dialog")
         print("DIALOGS_AFTER_ESCAPE=0")
         print("ERRORS=" + " | ".join(errors))
