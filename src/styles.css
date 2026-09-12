@@ -36,29 +36,42 @@ svg { flex-shrink: 0; }
 .icon-button { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; height: 40px; border-radius: 5px; color: var(--muted); }
 .icon-button:hover { background: var(--surface-3); color: var(--text); }
 .workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr); min-height: calc(100dvh - 60px); }
-.workspace-grid.with-navigation { grid-template-columns: 240px minmax(0, 1fr); }
-.left-sidebar { display: flex; flex-direction: column; gap: 20px; padding: 24px 16px; background: #f7f7f6; border-right: 1px solid var(--line); min-width: 0; }
-.sidebar-start-actions { display: grid; gap: 8px; }
-.sidebar-start-actions .secondary-action { width: 100%; }
+.workspace-grid.with-navigation { grid-template-columns: 252px minmax(0, 1fr); }
+.left-sidebar { display: flex; flex-direction: column; min-width: 0; min-height: calc(100dvh - 60px); padding: 14px 10px 12px; color: #3d3d3a; background: #f7f7f5; border-right: 1px solid #e3e3e0; color-scheme: light; overflow: hidden; }
+.sidebar-header { padding: 0 8px 14px; border-bottom: 1px solid #e3e3e0; }
+.sidebar-brand { display: grid; gap: 2px; min-width: 0; }
+.sidebar-brand > div { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.sidebar-brand svg { color: #858580; }
+.sidebar-brand strong { color: #242424; font-size: 15px; font-weight: 600; letter-spacing: -.2px; }
+.sidebar-brand span { color: #6b6b68; font-size: 11px; }
+.sidebar-start-actions { display: grid; gap: 2px; padding: 12px 0 10px; }
+.sidebar-row { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; min-height: 34px; padding: 7px 9px; border-radius: 5px; color: #4b4b48; font-size: 13px; line-height: 1.25; text-align: left; }
+.sidebar-row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-row:hover:not(:disabled), .sidebar-row:focus-visible { color: #242424; background: #e9e9e6; }
+.sidebar-row-primary { color: #242424; background: #e6e6e3; }
+.sidebar-row-primary:hover:not(:disabled), .sidebar-row-primary:focus-visible { background: #dededb; }
 .primary-action, .primary-submit, .secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 10px 16px; border-radius: 5px; font-size: 14px; font-weight: 500; }
 .primary-action, .primary-submit { color: #fff; background: var(--accent); }
 .primary-action:hover:not(:disabled), .primary-submit:hover:not(:disabled) { background: var(--accent-strong); }
 .secondary-action { background: #fff; border: 1px solid #d4d4d2; }
 .secondary-action:hover { background: var(--surface-2); }
 .primary-action.stop { background: #8e2824; }
-.search-field { display: flex; align-items: center; gap: 8px; color: var(--muted); }
-.search-field input { width: 100%; min-width: 0; padding: 9px 0; border: 0; background: transparent; outline-offset: 1px; font-size: 14px; }
-.sidebar-section-header { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; }
-.course-tree { display: grid; gap: 12px; }
-.tree-subject { width: 100%; display: flex; align-items: center; justify-content: space-between; text-align: left; gap: 8px; padding: 7px 6px; font-size: 13px; color: var(--muted); }
+.search-field { display: flex; align-items: center; gap: 8px; margin: 2px 6px 18px; padding: 0 9px; border: 1px solid #dcdcd8; border-radius: 5px; color: #858580; background: #fff; }
+.search-field:focus-within { border-color: #b8b8b3; }
+.search-field input { width: 100%; min-width: 0; padding: 8px 0; border: 0; color: #3d3d3a; background: transparent; outline-offset: 1px; font-size: 13px; }
+.search-field input::placeholder { color: #858580; }
+.sidebar-section-header { display: flex; justify-content: space-between; gap: 8px; padding: 0 8px 8px; color: #6b6b68; font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.course-tree { display: grid; flex: 1; min-height: 0; gap: 4px; padding-right: 2px; overflow-y: auto; scrollbar-color: #c8c8c4 transparent; }
+.tree-subject { width: 100%; display: flex; align-items: center; justify-content: space-between; text-align: left; gap: 8px; padding: 7px 8px; border-radius: 5px; font-size: 13px; color: #4b4b48; }
+.tree-subject:hover, .tree-subject:focus-visible { color: #242424; background: #e9e9e6; }
 .tree-subject span { overflow-wrap: anywhere; }
-.tree-children { margin: 4px 0; }
-.tree-chapter { display: block; padding: 8px 8px 4px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-.tree-lesson { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 10px 8px; border-radius: 5px; text-align: left; font-size: 14px; line-height: 1.45; }
+.tree-children { margin: 0 0 4px 6px; padding-left: 7px; border-left: 1px solid #dcdcd8; }
+.tree-chapter { display: block; padding: 6px 8px 4px; color: #6b6b68; font-size: 11px; overflow-wrap: anywhere; }
+.tree-lesson { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 8px 9px; border-radius: 5px; color: #4b4b48; text-align: left; font-size: 13px; line-height: 1.35; }
 .tree-lesson span { overflow-wrap: anywhere; min-width: 0; }
-.tree-lesson.active, .tree-lesson:hover { background: #eaeae7; }
-.sidebar-footer { margin-top: auto; padding-top: 28px; display: grid; gap: 8px; }
-.ghost-row { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px; color: var(--muted); font-size: 14px; text-align: left; }
+.tree-lesson.active, .tree-lesson:hover, .tree-lesson:focus-visible { color: #242424; background: #e2e2df; }
+.sidebar-footer { margin-top: 12px; padding-top: 10px; border-top: 1px solid #e3e3e0; display: grid; gap: 2px; }
+.ghost-row { color: #6f6f6b; }
 .file-label { position: relative; }
 .main-panel { min-width: 0; width: 100%; max-width: 1080px; padding: 40px 48px 64px; margin: 0 auto; }
 .main-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 26px; }
@@ -193,8 +206,8 @@ svg { flex-shrink: 0; }
 }
 @media (max-width: 900px) {
   .workspace-grid.with-navigation { grid-template-columns: minmax(0, 1fr); }
-  .left-sidebar { position: fixed; z-index: 7; inset: 60px auto 0 0; width: min(82vw, 290px); overflow-y: auto; }
-  .navigation-scrim { display: block; position: fixed; z-index: 6; inset: 60px 0 0 min(82vw, 290px); background: #0004; }
+  .left-sidebar { position: fixed; z-index: 7; inset: 60px auto 0 0; width: min(86vw, 308px); overflow-y: auto; }
+  .navigation-scrim { display: block; position: fixed; z-index: 6; inset: 60px 0 0 min(86vw, 308px); background: #0006; }
   .main-panel { max-width: 850px; }
 }
 @media (max-width: 540px) {

@@ -61,6 +61,20 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByRole('button', { name: /Targeted quiz/ })).toBeInTheDocument();
   });
 
+  it('renders the workspace sidebar with compact real navigation groups', () => {
+    render(<App />);
+
+    const sidebar = screen.getByRole('complementary', { name: 'Course navigation' });
+    expect(sidebar).toHaveClass('workspace-sidebar');
+    expect(within(sidebar).getByText('StudentLLM')).toBeInTheDocument();
+    expect(within(sidebar).getByText('Workspace')).toBeInTheDocument();
+    expect(within(sidebar).getByText('Courses')).toBeInTheDocument();
+    expect(within(sidebar).getByRole('button', { name: 'Quick start' })).toHaveClass('sidebar-row');
+    expect(within(sidebar).getByRole('button', { name: 'New course' })).toHaveClass('sidebar-row');
+    expect(within(sidebar).getByRole('button', { name: 'Global search' })).toHaveClass('sidebar-row');
+    expect(within(sidebar).getByLabelText('Import course export').closest('.sidebar-row')).not.toBeNull();
+  });
+
   it('searches indexed course content and opens the matching course', async () => {
     const user = userEvent.setup();
     render(<App />);
