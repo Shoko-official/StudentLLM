@@ -1,7 +1,7 @@
 const DEFAULT_NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1';
 const DEFAULT_LM_STUDIO_BASE_URL = 'http://127.0.0.1:1234/v1';
 const DEFAULT_NVIDIA_MODEL = 'openai/gpt-oss-20b';
-const DEFAULT_LM_STUDIO_MODEL = 'qwen/qwen3-4b';
+const DEFAULT_LM_STUDIO_MODEL = 'openai/gpt-oss-20b';
 
 function withTimeout(timeoutMs) {
   const controller = new AbortController();

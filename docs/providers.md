@@ -52,13 +52,13 @@ The server must already be running with the intended model loaded.
 Defaults:
 
 - endpoint: `http://127.0.0.1:1234/v1`;
-- model: `qwen/qwen3-4b`, override with `LM_STUDIO_MODEL`.
+- model: `openai/gpt-oss-20b`, override with `LM_STUDIO_MODEL`.
 
 Optional overrides:
 
 ```powershell
 $env:LM_STUDIO_BASE_URL = 'http://127.0.0.1:1234/v1'
-$env:LM_STUDIO_MODEL = 'qwen/qwen3-4b'
+$env:LM_STUDIO_MODEL = 'openai/gpt-oss-20b'
 ```
 
 The smoke script appends `/no_think` for Qwen models so the measured response uses the final content channel.
@@ -67,7 +67,7 @@ Browser development chat uses the built-in same-origin Vite proxy by default, so
 
 ```powershell
 $env:VITE_LM_STUDIO_BASE_URL = '/lm-studio/v1'
-$env:VITE_LM_STUDIO_MODEL = 'qwen/qwen3-4b'
+$env:VITE_LM_STUDIO_MODEL = 'openai/gpt-oss-20b'
 npm run dev
 ```
 

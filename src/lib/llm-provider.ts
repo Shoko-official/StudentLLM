@@ -81,6 +81,6 @@ export function createLocalLLMProvider(env: Record<string, string | undefined> =
   if (!baseUrl) return null;
   return new OpenAICompatibleProvider({
     baseUrl,
-    model: env.VITE_LM_STUDIO_MODEL?.trim() || 'qwen/qwen3-4b',
+    model: env.VITE_LM_STUDIO_MODEL?.trim() || 'openai/gpt-oss-20b',
   });
 }

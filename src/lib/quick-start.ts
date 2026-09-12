@@ -52,7 +52,7 @@ export async function analyzeQuickStart(
         'course is the top-level course group, lesson is the chapter or lesson, title is the name of the note/session to create, and sublesson is an optional nested topic.',
         'Keep names concise and in the language of the input. If a sublesson is not supported by the input, return an empty string. If title is not explicit, use the most specific supported topic name.',
         'confidence is a number from 0 to 1. Do not invent a teacher, date, facts, or hierarchy that is not supported by the input.',
-        `Existing course catalog:\n${catalog}`,
+        `Known destinations:\n${catalog}`,
       ].join('\n'),
     },
     { role: 'user', content: excerpt.slice(0, 24_000) },
