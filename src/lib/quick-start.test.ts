@@ -22,7 +22,13 @@ describe('Quick Start analysis', () => {
     });
     expect(generate).toHaveBeenCalledWith(expect.arrayContaining([
       expect.objectContaining({ role: 'user', content: 'Queries attend to keys and values.' }),
+      expect.objectContaining({
+        role: 'system',
+        content: expect.stringContaining('Known destinations:'),
+      }),
     ]));
+    expect(generate.mock.calls[0]?.[0]?.find((message: { role: string; content: string }) => message.role === 'system')?.content)
+      .not.toContain('Existing course catalog:');
   });
 
   it('falls back to a new course when the model invents an existing course id', async () => {

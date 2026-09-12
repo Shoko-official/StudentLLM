@@ -66,6 +66,21 @@ describe('OpenAI-compatible LLM provider', () => {
     expect(createLocalLLMProvider({ MODE: 'development' })).toBeInstanceOf(OpenAICompatibleProvider);
   });
 
+  it('prefers GPT OSS for a fresh local development connection', async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response({
+      model: 'openai/gpt-oss-20b',
+      choices: [{ message: { content: 'Connected.' } }],
+    }));
+    vi.stubGlobal('fetch', fetchImpl);
+    try {
+      const provider = createLocalLLMProvider({ MODE: 'development' });
+      await expect(provider?.generate([{ role: 'user', content: 'Hello' }])).resolves.toMatchObject({ model: 'openai/gpt-oss-20b' });
+      expect(JSON.parse(fetchImpl.mock.calls[0]?.[1]?.body as string).model).toBe('openai/gpt-oss-20b');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('allows deterministic offline browser tests to disable auto-connect', () => {
     expect(createLocalLLMProvider({ MODE: 'development', VITE_LM_STUDIO_AUTO_CONNECT: 'false' })).toBeNull();
   });
