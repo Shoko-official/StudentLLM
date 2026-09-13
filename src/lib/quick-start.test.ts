@@ -26,7 +26,12 @@ describe('Quick Start analysis', () => {
         role: 'system',
         content: expect.stringContaining('Known destinations:'),
       }),
-    ]));
+    ]), expect.objectContaining({
+      responseFormat: expect.objectContaining({
+        type: 'json_schema',
+        json_schema: expect.objectContaining({ name: 'quick_start' }),
+      }),
+    }));
     expect(generate.mock.calls[0]?.[0]?.find((message: { role: string; content: string }) => message.role === 'system')?.content)
       .not.toContain('Existing course catalog:');
   });
