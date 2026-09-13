@@ -77,7 +77,7 @@ The Vite development server proxies `/lm-studio/*` to the origin configured by `
 
 The Playwright web server disables this automatic connection so browser regression tests remain deterministic and offline. Set `VITE_LM_STUDIO_AUTO_CONNECT=false` in another isolated test environment when the local server should not be contacted.
 
-The live browser path was verified against the existing `openai/gpt-oss-20b` process on 2026-08-28: the Vite proxy returned HTTP 200, the model returned 886 characters, the answer rendered in Chat, and the page reported no browser or console errors.
+The live browser path was revalidated on 2026-09-13 against the existing `openai/gpt-oss-20b` process: the Vite proxy returned HTTP 200, Settings reported the selected model as available, and Quick Start returned a real structured proposal at 90% confidence without persisting the smoke input. The same run kept the local ASR and document sidecars available for source processing.
 
 ## Run the live check
 
