@@ -1358,6 +1358,46 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       const result = await localSpeechEngine.transcribe(audio);
       if (!result.segments.length) throw new Error('No speech was detected in this recording.');
       const segments = result.segments.map((segment, index) => ({ ...segment, id: `${resource.id}:${segment.id || index}`, sourceId: resource.id }));
+      if (localProvider) {
+        try {
+          const proposal = await analyzeQuickStart(
+            segments.map((segment) => `${segment.timestamp} ${segment.text}`).join('\n'),
+            lessons,
+            localProvider,
+          );
+          if (canAutoRouteRecording(proposal)) {
+            const sourceWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
+            const routingWorkspaces = {
+              ...lessonWorkspaces,
+              [lessonId]: {
+                ...sourceWorkspace,
+                resources: sourceWorkspace.resources.some((candidate) => candidate.id === resource.id)
+                  ? sourceWorkspace.resources
+                  : [...sourceWorkspace.resources, resource],
+                transcript: [...sourceWorkspace.transcript.filter((segment) => segment.sourceId !== resource.id), ...segments],
+              },
+            };
+            const routed = applyRecordingPlacement({
+              sourceLesson: activeLesson,
+              lessons,
+              lessonWorkspaces: routingWorkspaces,
+              proposal,
+              resource,
+              segments,
+            });
+            setLessons(routed.lessons);
+            setLessonWorkspaces(routed.lessonWorkspaces);
+            setActiveLessonId(routed.targetLesson.id);
+            setSelectedArtifactId(routed.lessonWorkspaces[routed.targetLesson.id]?.artifacts[0]?.id ?? null);
+            setView('course');
+            setShowAllResources(false);
+            notify(`Transcription added and routed to ${routed.targetLesson.title}.`);
+            return;
+          }
+        } catch {
+          // Keep the source in its current course when classification is unavailable or uncertain.
+        }
+      }
       updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: [...current.transcript.filter((segment) => segment.sourceId !== resource.id), ...segments] }));
       notify('Transcription added to your course notes.');
     } catch (error) {
