@@ -1176,19 +1176,48 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const lessonId = activeLesson.id;
     try {
       const documents = await loadRetrievalDocuments();
-      const contextDocuments = documents.slice(0, 12);
-      if (!contextDocuments.length) throw new Error('Import notes or transcribe a recording before generating study material.');
-      const context = contextDocuments.map((document) => document.text).join('\n\n').slice(0, 24000);
+      const candidateDocuments = documents.slice(0, 12);
+      if (!candidateDocuments.length) throw new Error('Import notes or transcribe a recording before generating study material.');
+      const evidenceParts: string[] = [];
+      const evidenceDocuments: RetrievalDocument[] = [];
+      let evidenceCharacters = 0;
+      for (const document of candidateDocuments) {
+        const { resourceName, part, speaker, timestamp } = document.metadata;
+        const label = resourceName
+          ? `[Source: ${resourceName}${part ? `, part ${part}` : ''}]`
+          : `[${timestamp}] ${speaker}:`;
+        const evidence = `${label} ${document.text}`;
+        const remainingCharacters = 24_000 - evidenceCharacters;
+        if (remainingCharacters <= 0) break;
+        evidenceDocuments.push(document);
+        evidenceParts.push(evidence.slice(0, remainingCharacters));
+        evidenceCharacters += Math.min(evidence.length, remainingCharacters);
+        if (evidence.length > remainingCharacters) break;
+      }
+      const context = [
+        'BEGIN COURSE EVIDENCE',
+        evidenceParts.join('\n\n'),
+        'END COURSE EVIDENCE',
+      ].join('\n');
       const result = await localProvider.generate([
-        { role: 'system', content: `Create a ${definition.label.toLowerCase()} for ${activeLesson.title} using only these excerpts. Do not invent facts.\n${context}` },
+        {
+          role: 'system',
+          content: [
+            `Create a ${definition.label.toLowerCase()} for ${activeLesson.title} using only the course evidence below.`,
+            'The evidence between BEGIN COURSE EVIDENCE and END COURSE EVIDENCE is present and authoritative.',
+            'If the evidence does not support a claim, omit it or say: Not enough evidence in this course.',
+            'Do not add facts from outside the evidence. Preserve technical terms, notation, and formulas exactly when they appear.',
+            context,
+          ].join('\n'),
+        },
         { role: 'user', content: `Generate the ${definition.label.toLowerCase()}.` },
       ]);
       if (!result.content.trim()) throw new Error('The model returned no study material. Try again.');
       const artifact: Artifact = {
         id: `${kind}-${crypto.randomUUID()}`, kind, label: definition.label,
         createdAt: new Date().toLocaleString('en-GB'), content: result.content,
-        citations: contextDocuments.slice(0, 3).map(formatRetrievalCitation),
-        citationTargets: contextDocuments.slice(0, 3).map((document) => document.id),
+        citations: evidenceDocuments.slice(0, 3).map(formatRetrievalCitation),
+        citationTargets: evidenceDocuments.slice(0, 3).map((document) => document.id),
       };
       updateLessonWorkspace(lessonId, (current) => ({ ...current, artifacts: [artifact, ...current.artifacts] }));
       setSelectedArtifactId(artifact.id);

@@ -236,9 +236,17 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('A source-grounded quiz.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Transcript · 01:13:42' })).toBeInTheDocument();
     expect(generate).toHaveBeenCalledWith([
-      { role: 'system', content: expect.stringContaining('Create a targeted quiz') },
+      {
+        role: 'system',
+        content: expect.stringContaining('Create a targeted quiz'),
+      },
       { role: 'user', content: 'Generate the targeted quiz.' },
     ]);
+    const systemPrompt = generate.mock.calls[0][0][0].content as string;
+    expect(systemPrompt).toContain('BEGIN COURSE EVIDENCE');
+    expect(systemPrompt).toContain('END COURSE EVIDENCE');
+    expect(systemPrompt).toContain('[01:13:42] Professor: We can write attention');
+    expect(systemPrompt).toContain('The evidence between BEGIN COURSE EVIDENCE and END COURSE EVIDENCE is present and authoritative.');
   });
 
   it('switches to chat and sends a grounded question', async () => {
