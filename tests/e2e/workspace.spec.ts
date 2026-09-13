@@ -169,6 +169,37 @@ test.describe('StudentLLM workspace', () => {
     ]));
   });
 
+  test('edits the course hierarchy and persists the updated note location', async ({ page }) => {
+    await page.goto('/');
+    await openCourseActions(page);
+    await page.getByRole('button', { name: 'Edit course', exact: true }).click();
+
+    const editCourse = page.getByRole('dialog', { name: 'Edit course', exact: true });
+    await expect(editCourse.getByLabel('Course title', { exact: true })).toHaveValue('Attention & Scaled Dot-Product');
+    await editCourse.getByLabel('Course title', { exact: true }).fill('Attention mechanisms');
+    await editCourse.getByLabel('Subject', { exact: true }).fill('Machine Learning Foundations');
+    await editCourse.getByLabel('Chapter', { exact: true }).fill('Attention');
+    await editCourse.getByLabel('Sublesson', { exact: false }).fill('Scaled dot-product');
+    await editCourse.getByRole('button', { name: 'Save course changes', exact: true }).click();
+
+    await expect(page.getByRole('heading', { name: 'Attention mechanisms', level: 1 })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Attention mechanisms', exact: true })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Course notes document' })).toContainText('Machine Learning Foundations / Attention');
+    const workspace = await savedWorkspace(page);
+    expect(workspace.lessons).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: FIXTURE_LESSON_ID,
+        subject: 'Machine Learning Foundations',
+        chapter: 'Attention',
+        title: 'Attention mechanisms',
+        sublesson: 'Scaled dot-product',
+      }),
+    ]));
+    expect(workspace.lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.folderPath).toEqual([
+      'Courses', 'Machine Learning Foundations', 'Attention', 'Attention mechanisms',
+    ]);
+  });
+
   test('routes a finalized recording to the course selected by the local model', async ({ page }) => {
     await installRecorderFixture(page);
     await page.route('**/fixture-asr/health', (route) => route.fulfill({ json: { status: 'ready', model: 'fixture-asr' } }));
