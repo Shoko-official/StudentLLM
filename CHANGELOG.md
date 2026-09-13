@@ -7,6 +7,7 @@
 - Live course notes now turn the incremental transcript into a persisted, routed document with formulas, code, schemas, and compact data visualizations when appropriate; LM Studio can refine the detected subject, chapter, title, and Markdown filename.
 - Course metadata can be edited after creation from the compact More menu; title, subject, chapter, and sublesson changes update the course tree and persisted note path together.
 - Course chat now wraps retrieved passages in explicit evidence boundaries and requires a grounded answer or a clear insufficient-evidence response; the live LM Studio smoke also checks for concepts present in the source.
+- Study artifacts now use bounded, source-labelled evidence with explicit insufficient-evidence handling, and citations only point to passages actually sent to the local model.
 - A flat, minimal workspace visual system with compact artifact rows and no decorative gradients, shadows, or complex motion.
 - React and TypeScript learning workspace;
 - course navigation, transcript review, recording controls, chat, and Studio artifact actions;
