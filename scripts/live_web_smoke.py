@@ -49,6 +49,7 @@ def main() -> None:
             "This lecture introduces eigenvalues and eigenvectors. "
             "We compute the characteristic polynomial of a matrix and interpret its roots."
         )
+        quick_start.get_by_label("Source name", exact=False).fill("live-quick-start")
         quick_start.get_by_role("button", name="Analyze structure", exact=True).click()
         try:
             quick_start.get_by_text("confidence", exact=False).wait_for(state="visible", timeout=30_000)
@@ -63,11 +64,35 @@ def main() -> None:
         print("LIVE_QUICK_START=" + proposal_text.replace("\n", " | ")[:600])
         if "confidence" not in proposal_text.lower():
             raise AssertionError("Live Quick Start did not expose a confidence summary")
-        page.keyboard.press("Escape")
+        quick_start.get_by_role("button", name="Apply structure", exact=True).click()
         quick_start.wait_for(state="hidden", timeout=5_000)
         if quick_start.count() != 0:
-            raise AssertionError("Escape did not close the live Quick Start dialog")
-        print("DIALOGS_AFTER_ESCAPE=0")
+            raise AssertionError("Applying Quick Start did not close the dialog")
+
+        await_notes = page.get_by_role("tab", name="Notes", exact=True)
+        await_notes.wait_for(state="visible", timeout=5_000)
+        if "This lecture introduces eigenvalues and eigenvectors." not in page.locator("body").inner_text():
+            raise AssertionError("Applying Quick Start did not render the source in Course notes")
+
+        page.get_by_role("tab", name="Sources", exact=False).click()
+        source_item = page.locator(".resource-item").filter(has_text="live-quick-start.md")
+        source_item.wait_for(state="visible", timeout=5_000)
+        if source_item.count() != 1:
+            raise AssertionError("Applying Quick Start did not persist exactly one source")
+
+        page.get_by_role("tab", name="Chat", exact=True).click()
+        composer = page.get_by_role("textbox", name="Ask the course chat", exact=True)
+        composer.fill("What concepts does this lecture introduce?")
+        composer.press("Enter")
+        assistant = page.locator(".chat-message.assistant").last
+        assistant.wait_for(state="visible", timeout=60_000)
+        assistant_text = assistant.inner_text().strip()
+        if not assistant_text or "Course assistant" not in assistant_text:
+            raise AssertionError("LM Studio did not return a course chat answer")
+        citation_list = assistant.locator(".citation-list")
+        citation_list.wait_for(state="visible", timeout=5_000)
+        print("LIVE_CHAT=" + assistant_text.replace("\n", " | ")[:600])
+        print("LIVE_QUICK_START_APPLIED=1")
         print("ERRORS=" + " | ".join(errors))
         if errors:
             raise AssertionError("The page emitted browser errors")

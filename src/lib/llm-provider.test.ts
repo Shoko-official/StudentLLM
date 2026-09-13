@@ -66,6 +66,26 @@ describe('OpenAI-compatible LLM provider', () => {
     expect(createLocalLLMProvider({ MODE: 'development' })).toBeInstanceOf(OpenAICompatibleProvider);
   });
 
+  it('passes a caller-provided JSON schema to OpenAI-compatible providers', async () => {
+    const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => response({
+      model: 'openai/gpt-oss-20b',
+      choices: [{ message: { content: '{"ok":true}' } }],
+    }));
+    const provider = new OpenAICompatibleProvider({ baseUrl: '/lm-studio/v1', model: 'openai/gpt-oss-20b', fetchImpl });
+    const responseFormat = {
+      type: 'json_schema' as const,
+      json_schema: {
+        name: 'test_response',
+        schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] },
+      },
+    };
+
+    await provider.generate([{ role: 'user', content: 'Return JSON.' }], { responseFormat });
+
+    const sent = JSON.parse(fetchImpl.mock.calls[0]?.[1]?.body as string);
+    expect(sent.response_format).toEqual(responseFormat);
+  });
+
   it('prefers GPT OSS for a fresh local development connection', async () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response({
       model: 'openai/gpt-oss-20b',
