@@ -1258,6 +1258,44 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             id: `${resource.id}:${segment.id || index}`,
             sourceId: resource.id,
           }));
+          if (segments.length && localProvider) {
+            try {
+              const proposal = await analyzeQuickStart(
+                segments.map((segment) => `${segment.timestamp} ${segment.text}`).join('\n'),
+                lessons,
+                localProvider,
+              );
+              if (canAutoRouteRecording(proposal)) {
+                const sourceWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
+                const routingWorkspaces = {
+                  ...lessonWorkspaces,
+                  [lessonId]: {
+                    ...sourceWorkspace,
+                    resources: [...sourceWorkspace.resources, resource],
+                    transcript: [...sourceWorkspace.transcript, ...segments],
+                  },
+                };
+                const routed = applyRecordingPlacement({
+                  sourceLesson: activeLesson,
+                  lessons,
+                  lessonWorkspaces: routingWorkspaces,
+                  proposal,
+                  resource,
+                  segments,
+                });
+                setLessons(routed.lessons);
+                setLessonWorkspaces(routed.lessonWorkspaces);
+                setActiveLessonId(routed.targetLesson.id);
+                setSelectedArtifactId(routed.lessonWorkspaces[routed.targetLesson.id]?.artifacts[0]?.id ?? null);
+                setView('course');
+                setShowAllResources(false);
+                notify(`Local transcription added and routed to ${routed.targetLesson.title}.`);
+                return;
+              }
+            } catch {
+              // Keep imported audio in the selected course when classification is unavailable or uncertain.
+            }
+          }
           updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: [...current.transcript, ...segments] }));
           notify(segments.length
             ? `Local transcription added ${segments.length} segments from ${resource.name}.`
