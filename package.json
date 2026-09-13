@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
+    "katex": "^0.18.7",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest"
