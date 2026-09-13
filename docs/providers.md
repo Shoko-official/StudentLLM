@@ -77,7 +77,7 @@ The Vite development server proxies `/lm-studio/*` to the origin configured by `
 
 The Playwright web server disables this automatic connection so browser regression tests remain deterministic and offline. Set `VITE_LM_STUDIO_AUTO_CONNECT=false` in another isolated test environment when the local server should not be contacted.
 
-The live browser path was revalidated on 2026-09-13 against the existing `openai/gpt-oss-20b` process: the Vite proxy returned HTTP 200, Settings reported the selected model as available, and Quick Start returned a real structured proposal at 90% confidence without persisting the smoke input. The same run kept the local ASR and document sidecars available for source processing.
+The live browser path was revalidated on 2026-09-13 against the existing `openai/gpt-oss-20b` process: the Vite proxy returned HTTP 200, Settings reported the selected model as available, Quick Start returned a real JSON-schema-constrained proposal at 90% confidence, and the isolated smoke context applied it, persisted one text source, and received a course-chat answer with citations. The same run kept the local ASR and document sidecars available for source processing.
 
 ## Run the live check
 
@@ -86,6 +86,6 @@ npm run providers:smoke
 python scripts/live_web_smoke.py
 ```
 
-The provider smoke prints the selected model, exposed model count, latency, and a short response sample. The live web smoke starts from an empty browser workspace, saves the local LM Studio connection, waits for the model availability check, opens Quick Start, and validates a real structured proposal before closing without applying it. An unavailable provider is reported as unavailable rather than replaced by a simulation.
+The provider smoke prints the selected model, exposed model count, latency, and a short response sample. The live web smoke starts from an empty browser workspace, saves the local LM Studio connection, waits for the model availability check, opens Quick Start, validates a real JSON-schema-constrained proposal, applies it in the isolated context, verifies the saved source and rendered note, and asks the course chat for a cited answer. An unavailable provider is reported as unavailable rather than replaced by a simulation.
 
 Provider credentials are not needed for Vitest, Playwright, or the frontend build.

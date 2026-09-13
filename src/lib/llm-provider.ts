@@ -8,8 +8,21 @@ export interface ProviderResponse {
   model: string;
 }
 
+export interface ProviderResponseFormat {
+  type: 'json_schema' | 'text';
+  json_schema?: {
+    name: string;
+    strict?: boolean;
+    schema: Record<string, unknown>;
+  };
+}
+
+export interface ProviderGenerateOptions {
+  responseFormat?: ProviderResponseFormat;
+}
+
 export interface LLMProvider {
-  generate: (messages: ProviderMessage[]) => Promise<ProviderResponse>;
+  generate: (messages: ProviderMessage[], options?: ProviderGenerateOptions) => Promise<ProviderResponse>;
 }
 
 export interface OpenAICompatibleProviderOptions {
@@ -40,7 +53,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     this.timeoutMs = options.timeoutMs ?? 60_000;
   }
 
-  async generate(messages: ProviderMessage[]): Promise<ProviderResponse> {
+  async generate(messages: ProviderMessage[], options?: ProviderGenerateOptions): Promise<ProviderResponse> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     const requestBody = JSON.stringify({
@@ -51,6 +64,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       temperature: 0,
       max_tokens: 1024,
       stream: false,
+      ...(options?.responseFormat ? { response_format: options.responseFormat } : {}),
     });
     let attempt = 0;
     try {
