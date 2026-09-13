@@ -83,8 +83,9 @@ The live browser path was revalidated on 2026-09-13 against the existing `openai
 
 ```bash
 npm run providers:smoke
+python scripts/live_web_smoke.py
 ```
 
-The command prints the selected model, exposed model count, latency, and a short response sample. An unavailable provider is reported as unavailable rather than replaced by a simulation.
+The provider smoke prints the selected model, exposed model count, latency, and a short response sample. The live web smoke starts from an empty browser workspace, saves the local LM Studio connection, waits for the model availability check, opens Quick Start, and validates a real structured proposal before closing without applying it. An unavailable provider is reported as unavailable rather than replaced by a simulation.
 
 Provider credentials are not needed for Vitest, Playwright, or the frontend build.
