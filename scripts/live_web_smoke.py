@@ -52,7 +52,7 @@ def main() -> None:
         quick_start.get_by_label("Source name", exact=False).fill("live-quick-start")
         quick_start.get_by_role("button", name="Analyze structure", exact=True).click()
         try:
-            quick_start.get_by_text("confidence", exact=False).wait_for(state="visible", timeout=30_000)
+            quick_start.get_by_text("confidence", exact=False).wait_for(state="visible", timeout=75_000)
         except Exception:
             print("LIVE_QUICK_START_STATE=" + quick_start.inner_text().replace("\n", " | ")[:1_000])
             raise
@@ -92,6 +92,9 @@ def main() -> None:
         citation_list = assistant.locator(".citation-list")
         citation_list.wait_for(state="visible", timeout=5_000)
         print("LIVE_CHAT=" + assistant_text.replace("\n", " | ")[:600])
+        grounded_terms = ("eigenvalue", "eigenvector", "characteristic polynomial", "root")
+        if not any(term in assistant_text.lower() for term in grounded_terms):
+            raise AssertionError("LM Studio returned an answer without the concepts present in the course evidence")
         print("LIVE_QUICK_START_APPLIED=1")
         print("ERRORS=" + " | ".join(errors))
         if errors:
