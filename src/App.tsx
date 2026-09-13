@@ -1572,7 +1572,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               {recordingError && <p className="action-error" role="alert">{recordingError}</p>}
               {liveTranscriptionError && <p className="action-error" role="alert">{liveTranscriptionError}</p>}
               <section className="course-note-document" aria-label="Course notes document">
-                <div className="course-note-toolbar"><span>Course notes</span>{(transcript.length > 0 || visibleLiveTranscript.length > 0) && <button className="text-action" onClick={exportCourseNote}><Download size={15} /> Save note</button>}</div>
+                <div className="course-note-toolbar"><span>Course notes</span><div className="course-note-toolbar-actions">{isRecording && <span className="course-note-status" role="status" aria-label="Live transcription status">{localSpeechEngine ? visibleLiveTranscript.length ? 'Live transcription' : 'Waiting for transcription' : 'Audio recording'}</span>}{(transcript.length > 0 || visibleLiveTranscript.length > 0) && <button className="text-action" onClick={exportCourseNote}><Download size={15} /> Save note</button>}</div></div>
                 <div className="course-note-content" aria-live={isRecording ? 'polite' : 'off'}>
                   {transcript.length || visibleLiveTranscript.length ? activeCourseNote.blocks.map(renderCourseNoteBlock) : <div className="note-empty"><h2>Your notes start here.</h2><p>Record your lecture or import a file above.</p><p>Text notes appear directly. Audio transcription and PDF extraction need a connected service.</p><button className="text-action" onClick={() => setShowSettingsPanel(true)}>Set up transcription</button></div>}
                 </div>
