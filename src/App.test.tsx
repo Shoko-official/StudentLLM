@@ -570,6 +570,7 @@ describe('StudentLLM workspace', () => {
     const courseNote = screen.getByRole('region', { name: 'Course notes document' });
     expect(screen.getByRole('heading', { name: 'Attention & Scaled Dot-Product', level: 1 })).toBeInTheDocument();
     expect(screen.getByText('Machine Learning / Transformers')).toBeInTheDocument();
+    expect(within(courseNote).getByLabelText('Live transcription status')).toHaveTextContent('Live transcription');
     expect(courseNote).toHaveTextContent('E = mc^2');
     expect(within(liveRegion).getByRole('img', { name: 'LaTeX formula: E = mc^2' })).toBeInTheDocument();
     expect(within(courseNote).getByRole('img', { name: 'LaTeX formula: E = mc^2' })).toBeInTheDocument();
