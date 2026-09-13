@@ -767,6 +767,43 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('imported-lecture.webm removed from this course.')).toBeInTheDocument();
   });
 
+  it('routes imported audio to the existing course selected by LM Studio', async () => {
+    const user = userEvent.setup();
+    const transcribe = vi.fn(async () => ({
+      model: 'faster-whisper-small',
+      segments: [{ id: 'imported-routing-segment', timestamp: '00:00:04', speaker: 'Professor', text: 'Matrices preserve addition and scalar multiplication.', status: 'review' as const }],
+    }));
+    const generate = vi.fn(async () => ({
+      model: 'fixture-model',
+      content: JSON.stringify({
+        placement: 'existing', targetCourseId: 'fixture-linear-algebra', course: 'Mathematics',
+        lesson: 'Linear Algebra', sublesson: 'Matrices and Linear Maps', subject: 'Mathematics',
+        confidence: 0.94, rationale: 'The imported lecture describes linear maps.',
+      }),
+    }));
+
+    render(<App speechEngine={{ transcribe }} provider={{ generate }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['audio bytes'],
+      'imported-linear-algebra.webm',
+      { type: 'audio/webm' },
+    ));
+
+    expect(await screen.findByText('Local transcription added and routed to Matrices and Linear Maps.')).toBeInTheDocument();
+    const saved = savedWorkspace();
+    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].resources).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'imported-linear-algebra.webm' }),
+    ]));
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'imported-linear-algebra.webm', kind: 'audio' }),
+    ]));
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: expect.stringContaining(':imported-routing-segment'), sourceId: expect.any(String) }),
+    ]));
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
   it('clears persisted chunks when removing an audio source', async () => {
     const user = userEvent.setup();
     const clear = vi.fn(async () => undefined);
