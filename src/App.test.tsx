@@ -804,6 +804,56 @@ describe('StudentLLM workspace', () => {
     expect(generate).toHaveBeenCalledTimes(1);
   });
 
+  it('reroutes an existing imported audio source when Transcribe is run later', async () => {
+    const user = userEvent.setup();
+    const transcribe = vi.fn(async () => ({
+      model: 'faster-whisper-small',
+      segments: [{ id: 'deferred-routing-segment', timestamp: '00:00:06', speaker: 'Professor', text: 'Matrices preserve addition and scalar multiplication.', status: 'review' as const }],
+    }));
+    const generate = vi.fn()
+      .mockResolvedValueOnce({
+        model: 'fixture-model',
+        content: JSON.stringify({
+          placement: 'existing', targetCourseId: 'fixture-linear-algebra', course: 'Mathematics',
+          lesson: 'Linear Algebra', sublesson: 'Matrices and Linear Maps', subject: 'Mathematics',
+          confidence: 0.4, rationale: 'The first pass is not confident enough to move the source.',
+        }),
+      })
+      .mockResolvedValueOnce({
+        model: 'fixture-model',
+        content: JSON.stringify({
+          placement: 'existing', targetCourseId: 'fixture-linear-algebra', course: 'Mathematics',
+          lesson: 'Linear Algebra', sublesson: 'Matrices and Linear Maps', subject: 'Mathematics',
+          confidence: 0.94, rationale: 'The transcript describes linear maps.',
+        }),
+      });
+
+    render(<App speechEngine={{ transcribe }} provider={{ generate }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['audio bytes'],
+      'deferred-routing.webm',
+      { type: 'audio/webm' },
+    ));
+    expect(await screen.findByText('Local transcription added 1 segments from deferred-routing.webm.')).toBeInTheDocument();
+
+    await openSources(user);
+    await user.click(screen.getByRole('button', { name: 'Transcribe deferred-routing.webm' }));
+
+    expect(await screen.findByText('Transcription added and routed to Matrices and Linear Maps.')).toBeInTheDocument();
+    const saved = savedWorkspace();
+    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].resources).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'deferred-routing.webm' }),
+    ]));
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'deferred-routing.webm', kind: 'audio' }),
+    ]));
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: expect.stringContaining(':deferred-routing-segment'), sourceId: expect.any(String) }),
+    ]));
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
   it('clears persisted chunks when removing an audio source', async () => {
     const user = userEvent.setup();
     const clear = vi.fn(async () => undefined);
