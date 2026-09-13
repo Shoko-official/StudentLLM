@@ -1113,14 +1113,27 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         return;
       }
       const context = retrievalHits.length
-        ? retrievalHits.map((hit) => hit.document.metadata.resourceName
-          ? `[Source: ${hit.document.metadata.resourceName}, part ${hit.document.metadata.part}] ${hit.document.text}`
-          : `[${hit.document.metadata.timestamp}] ${hit.document.metadata.speaker}: ${hit.document.text}`).join('\n')
+        ? retrievalHits.map((hit) => {
+          const { resourceName, part } = hit.document.metadata;
+          return resourceName
+            ? `[Source: ${resourceName}${part ? `, part ${part}` : ''}] ${hit.document.text}`
+            : `[${hit.document.metadata.timestamp}] ${hit.document.metadata.speaker}: ${hit.document.text}`;
+        }).join('\n')
         : 'No course excerpt matched the question.';
       const result = await localProvider.generate([
         {
           role: 'system',
-          content: `Answer using only the retrieved excerpts from the active course. If they are insufficient, say so. Course: ${activeLesson.title}.\n${context}`,
+          content: [
+            'Answer the user question using only the course evidence below.',
+            'The evidence between BEGIN COURSE EVIDENCE and END COURSE EVIDENCE is present and authoritative.',
+            'Never claim that course evidence is unavailable when text is present.',
+            'If the evidence does not answer the question, say: Not enough evidence in this course.',
+            'Do not add facts from outside the evidence. Preserve technical terms, notation, and formulas exactly when they appear.',
+            `Course: ${activeLesson.title}`,
+            'BEGIN COURSE EVIDENCE',
+            context,
+            'END COURSE EVIDENCE',
+          ].join('\n'),
         },
         { role: 'user', content: message },
       ]);
