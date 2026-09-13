@@ -95,6 +95,23 @@ describe('OpenAI-compatible LLM provider', () => {
     await expect(provider.generate([{ role: 'user', content: 'Hello' }])).rejects.toThrow('Provider request failed (503): model unavailable');
   });
 
+  it('retries a transient LM Studio engine protocol failure once', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(response({ error: { message: 'Engine protocol predict stream returned an error' } }, false, 400))
+      .mockResolvedValueOnce(response({
+        model: 'openai/gpt-oss-20b',
+        choices: [{ message: { content: '{"placement":"new"}' } }],
+      }));
+    const provider = new OpenAICompatibleProvider({
+      baseUrl: 'http://127.0.0.1:1234/v1',
+      model: 'openai/gpt-oss-20b',
+      fetchImpl,
+    });
+
+    await expect(provider.generate([{ role: 'user', content: 'Organize this lecture.' }])).resolves.toMatchObject({ content: '{"placement":"new"}' });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it('does not present a reasoning-only response as a final answer', async () => {
     const provider = new OpenAICompatibleProvider({
       baseUrl: '/lm-studio/v1', model: 'qwen/qwen3-4b',
