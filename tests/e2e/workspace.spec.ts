@@ -152,14 +152,17 @@ test.describe('StudentLLM workspace', () => {
     }));
     await page.getByRole('button', { name: 'Quick start', exact: true }).click();
     const quickStart = page.getByRole('dialog', { name: 'Quick start', exact: true });
-    await quickStart.getByLabel('Lecture excerpt or course description').fill('Cross-attention lets decoder queries read encoder keys and values.');
+    await quickStart.getByLabel('Lecture excerpt or course description').fill(String.raw`Cross-attention lets decoder queries read encoder keys and values. The scaling term is $\frac{QK^T}{\sqrt{d_k}}$.`);
     await quickStart.getByRole('button', { name: 'Analyze structure' }).click({ noWaitAfter: true });
     await expect(quickStart.getByLabel('Title')).toHaveValue('Cross-attention notes');
     await expect(quickStart.getByLabel('Sublesson optional')).toHaveValue('Decoder context');
     await expect(quickStart.getByLabel('Place this material in')).toHaveValue(FIXTURE_LESSON_ID);
     await quickStart.getByRole('button', { name: 'Apply structure' }).click();
 
-    await expect(page.getByRole('region', { name: 'Course notes document' })).toContainText('Cross-attention lets decoder queries read encoder keys and values.');
+    const courseNote = page.getByRole('region', { name: 'Course notes document' });
+    await expect(courseNote).toContainText('Cross-attention lets decoder queries read encoder keys and values.');
+    expect(await courseNote.locator('.course-note-formula .katex').count()).toBeGreaterThan(0);
+    expect(await courseNote.locator('.course-note-formula math').count()).toBeGreaterThan(0);
     const workspace = await savedWorkspace(page);
     expect(workspace.lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ meta: 'Quick Start notes · text source', kind: 'transcript' }),
