@@ -79,10 +79,12 @@ describe('StudentLLM packaged desktop workflow', () => {
     await expect(await visible('[aria-labelledby="transcript-panel-title"] .empty-state')).toHaveText('This course has no transcript segments yet.');
     await (await visible('button[aria-label="Close full transcript"]')).click();
 
+    await (await visible('summary[aria-label="Course actions"]')).click();
     await (await visible('//div[@class="course-actions-menu"]//button[starts-with(normalize-space(.),"Needs review")]')).click();
     await expect(await visible('[aria-labelledby="review-panel-title"] .empty-state')).toHaveText('Nothing needs review.');
     await (await visible('button[aria-label="Close review queue"]')).click();
 
+    await (await visible('summary[aria-label="Course actions"]')).click();
     await (await visible('//div[@class="course-actions-menu"]//button[normalize-space(.)="Delete course"]')).click();
     await expect(await visible('#delete-course-title')).toHaveText(`Delete ${title}?`);
     await (await visible('//section[@aria-labelledby="delete-course-title"]//button[normalize-space(.)="Cancel"]')).click();
