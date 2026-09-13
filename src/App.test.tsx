@@ -308,9 +308,15 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByRole('button', { name: 'Source · optimization.md · part 1' })).toBeInTheDocument();
     expect(screen.getByText('LM Studio · mock-local-model')).toBeInTheDocument();
     expect(generate).toHaveBeenCalledWith([
-      { role: 'system', content: expect.stringContaining('Gradient descent updates parameters using the learning rate.') },
+      {
+        role: 'system',
+        content: expect.stringContaining('BEGIN COURSE EVIDENCE'),
+      },
       { role: 'user', content: 'What updates parameters using the learning rate?' },
     ]);
+    expect(generate.mock.calls[0][0][0].content).not.toContain('undefined');
+    expect(generate.mock.calls[0][0][0].content).toContain('END COURSE EVIDENCE');
+    expect(generate.mock.calls[0][0][0].content).toContain('Never claim that course evidence is unavailable when text is present.');
   });
 
   it('renders an injected provider failure in the chat', async () => {
