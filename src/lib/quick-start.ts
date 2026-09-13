@@ -1,5 +1,5 @@
 import type { Lesson } from '../types';
-import type { LLMProvider } from './llm-provider';
+import type { LLMProvider, ProviderResponseFormat } from './llm-provider';
 
 export interface QuickStartProposal {
   course: string;
@@ -12,6 +12,30 @@ export interface QuickStartProposal {
   confidence: number;
   rationale: string;
 }
+
+const quickStartResponseFormat: ProviderResponseFormat = {
+  type: 'json_schema',
+  json_schema: {
+    name: 'quick_start',
+    strict: true,
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        placement: { type: 'string', enum: ['new', 'existing'] },
+        targetCourseId: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        course: { type: 'string' },
+        lesson: { type: 'string' },
+        title: { type: 'string' },
+        sublesson: { type: 'string' },
+        subject: { type: 'string' },
+        confidence: { type: 'number' },
+        rationale: { type: 'string' },
+      },
+      required: ['placement', 'targetCourseId', 'course', 'lesson', 'title', 'sublesson', 'subject', 'confidence', 'rationale'],
+    },
+  },
+};
 
 function clean(value: unknown) {
   return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
@@ -56,7 +80,7 @@ export async function analyzeQuickStart(
       ].join('\n'),
     },
     { role: 'user', content: excerpt.slice(0, 24_000) },
-  ]);
+  ], { responseFormat: quickStartResponseFormat });
 
   const parsed = extractJson(result.content);
   const targetCourseId = clean(parsed.targetCourseId);
