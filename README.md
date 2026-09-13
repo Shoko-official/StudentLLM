@@ -41,7 +41,7 @@ StudentLLM is built around three principles:
 - Full public French FLEURS ASR baseline with WER, CER, RTF, and reproducibility receipt.
 - Public DocVQA OCR extractability diagnostic with a reproducible partial validation receipt.
 - Optional live LM Studio chat through a browser-safe OpenAI-compatible provider adapter; no remote API key is bundled in the client.
-- LaTeX-aware rendering for formulas in transcripts, chat answers, and study artifacts, with accessible formula labels.
+- KaTeX-powered rendering for formulas in transcripts, chat answers, course notes, and study artifacts, with semantic MathML and accessible formula labels.
 - Connection settings for LM Studio, speech recognition, and document extraction, with on-demand availability checks.
 - Text imports appear in course notes immediately. Saved audio can be transcribed or retried from Sources.
 - Study material is saved only after a model returns content; failed requests do not create placeholder artifacts.
@@ -119,7 +119,7 @@ src/
   lib/source-ingest.ts        local source classification and fingerprinting
   lib/source-storage.ts       IndexedDB source blob storage
   lib/source-chunking.ts      bounded text passages for retrieval
-  lib/rich-text.tsx           accessible lightweight LaTeX-aware rendering
+  lib/rich-text.tsx           accessible KaTeX and MathML formula rendering
   lib/workspace-storage.ts   versioned workspace persistence
   *.test.tsx                 UI and storage tests
 scripts/
