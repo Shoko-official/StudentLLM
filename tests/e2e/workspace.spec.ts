@@ -532,6 +532,7 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByRole('button', { name: 'Stop recording' })).toBeEnabled();
     await openTranscript(page);
     await expect(page.getByRole('region', { name: 'Live course transcription' }).getByText('Preview from the recording.', { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByLabel('Live transcription status')).toHaveText('Live transcription');
 
     await page.getByRole('button', { name: 'View all' }).click();
     const transcriptDialog = page.getByRole('dialog', { name: 'Full transcript 3' });
