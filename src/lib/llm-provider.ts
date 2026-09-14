@@ -19,6 +19,7 @@ export interface ProviderResponseFormat {
 
 export interface ProviderGenerateOptions {
   responseFormat?: ProviderResponseFormat;
+  maxTokens?: number;
 }
 
 export interface LLMProvider {
@@ -62,7 +63,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         ? [{ role: 'system', content: 'Return the final answer directly. /no_think' }, ...messages]
         : messages,
       temperature: 0,
-      max_tokens: 1024,
+      max_tokens: Math.max(256, Math.min(options?.maxTokens ?? 1024, 16_384)),
       stream: false,
       ...(options?.responseFormat ? { response_format: options.responseFormat } : {}),
     });

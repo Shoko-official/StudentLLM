@@ -1,5 +1,6 @@
 node_modules/
 src-tauri/target/
+src-tauri/gen/
 .venv-bench/
 .venv-bench-sys/
 dist/
@@ -13,4 +14,6 @@ __pycache__/
 playwright-report/
 test-results/
 debug.log
+tmp/
+.pytest_cache/
 *.local

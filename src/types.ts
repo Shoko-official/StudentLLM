@@ -53,8 +53,10 @@ export interface LessonWorkspace {
 
 export type CourseNoteBlock =
   | { id: string; type: 'heading'; level: 1 | 2; text: string }
+  | { id: string; type: 'markdown'; markdown: string; sourceName?: string; sourceId?: string }
   | { id: string; type: 'paragraph'; text: string; timestamp?: string; speaker?: string; sourceId?: string }
   | { id: string; type: 'formula'; latex: string; caption?: string; sourceId?: string }
+  | { id: string; type: 'formula-image'; imageData: string; alt: string; sourceName: string; sourceId?: string }
   | { id: string; type: 'code'; language: string; code: string; sourceId?: string }
   | { id: string; type: 'chart'; label: string; values: Array<{ label: string; value: number }>; sourceId?: string }
   | { id: string; type: 'schema'; nodes: string[]; edges: Array<{ from: string; to: string }>; sourceId?: string };

@@ -2,7 +2,9 @@ import { afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
+import { buildCourseNote } from './lib/course-notes';
 import { listPendingRecordings, RECORDING_RECOVERY_STORAGE_KEY, savePendingRecording } from './lib/recording-recovery';
+import type { SourceBlobStore } from './lib/source-storage';
 import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from './test/workspace-fixture';
 
@@ -180,6 +182,19 @@ describe('StudentLLM workspace', () => {
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
   });
 
+  it('keeps local document and speech endpoints when stale settings contain blank URLs', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem('studentllm.services.v1', JSON.stringify({
+      llmUrl: '/lm-studio/v1', model: 'openai/gpt-oss-20b', asrUrl: '', documentsUrl: '',
+    }));
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    const settings = screen.getByRole('dialog', { name: 'Settings' });
+    expect(within(settings).getByLabelText('Speech service address')).toHaveValue('http://127.0.0.1:8765');
+    expect(within(settings).getByLabelText('Document service address')).toHaveValue('http://127.0.0.1:8766');
+  });
+
   it('detects and selects the first model exposed by an OpenAI-compatible local endpoint', async () => {
     const user = userEvent.setup();
     vi.spyOn(globalThis, 'fetch').mockResolvedValue({
@@ -273,7 +288,7 @@ describe('StudentLLM workspace', () => {
         content: expect.stringContaining('Create a targeted quiz'),
       },
       { role: 'user', content: 'Generate the targeted quiz.' },
-    ]);
+    ], { maxTokens: 4096 });
     const systemPrompt = generate.mock.calls[0][0][0].content as string;
     expect(systemPrompt).toContain('BEGIN COURSE EVIDENCE');
     expect(systemPrompt).toContain('END COURSE EVIDENCE');
@@ -433,6 +448,18 @@ describe('StudentLLM workspace', () => {
 
   it('adds a durable recording resource after a successful stop', async () => {
     const user = userEvent.setup();
+    const recordingChunkStore = {
+      durability: 'durable' as const,
+      append: vi.fn(async () => undefined),
+      list: vi.fn(async () => [{
+        recordingId: 'recording-resource-test',
+        sequence: 0,
+        blob: new Blob(['audio'], { type: 'audio/webm' }),
+        recordedAt: 123,
+      }]),
+      count: vi.fn(async () => 1),
+      clear: vi.fn(async () => undefined),
+    };
     const session = {
       recordingId: 'recording-resource-test',
       stream: {} as MediaStream,
@@ -450,7 +477,7 @@ describe('StudentLLM workspace', () => {
       })),
     };
 
-    render(<App recorderSessionFactory={async () => session} />);
+    render(<App recorderSessionFactory={async () => session} recordingChunkStore={recordingChunkStore} speechEngine={null} />);
 
     await user.click(screen.getByRole('button', { name: 'Start recording' }));
     await user.click(screen.getByRole('button', { name: 'Stop recording' }));
@@ -459,6 +486,7 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('Attention & Scaled Dot-Product audio.webm')).toBeInTheDocument();
     expect(screen.getByText('Audio · 2 chunks')).toBeInTheDocument();
     expect(session.stop).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(listPendingRecordings()).toEqual([]));
   });
 
   it('does not start a durable recording when interrupted-session recovery cannot be saved', async () => {
@@ -625,6 +653,7 @@ describe('StudentLLM workspace', () => {
     render(<App recorderSessionFactory={async () => session} speechEngine={{ transcribe }} />);
 
     await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Live course transcription' })).toBeVisible());
     await openTranscript(user);
     await waitFor(() => expect(screen.getAllByText('Live preview').length).toBeGreaterThan(0));
     const liveRegion = screen.getByRole('region', { name: 'Live course transcription' });
@@ -634,8 +663,8 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('Machine Learning / Transformers')).toBeInTheDocument();
     expect(within(courseNote).getByLabelText('Live transcription status')).toHaveTextContent('Live transcription');
     expect(courseNote).toHaveTextContent('E = mc^2');
-    expect(within(liveRegion).getByRole('img', { name: 'LaTeX formula: E = mc^2' })).toBeInTheDocument();
-    expect(within(courseNote).getByRole('img', { name: 'LaTeX formula: E = mc^2' })).toBeInTheDocument();
+    expect(liveRegion.querySelector('.katex')).not.toBeNull();
+    expect(courseNote.querySelector('.katex')).not.toBeNull();
     expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
 
     await user.click(screen.getByRole('button', { name: 'View all' }));
@@ -838,7 +867,7 @@ describe('StudentLLM workspace', () => {
     expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: expect.stringContaining(':page-1'), sourceId: expect.any(String), text: 'Eigenvectors describe invariant directions.' }),
     ]));
-    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate).toHaveBeenCalledTimes(3);
     expect(extract).toHaveBeenCalledWith(expect.any(Blob));
   });
 
@@ -865,6 +894,97 @@ describe('StudentLLM workspace', () => {
     expect(transcriptPreview().getByText('The learning rate controls the step size.')).toBeInTheDocument();
     expect(screen.getByText('optimization.pdf indexed 2 pages locally.')).toBeInTheDocument();
     expect(extract).toHaveBeenCalledWith(expect.any(Blob));
+  });
+
+  it('renders extracted PDF blocks as readable note sections without invalid KaTeX', async () => {
+    const user = userEvent.setup();
+    const extract = vi.fn().mockResolvedValue({
+      model: 'pymupdf',
+      pages: [{
+        pageNumber: 1,
+        text: 'Dé\u001cnition\nPour f(x), on dérive.',
+        blocks: [
+          { x: 0, y: 220, width: 100, height: 20, text: 'Dé\u001cnition\nPour f(x), on dérive.' },
+        ],
+      }],
+    });
+
+    render(<App documentEngine={{ extract }} provider={null} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['%PDF-1.7'],
+      'Formulaire_Maths_BAC2.pdf',
+      { type: 'application/pdf' },
+    ));
+
+    const courseNote = screen.getByRole('region', { name: 'Course notes document' });
+    expect(await within(courseNote).findByRole('heading', { name: 'Définition', level: 3 })).toBeInTheDocument();
+    expect(within(courseNote).getByText('Pour f(x), on dérive.')).toBeInTheDocument();
+    expect(courseNote.querySelector('.katex-error')).toBeNull();
+  });
+
+  it('renders a faithful formula image supplied by the local document sidecar', async () => {
+    const user = userEvent.setup();
+    const extract = vi.fn().mockResolvedValue({
+      model: 'pymupdf',
+      pages: [{
+        pageNumber: 1,
+        text: 'Example\n∂f\n∂x = 3x2y4ez',
+        blocks: [
+          { x: 49, y: 298, width: 40, height: 10, text: 'Example' },
+          { x: 147, y: 312, width: 64, height: 24, text: '∂f\n∂x = 3x2y4ez', imageData: 'data:image/png;base64,iVBORw0KGgo=' },
+        ],
+      }],
+    });
+
+    render(<App documentEngine={{ extract }} provider={null} />);
+    await user.upload(screen.getByLabelText('Select course source'), new File(['%PDF-1.7'], 'formula.pdf', { type: 'application/pdf' }));
+
+    expect(await screen.findByRole('img', { name: 'Formula from formula.pdf: ∂f ∂x = 3x2y4ez' })).toBeInTheDocument();
+  });
+
+  it('rebuilds a legacy PDF note from its saved source instead of retaining transcript-shaped notes', async () => {
+    const resource = {
+      id: 'legacy-pdf', name: 'Formulaire_Maths_BAC2.pdf', meta: 'Document · 2 KB', kind: 'document' as const,
+      mimeType: 'application/pdf', sizeBytes: 2048,
+    };
+    const page = {
+      id: 'legacy-pdf:page-1', sourceId: resource.id, timestamp: 'Page 1', speaker: resource.name,
+      text: 'Dérivées partielles\nDéfinition\nPour f(x), on dérive.', status: 'review' as const,
+    };
+    const snapshot = createFixtureWorkspace();
+    const lessonWorkspaces = snapshot.lessonWorkspaces!;
+    const lesson = snapshot.lessons.find((item) => item.id === FIXTURE_LESSON_ID)!;
+    lessonWorkspaces[FIXTURE_LESSON_ID] = {
+      ...lessonWorkspaces[FIXTURE_LESSON_ID],
+      resources: [resource],
+      transcript: [],
+      courseNote: buildCourseNote(lesson, [page]),
+    };
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(snapshot));
+    const sourceBlobStore: SourceBlobStore = {
+      durability: 'memory-only',
+      save: vi.fn(async () => undefined),
+      load: vi.fn(async () => new Blob(['%PDF-1.7'], { type: 'application/pdf' })),
+      remove: vi.fn(async () => undefined),
+    };
+    const extract = vi.fn().mockResolvedValue({
+      model: 'pymupdf',
+      pages: [{
+        pageNumber: 1,
+        text: page.text,
+        blocks: [{ x: 0, y: 220, width: 300, height: 40, text: page.text }],
+      }],
+    });
+
+    render(<App provider={null} documentEngine={{ extract }} sourceBlobStore={sourceBlobStore} />);
+
+    await waitFor(() => expect(extract).toHaveBeenCalledWith(expect.any(Blob)));
+    await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.detection.basis).toContain('layout-v11'));
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'document-source-title', type: 'heading' }),
+    ]));
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.detection.basis).toContain('layout-v11');
   });
 
   it('indexes an extracted image as a reviewable transcript segment', async () => {
