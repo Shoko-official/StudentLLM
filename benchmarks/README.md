@@ -861,6 +861,22 @@ $env:NVIDIA_API_KEY = [Environment]::GetEnvironmentVariable('NVIDIA_API_KEY', 'U
 
 The generated JSONL can be scored with IBM's official evaluator from the checked-out `mt-rag-benchmark` repository. Generation metrics are not recorded until the full input file has completed and the official evaluator has returned its result.
 
+The complete public reference-only run was also completed with one worker and the full available task context:
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_mtrag_generation.py `
+  --input C:\path\to\mt-rag-benchmark\mtrag-human\generation_tasks\reference.jsonl `
+  --output artifacts\benchmarks\mtrag\reference-gpt-oss-20b-full.jsonl `
+  --checkpoint artifacts\benchmarks\mtrag\reference-gpt-oss-20b-full.checkpoint.json `
+  --model openai/gpt-oss-20b `
+  --base-url https://integrate.api.nvidia.com/v1 `
+  --api-key-env NVIDIA_API_KEY `
+  --workers 1 `
+  --max-tokens 512
+```
+
+IBM's official algorithmic evaluation covered all 842 tasks: Recall `0.401087`, ROUGE-L `0.268139`, BERTScore precision/recall `0.193058`/`0.278742`, and RB aggregate `0.386583`. The run produced 837 non-empty predictions and 5 generation errors. This is a supplied-reference ceiling diagnostic, not a RAG-quality claim; the 436-task `reference+RAG.jsonl` campaign remains open. The evaluated local artifact is `artifacts\benchmarks\mtrag\reference-gpt-oss-20b-official-algorithmic.jsonl` with SHA-256 `1B0C57BDC70433C669EDACC5CE8223FD359CB42696A9E5EEFEA962AE89B79D79`.
+
 ## CRAG Task 1/2 generation
 
 `run_crag.py` evaluates the official [Facebook Research CRAG](https://github.com/facebookresearch/CRAG) Task 1 and Task 2 development file through any OpenAI-compatible endpoint. The gold answer is used only after generation by the optional public-style judge. The runner supports bounded requests, concurrent workers, split selection, and JSON receipts that retain every response and failure. For long campaigns, `--checkpoint-path` atomically persists completed non-empty generations and valid judge decisions. Reusing the same command verifies the dataset hash and run settings before resuming, then retries failed or unparsed entries instead of silently treating them as complete.
