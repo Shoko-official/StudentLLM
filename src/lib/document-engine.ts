@@ -1,3 +1,5 @@
+import { normalizeExtractedDocumentText } from './document-text';
+
 export interface DocumentBlock {
   x: number;
   y: number;
@@ -67,7 +69,11 @@ export class LocalDocumentEngine implements DocumentEngine {
           if (![item.x, item.y, item.width, item.height].every((coordinate) => typeof coordinate === 'number' && Number.isFinite(coordinate)) || typeof item.text !== 'string') return [];
           return [{ x: item.x, y: item.y, width: item.width, height: item.height, text: item.text }];
         }) : [];
-        return [{ pageNumber: value.pageNumber, text: value.text, blocks }];
+        return [{
+          pageNumber: value.pageNumber,
+          text: normalizeExtractedDocumentText(value.text),
+          blocks: blocks.map((block) => ({ ...block, text: normalizeExtractedDocumentText(block.text) })),
+        }];
       }) : [];
       return { model: typeof body?.model === 'string' ? body.model : 'local-document-engine', pages };
     } catch (error) {

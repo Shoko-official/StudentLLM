@@ -1,5 +1,7 @@
 import type { CourseNote, CourseNoteBlock, Lesson, TranscriptSegment } from '../types';
 import type { LLMProvider, ProviderResponseFormat } from './llm-provider';
+import type { DocumentPage } from './document-engine';
+import { normalizeDocumentLine, normalizeExtractedDocumentText } from './document-text';
 
 const SUBJECT_SIGNALS: Record<string, string[]> = {
   Mathematics: ['equation', 'matrix', 'vector', 'derivative', 'integral', 'theorem', 'proof', 'probability', 'softmax', 'logit', 'gradient'],
@@ -17,6 +19,10 @@ function slug(value: string) {
   return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLocaleLowerCase() || 'course';
 }
 
+const PDF_SOURCE_TITLE_BLACKLIST = new Set([
+  'BAC+2 Informatique',
+]);
+
 function extractFormula(text: string) {
   const explicit = text.match(/(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$(?!\$)[^$\n]+\$)/);
   if (explicit) return explicit[1];
@@ -24,8 +30,8 @@ function extractFormula(text: string) {
   if (lower.includes('softmax') && lower.includes('square root') && lower.includes('multiplied by v')) return String.raw`$$\operatorname{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right)V$$`;
   if (lower.includes('newton') && lower.includes('force')) return String.raw`$$F = ma$$`;
   if (lower.includes('einstein') || lower.includes('mass energy')) return String.raw`$$E = mc^2$$`;
-  const equation = text.match(/\b([A-Z][A-Za-z0-9_]*)\s*=\s*([^,.!?;]+)/);
-  if (equation) return `$$${equation[1]} = ${equation[2].trim()}$$`;
+  const equation = text.match(/(^|\s)([A-Z][A-Za-z0-9_]*)\s*=\s*([^,.!?;\n]{1,100})(?=$|[,.!?;\n])/);
+  if (equation && !/[\u0000-\u001f\u007f-\u009f\u2192\u2190\u2194]/.test(equation[3])) return `$$${equation[2]} = ${equation[3].trim()}$$`;
   return null;
 }
 
@@ -177,6 +183,7 @@ function blocksForSegment(segment: TranscriptSegment): CourseNoteBlock[] {
     speaker: segment.speaker,
     sourceId: segment.sourceId,
   }];
+  if (/^Page \d+$/i.test(segment.timestamp)) return blocks;
   const formula = extractFormula(segment.text);
   if (formula) blocks.push({ id: `formula-${segment.id}`, type: 'formula', latex: formula, sourceId: segment.sourceId });
   const code = extractCode(segment.text);
@@ -186,6 +193,165 @@ function blocksForSegment(segment: TranscriptSegment): CourseNoteBlock[] {
   const chart = extractChart(segment.text);
   if (chart) blocks.push({ id: `chart-${segment.id}`, type: 'chart', ...chart, sourceId: segment.sourceId });
   return blocks;
+}
+
+function normalizeHeadingSignal(line: string) {
+  return normalizeDocumentLine(line)
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const DOCUMENT_HEADING_LABELS = [
+  'definition',
+  'exemple',
+  'theoreme',
+  'sens physique',
+  'a retenir',
+  'astuce memo',
+  'memo',
+  'base trigonometrie',
+  'identite',
+  'reciprocite',
+  'deux relations remarquables',
+  'methode generale',
+  'equation caracteristique',
+  'solution homogene',
+  'principe de superposition',
+  'calcul des constantes',
+  'formes de la decomposition',
+  'poles simples',
+  'synthese du cours',
+] as const;
+
+function isDocumentHeadingToken(text: string) {
+  const line = normalizeDocumentLine(text);
+  if (line.length > 64) return false;
+  const normalized = normalizeHeadingSignal(line);
+  if (!normalized) return false;
+  return DOCUMENT_HEADING_LABELS.some((keyword) => normalized === keyword || normalized.startsWith(`${keyword} `));
+}
+
+function trimIncompleteHeadingSuffix(line: string) {
+  const openingParenthesis = line.lastIndexOf('(');
+  if (openingParenthesis >= 0 && !line.slice(openingParenthesis + 1).includes(')')) {
+    return line.slice(0, openingParenthesis).trim();
+  }
+  return line;
+}
+
+function documentHeading(line: string): { level: 1 | 2; text: string } | null {
+  const text = trimIncompleteHeadingSuffix(line);
+  if (!text) return null;
+  if (/^\d+\s+(?:[A-ZÀ-ÖØ-Þ]|identités\b)/.test(text)) return { level: 1, text };
+  if (/^\d+\.\d+\s+\S/.test(text)) return { level: 2, text };
+  if (isDocumentHeadingToken(text)) {
+    return { level: 2, text };
+  }
+  return null;
+}
+
+function documentChrome(line: string, page: DocumentPage, blockY?: number) {
+  const normalized = normalizeHeadingSignal(line);
+  return !line
+    || normalized === 'formulaire de mathematiques'
+    || normalized === 'formulaire de maths'
+    || normalized === 'bac 2 informatique'
+    || (blockY !== undefined && blockY > 790 && /^\d+$/.test(line))
+    || (page.pageNumber > 1 && normalized === 'formulaire de mathematiques');
+}
+
+function documentBlockText(text: string) {
+  return normalizeExtractedDocumentText(text).split('\n').map(normalizeDocumentLine).filter(Boolean);
+}
+
+function extractDocumentSourceTitle(pages: DocumentPage[], sourceName: string) {
+  const normalizedSource = normalizeDocumentLine(sourceName).replace(/\.[^.]+$/, '');
+  const lines = pages
+    .flatMap((page) => (page.blocks.length ? page.blocks : [{ x: 0, y: 0, width: 0, height: 0, text: page.text }]))
+    .flatMap((block) => documentBlockText(block.text).map((line) => ({ line, orderY: block.y })))
+    .sort((left, right) => left.orderY - right.orderY);
+
+  const titleLine = lines.find(({ line }) => {
+    if (!line || line.length < 3 || line.length > 90) return false;
+    if (PDF_SOURCE_TITLE_BLACKLIST.has(line)) return false;
+    if (/^\d+(?:\.\d+)?(?:\s|$)/.test(line)) return false;
+    if (/^page\s+\d+/i.test(line)) return false;
+    if (line.toLocaleLowerCase() === normalizedSource.toLocaleLowerCase()) return true;
+    return true;
+  })?.line;
+  return titleLine || normalizedSource;
+}
+
+export function buildDocumentCourseNote(
+  lesson: Lesson,
+  pages: DocumentPage[],
+  sourceName: string,
+  now: () => string = () => new Date().toISOString(),
+): CourseNote {
+  const sourceTitle = extractDocumentSourceTitle(pages, sourceName);
+  const blocks: CourseNoteBlock[] = [
+    { id: 'note-title', type: 'heading', level: 1, text: lesson.title },
+    { id: 'document-source-title', type: 'heading', level: 1, text: sourceTitle },
+    { id: 'note-context', type: 'paragraph', text: `${lesson.subject} / ${lesson.chapter} · Source: ${sourceName}` },
+  ];
+  let index = 0;
+  pages.slice().sort((left, right) => left.pageNumber - right.pageNumber).forEach((page) => {
+    const pageBlocks = page.blocks.length
+      ? page.blocks.slice().sort((left, right) => left.y - right.y || left.x - right.x)
+      : [{ x: 0, y: 0, width: 0, height: 0, text: page.text }];
+    pageBlocks.forEach((documentBlock) => {
+      const lines = documentBlockText(documentBlock.text);
+      let lineIndex = 0;
+      while (lineIndex < lines.length) {
+        const line = lines[lineIndex];
+        if (documentChrome(line, page, documentBlock.y)) {
+          lineIndex += 1;
+          continue;
+        }
+        const combinedSection = /^\d+$/.test(line) && lines[lineIndex + 1] ? `${line} ${lines[lineIndex + 1]}` : line;
+        const heading = documentHeading(combinedSection);
+        if (heading) {
+          blocks.push({ id: `document-heading-${page.pageNumber}-${index++}`, type: 'heading', ...heading });
+          lineIndex += combinedSection === line ? 1 : 2;
+          continue;
+        }
+        const label = isDocumentHeadingToken(line);
+        if (label) {
+          blocks.push({ id: `document-heading-${page.pageNumber}-${index++}`, type: 'heading', level: 2, text: line });
+          lineIndex += 1;
+          continue;
+        }
+        const paragraphLines = [line];
+        lineIndex += 1;
+        while (lineIndex < lines.length && !documentHeading(lines[lineIndex]) && !documentChrome(lines[lineIndex], page, documentBlock.y)) {
+          paragraphLines.push(lines[lineIndex]);
+          lineIndex += 1;
+        }
+        blocks.push({
+          id: `document-paragraph-${page.pageNumber}-${index++}`,
+          type: 'paragraph',
+          text: paragraphLines.join(' '),
+          speaker: sourceName,
+        });
+      }
+    });
+  });
+  return {
+    id: `course-note:${lesson.id}`,
+    title: lesson.title,
+    subject: lesson.subject,
+    chapter: lesson.chapter,
+    folderPath: ['Courses', lesson.subject, lesson.chapter, lesson.title],
+    fileName: `${slug(lesson.title)}-course-notes.md`,
+    updatedAt: now(),
+    ...(lesson.sublesson ? { sublesson: lesson.sublesson } : {}),
+    detection: { method: 'active course', confidence: 1, basis: `Imported from ${sourceName} with layout-aware text extraction (layout-v4).` },
+    blocks,
+  };
 }
 
 export function buildCourseNote(lesson: Lesson, transcript: TranscriptSegment[], now: () => string = () => new Date().toISOString()): CourseNote {

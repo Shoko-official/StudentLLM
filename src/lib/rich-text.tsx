@@ -41,7 +41,7 @@ function renderRichText(content: string): ReactNode[] {
         renderedMath = katex.renderToString(math.source, {
           displayMode: math.display,
           output: 'htmlAndMathml',
-          throwOnError: false,
+          throwOnError: true,
           strict: false,
         });
         renderedMathCache.set(cacheKey, renderedMath);

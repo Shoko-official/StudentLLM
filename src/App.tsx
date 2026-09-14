@@ -32,18 +32,19 @@ import type { LLMProvider } from './lib/llm-provider';
 import { createLocalSpeechEngine } from './lib/speech-engine';
 import type { SpeechEngine } from './lib/speech-engine';
 import { createLocalDocumentEngine } from './lib/document-engine';
+import type { DocumentPage } from './lib/document-engine';
 import type { DocumentEngine } from './lib/document-engine';
 import { probeSidecar, SidecarHealth } from './lib/sidecar-health';
 import { getManagedSidecarStatus, ManagedSidecarStatus, startManagedSidecars, stopManagedSidecars } from './lib/sidecar-supervisor';
 import { createSourceResource } from './lib/source-ingest';
-import { createSourceBlobStore } from './lib/source-storage';
+import { createSourceBlobStore, type SourceBlobStore } from './lib/source-storage';
 import { AudioChunkStore, createRecordingChunkStore } from './lib/recording-storage';
 import { listPendingRecordings, removePendingRecording, savePendingRecording } from './lib/recording-recovery';
 import { buildCourseExport, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
-import { buildCourseNote, courseNoteMarkdown, formatCourseNoteWithProvider } from './lib/course-notes';
+import { buildCourseNote, buildDocumentCourseNote, courseNoteMarkdown, formatCourseNoteWithProvider } from './lib/course-notes';
 import { analyzeQuickStart } from './lib/quick-start';
 import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-routing';
 import type { QuickStartProposal } from './lib/quick-start';
@@ -121,13 +122,13 @@ function loadServiceSettings(): ServiceSettings {
   const defaults = {
     llmUrl: import.meta.env.VITE_LM_STUDIO_BASE_URL?.trim() || (import.meta.env.DEV ? '/lm-studio/v1' : 'http://127.0.0.1:1234/v1'),
     model: import.meta.env.VITE_LM_STUDIO_MODEL?.trim() || 'openai/gpt-oss-20b',
-    asrUrl: import.meta.env.VITE_LOCAL_ASR_BASE_URL?.trim() || '',
-    documentsUrl: import.meta.env.VITE_LOCAL_DOCUMENT_BASE_URL?.trim() || (import.meta.env.DEV ? 'http://127.0.0.1:8766' : ''),
+    asrUrl: import.meta.env.VITE_LOCAL_ASR_BASE_URL?.trim() || 'http://127.0.0.1:8765',
+    documentsUrl: import.meta.env.VITE_LOCAL_DOCUMENT_BASE_URL?.trim() || 'http://127.0.0.1:8766',
   };
   try {
     const saved = JSON.parse(localStorage.getItem(SERVICES_STORAGE_KEY) ?? '{}');
     for (const key of Object.keys(defaults) as (keyof ServiceSettings)[]) {
-      if (typeof saved?.[key] === 'string') defaults[key] = saved[key];
+      if (typeof saved?.[key] === 'string' && saved[key].trim()) defaults[key] = saved[key].trim();
     }
   } catch { /* Use configured defaults if saved connection settings cannot be read. */ }
   return defaults;
@@ -178,12 +179,18 @@ function isTextResource(resource: Resource) {
   return resource.kind === 'transcript' || resource.mimeType?.startsWith('text/') === true;
 }
 
+function hasCurrentDocumentNote(workspace: LessonWorkspace) {
+  return workspace.courseNote?.blocks.some((block) => block.id === 'document-source-title') === true
+    && workspace.courseNote.detection.basis.includes('layout-v4');
+}
+
 export interface AppProps {
   provider?: LLMProvider | null;
   recorderSessionFactory?: () => Promise<RecorderSession>;
   speechEngine?: SpeechEngine | null;
   documentEngine?: DocumentEngine | null;
   recordingChunkStore?: AudioChunkStore;
+  sourceBlobStore?: SourceBlobStore;
   liveTranscriptionIntervalMs?: number;
 }
 
@@ -196,7 +203,7 @@ interface ResourcePreview {
   detail?: string;
 }
 
-function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine, recordingChunkStore: recordingChunkStoreOverride, liveTranscriptionIntervalMs = 3_000 }: AppProps) {
+function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine, recordingChunkStore: recordingChunkStoreOverride, sourceBlobStore: sourceBlobStoreOverride, liveTranscriptionIntervalMs = 3_000 }: AppProps) {
   const [workspace] = useState(() => loadWorkspace(initialWorkspace));
   const [nativeStorageReady, setNativeStorageReady] = useState(() => !isNativeRuntime());
   const [lessons, setLessons] = useState(workspace.lessons);
@@ -276,10 +283,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const resourcePreviewRequest = useRef(0);
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
   const lastFocusedElementRef = useRef<HTMLElement | null>(null);
+  const rebuiltDocumentSourceIds = useRef(new Set<string>());
   const localProvider = useMemo(() => provider === undefined ? (serviceSettings.llmUrl ? createLocalLLMProvider({ MODE: import.meta.env.MODE, VITE_LM_STUDIO_AUTO_CONNECT: connectionsEnabled ? 'true' : import.meta.env.VITE_LM_STUDIO_AUTO_CONNECT, VITE_LM_STUDIO_BASE_URL: serviceSettings.llmUrl, VITE_LM_STUDIO_MODEL: serviceSettings.model }) : null) : provider, [provider, serviceSettings, connectionsEnabled]);
   const localSpeechEngine = useMemo(() => speechEngine === undefined ? createLocalSpeechEngine({ VITE_LOCAL_ASR_BASE_URL: serviceSettings.asrUrl, VITE_LOCAL_ASR_LANGUAGE: import.meta.env.VITE_LOCAL_ASR_LANGUAGE }) : speechEngine, [speechEngine, serviceSettings]);
   const localDocumentEngine = useMemo(() => documentEngine === undefined ? createLocalDocumentEngine({ VITE_LOCAL_DOCUMENT_BASE_URL: serviceSettings.documentsUrl }) : documentEngine, [documentEngine, serviceSettings]);
-  const sourceBlobStore = useMemo(() => createSourceBlobStore(), []);
+  const sourceBlobStore = useMemo(() => sourceBlobStoreOverride ?? createSourceBlobStore(), [sourceBlobStoreOverride]);
   const recordingChunkStore = useMemo(() => recordingChunkStoreOverride ?? createRecordingChunkStore(), [recordingChunkStoreOverride]);
   const hasOpenDialog = Boolean(resourcePreview || showNewCourse || showDeleteCourse || showGlobalSearch || showReviewPanel || showTranscriptPanel || showSettingsPanel || showQuickStart || showEditCourse);
 
@@ -305,7 +313,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         const previous = current[lessonId] ?? emptyLessonWorkspace;
         const next = update(previous);
         const lesson = lessons.find((item) => item.id === lessonId);
-        return lesson && next.transcript !== previous.transcript
+        const hasDocumentNote = next.courseNote?.blocks?.some((block) => block.id === 'document-source-title');
+        return lesson && next.transcript !== previous.transcript && !localProvider && !hasDocumentNote
           ? { ...next, courseNote: buildCourseNote(lesson, next.transcript) }
           : next;
       })(),
@@ -601,6 +610,52 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   }, []);
 
   useEffect(() => {
+    if (!localDocumentEngine) return undefined;
+    const candidate = lessons.flatMap((lesson) => {
+      const workspace = lessonWorkspaces[lesson.id] ?? emptyLessonWorkspace;
+      if (hasCurrentDocumentNote(workspace)) return [];
+      return workspace.resources.flatMap((resource) => {
+        const isPdf = resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name));
+        const hasIndexedPages = workspace.transcript.some((segment) => segment.sourceId === resource.id && /^Page \d+$/i.test(segment.timestamp));
+        return isPdf && hasIndexedPages && !rebuiltDocumentSourceIds.current.has(resource.id) ? [{ lesson, resource }] : [];
+      });
+    })[0];
+    if (!candidate) return undefined;
+
+    rebuiltDocumentSourceIds.current.add(candidate.resource.id);
+    void (async () => {
+      try {
+        const source = await sourceBlobStore.load(candidate.resource.id);
+        if (!source) {
+          rebuiltDocumentSourceIds.current.delete(candidate.resource.id);
+          return;
+        }
+        const extraction = await localDocumentEngine.extract(source);
+        if (!extraction.pages.some((page) => page.text.trim())) {
+          rebuiltDocumentSourceIds.current.delete(candidate.resource.id);
+          return;
+        }
+        setLessonWorkspaces((current) => {
+          const workspace = current[candidate.lesson.id] ?? emptyLessonWorkspace;
+          const hasLayoutNote = hasCurrentDocumentNote(workspace);
+          const hasResource = workspace.resources.some((resource) => resource.id === candidate.resource.id);
+          const hasIndexedPages = workspace.transcript.some((segment) => segment.sourceId === candidate.resource.id && /^Page \d+$/i.test(segment.timestamp));
+          if (hasLayoutNote || !hasResource || !hasIndexedPages) return current;
+          return {
+            ...current,
+            [candidate.lesson.id]: {
+              ...workspace,
+              courseNote: buildDocumentCourseNote(candidate.lesson, extraction.pages, candidate.resource.name),
+            },
+          };
+        });
+      } catch {
+        rebuiltDocumentSourceIds.current.delete(candidate.resource.id);
+      }
+    })();
+  }, [lessonWorkspaces, lessons, localDocumentEngine, sourceBlobStore]);
+
+  useEffect(() => {
     if (!nativeStorageReady) return;
     void saveWorkspaceAsync(
       { activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces },
@@ -814,7 +869,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const visibleLiveTranscript = liveRecordingLessonId === activeLessonId
     ? liveTranscript
     : [];
-  const courseTranscript = isRecording ? visibleTranscript : [...visibleTranscript, ...visibleLiveTranscript];
+  const courseTranscript = [...visibleTranscript, ...visibleLiveTranscript];
   const noteTranscript = [...visibleTranscript, ...visibleLiveTranscript];
   const activeCourseNote = useMemo(() => {
     const note = activeWorkspace.courseNote ?? buildCourseNote(activeLesson, transcript);
@@ -1025,13 +1080,16 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       const recordingLessonTitle = activeLesson.title;
       recorderRef.current = null;
       setIsRecording(false);
-      setLiveTranscript([]);
-      setLiveRecordingLessonId(null);
       if (!session) {
+        setLiveTranscript([]);
+        setLiveRecordingLessonId(null);
         notify('Session stopped.');
         return;
       }
       void session.stop().then(async ({ chunksPersisted, persistenceError }) => {
+        // A clean stop is no longer recoverable work. Clear the manifest before
+        // state updates can re-run the recovery effect against persisted chunks.
+        removePendingRecording(session.recordingId);
         const recordingResource: Resource = {
           id: session.recordingId,
           name: `${recordingLessonTitle} audio.webm`,
@@ -1125,7 +1183,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           notify('Audio saved locally; local transcription needs review.');
         }
       }).catch(() => setRecordingError('The audio session could not be finalized correctly.'))
-        .finally(() => setIsFinalizingRecording(false));
+        .finally(() => {
+          setLiveTranscript([]);
+          setLiveRecordingLessonId(null);
+          setIsFinalizingRecording(false);
+        });
       setIsFinalizingRecording(true);
       return;
     }
@@ -1349,6 +1411,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     sourceLesson: Lesson,
     resource: Resource,
     segments: TranscriptSegment[],
+    documentPages?: DocumentPage[],
   ) => {
     if (!localProvider || !segments.length) return false;
     try {
@@ -1381,7 +1444,18 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         segments,
         sourceType: 'material',
       });
-      const formatted = await formatPlacedCourseNote(routed);
+      const formatted = documentPages
+        ? {
+            ...routed,
+            lessonWorkspaces: {
+              ...routed.lessonWorkspaces,
+              [routed.targetLesson.id]: {
+                ...routed.lessonWorkspaces[routed.targetLesson.id],
+                courseNote: buildDocumentCourseNote(routed.targetLesson, documentPages, resource.name),
+              },
+            },
+          }
+        : await formatPlacedCourseNote(routed);
       commitPlacedCourse(formatted, sourceLesson.id, resource, segments);
       setActiveLessonId(formatted.targetLesson.id);
       setSelectedArtifactId(formatted.lessonWorkspaces[formatted.targetLesson.id]?.artifacts[0]?.id ?? null);
@@ -1504,11 +1578,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               text: page.text.trim(),
               status: 'review' as const,
             }));
-          if (pageSegments.length && await routeImportedMaterial(activeLesson, resource, pageSegments)) return;
+          if (pageSegments.length && await routeImportedMaterial(activeLesson, resource, pageSegments, extraction.pages)) return;
           const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
           const nextTranscript = [...previousWorkspace.transcript, ...pageSegments];
-          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: nextTranscript }));
-          formatExistingCourseNote(lessonId, nextTranscript);
+          updateLessonWorkspace(lessonId, (current) => ({
+            ...current,
+            transcript: nextTranscript,
+            courseNote: buildDocumentCourseNote(activeLesson, extraction.pages, resource.name),
+          }));
           notify(pageSegments.length > 0
             ? `${resource.name} indexed ${pageSegments.length} page${pageSegments.length === 1 ? '' : 's'} locally.`
             : `${resource.name} contains no extractable text.`);
@@ -1990,9 +2067,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                   {transcript.length || visibleLiveTranscript.length ? activeCourseNote.blocks.map(renderCourseNoteBlock) : <div className="note-empty"><h2>Your notes start here.</h2><p>Record your lecture or import a file above.</p><p>Text notes appear directly. Audio transcription and PDF extraction need a connected service.</p><button className="text-action" onClick={() => setShowSettingsPanel(true)}>Set up transcription</button></div>}
                 </div>
               </section>
+              {isRecording && localSpeechEngine && <section className="live-transcript-panel" aria-label="Live course transcription">
+                <div className="live-transcript-header"><strong>Live transcript</strong><span>Updates as audio is processed. Segments remain marked for review until recording is finalized.</span></div>
+                <div ref={liveTranscriptFeedRef} aria-live="polite">{visibleLiveTranscript.length ? visibleLiveTranscript.map(renderTranscriptSegment) : <p className="empty-state">Waiting for the first transcribed passage.</p>}</div>
+              </section>}
               {(transcript.length > 0 || isRecording) && <details className="transcript-disclosure">
                 <summary>Transcript {isRecording ? '(recording)' : `(${transcript.length})`}</summary>
-                {isRecording && localSpeechEngine && <section className="live-transcript-panel" aria-label="Live course transcription"><div ref={liveTranscriptFeedRef} aria-live="polite">{visibleLiveTranscript.length ? visibleLiveTranscript.map(renderTranscriptSegment) : <p className="empty-state">Waiting for the first transcribed passage.</p>}</div></section>}
                 <div className={`transcript-list ${compactTranscript ? 'compact' : ''}`} role="region" aria-label="Transcript preview">{courseTranscript.map(renderTranscriptSegment)}</div>
                 <button className="text-action" onClick={() => setShowTranscriptPanel(true)}>View all <ArrowUpRight size={13} /></button>
               </details>}

@@ -15,4 +15,13 @@ describe('RichText', () => {
     expect(display.querySelector('.katex-display')).not.toBeNull();
     expect(display.querySelector('math')).not.toBeNull();
   });
+
+  it('keeps malformed LaTeX legible instead of displaying a KaTeX error', () => {
+    render(<RichText content={'\\(\\notARealCommand{x}\\)'} />);
+
+    const formula = screen.getByRole('img', { name: 'LaTeX formula: \\notARealCommand{x}' });
+    expect(formula).toHaveTextContent('\\notARealCommand{x}');
+    expect(formula.querySelector('.katex-error')).toBeNull();
+    expect(formula.querySelector('[style*="color"]')).toBeNull();
+  });
 });
