@@ -96,12 +96,18 @@ function isArtifact(value: unknown): value is Artifact {
 function isCourseNoteBlock(value: unknown): value is CourseNoteBlock {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.type !== 'string') return false;
   if (value.type === 'heading') return (value.level === 1 || value.level === 2) && typeof value.text === 'string';
+  if (value.type === 'markdown') return typeof value.markdown === 'string'
+    && (value.sourceName === undefined || typeof value.sourceName === 'string')
+    && (value.sourceId === undefined || typeof value.sourceId === 'string');
   if (value.type === 'paragraph') return typeof value.text === 'string'
     && (value.timestamp === undefined || typeof value.timestamp === 'string')
     && (value.speaker === undefined || typeof value.speaker === 'string')
     && (value.sourceId === undefined || typeof value.sourceId === 'string');
   if (value.type === 'formula') return typeof value.latex === 'string'
     && (value.caption === undefined || typeof value.caption === 'string')
+    && (value.sourceId === undefined || typeof value.sourceId === 'string');
+  if (value.type === 'formula-image') return typeof value.alt === 'string' && typeof value.sourceName === 'string'
+    && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(String(value.imageData))
     && (value.sourceId === undefined || typeof value.sourceId === 'string');
   if (value.type === 'code') return typeof value.language === 'string' && typeof value.code === 'string'
     && (value.sourceId === undefined || typeof value.sourceId === 'string');
