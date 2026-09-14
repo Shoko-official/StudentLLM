@@ -155,8 +155,8 @@ docs/
 
 ## Roadmap
 
-- Add UI-driven packaged interaction coverage beyond the current frontend-to-native IPC smoke and ten-cycle recovery soak.
-- Extend the `SpeechEngine` contract to streaming partials, diarization, and crash-resumable jobs.
+- Produce self-contained desktop release bundles with isolated ASR and document sidecar runtimes, then add signed release artifacts.
+- Extend the `SpeechEngine` contract to diarization and crash-resumable jobs while preserving the current live partial transcript path.
 - Extend OCR with structured tables, formulas, diagrams, handwriting, and richer page or region provenance.
 - Add hybrid BM25 plus dense retrieval, reranking, and a permissioned citation-first agent loop.
 - Expand public benchmark coverage and the versioned LectureBench described in [docs/benchmarks.md](./docs/benchmarks.md).
