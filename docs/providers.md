@@ -2,9 +2,9 @@
 
 ## In the app
 
-Open **Settings** to set the LM Studio address and model, speech service address, and document service address. **Save connections** persists these settings on the current device and checks the services. A reachable model catalog confirms availability, not successful generation.
+Open **Settings** to set the local OpenAI-compatible endpoint and model, speech service address, and document service address. **Save connections** persists these settings on the current device and checks the services. The app reads `/models`, shows the discovered model IDs, and selects the first available model when the configured model is not loaded. A reachable model catalog confirms availability, not successful generation.
 
-During development, use `/lm-studio/v1` for LM Studio. For a packaged app, use its local server address and enable CORS for the application origin in LM Studio when needed.
+During development, use `/lm-studio/v1` for LM Studio. The same field accepts Bionic and any server implementing the OpenAI-compatible `/v1/models` and `/v1/chat/completions` routes. For a packaged app, use its local server address and enable CORS for the application origin when needed.
 
 Start the optional local services with a Python environment that has their dependencies installed:
 

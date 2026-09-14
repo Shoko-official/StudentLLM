@@ -150,8 +150,9 @@ test.describe('StudentLLM workspace', () => {
       lesson: 'Transformers', title: 'Cross-attention notes', sublesson: 'Decoder context', subject: 'Machine Learning',
       confidence: 0.93, rationale: 'The excerpt describes decoder queries reading encoder keys.',
     }));
-    await page.getByRole('button', { name: 'Quick start', exact: true }).click();
-    const quickStart = page.getByRole('dialog', { name: 'Quick start', exact: true });
+    await openCourseActions(page);
+    await page.getByRole('button', { name: 'Organize material with AI', exact: true }).click();
+    const quickStart = page.getByRole('dialog', { name: 'Organize material with AI', exact: true });
     await quickStart.getByLabel('Lecture excerpt or course description').fill(String.raw`Cross-attention lets decoder queries read encoder keys and values. The scaling term is $\frac{QK^T}{\sqrt{d_k}}$.`);
     await quickStart.getByRole('button', { name: 'Analyze structure' }).click({ noWaitAfter: true });
     await expect(quickStart.getByLabel('Title')).toHaveValue('Cross-attention notes');
@@ -167,6 +168,48 @@ test.describe('StudentLLM workspace', () => {
     expect(workspace.lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ meta: 'Quick Start notes · text source', kind: 'transcript' }),
     ]));
+  });
+
+  test('preserves a course created while imported material is being classified', async ({ page }) => {
+    await page.goto('/');
+    let releaseClassification!: () => void;
+    const classificationGate = new Promise<void>((resolve) => { releaseClassification = resolve; });
+    let markClassificationStarted!: () => void;
+    const classificationStarted = new Promise<void>((resolve) => { markClassificationStarted = resolve; });
+    await page.route('**/race-provider/v1/models', (route) => route.fulfill({ json: { data: [{ id: 'race-model' }] } }));
+    await page.route('**/race-provider/v1/chat/completions', async (route) => {
+      markClassificationStarted();
+      await classificationGate;
+      await route.fulfill({ json: {
+        model: 'race-model',
+        choices: [{ message: { content: JSON.stringify({
+          placement: 'existing', targetCourseId: FIXTURE_LESSON_ID, course: 'Machine Learning',
+          lesson: 'Transformers', title: 'Attention & Scaled Dot-Product', sublesson: '', subject: 'Machine Learning',
+          confidence: 0.92, rationale: 'The imported text belongs to the selected course.',
+        }) } }],
+      } });
+    });
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const settings = page.getByRole('dialog', { name: 'Settings', exact: true });
+    await settings.getByLabel('LM Studio address').fill('/race-provider/v1');
+    await settings.getByLabel('Model', { exact: true }).fill('race-model');
+    await settings.getByRole('button', { name: 'Save connections' }).click();
+    await expect(settings.getByRole('status')).toContainText('Connected. Selected model is available.');
+    await settings.getByRole('button', { name: 'Done' }).click();
+
+    await page.getByLabel('Select course source').setInputFiles({
+      name: 'pending-race.txt', mimeType: 'text/plain', buffer: Buffer.from('A pending import must not erase a newly created course.'),
+    });
+    await classificationStarted;
+    await page.getByRole('button', { name: 'New course', exact: true }).click();
+    const newCourse = page.getByRole('dialog', { name: 'Start a course', exact: true });
+    await newCourse.getByLabel('Course title').fill('Created while routing');
+    await newCourse.getByRole('button', { name: 'Create course', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Created while routing', exact: true })).toBeVisible();
+
+    releaseClassification();
+    await expect.poll(async () => (await savedWorkspace(page)).lessons.map((lesson: { title: string }) => lesson.title)).toContain('Created while routing');
+    await expect(page.getByRole('button', { name: 'Created while routing', exact: true })).toBeVisible();
   });
 
   test('edits the course hierarchy and persists the updated note location', async ({ page }) => {

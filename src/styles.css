@@ -61,7 +61,7 @@ svg { flex-shrink: 0; }
 .search-field input { width: 100%; min-width: 0; padding: 8px 0; border: 0; color: #3d3d3a; background: transparent; outline-offset: 1px; font-size: 13px; }
 .search-field input::placeholder { color: #858580; }
 .sidebar-section-header { display: flex; justify-content: space-between; gap: 8px; padding: 0 8px 8px; color: #6b6b68; font-size: 11px; font-weight: 600; letter-spacing: .02em; }
-.course-tree { display: grid; flex: 1; min-height: 0; gap: 4px; padding-right: 2px; overflow-y: auto; scrollbar-color: #c8c8c4 transparent; }
+.course-tree { display: grid; flex: 1; min-height: 0; align-content: start; grid-auto-rows: max-content; gap: 4px; padding-right: 2px; overflow-y: auto; scrollbar-color: #c8c8c4 transparent; }
 .tree-subject { width: 100%; display: flex; align-items: center; justify-content: space-between; text-align: left; gap: 8px; padding: 7px 8px; border-radius: 5px; font-size: 13px; color: #4b4b48; }
 .tree-subject:hover, .tree-subject:focus-visible { color: #242424; background: #e9e9e6; }
 .tree-subject span { overflow-wrap: anywhere; }
@@ -130,11 +130,12 @@ svg { flex-shrink: 0; }
 .resource-open small { color: var(--muted); font-size: 12px; }
 .chat-view { display: grid; gap: 24px; }
 .chat-intro p { color: var(--muted); font-size: 14px; margin-bottom: 0; }
-.chat-list { display: grid; gap: 28px; }
-.chat-message { min-width: 0; }
+.chat-list { display: grid; gap: 14px; }
+.chat-message { min-width: 0; padding: 16px; border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: 6px; background: var(--surface); }
 .message-role { font-size: 12px; color: var(--muted); }
 .message-content { margin-top: 8px; color: var(--text); font-size: 15px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
-.chat-message.user { border-left: 2px solid #ddd; padding-left: 14px; }
+.chat-message.user { margin-left: 12%; border-left-color: var(--line-strong); background: var(--surface-2); }
+.chat-message.assistant { margin-right: 8%; border-left-color: var(--accent); }
 .chat-composer { display: flex; align-items: center; gap: 10px; padding: 8px; border: 1px solid #ccc; border-radius: 5px; }
 .chat-composer input { flex: 1; min-width: 0; width: 100%; border: 0; padding: 8px; font-size: 15px; background: transparent; }
 .chat-composer .primary-action { flex-shrink: 0; }
@@ -185,6 +186,9 @@ svg { flex-shrink: 0; }
 .setting-row span, .setting-info span { display: grid; gap: 6px; }
 .setting-row small, .setting-info small { font-size: 13px; color: var(--muted); line-height: 1.5; }
 .setting-row input[type='checkbox'] { width: 20px; min-height: 20px; height: 20px; flex-shrink: 0; accent-color: #333; }
+.connection-field { display: grid; gap: 7px; }
+.connection-field small, .detected-models, .edit-course-tools small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.edit-course-tools { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); background: var(--surface-2); }
 .setting-info { border-top: 1px solid var(--line); padding-top: 18px; }
 .sidecar-status-list { display: grid; gap: 14px; font-size: 13px; }
 .sidecar-status-list div { display: grid; gap: 5px; }
@@ -202,6 +206,40 @@ svg { flex-shrink: 0; }
 .course-note-chart-row em { display: block; height: 100%; background: #555; }
 .managed-sidecar-tray { display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; padding: 16px; border-top: 1px solid var(--line); }
 .navigation-scrim { display: none; }
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  color: #ededeb;
+  background: #1d1d1c;
+  --text: #ededeb;
+  --muted: #a7a7a2;
+  --faint: #8e8e89;
+  --surface: #252524;
+  --surface-2: #2d2d2b;
+  --surface-3: #383836;
+  --line: #41413e;
+  --line-strong: #656560;
+  --accent: #ededeb;
+  --accent-strong: #fff;
+  --danger: #ef7770;
+}
+:root[data-theme='dark'] body { background: #1d1d1c; color: var(--text); }
+:root[data-theme='dark'] .topbar { background: #1d1d1c; }
+:root[data-theme='dark'] .left-sidebar { color: #d4d4d0; background: #242423; border-color: var(--line); color-scheme: dark; }
+:root[data-theme='dark'] .sidebar-header, :root[data-theme='dark'] .sidebar-footer { border-color: var(--line); }
+:root[data-theme='dark'] .sidebar-brand strong { color: var(--text); }
+:root[data-theme='dark'] .sidebar-brand span, :root[data-theme='dark'] .sidebar-section-header { color: var(--muted); }
+:root[data-theme='dark'] .sidebar-row, :root[data-theme='dark'] .tree-subject, :root[data-theme='dark'] .tree-lesson { color: #d4d4d0; }
+:root[data-theme='dark'] .sidebar-row:hover:not(:disabled), :root[data-theme='dark'] .sidebar-row:focus-visible, :root[data-theme='dark'] .tree-subject:hover, :root[data-theme='dark'] .tree-subject:focus-visible { color: var(--text); background: var(--surface-3); }
+:root[data-theme='dark'] .sidebar-row-primary, :root[data-theme='dark'] .tree-lesson.active, :root[data-theme='dark'] .tree-lesson:hover, :root[data-theme='dark'] .tree-lesson:focus-visible { color: var(--text); background: #3b3b39; }
+:root[data-theme='dark'] .search-field, :root[data-theme='dark'] .course-actions-menu, :root[data-theme='dark'] .course-note-document, :root[data-theme='dark'] .modal, :root[data-theme='dark'] .toast, :root[data-theme='dark'] .secondary-action { background: var(--surface); border-color: var(--line-strong); }
+:root[data-theme='dark'] .search-field input, :root[data-theme='dark'] .modal input, :root[data-theme='dark'] .modal select, :root[data-theme='dark'] .quick-start-modal textarea { color: var(--text); background: var(--surface); border-color: var(--line-strong); }
+:root[data-theme='dark'] .course-actions-menu button:hover { background: var(--surface-2); }
+:root[data-theme='dark'] .action-error { color: #ffaaa4; background: #3a2827; }
+:root[data-theme='dark'] .course-note-code { background: #20201f; }
+:root[data-theme='dark'] .course-note-chart-row i { background: #4b4b48; }
+:root[data-theme='dark'] .course-note-chart-row em { background: #d8d8d2; }
+:root[data-theme='dark'] .setting-row input[type='checkbox'] { accent-color: #ededeb; }
 @media (max-width: 1100px) {
   .workspace-grid.with-navigation { grid-template-columns: 210px minmax(0, 1fr); }
   .main-panel { padding: 32px 28px 48px; }

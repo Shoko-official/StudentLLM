@@ -134,7 +134,7 @@ function loadServiceSettings(): ServiceSettings {
 }
 const packagedIpcSmokeRequested = import.meta.env.VITE_STUDENTLLM_PACKAGED_IPC_SMOKE === 'true';
 
-function loadPreference(name: 'compactTranscript' | 'showVerifiedTranscript', fallback: boolean) {
+function loadPreference(name: 'compactTranscript' | 'showVerifiedTranscript' | 'darkMode', fallback: boolean) {
   try {
     const raw = window.localStorage.getItem(PREFERENCES_STORAGE_KEY);
     if (!raw) return fallback;
@@ -159,6 +159,12 @@ function formatElapsed(totalSeconds: number) {
   const minutes = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
   const seconds = (totalSeconds % 60).toString().padStart(2, '0');
   return `${hours}:${minutes}:${seconds}`;
+}
+
+function randomQuickCourseTitle() {
+  const prefixes = ['Untitled lecture', 'Study session', 'Quick course'];
+  const suffix = crypto.randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase();
+  return `${prefixes[Math.floor(Math.random() * prefixes.length)]} · ${suffix}`;
 }
 
 function resourceIcon(kind: Resource['kind']) {
@@ -239,15 +245,22 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [quickStartProposal, setQuickStartProposal] = useState<QuickStartProposal | null>(null);
   const [quickStartPlacement, setQuickStartPlacement] = useState('new');
   const [isAnalyzingQuickStart, setIsAnalyzingQuickStart] = useState(false);
+  const [isSuggestingCourseDetails, setIsSuggestingCourseDetails] = useState(false);
   const [quickStartError, setQuickStartError] = useState('');
   const [compactTranscript, setCompactTranscript] = useState(() => loadPreference('compactTranscript', false));
   const [showVerifiedTranscript, setShowVerifiedTranscript] = useState(() => loadPreference('showVerifiedTranscript', true));
+  const [darkMode, setDarkMode] = useState(() => {
+    const initial = loadPreference('darkMode', false);
+    document.documentElement.dataset.theme = initial ? 'dark' : 'light';
+    return initial;
+  });
   const [serviceSettings, setServiceSettings] = useState(loadServiceSettings);
   const [connectionsEnabled, setConnectionsEnabled] = useState(() => {
     try { return localStorage.getItem(SERVICES_STORAGE_KEY) !== null; } catch { return false; }
   });
   const [serviceDraft, setServiceDraft] = useState(serviceSettings);
   const [llmHealth, setLlmHealth] = useState('Not checked.');
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [sidecarHealth, setSidecarHealth] = useState<{ asr: SidecarHealth; documents: SidecarHealth } | null>(null);
   const [managedSidecars, setManagedSidecars] = useState<ManagedSidecarStatus[]>([]);
   const [isCheckingSidecars, setIsCheckingSidecars] = useState(false);
@@ -313,6 +326,54 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       },
     };
   }
+
+  const commitPlacedCourse = (
+    placement: { targetLesson: Lesson; lessonWorkspaces: Record<string, LessonWorkspace> },
+    sourceLessonId: string,
+    resource: Resource,
+    segments: TranscriptSegment[],
+  ) => {
+    const targetLessonId = placement.targetLesson.id;
+    const incomingIds = new Set(segments.map((segment) => segment.id));
+    setLessons((current) => {
+      if (!current.some((lesson) => lesson.id === sourceLessonId)) return current;
+      if (current.some((lesson) => lesson.id === targetLessonId)) return current;
+      return [placement.targetLesson, ...current];
+    });
+    setLessonWorkspaces((current) => {
+      if (!current[sourceLessonId]) return current;
+      const sourceWorkspace = current[sourceLessonId] ?? emptyLessonWorkspace;
+      const targetWorkspace = current[targetLessonId] ?? emptyLessonWorkspace;
+      const sourceIsTarget = sourceLessonId === targetLessonId;
+      const targetTranscript = Array.from(new Map([...targetWorkspace.transcript, ...segments].map((segment) => [segment.id, segment])).values());
+      const snapshotTargetWorkspace = placement.lessonWorkspaces[targetLessonId];
+      const snapshotTargetIds = new Set(snapshotTargetWorkspace?.transcript.map((segment) => segment.id) ?? []);
+      const targetChangedWhilePending = targetWorkspace.transcript.some((segment) => !snapshotTargetIds.has(segment.id));
+      const formattedCourseNote = snapshotTargetWorkspace?.courseNote;
+      const nextTargetWorkspace: LessonWorkspace = {
+        ...targetWorkspace,
+        resources: Array.from(new Map([...targetWorkspace.resources, resource].map((item) => [item.id, item])).values()),
+        transcript: targetTranscript,
+        courseNote: !targetChangedWhilePending && formattedCourseNote
+          ? formattedCourseNote
+          : buildCourseNote(placement.targetLesson, targetTranscript),
+      };
+      if (sourceIsTarget) return { ...current, [targetLessonId]: nextTargetWorkspace };
+      return {
+        ...current,
+        [sourceLessonId]: {
+          ...sourceWorkspace,
+          resources: sourceWorkspace.resources.filter((candidate) => candidate.id !== resource.id),
+          transcript: sourceWorkspace.transcript.filter((segment) => segment.sourceId !== resource.id && !incomingIds.has(segment.id)),
+          courseNote: buildCourseNote(
+            lessons.find((lesson) => lesson.id === sourceLessonId) ?? placement.targetLesson,
+            sourceWorkspace.transcript.filter((segment) => segment.sourceId !== resource.id && !incomingIds.has(segment.id)),
+          ),
+        },
+        [targetLessonId]: nextTargetWorkspace,
+      };
+    });
+  };
 
   const formatExistingCourseNote = (lessonId: string, candidateTranscript: TranscriptSegment[]) => {
     if (!localProvider || !candidateTranscript.length) return;
@@ -498,11 +559,15 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ compactTranscript, showVerifiedTranscript }));
+      window.localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ compactTranscript, showVerifiedTranscript, darkMode }));
     } catch {
       // Preferences remain session-scoped when browser storage is unavailable.
     }
-  }, [compactTranscript, showVerifiedTranscript]);
+  }, [compactTranscript, showVerifiedTranscript, darkMode]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
+  }, [darkMode]);
 
   useEffect(() => {
     if (showSettingsPanel) void checkSidecars();
@@ -629,7 +694,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     setIsAnalyzingQuickStart(false);
   };
 
-  const openQuickStart = () => {
+  const openAiOrganizer = () => {
     if (isRecording || isFinalizingRecording || isStartingRecording) {
       notify('Stop and save the recording before using Quick Start.');
       return;
@@ -793,9 +858,24 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       const response = await fetch(`${settings.llmUrl.replace(/\/$/, '')}/models`, { signal: AbortSignal.timeout(3000) });
       if (!response.ok) throw new Error('LM Studio is not responding.');
       const body = await response.json();
-      const models = Array.isArray(body.data) ? body.data : [];
-      setLlmHealth(models.some((model: { id: string }) => model.id === settings.model) ? 'Connected. Selected model is available.' : 'Connected. Choose a model listed in LM Studio.');
+      const models = Array.isArray(body.data)
+        ? body.data.map((model: { id?: unknown }) => typeof model?.id === 'string' ? model.id.trim() : '').filter(Boolean)
+        : [];
+      setAvailableModels(models);
+      const detectedModel = models.find((model: string) => model === settings.model) ?? models[0];
+      if (detectedModel && detectedModel !== settings.model) {
+        const detectedSettings = { ...settings, model: detectedModel };
+        setServiceSettings((current) => current.llmUrl === settings.llmUrl ? detectedSettings : current);
+        setServiceDraft((current) => current.llmUrl === settings.llmUrl ? detectedSettings : current);
+        try { localStorage.setItem(SERVICES_STORAGE_KEY, JSON.stringify(detectedSettings)); } catch { /* Keep the detected model for this session. */ }
+        setLlmHealth(`Connected. Detected and selected ${detectedModel}.`);
+      } else if (detectedModel) {
+        setLlmHealth('Connected. Selected model is available.');
+      } else {
+        setLlmHealth('Connected. No model is currently loaded.');
+      }
     } catch {
+      setAvailableModels([]);
       setLlmHealth('Unavailable. Start the LM Studio server and load a model.');
     }
     setIsCheckingSidecars(false);
@@ -1027,8 +1107,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 duration: formatElapsed(recordingSeconds),
               });
               const formatted = await formatPlacedCourseNote(routed);
-              setLessons(formatted.lessons);
-              setLessonWorkspaces(formatted.lessonWorkspaces);
+              commitPlacedCourse(formatted, recordingLessonId, recordingResource, segments);
               setActiveLessonId(formatted.targetLesson.id);
               setSelectedArtifactId(formatted.lessonWorkspaces[formatted.targetLesson.id]?.artifacts[0]?.id ?? null);
               setView('course');
@@ -1302,8 +1381,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         sourceType: 'material',
       });
       const formatted = await formatPlacedCourseNote(routed);
-      setLessons(formatted.lessons);
-      setLessonWorkspaces(formatted.lessonWorkspaces);
+      commitPlacedCourse(formatted, sourceLesson.id, resource, segments);
       setActiveLessonId(formatted.targetLesson.id);
       setSelectedArtifactId(formatted.lessonWorkspaces[formatted.targetLesson.id]?.artifacts[0]?.id ?? null);
       setView('course');
@@ -1378,8 +1456,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                   segments,
                 });
                 const formatted = await formatPlacedCourseNote(routed);
-                setLessons(formatted.lessons);
-                setLessonWorkspaces(formatted.lessonWorkspaces);
+                commitPlacedCourse(formatted, lessonId, resource, segments);
                 setActiveLessonId(formatted.targetLesson.id);
                 setSelectedArtifactId(formatted.lessonWorkspaces[formatted.targetLesson.id]?.artifacts[0]?.id ?? null);
                 setView('course');
@@ -1488,8 +1565,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               segments,
             });
             const formatted = await formatPlacedCourseNote(routed);
-            setLessons(formatted.lessons);
-            setLessonWorkspaces(formatted.lessonWorkspaces);
+            commitPlacedCourse(formatted, lessonId, resource, segments);
             setActiveLessonId(formatted.targetLesson.id);
             setSelectedArtifactId(formatted.lessonWorkspaces[formatted.targetLesson.id]?.artifacts[0]?.id ?? null);
             setView('course');
@@ -1652,12 +1728,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
   };
 
-  const createCourse = (event: FormEvent) => {
-    event.preventDefault();
-    const title = newCourseTitle.trim();
-    if (!title || isRecording || isFinalizingRecording || isStartingRecording) return;
-    const subject = newCourseSubject.trim() || 'General';
-    const chapter = newCourseChapter.trim() || 'General notes';
+  const createCourseRecord = (title: string, subject: string, chapter: string, message: string) => {
     const id = `lesson-${crypto.randomUUID()}`;
     const lesson: Lesson = {
       id,
@@ -1681,7 +1752,31 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     setView('course');
     setActionError('');
     if (window.innerWidth <= 900) setShowLeftSidebar(false);
-    notify('New course created. Ready to record.');
+    notify(message);
+  };
+
+  const startQuickCourse = () => {
+    if (isRecording || isFinalizingRecording || isStartingRecording) {
+      notify('Stop and save the recording before using Quick Start.');
+      return;
+    }
+    createCourseRecord(randomQuickCourseTitle(), 'General', 'General notes', 'Quick Start created a blank course. Ready to record or import.');
+  };
+
+  const createCourse = (event: FormEvent) => {
+    event.preventDefault();
+    const title = newCourseTitle.trim();
+    if (!title || isRecording || isFinalizingRecording || isStartingRecording) return;
+    createCourseRecord(
+      title,
+      newCourseSubject.trim() || 'General',
+      newCourseChapter.trim() || 'General notes',
+      'New course created. Ready to record.',
+    );
+    setNewCourseTitle('');
+    setNewCourseSubject('General');
+    setNewCourseChapter('General notes');
+    setShowNewCourse(false);
   };
 
   const openEditCourse = () => {
@@ -1695,6 +1790,40 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     setActionError('');
     setCourseActionsOpen(false);
     setShowEditCourse(true);
+  };
+
+  const suggestCourseDetails = async () => {
+    if (!hasCourse || isSuggestingCourseDetails) return;
+    const workspace = lessonWorkspaces[activeLesson.id] ?? emptyLessonWorkspace;
+    const material = [
+      ...workspace.transcript.slice(-16).map((segment) => segment.text),
+      ...workspace.resources.map((resource) => `Source: ${resource.name}`),
+    ].join('\n').trim();
+    if (!material) {
+      setActionError('Add a recording or source before asking AI to name this course.');
+      return;
+    }
+    if (!localProvider) {
+      setActionError('Connect a local model in Settings before asking AI to name this course.');
+      return;
+    }
+    setIsSuggestingCourseDetails(true);
+    setActionError('');
+    try {
+      const proposal = await analyzeQuickStart(material, [activeLesson], localProvider);
+      setCourseEditDraft((current) => ({
+        ...current,
+        title: proposal.title.trim() || current.title,
+        subject: proposal.subject.trim() || current.subject,
+        chapter: proposal.lesson.trim() || current.chapter,
+        sublesson: proposal.sublesson.trim(),
+      }));
+      notify('AI suggested a course title and structure. Review before saving.');
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'AI could not suggest course details.');
+    } finally {
+      setIsSuggestingCourseDetails(false);
+    }
   };
 
   const updateCourse = (event: FormEvent) => {
@@ -1775,7 +1904,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <div className="sidebar-brand"><div><strong>StudentLLM</strong><ChevronDown size={13} aria-hidden="true" /></div><span>Workspace</span></div>
             </div>
             <div className="sidebar-start-actions">
-              <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={openQuickStart}><Sparkles size={16} /><span>Quick start</span></button>
+              <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={startQuickCourse}><Sparkles size={16} /><span>Quick start</span></button>
               <button className="sidebar-row" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={() => setShowNewCourse(true)}><Plus size={16} /><span>New course</span></button>
             </div>
             {lessons.length > 0 && <label className="search-field"><Search size={16} /><input aria-label="Search courses" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Find a course" /></label>}
@@ -1809,7 +1938,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <BookOpen size={32} strokeWidth={1.3} aria-hidden="true" />
               <h1>A place for your courses.</h1>
               <p>Create a course, then record a lecture or import your notes.<br />Your material stays together here.</p>
-              <button className="primary-action" onClick={openQuickStart}><Sparkles size={17} /> Quick start with AI</button>
+              <button className="primary-action" onClick={startQuickCourse}><Sparkles size={17} /> Quick start</button>
+              <button className="text-action" onClick={openAiOrganizer}><Sparkles size={16} /> Organize notes with AI</button>
               <button className="text-action" onClick={() => setShowNewCourse(true)}><Plus size={16} /> Create your first course</button>
             </section>
           ) : <>
@@ -1819,6 +1949,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 <summary aria-label="Course actions">More <ChevronDown size={15} /></summary>
                 <div className="course-actions-menu" onClick={() => setCourseActionsOpen(false)}>
                   <button onClick={openEditCourse}><Pencil size={15} /> Edit course</button>
+                  <button onClick={openAiOrganizer}><Sparkles size={15} /> Organize material with AI</button>
                   <button onClick={exportCourseNote}><Download size={15} /> Save note</button>
                   <button onClick={() => void exportCourse()}><Download size={15} /> Export course</button>
                   <button onClick={() => setShowTranscriptPanel(true)}><FileText size={15} /> Full transcript</button>
@@ -1871,7 +2002,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             {view === 'chat' && <section className="chat-view">
               <div className="chat-intro"><h2>Ask about this course</h2><p>{localProvider ? 'Answers use your notes and sources. LM Studio must be running with a loaded model.' : 'Connect LM Studio in Settings to generate answers. You can still search and open your sources.'}</p></div>
               {!resources.length && !transcript.length && <p className="empty-state">Import material or record a lecture before asking a question.</p>}
-              <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} key={message.id}><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span><div className="message-content"><RichText content={message.content} /></div>{message.citations && <div className="citation-list">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button key={citation} onClick={() => openCitation(message.citationTargets![index])}>{citation}</button> : <span key={citation}>{citation}</span>)}</div>}</article>)}</div>
+              <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span><div className="message-content"><RichText content={message.content} /></div>{message.citations && <div className="citation-list">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button key={citation} onClick={() => openCitation(message.citationTargets![index])}>{citation}</button> : <span key={citation}>{citation}</span>)}</div>}</article>)}</div>
               <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
             </section>}
             {view === 'study' && <section className="study-view">
@@ -1885,22 +2016,22 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       </div>
 
       {resourcePreview && <div className="modal-backdrop" role="presentation" onMouseDown={() => setResourcePreview(null)}><section className="modal resource-preview-modal" role="dialog" aria-modal="true" aria-labelledby="resource-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Original source</span><h2 id="resource-preview-title">{resourcePreview.resource.name}</h2></div><button className="icon-button" aria-label="Close source preview" onClick={() => setResourcePreview(null)}><X size={17} /></button></div><p className="modal-description">{resourcePreview.resource.meta}{resourcePreview.resource.sha256 ? ` · SHA-256 ${resourcePreview.resource.sha256.slice(0, 12)}…` : ''}</p>{resourcePreview.state === 'loading' && <p className="empty-state">Opening the locally stored source…</p>}{resourcePreview.state === 'missing' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'error' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'ready' && resourcePreview.text !== undefined && <div className="source-text-preview"><pre>{resourcePreview.text}</pre>{resourcePreview.truncated && <small>Preview truncated to 12,000 characters. The original source remains unchanged.</small>}</div>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'image' && <img className="source-image-preview" src={resourcePreview.blobUrl} alt={`Preview of ${resourcePreview.resource.name}`} />}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'audio' && <audio className="source-audio-preview" controls src={resourcePreview.blobUrl}>Your browser cannot play this audio source.</audio>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'document' && <iframe className="source-document-preview" title={`Preview of ${resourcePreview.resource.name}`} src={resourcePreview.blobUrl} />}</section></div>}
-      {showQuickStart && <div className="modal-backdrop" role="presentation" onMouseDown={() => { setShowQuickStart(false); resetQuickStart(); }}><section className="modal quick-start-modal" role="dialog" aria-modal="true" aria-labelledby="quick-start-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">AI course organizer</span><h2 id="quick-start-title">Quick start</h2></div><button className="icon-button" aria-label="Close Quick Start" onClick={() => { setShowQuickStart(false); resetQuickStart(); }}><X size={17} /></button></div><p className="modal-description">Paste a lecture excerpt or course description. AI proposes the hierarchy and destination; review it before saving.</p>{!quickStartProposal ? <form onSubmit={analyzeQuickStartInput}><label>Lecture excerpt or course description<textarea autoFocus rows={8} value={quickStartInput} onChange={(event) => setQuickStartInput(event.target.value)} placeholder="Paste what you are studying, or a few paragraphs from the lecture..." /></label><label>Source name <span className="muted">optional</span><input value={quickStartSourceName} onChange={(event) => setQuickStartSourceName(event.target.value)} placeholder="e.g. week-04-notes" /></label>{!localProvider && <p className="quick-start-note">Connect LM Studio in Settings to analyze and organize this material.</p>}{quickStartError && <p className="action-error" role="alert">{quickStartError}</p>}<div className="modal-footer"><button type="button" className="secondary-action" onClick={() => { setShowQuickStart(false); resetQuickStart(); }}>Cancel</button><button className="primary-submit" type="submit" disabled={!quickStartInput.trim() || isAnalyzingQuickStart}><Sparkles size={15} /> {isAnalyzingQuickStart ? 'Analyzing...' : 'Analyze structure'}</button></div></form> : <div className="quick-start-review"><div className="quick-start-fields"><label>Course group<input value={quickStartProposal.course} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, course: event.target.value } : current)} /></label><label>Subject<input value={quickStartProposal.subject} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, subject: event.target.value } : current)} /></label><label>Lesson<input value={quickStartProposal.lesson} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, lesson: event.target.value } : current)} /></label><label>Title<input value={quickStartProposal.title} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, title: event.target.value } : current)} /></label><label>Sublesson <span className="muted">optional</span><input value={quickStartProposal.sublesson} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, sublesson: event.target.value } : current)} placeholder="No sublesson detected" /></label></div><label>Place this material in<select aria-label="Place this material in" value={quickStartPlacement} onChange={(event) => setQuickStartPlacement(event.target.value)}><option value="new">Create a new course</option>{lessons.map((lesson) => <option key={lesson.id} value={lesson.id}>{lesson.subject} / {lesson.chapter} / {lesson.title}</option>)}</select></label><div className="quick-start-summary"><strong>{Math.round(quickStartProposal.confidence * 100)}% confidence</strong><span>{quickStartProposal.rationale}</span><small>{quickStartPlacement === 'new' ? `Creates ${quickStartProposal.course} / ${quickStartProposal.lesson} / ${quickStartProposal.title}` : 'Adds the source to the selected existing course.'}</small></div>{quickStartError && <p className="action-error" role="alert">{quickStartError}</p>}<div className="modal-footer"><button type="button" className="text-action" onClick={() => { setQuickStartProposal(null); setQuickStartError(''); }}>Edit material</button><button type="button" className="primary-submit" onClick={() => void applyQuickStart()}><Check size={15} /> Apply structure</button></div></div>}</section></div>}
+      {showQuickStart && <div className="modal-backdrop" role="presentation" onMouseDown={() => { setShowQuickStart(false); resetQuickStart(); }}><section className="modal quick-start-modal" role="dialog" aria-modal="true" aria-labelledby="quick-start-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">AI course organizer</span><h2 id="quick-start-title">Organize material with AI</h2></div><button className="icon-button" aria-label="Close AI organizer" onClick={() => { setShowQuickStart(false); resetQuickStart(); }}><X size={17} /></button></div><p className="modal-description">Paste a lecture excerpt or course description. AI proposes the hierarchy and destination; review it before saving.</p>{!quickStartProposal ? <form onSubmit={analyzeQuickStartInput}><label>Lecture excerpt or course description<textarea autoFocus rows={8} value={quickStartInput} onChange={(event) => setQuickStartInput(event.target.value)} placeholder="Paste what you are studying, or a few paragraphs from the lecture..." /></label><label>Source name <span className="muted">optional</span><input value={quickStartSourceName} onChange={(event) => setQuickStartSourceName(event.target.value)} placeholder="e.g. week-04-notes" /></label>{!localProvider && <p className="quick-start-note">Connect LM Studio in Settings to analyze and organize this material.</p>}{quickStartError && <p className="action-error" role="alert">{quickStartError}</p>}<div className="modal-footer"><button type="button" className="secondary-action" onClick={() => { setShowQuickStart(false); resetQuickStart(); }}>Cancel</button><button className="primary-submit" type="submit" disabled={!quickStartInput.trim() || isAnalyzingQuickStart}><Sparkles size={15} /> {isAnalyzingQuickStart ? 'Analyzing...' : 'Analyze structure'}</button></div></form> : <div className="quick-start-review"><div className="quick-start-fields"><label>Course group<input value={quickStartProposal.course} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, course: event.target.value } : current)} /></label><label>Subject<input value={quickStartProposal.subject} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, subject: event.target.value } : current)} /></label><label>Lesson<input value={quickStartProposal.lesson} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, lesson: event.target.value } : current)} /></label><label>Title<input value={quickStartProposal.title} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, title: event.target.value } : current)} /></label><label>Sublesson <span className="muted">optional</span><input value={quickStartProposal.sublesson} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, sublesson: event.target.value } : current)} placeholder="No sublesson detected" /></label></div><label>Place this material in<select aria-label="Place this material in" value={quickStartPlacement} onChange={(event) => setQuickStartPlacement(event.target.value)}><option value="new">Create a new course</option>{lessons.map((lesson) => <option key={lesson.id} value={lesson.id}>{lesson.subject} / {lesson.chapter} / {lesson.title}</option>)}</select></label><div className="quick-start-summary"><strong>{Math.round(quickStartProposal.confidence * 100)}% confidence</strong><span>{quickStartProposal.rationale}</span><small>{quickStartPlacement === 'new' ? `Creates ${quickStartProposal.course} / ${quickStartProposal.lesson} / ${quickStartProposal.title}` : 'Adds the source to the selected existing course.'}</small></div>{quickStartError && <p className="action-error" role="alert">{quickStartError}</p>}<div className="modal-footer"><button type="button" className="text-action" onClick={() => { setQuickStartProposal(null); setQuickStartError(''); }}>Edit material</button><button type="button" className="primary-submit" onClick={() => void applyQuickStart()}><Check size={15} /> Apply structure</button></div></div>}</section></div>}
       {showNewCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="new-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">New session</span><h2 id="new-course-title">Start a course</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowNewCourse(false)}><X size={17} /></button></div><p className="modal-description">Give your course a name. You can add recordings and files next.</p><form onSubmit={createCourse}><label>Course title<input autoFocus value={newCourseTitle} onChange={(event) => setNewCourseTitle(event.target.value)} placeholder="e.g. Introduction to probability" /></label><label>Subject<input list="course-subject-suggestions" value={newCourseSubject} onChange={(event) => setNewCourseSubject(event.target.value)} placeholder="e.g. Machine Learning" /></label><datalist id="course-subject-suggestions">{subjectOptions.map((subjectOption) => <option key={subjectOption} value={subjectOption} />)}</datalist><label>Chapter<input value={newCourseChapter} onChange={(event) => setNewCourseChapter(event.target.value)} placeholder="e.g. Transformers" /></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowNewCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!newCourseTitle.trim()}><Mic size={15} /> Create course</button></div></form></section></div>}
-      {showEditCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowEditCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Course structure</span><h2 id="edit-course-title">Edit course</h2></div><button className="icon-button" aria-label="Close edit course" onClick={() => setShowEditCourse(false)}><X size={17} /></button></div><p className="modal-description">Update the names used in the course tree and saved note location.</p><form onSubmit={updateCourse}><label>Course title<input autoFocus value={courseEditDraft.title} onChange={(event) => setCourseEditDraft((current) => ({ ...current, title: event.target.value }))} /></label><label>Subject<input list="course-subject-suggestions" value={courseEditDraft.subject} onChange={(event) => setCourseEditDraft((current) => ({ ...current, subject: event.target.value }))} /></label><label>Chapter<input value={courseEditDraft.chapter} onChange={(event) => setCourseEditDraft((current) => ({ ...current, chapter: event.target.value }))} /></label><label>Sublesson <span className="muted">optional</span><input value={courseEditDraft.sublesson} onChange={(event) => setCourseEditDraft((current) => ({ ...current, sublesson: event.target.value }))} placeholder="No sublesson" /></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowEditCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!courseEditDraft.title.trim()}><Check size={15} /> Save course changes</button></div></form></section></div>}
+      {showEditCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowEditCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Course structure</span><h2 id="edit-course-title">Edit course</h2></div><button className="icon-button" aria-label="Close edit course" onClick={() => setShowEditCourse(false)}><X size={17} /></button></div><p className="modal-description">Update the names used in the course tree and saved note location.</p><div className="edit-course-tools"><button type="button" className="secondary-action" onClick={() => void suggestCourseDetails()} disabled={isSuggestingCourseDetails || !localProvider || !transcript.length && !resources.length}><Sparkles size={15} /> {isSuggestingCourseDetails ? 'Suggesting...' : 'Suggest with AI'}</button><small>{transcript.length || resources.length ? 'Use the saved material to propose a title and hierarchy.' : 'Record or import material first.'}</small></div>{actionError && <p className="action-error" role="alert">{actionError}</p>}<form onSubmit={updateCourse}><label>Course title<input autoFocus value={courseEditDraft.title} onChange={(event) => setCourseEditDraft((current) => ({ ...current, title: event.target.value }))} /></label><label>Subject<input list="course-subject-suggestions" value={courseEditDraft.subject} onChange={(event) => setCourseEditDraft((current) => ({ ...current, subject: event.target.value }))} /></label><label>Chapter<input value={courseEditDraft.chapter} onChange={(event) => setCourseEditDraft((current) => ({ ...current, chapter: event.target.value }))} /></label><label>Sublesson <span className="muted">optional</span><input value={courseEditDraft.sublesson} onChange={(event) => setCourseEditDraft((current) => ({ ...current, sublesson: event.target.value }))} placeholder="No sublesson" /></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowEditCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!courseEditDraft.title.trim()}><Check size={15} /> Save course changes</button></div></form></section></div>}
       {showDeleteCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowDeleteCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Delete session</span><h2 id="delete-course-title">Delete {activeLesson.title}?</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowDeleteCourse(false)}><X size={17} /></button></div><p className="modal-description">This removes the course workspace and its locally stored source and recording data. This action cannot be undone from the app.</p><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowDeleteCourse(false)}>Cancel</button><button className="danger-submit" type="button" onClick={() => void deleteActiveCourse()}><Trash2 size={14} /> Delete course permanently</button></div></section></div>}
       {showGlobalSearch && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowGlobalSearch(false)}><section className="modal search-modal" role="dialog" aria-modal="true" aria-labelledby="global-search-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace index</span><h2 id="global-search-title">Search all course content</h2></div><button className="icon-button" aria-label="Close search" onClick={() => setShowGlobalSearch(false)}><X size={17} /></button></div><label className="modal-search"><Search size={15} /><input autoFocus aria-label="Search all course content" value={globalSearchValue} onChange={(event) => setGlobalSearchValue(event.target.value)} placeholder="Search courses, transcripts, and sources" /></label>{globalSearchValue.trim() && <div className="search-results" aria-live="polite">{globalSearchResults.length ? globalSearchResults.map((result) => <button className="search-result" key={`${result.lessonId}:${result.id}`} onClick={() => openSearchResult(result.lessonId)}><strong>{result.title}</strong><small>{result.detail}</small></button>) : <p className="empty-state">No matching course content.</p>}</div>}</section></div>}
       {showReviewPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowReviewPanel(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="review-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Review queue</span><h2 id="review-panel-title">Needs review <span className="modal-count">{reviewItems.length}</span></h2></div><button className="icon-button" aria-label="Close review queue" onClick={() => setShowReviewPanel(false)}><X size={17} /></button></div><p className="modal-description">Transcript segments and imported pages that still need a quick human check.</p><div className="review-results">{reviewItems.length ? reviewItems.map(({ lesson, segment }) => <button className="review-result" key={`${lesson.id}:${segment.id}`} onClick={() => { selectLesson(lesson.id); setShowReviewPanel(false); }}><strong>{segment.text}</strong><small>{lesson.title} · {segment.timestamp}</small></button>) : <p className="empty-state">Nothing needs review.</p>}</div></section></div>}
       {showTranscriptPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowTranscriptPanel(false)}><section className="modal transcript-modal" role="dialog" aria-modal="true" aria-labelledby="transcript-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Transcript archive</span><h2 id="transcript-panel-title">Full transcript <span className="modal-count">{transcript.length}</span></h2>{visibleLiveTranscript.length > 0 && <span className="review-badge">Live preview</span>}</div><button className="icon-button" aria-label="Close full transcript" onClick={() => setShowTranscriptPanel(false)}><X size={17} /></button></div><p className="modal-description">Review every indexed segment from {activeLesson.title}. Changes are saved to this course workspace.</p><div className={`transcript-list modal-transcript-list ${compactTranscript ? 'compact' : ''}`}>{transcript.length || visibleLiveTranscript.length ? [...transcript, ...visibleLiveTranscript].map(renderTranscriptSegment) : <p className="empty-state">This course has no transcript segments yet.</p>}</div></section></div>}
       {showSettingsPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettingsPanel(false)}><section className="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace preferences</span><h2 id="settings-panel-title">Settings</h2></div><button className="icon-button" aria-label="Close settings" onClick={() => setShowSettingsPanel(false)}><X size={17} /></button></div><p className="modal-description">Connect your local services. Recording and text import work without an AI model.</p>
         <form className="connection-settings" onSubmit={saveServiceSettings}>
-          <label>LM Studio address<input value={serviceDraft.llmUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, llmUrl: event.target.value }))} placeholder="/lm-studio/v1" /></label>
+          <div className="connection-field"><label htmlFor="local-llm-url">LM Studio address</label><input id="local-llm-url" value={serviceDraft.llmUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, llmUrl: event.target.value }))} placeholder="/lm-studio/v1" /><small>Works with LM Studio, Bionic, and any OpenAI-compatible local server.</small></div>
           <label>Model<input value={serviceDraft.model} onChange={(event) => setServiceDraft((current) => ({ ...current, model: event.target.value }))} placeholder="Model identifier in LM Studio" /></label>
           <label>Speech service address<input value={serviceDraft.asrUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, asrUrl: event.target.value }))} placeholder="http://127.0.0.1:8765" /></label>
           <label>Document service address<input value={serviceDraft.documentsUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, documentsUrl: event.target.value }))} placeholder="http://127.0.0.1:8766" /></label>
           <button className="primary-submit" disabled={isRecording || isFinalizingRecording || isStartingRecording || isCheckingSidecars} type="submit">Save connections</button>
-          <p className="empty-state" role="status">LM Studio: {isCheckingSidecars ? 'Checking...' : llmHealth}</p>
-        </form><div className="settings-list"><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>Audio and document sidecars are checked without interrupting any running local model.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>ASR sidecar</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document sidecar</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
+          <p className="empty-state" role="status">LM Studio / Bionic: {isCheckingSidecars ? 'Checking...' : llmHealth}</p>{availableModels.length > 0 && <p className="detected-models">Detected local models: {availableModels.join(', ')}</p>}
+        </form><div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>Audio and document sidecars are checked without interrupting any running local model.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>ASR sidecar</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document sidecar</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
       {isNativeRuntime() && <div className="managed-sidecar-tray" aria-label="Managed local services"><span>Managed services</span><span aria-live="polite">{managedSidecars.filter((sidecar) => sidecar.running).length}/2 running</span><button type="button" onClick={() => void startConfiguredSidecars()}>Start</button><button type="button" onClick={() => void stopConfiguredSidecars()}>Stop</button></div>}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
