@@ -1890,7 +1890,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       return <div className="course-note-schema" key={block.id} aria-label="Course concept schema">{block.edges.map((edge) => <span key={`${block.id}-${edge.from}-${edge.to}`}><b>{edge.from}</b><span aria-hidden="true"> → </span><b>{edge.to}</b></span>)}</div>;
     }
     const maximum = Math.max(...block.values.map((item) => Math.abs(item.value)), 1);
-    return <figure className="course-note-chart" key={block.id}><figcaption>{block.label}</figcaption>{block.values.map((item) => <div className="course-note-chart-row" key={`${block.id}-${item.label}`}><span>{item.label}</span><i><em style={{ width: `${Math.max(4, Math.round(Math.abs(item.value) / maximum * 100))}%` }} /></i><strong>{item.value}</strong></div>)}</figure>;
+    return <figure className="course-note-chart" key={block.id}><figcaption>{block.label}</figcaption>{block.values.map((item, index) => <div className="course-note-chart-row" key={`${block.id}-${index}-${item.label}`}><span>{item.label}</span><i><em style={{ width: `${Math.max(4, Math.round(Math.abs(item.value) / maximum * 100))}%` }} /></i><strong>{item.value}</strong></div>)}</figure>;
   };
 
   return (
