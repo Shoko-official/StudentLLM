@@ -875,7 +875,23 @@ The complete public reference-only run was also completed with one worker and th
   --max-tokens 512
 ```
 
-IBM's official algorithmic evaluation covered all 842 tasks: Recall `0.401087`, ROUGE-L `0.268139`, BERTScore precision/recall `0.193058`/`0.278742`, and RB aggregate `0.386583`. The run produced 837 non-empty predictions and 5 generation errors. This is a supplied-reference ceiling diagnostic, not a RAG-quality claim; the 436-task `reference+RAG.jsonl` campaign remains open. The evaluated local artifact is `artifacts\benchmarks\mtrag\reference-gpt-oss-20b-official-algorithmic.jsonl` with SHA-256 `1B0C57BDC70433C669EDACC5CE8223FD359CB42696A9E5EEFEA962AE89B79D79`.
+IBM's official algorithmic evaluation covered all 842 tasks: Recall `0.401087`, ROUGE-L `0.268139`, BERTScore precision/recall `0.193058`/`0.278742`, and RB aggregate `0.386583`. The run produced 837 non-empty predictions and 5 generation errors. This is a supplied-reference ceiling diagnostic, not a RAG-quality claim. The evaluated local artifact is `artifacts\benchmarks\mtrag\reference-gpt-oss-20b-official-algorithmic.jsonl` with SHA-256 `1B0C57BDC70433C669EDACC5CE8223FD359CB42696A9E5EEFEA962AE89B79D79`.
+
+The complete public `reference+RAG.jsonl` run used one worker, the full available task context, `max-tokens 512`, and `openai/gpt-oss-20b` through NVIDIA. IBM's official algorithmic evaluation covered all 436 tasks after retrying four transient generation failures:
+
+```powershell
+.\.venv-bench-sys\Scripts\python.exe benchmarks\run_mtrag_generation.py `
+  --input C:\path\to\mt-rag-benchmark\mtrag-human\generation_tasks\reference+RAG.jsonl `
+  --output artifacts\benchmarks\mtrag\reference-rag-gpt-oss-20b-full.jsonl `
+  --checkpoint artifacts\benchmarks\mtrag\reference-rag-gpt-oss-20b-full.checkpoint.json `
+  --model openai/gpt-oss-20b `
+  --base-url https://integrate.api.nvidia.com/v1 `
+  --api-key-env NVIDIA_API_KEY `
+  --workers 1 `
+  --max-tokens 512
+```
+
+Recall `0.399581`, ROUGE-L `0.236180`, BERTScore precision/recall `0.102346`/`0.250174`, and RB aggregate `0.376490`; all 436 predictions were non-empty and no generation errors remained. This variant includes supplied reference passages as well as retrieved contexts, so it is a diagnostic of generation/context handling rather than a product RAG-quality claim. The evaluated local artifact is `artifacts\benchmarks\mtrag\reference-rag-gpt-oss-20b-official-algorithmic.jsonl` with SHA-256 `2053CD361A06AEE873044A71B710EB1AAE94E76A47CC7CEF60B2B4EDE9A558EC`; the final generation artifact SHA-256 is `5D2DBC177E153AD04C196209B3A1AF7AD402FAD1F0EC1F4EF4FD013D86B0C45C`.
 
 ## CRAG Task 1/2 generation
 
