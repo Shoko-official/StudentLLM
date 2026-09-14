@@ -18,7 +18,7 @@ StudentLLM is built around three principles:
 - Responsive workspace with a course library and four focused views: Notes, Sources, Chat, and Study.
 - Flat, minimal interface with compact controls and an information-first layout.
 - Course creation, navigation, search, bookmarks, transcript review states, and artifact creation.
-- Quick Start turns a lecture excerpt into an editable course-group, subject, lesson, title, and optional sublesson proposal, then places the material in an existing course or a new one after confirmation.
+- Quick Start creates a blank course immediately with a provisional human-readable title such as `Study session · 5AB8`; after material is recorded or imported, **Organize material with AI** can propose and apply a reviewed course title and hierarchy.
 - Empty library on first launch. Legacy demonstration content is removed with a recoverable backup; user recordings and imports are retained.
 - Real browser microphone capture, with explicit errors when capture is unavailable.
 - Versioned local workspace persistence with course-isolated sources, transcript segments, chat history, and artifacts.
@@ -43,7 +43,8 @@ StudentLLM is built around three principles:
 - Public DocVQA OCR extractability diagnostic with a reproducible partial validation receipt.
 - Optional live LM Studio chat through a browser-safe OpenAI-compatible provider adapter; no remote API key is bundled in the client.
 - KaTeX-powered rendering for formulas in transcripts, chat answers, course notes, and study artifacts, with semantic MathML and accessible formula labels.
-- Connection settings for LM Studio, speech recognition, and document extraction, with on-demand availability checks.
+- Connection settings for LM Studio, Bionic, and other OpenAI-compatible local endpoints, with model discovery, automatic selection, and on-demand availability checks.
+- Persistent light/dark workspace themes, compact course navigation, and visually distinct user and assistant chat messages.
 - Text imports appear in course notes immediately. Saved audio can be transcribed or retried from Sources.
 - Study material is saved only after a model returns content; failed requests do not create placeholder artifacts.
 - Local lexical retrieval selects transcript or bounded imported text passages and preserves source-part citations before a live provider request.
@@ -61,9 +62,9 @@ npm ci
 npm run dev
 ```
 
-Open the local URL printed by Vite. Use **Quick start** to paste a lecture excerpt and let LM Studio propose the course group, subject, lesson, note title, optional sublesson, and destination; review the proposal before applying it. Existing destinations receive the material in their current workspace, while new destinations are created under the proposed hierarchy. You can also create a course manually, then use **Record** or **Import file**. Sources contains original files, Chat answers questions about them, and Study generates revision material. Export and transcript review are under **More**.
+Open the local URL printed by Vite. Use **Quick start** to create a blank course in one click, then use **Record** or **Import file**. Once material exists, **Organize material with AI** proposes the course group, subject, lesson, note title, optional sublesson, and destination; review the proposal before applying it. Sources contains original files, Chat answers questions about them, and Study generates revision material. Export and transcript review are under **More**.
 
-Open **Settings** to configure AI services. In development, keep the LM Studio address at `/lm-studio/v1` and select a model available in your running LM Studio server. Speech and document services are configured separately; see [Provider configuration](docs/providers.md). Recording and text import do not require a model.
+Open **Settings** to configure AI services, choose a light or dark theme, and inspect detected local models. In development, keep the endpoint at `/lm-studio/v1` and select a model available in LM Studio, Bionic, or another OpenAI-compatible local server. Speech and document services are configured separately; see [Provider configuration](docs/providers.md). Recording and text import do not require a model.
 
 To inspect the production build:
 

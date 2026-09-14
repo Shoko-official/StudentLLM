@@ -2,9 +2,9 @@
 
 ## In the app
 
-Open **Settings** to set the LM Studio address and model, speech service address, and document service address. **Save connections** persists these settings on the current device and checks the services. A reachable model catalog confirms availability, not successful generation.
+Open **Settings** to set the local OpenAI-compatible endpoint and model, speech service address, and document service address. **Save connections** persists these settings on the current device and checks the services. The app reads `/models`, shows the discovered model IDs, and selects the first available model when the configured model is not loaded. A reachable model catalog confirms availability, not successful generation.
 
-During development, use `/lm-studio/v1` for LM Studio. For a packaged app, use its local server address and enable CORS for the application origin in LM Studio when needed.
+During development, use `/lm-studio/v1` for LM Studio. The same field accepts Bionic and any server implementing the OpenAI-compatible `/v1/models` and `/v1/chat/completions` routes. For a packaged app, use its local server address and enable CORS for the application origin when needed.
 
 Start the optional local services with a Python environment that has their dependencies installed:
 
@@ -13,7 +13,7 @@ python scripts/local_asr_server.py --model small --language fr
 python scripts/local_document_server.py --port 8766
 ```
 
-Set the speech address to `http://127.0.0.1:8765` and the document address to `http://127.0.0.1:8766`. Speech requires `faster-whisper`; document extraction uses PyMuPDF and optional RapidOCR. Existing recordings can be transcribed from **Sources**. Text notes are imported directly without either service.
+Set the speech address to `http://127.0.0.1:8765` and the document address to `http://127.0.0.1:8766`. The development web app pre-fills the document address with this local default. Speech requires `faster-whisper`; document extraction uses PyMuPDF and optional RapidOCR. Existing recordings can be transcribed from **Sources**. Text notes are imported directly without either service.
 
 The Qwen3 adapter requests a direct answer using the model's documented `/no_think` instruction. Reasoning-only responses are treated as incomplete, not displayed as final answers. See the [Qwen3 model documentation](https://huggingface.co/Qwen/Qwen3-4B).
 

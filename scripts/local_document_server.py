@@ -29,7 +29,13 @@ class DocumentHandler(BaseHTTPRequestHandler):
         if urlparse(self.path).path != "/health":
             self._write_json(404, {"error": "Not found."})
             return
-        self._write_json(200, {"status": "ok", "model": "pymupdf+rapidocr"})
+        ocr_available = has_ocr_dependencies()
+        self._write_json(200, {
+            "status": "ok",
+            "model": "pymupdf+rapidocr" if ocr_available else "pymupdf",
+            "capabilities": ["pdf-text", "image-ocr", "scanned-pdf-ocr"] if ocr_available else ["pdf-text"],
+            "ocrAvailable": ocr_available,
+        })
 
     def do_POST(self) -> None:
         if urlparse(self.path).path != "/extract":
@@ -66,6 +72,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
     return parser.parse_args()
+
+
+def has_ocr_dependencies() -> bool:
+    try:
+        from rapidocr import RapidOCR  # noqa: F401
+        return True
+    except Exception:
+        return False
 
 
 def ocr_image(image: bytes) -> tuple[str, list[dict[str, object]]]:

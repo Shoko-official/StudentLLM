@@ -13,12 +13,12 @@ Install the local document dependencies in an isolated Python environment:
 .\.venv-bench-sys\Scripts\python.exe scripts/local_document_server.py --port 8766
 ```
 
-The service listens on `http://127.0.0.1:8766` and exposes:
+The service listens on `http://127.0.0.1:8766`. In development, the web app uses this address by default, so importing a PDF works as soon as the sidecar is running. It exposes:
 
-- `GET /health` for readiness;
+- `GET /health` for readiness and the capabilities actually installed (`pdf-text` is always available; OCR capabilities are reported only when RapidOCR is importable);
 - `POST /extract` with an `application/pdf` or `image/*` body.
 
-The server is local-only by default and does not overwrite the original source blob. Its readiness response identifies the combined `pymupdf+rapidocr` service.
+The server is local-only by default and does not overwrite the original source blob. Its readiness response identifies the active extractor and its capabilities.
 
 ## Connect the web app
 
@@ -37,7 +37,7 @@ $env:STUDENTLLM_DOCUMENT_COMMAND = 'python scripts/local_document_server.py --po
 
 The desktop service tray can start or stop only the process launched by StudentLLM. The service command is not enabled unless this variable is set.
 
-Importing a PDF or image saves the original file first. If extraction succeeds, the UI adds one reviewable segment per non-empty page. If the sidecar is unavailable, the source remains saved and the transcript is unchanged.
+Importing a PDF or image saves the original file first. If extraction succeeds, the UI adds one reviewable segment per non-empty page. If the sidecar is unavailable, the source remains saved and the transcript is unchanged. The app opens Settings and identifies the document sidecar as offline so it can be started or refreshed without losing the imported file.
 
 Open Settings and choose `Refresh local services` to check the configured document sidecar `/health` endpoint without interrupting the service. The UI reports readiness, the advertised engine, or the failure detail.
 
