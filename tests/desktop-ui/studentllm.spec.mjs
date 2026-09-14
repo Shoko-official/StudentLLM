@@ -67,9 +67,9 @@ describe('StudentLLM packaged desktop workflow', () => {
     await selectTab('Study');
     await expect(await visible('.study-view h2')).toHaveText('Study materials');
     await expect($$('.recent-artifact')).toBeElementsArrayOfSize(0);
-    await (await visible('//section[contains(@class,"study-view")]//button[strong[normalize-space(.)="Quick summary"]]')).click();
-    const generationError = await visible('[role="alert"] p');
-    await expect(generationError).toHaveText(/^(Connect LM Studio in Settings to generate study material\.|Import notes or transcribe a recording before generating study material\.)$/);
+    await expect(await visible('.study-empty-hint')).toHaveText('Import notes or finish a transcription to enable study material generation.');
+    const quickSummary = await visible('//section[contains(@class,"study-view")]//button[strong[normalize-space(.)="Quick summary"]]');
+    await expect(quickSummary).toBeDisabled();
     await expect($$('.recent-artifact')).toBeElementsArrayOfSize(0);
     await expect($$('.artifact-preview')).toBeElementsArrayOfSize(0);
 

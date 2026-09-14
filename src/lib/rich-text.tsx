@@ -3,6 +3,7 @@ import katex from 'katex';
 import 'katex/dist/katex.min.css';
 
 const mathPattern = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$(?!\$)(?:\\.|[^$\\\n])+\$)/g;
+const renderedMathCache = new Map<string, string>();
 
 function unwrapMath(token: string) {
   if (token.startsWith('$$')) return { source: token.slice(2, -2).trim(), display: true };
@@ -25,6 +26,7 @@ function renderRichText(content: string): ReactNode[] {
   let cursor = 0;
   let match: RegExpExecArray | null;
   let partIndex = 0;
+  mathPattern.lastIndex = 0;
 
   while ((match = mathPattern.exec(content)) !== null) {
     if (match.index > cursor) {
@@ -32,16 +34,20 @@ function renderRichText(content: string): ReactNode[] {
       partIndex += 1;
     }
     const math = unwrapMath(match[0]);
-    let renderedMath: string | null = null;
-    try {
-      renderedMath = katex.renderToString(math.source, {
-        displayMode: math.display,
-        output: 'htmlAndMathml',
-        throwOnError: false,
-        strict: false,
-      });
-    } catch {
-      renderedMath = null;
+    const cacheKey = `${math.display ? 'display' : 'inline'}:${math.source}`;
+    let renderedMath = renderedMathCache.get(cacheKey) ?? null;
+    if (renderedMath === null) {
+      try {
+        renderedMath = katex.renderToString(math.source, {
+          displayMode: math.display,
+          output: 'htmlAndMathml',
+          throwOnError: false,
+          strict: false,
+        });
+        renderedMathCache.set(cacheKey, renderedMath);
+      } catch {
+        renderedMath = null;
+      }
     }
     const mathProps = {
       className: math.display ? 'latex-block' : 'latex-inline',
@@ -56,6 +62,7 @@ function renderRichText(content: string): ReactNode[] {
     partIndex += 1;
   }
 
+  mathPattern.lastIndex = 0;
   if (cursor < content.length) parts.push(...renderPlainText(content.slice(cursor), `text-${partIndex}`));
   return parts;
 }

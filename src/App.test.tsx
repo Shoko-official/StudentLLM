@@ -41,6 +41,7 @@ describe('StudentLLM workspace', () => {
   });
   afterEach(() => {
     delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
+    document.documentElement.removeAttribute('data-theme');
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
@@ -161,6 +162,37 @@ describe('StudentLLM workspace', () => {
     await openTranscript(user);
     expect(screen.getByRole('region', { name: 'Transcript preview' })).toHaveClass('compact');
     expect(transcriptPreview().queryByText('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.')).not.toBeInTheDocument();
+  });
+
+  it('applies and restores the dark mode preference', async () => {
+    const user = userEvent.setup();
+    const firstRender = render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Settings/ }));
+    const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
+    await user.click(within(settingsDialog).getByRole('checkbox', { name: /Dark mode/ }));
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+    firstRender.unmount();
+
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: /Settings/ }));
+    expect(within(screen.getByRole('dialog', { name: 'Settings' })).getByRole('checkbox', { name: /Dark mode/ })).toBeChecked();
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+  });
+
+  it('detects and selects the first model exposed by an OpenAI-compatible local endpoint', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: 'bionic/lecture-model' }] }),
+    } as Response);
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Settings/ }));
+    const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
+    await waitFor(() => expect(within(settingsDialog).getByRole('status')).toHaveTextContent('Detected and selected bionic/lecture-model'));
+    expect(within(settingsDialog).getByLabelText('Model')).toHaveValue('bionic/lecture-model');
+    expect(within(settingsDialog).getByText('Detected local models: bionic/lecture-model')).toBeInTheDocument();
   });
 
   it('traps focus inside dialogs and restores the trigger after closing', async () => {
@@ -841,6 +873,26 @@ describe('StudentLLM workspace', () => {
     expect(extract).toHaveBeenCalledWith(expect.any(Blob));
   });
 
+  it('keeps a PDF saved and opens document service recovery when extraction fails', async () => {
+    const user = userEvent.setup();
+    const extract = vi.fn().mockRejectedValue(new Error('Local document extraction timed out.'));
+
+    render(<App documentEngine={{ extract }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['%PDF-1.7'],
+      'Formulaire_Maths_BAC2.pdf',
+      { type: 'application/pdf' },
+    ));
+
+    expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Formulaire_Maths_BAC2.pdf is saved.');
+    expect(screen.getByRole('alert')).toHaveTextContent('document service is offline');
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Formulaire_Maths_BAC2.pdf', kind: 'document' }),
+    ]));
+  });
+
   it('removes an imported source from the active course', async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -1148,8 +1200,9 @@ describe('StudentLLM workspace', () => {
     });
     render(<App provider={{ generate }} />);
 
-    await user.click(screen.getByRole('button', { name: 'Quick start' }));
-    const dialog = screen.getByRole('dialog', { name: 'Quick start' });
+    await openCourseActions(user);
+    await user.click(screen.getByRole('button', { name: 'Organize material with AI' }));
+    const dialog = screen.getByRole('dialog', { name: 'Organize material with AI' });
     await user.type(within(dialog).getByLabelText('Lecture excerpt or course description'), 'Cross-attention lets decoder queries read encoder keys and values.');
     await user.click(within(dialog).getByRole('button', { name: 'Analyze structure' }));
 
@@ -1157,7 +1210,7 @@ describe('StudentLLM workspace', () => {
     expect(within(dialog).getByLabelText('Place this material in')).toHaveValue(FIXTURE_LESSON_ID);
     await user.click(within(dialog).getByRole('button', { name: 'Apply structure' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Quick start' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Organize material with AI' })).not.toBeInTheDocument());
     expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].transcript).toEqual(expect.arrayContaining([
       expect.objectContaining({ text: 'Cross-attention lets decoder queries read encoder keys and values.', sourceId: expect.stringMatching(/^quick-start-/) }),
     ]));
@@ -1177,8 +1230,8 @@ describe('StudentLLM workspace', () => {
     });
     render(<App provider={{ generate }} />);
 
-    await user.click(screen.getByRole('button', { name: 'Quick start with AI' }));
-    const dialog = screen.getByRole('dialog', { name: 'Quick start' });
+    await user.click(screen.getByRole('button', { name: 'Organize notes with AI' }));
+    const dialog = screen.getByRole('dialog', { name: 'Organize material with AI' });
     await user.type(within(dialog).getByLabelText('Lecture excerpt or course description'), 'Attention scales QK before applying softmax to V.');
     await user.click(within(dialog).getByRole('button', { name: 'Analyze structure' }));
     await user.click(within(dialog).getByRole('button', { name: 'Apply structure' }));
@@ -1190,6 +1243,40 @@ describe('StudentLLM workspace', () => {
     expect(savedWorkspace().lessonWorkspaces[savedWorkspace().activeLessonId].transcript[0]).toEqual(expect.objectContaining({
       text: 'Attention scales QK before applying softmax to V.',
     }));
+  });
+
+  it('creates a blank course with a provisional random title from Quick Start', async () => {
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify({
+      version: 1, activeLessonId: '', lessons: [], resources: [], transcript: [], chat: [], artifacts: [], lessonWorkspaces: {},
+    }));
+    const user = userEvent.setup();
+    render(<App provider={null} />);
+
+    await user.click(within(screen.getByRole('complementary', { name: 'Course navigation' })).getByRole('button', { name: 'Quick start' }));
+
+    const title = screen.getByRole('heading', { level: 1 }).textContent ?? '';
+    expect(title).toMatch(/^(Untitled lecture|Study session|Quick course) · [A-Z0-9]{4}$/);
+    expect(savedWorkspace().lessons).toEqual([expect.objectContaining({ title, subject: 'General', chapter: 'General notes' })]);
+    expect(savedWorkspace().lessonWorkspaces[savedWorkspace().activeLessonId]).toMatchObject({ resources: [], transcript: [], chat: [], artifacts: [] });
+  });
+
+  it('lets the AI suggest course details after material is available', async () => {
+    const user = userEvent.setup();
+    const generate = vi.fn().mockResolvedValue({
+      model: 'fixture-model',
+      content: '{"placement":"existing","targetCourseId":"fixture-attention","course":"Machine Learning","lesson":"Transformers","title":"Attention mechanisms","sublesson":"Scaled dot-product","subject":"Machine Learning","confidence":0.94,"rationale":"The saved material covers attention scores."}',
+    });
+    render(<App provider={{ generate }} />);
+
+    await openCourseActions(user);
+    await user.click(screen.getByRole('button', { name: 'Edit course' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit course' });
+    await user.click(within(dialog).getByRole('button', { name: 'Suggest with AI' }));
+
+    await waitFor(() => expect(within(dialog).getByLabelText('Course title')).toHaveValue('Attention mechanisms'));
+    expect(within(dialog).getByLabelText('Subject')).toHaveValue('Machine Learning');
+    expect(within(dialog).getByLabelText('Chapter')).toHaveValue('Transformers');
+    expect(within(dialog).getByLabelText(/Sublesson/)).toHaveValue('Scaled dot-product');
   });
 
   it('keeps the workspace empty after deleting its last course and remounting', async () => {
