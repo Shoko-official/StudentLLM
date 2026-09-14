@@ -809,7 +809,11 @@ test.describe('StudentLLM workspace', () => {
   });
 
   test('opens an imported image source preview locally', async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem('studentllm.services.v1', JSON.stringify({ documentsUrl: '' })));
+    await page.route('**/fixture-documents/extract', (route) => route.fulfill({
+      status: 503,
+      json: { error: 'The document test fixture is unavailable.' },
+    }));
+    await page.addInitScript(() => localStorage.setItem('studentllm.services.v1', JSON.stringify({ documentsUrl: '/fixture-documents' })));
     await page.goto('/');
     await page.setInputFiles('input[aria-label="Select course source"]', {
       name: 'image-preview.png',

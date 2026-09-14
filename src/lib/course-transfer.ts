@@ -156,11 +156,15 @@ function isArtifact(value: unknown): value is Artifact {
 function isCourseNoteBlock(value: unknown): value is CourseNoteBlock {
   if (!isRecord(value) || !isString(value.id) || !isString(value.type)) return false;
   if (value.type === 'heading') return (value.level === 1 || value.level === 2) && isString(value.text);
+  if (value.type === 'markdown') return isString(value.markdown)
+    && (value.sourceName === undefined || isString(value.sourceName))
+    && (value.sourceId === undefined || isString(value.sourceId));
   if (value.type === 'paragraph') return isString(value.text)
     && (value.timestamp === undefined || isString(value.timestamp))
     && (value.speaker === undefined || isString(value.speaker))
     && (value.sourceId === undefined || isString(value.sourceId));
   if (value.type === 'formula') return isString(value.latex) && (value.caption === undefined || isString(value.caption)) && (value.sourceId === undefined || isString(value.sourceId));
+  if (value.type === 'formula-image') return isString(value.alt) && isString(value.sourceName) && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(String(value.imageData)) && (value.sourceId === undefined || isString(value.sourceId));
   if (value.type === 'code') return isString(value.language) && isString(value.code) && (value.sourceId === undefined || isString(value.sourceId));
   if (value.type === 'chart') return isString(value.label) && Array.isArray(value.values)
     && value.values.every((item) => isRecord(item) && isString(item.label) && typeof item.value === 'number' && Number.isFinite(item.value));
