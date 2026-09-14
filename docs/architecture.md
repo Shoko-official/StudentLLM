@@ -39,9 +39,12 @@ The React and TypeScript application defines the product interaction contract:
 - chat with visible context citations;
 - optional local LM Studio chat through an OpenAI-compatible provider adapter;
 - local lexical retrieval over transcript and bounded imported text passages with actionable source-part citations that open local originals;
+- deterministic course-note assembly during capture, followed by optional strict source-linked rich-block formatting through the local LLM provider;
 - provider smoke checks kept independent from the UI.
 
 The browser layer deliberately keeps its provider and retrieval adapters separate from the domain model. LM Studio is opt-in through a non-secret Vite endpoint; remote credentials remain outside the browser bundle.
+
+Course-note formatting follows the same separation. Transcript segments are the source of truth, `buildCourseNote` provides the immediate offline representation, and `formatCourseNoteWithProvider` can add only validated blocks linked to submitted segment IDs. The provider result is never allowed to replace the transcript or create an unlinked note block.
 
 ## Target runtime
 

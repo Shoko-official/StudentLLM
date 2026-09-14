@@ -524,7 +524,7 @@ describe('StudentLLM workspace', () => {
     expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'recording-routing-test:routing-segment' }),
     ]));
-    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(2);
   });
 
   it('shows recording finalization state until audio processing completes', async () => {
@@ -708,7 +708,53 @@ describe('StudentLLM workspace', () => {
       expect.objectContaining({ id: expect.stringContaining(':text'), sourceId: expect.any(String), text: 'Matrices preserve addition and scalar multiplication.' }),
     ]));
     expect(saved.lessonWorkspaces['fixture-linear-algebra'].courseNote.detection.basis).toContain('routed this material');
-    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it('renders source-linked AI rich blocks after imported material is routed', async () => {
+    const user = userEvent.setup();
+    const generate = vi.fn(async (messages: Array<{ role: string; content: string }>) => {
+      if (generate.mock.calls.length === 1) {
+        return {
+          model: 'fixture-model',
+          content: JSON.stringify({
+            placement: 'existing', targetCourseId: 'fixture-linear-algebra', course: 'Mathematics',
+            lesson: 'Linear Algebra', sublesson: 'Matrices and Linear Maps', subject: 'Mathematics',
+            confidence: 0.94, rationale: 'The notes describe a linear map.',
+          }),
+        };
+      }
+      const sourceIds = [...messages[1].content.matchAll(/SOURCE ([^ ]+)/g)].map((match) => match[1]);
+      const sourceId = sourceIds.at(-1) ?? '';
+      return {
+        model: 'fixture-model',
+        content: JSON.stringify({
+          blocks: [
+            { type: 'formula', sourceId, latex: 'f(x) = 2x', caption: 'AI-formatted formula' },
+            { type: 'schema', sourceId, nodes: ['Input', 'Output'], edges: [{ from: 'Input', to: 'Output' }] },
+          ],
+        }),
+      };
+    });
+
+    render(<App provider={{ generate }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['A function maps each input to one output.'],
+      'functions.md',
+      { type: 'text/markdown' },
+    ));
+
+    expect(await screen.findByText('Imported material routed to Matrices and Linear Maps.')).toBeInTheDocument();
+    const note = savedWorkspace().lessonWorkspaces['fixture-linear-algebra'].courseNote;
+    expect(note.detection.method).toBe('LM Studio');
+    expect(note.detection.basis).toContain('formatted source-linked');
+    expect(note.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'formula', sourceId: expect.stringContaining(':text'), latex: 'f(x) = 2x' }),
+      expect.objectContaining({ type: 'schema', sourceId: expect.stringContaining(':text') }),
+    ]));
+    expect(screen.getByRole('region', { name: 'Course notes document' })).toHaveTextContent('Input');
+    expect(generate).toHaveBeenCalledTimes(2);
   });
 
   it('routes extracted PDF pages to the existing course selected by LM Studio', async () => {
@@ -745,7 +791,7 @@ describe('StudentLLM workspace', () => {
     expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: expect.stringContaining(':page-1'), sourceId: expect.any(String), text: 'Eigenvectors describe invariant directions.' }),
     ]));
-    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(2);
     expect(extract).toHaveBeenCalledWith(expect.any(Blob));
   });
 
@@ -874,7 +920,7 @@ describe('StudentLLM workspace', () => {
     expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: expect.stringContaining(':imported-routing-segment'), sourceId: expect.any(String) }),
     ]));
-    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(2);
   });
 
   it('reroutes an existing imported audio source when Transcribe is run later', async () => {
@@ -892,6 +938,7 @@ describe('StudentLLM workspace', () => {
           confidence: 0.4, rationale: 'The first pass is not confident enough to move the source.',
         }),
       })
+      .mockResolvedValueOnce({ model: 'fixture-model', content: JSON.stringify({ blocks: [] }) })
       .mockResolvedValueOnce({
         model: 'fixture-model',
         content: JSON.stringify({
@@ -899,7 +946,8 @@ describe('StudentLLM workspace', () => {
           lesson: 'Linear Algebra', sublesson: 'Matrices and Linear Maps', subject: 'Mathematics',
           confidence: 0.94, rationale: 'The transcript describes linear maps.',
         }),
-      });
+      })
+      .mockResolvedValueOnce({ model: 'fixture-model', content: JSON.stringify({ blocks: [] }) });
 
     render(<App speechEngine={{ transcribe }} provider={{ generate }} />);
 
@@ -924,7 +972,7 @@ describe('StudentLLM workspace', () => {
     expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: expect.stringContaining(':deferred-routing-segment'), sourceId: expect.any(String) }),
     ]));
-    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate).toHaveBeenCalledTimes(4);
   });
 
   it('clears persisted chunks when removing an audio source', async () => {
