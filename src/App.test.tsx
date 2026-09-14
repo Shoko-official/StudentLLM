@@ -315,16 +315,17 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('The source explains gradient descent.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Source · optimization.md · part 1' })).toBeInTheDocument();
     expect(screen.getByText('LM Studio · mock-local-model')).toBeInTheDocument();
-    expect(generate).toHaveBeenCalledWith([
+    const chatCall = generate.mock.calls.at(-1)!;
+    expect(chatCall[0]).toEqual([
       {
         role: 'system',
         content: expect.stringContaining('BEGIN COURSE EVIDENCE'),
       },
       { role: 'user', content: 'What updates parameters using the learning rate?' },
     ]);
-    expect(generate.mock.calls[0][0][0].content).not.toContain('undefined');
-    expect(generate.mock.calls[0][0][0].content).toContain('END COURSE EVIDENCE');
-    expect(generate.mock.calls[0][0][0].content).toContain('Never claim that course evidence is unavailable when text is present.');
+    expect(chatCall[0][0].content).not.toContain('undefined');
+    expect(chatCall[0][0].content).toContain('END COURSE EVIDENCE');
+    expect(chatCall[0][0].content).toContain('Never claim that course evidence is unavailable when text is present.');
   });
 
   it('renders an injected provider failure in the chat', async () => {
@@ -674,6 +675,78 @@ describe('StudentLLM workspace', () => {
     await openSources(user);
     expect(screen.getByText('week-1.md')).toBeInTheDocument();
     expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].resources[0]).toMatchObject({ name: 'week-1.md', lastModified: 123, sizeBytes: 12, sha256: expect.any(String) });
+  });
+
+  it('routes imported text notes to the existing course selected by LM Studio', async () => {
+    const user = userEvent.setup();
+    const generate = vi.fn(async () => ({
+      model: 'fixture-model',
+      content: JSON.stringify({
+        placement: 'existing', targetCourseId: 'fixture-linear-algebra', course: 'Mathematics',
+        lesson: 'Linear Algebra', sublesson: 'Matrices and Linear Maps', subject: 'Mathematics',
+        confidence: 0.94, rationale: 'The notes describe linear maps.',
+      }),
+    }));
+
+    render(<App provider={{ generate }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['Matrices preserve addition and scalar multiplication.'],
+      'linear-algebra-notes.md',
+      { type: 'text/markdown' },
+    ));
+
+    expect(await screen.findByText('Imported material routed to Matrices and Linear Maps.')).toBeInTheDocument();
+    const saved = savedWorkspace();
+    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].resources).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'linear-algebra-notes.md' }),
+    ]));
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'linear-algebra-notes.md', kind: 'transcript' }),
+    ]));
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: expect.stringContaining(':text'), sourceId: expect.any(String), text: 'Matrices preserve addition and scalar multiplication.' }),
+    ]));
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].courseNote.detection.basis).toContain('routed this material');
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes extracted PDF pages to the existing course selected by LM Studio', async () => {
+    const user = userEvent.setup();
+    const extract = vi.fn().mockResolvedValue({
+      model: 'pymupdf',
+      pages: [{ pageNumber: 1, text: 'Eigenvectors describe invariant directions.', blocks: [] }],
+    });
+    const generate = vi.fn(async () => ({
+      model: 'fixture-model',
+      content: JSON.stringify({
+        placement: 'existing', targetCourseId: 'fixture-linear-algebra', course: 'Mathematics',
+        lesson: 'Linear Algebra', sublesson: 'Eigenvectors', subject: 'Mathematics',
+        confidence: 0.91, rationale: 'The page explains eigenvectors.',
+      }),
+    }));
+
+    render(<App documentEngine={{ extract }} provider={{ generate }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['%PDF-1.7'],
+      'eigenvectors.pdf',
+      { type: 'application/pdf' },
+    ));
+
+    expect(await screen.findByText('Imported material routed to Matrices and Linear Maps.')).toBeInTheDocument();
+    const saved = savedWorkspace();
+    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].resources).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'eigenvectors.pdf' }),
+    ]));
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'eigenvectors.pdf', kind: 'document' }),
+    ]));
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: expect.stringContaining(':page-1'), sourceId: expect.any(String), text: 'Eigenvectors describe invariant directions.' }),
+    ]));
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(extract).toHaveBeenCalledWith(expect.any(Blob));
   });
 
   it('indexes extracted PDF pages as reviewable transcript segments', async () => {

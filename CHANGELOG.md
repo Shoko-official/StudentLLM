@@ -54,6 +54,7 @@
 - durable recordings can be sent to an optional local faster-whisper service and added back as reviewable transcript segments;
 - imported audio can be transcribed through the optional local faster-whisper service, with source-linked transcript provenance;
 - imported audio now reuses the catalog-aware LM Studio router after transcription, moving the source and transcript into a confident existing or newly proposed course while retaining the selected course as a fallback;
+- imported text, PDF, and OCR image material now reuses the catalog-aware LM Studio router after extraction, preserving the source and extracted transcript in a confident existing or newly proposed course while retaining the selected course as a fallback;
 - removing an audio source now removes its derived transcript segments and preserves source links across course export and import;
 - course deletion clears the active lesson workspace and its local source and recording blobs;
 - active courses can be exported and imported as versioned JSON packages with source and audio fidelity;
