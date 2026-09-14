@@ -1229,6 +1229,56 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
   };
 
+  const routeImportedMaterial = async (
+    sourceLesson: Lesson,
+    resource: Resource,
+    segments: TranscriptSegment[],
+  ) => {
+    if (!localProvider || !segments.length) return false;
+    try {
+      const proposal = await analyzeQuickStart(
+        segments.map((segment) => `${segment.timestamp} ${segment.text}`).join('\n'),
+        lessons,
+        localProvider,
+      );
+      if (!canAutoRouteRecording(proposal)) return false;
+      const sourceWorkspace = lessonWorkspaces[sourceLesson.id] ?? emptyLessonWorkspace;
+      const routingWorkspaces = {
+        ...lessonWorkspaces,
+        [sourceLesson.id]: {
+          ...sourceWorkspace,
+          resources: sourceWorkspace.resources.some((candidate) => candidate.id === resource.id)
+            ? sourceWorkspace.resources
+            : [...sourceWorkspace.resources, resource],
+          transcript: [
+            ...sourceWorkspace.transcript.filter((segment) => segment.sourceId !== resource.id),
+            ...segments,
+          ],
+        },
+      };
+      const routed = applyRecordingPlacement({
+        sourceLesson,
+        lessons,
+        lessonWorkspaces: routingWorkspaces,
+        proposal,
+        resource,
+        segments,
+        sourceType: 'material',
+      });
+      setLessons(routed.lessons);
+      setLessonWorkspaces(routed.lessonWorkspaces);
+      setActiveLessonId(routed.targetLesson.id);
+      setSelectedArtifactId(routed.lessonWorkspaces[routed.targetLesson.id]?.artifacts[0]?.id ?? null);
+      setView('course');
+      setShowAllResources(false);
+      notify(`Imported material routed to ${routed.targetLesson.title}.`);
+      return true;
+    } catch {
+      // Keep imported material in the selected course when classification is unavailable or uncertain.
+      return false;
+    }
+  };
+
   const importSource = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -1243,9 +1293,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       notify(`${resource.name} added to course sources${sourceBlobStore.durability === 'durable' ? ' and saved locally.' : ' in memory only.'}`);
       if (isTextResource(resource)) {
         const text = (await file.text()).trim();
-        if (text) updateLessonWorkspace(lessonId, (current) => ({
-          ...current, transcript: [...current.transcript, { id: `${resource.id}:text`, sourceId: resource.id, timestamp: 'Notes', speaker: resource.name, text, status: 'review' }],
-        }));
+        if (text) {
+          const segment: TranscriptSegment = {
+            id: `${resource.id}:text`, sourceId: resource.id, timestamp: 'Notes', speaker: resource.name, text, status: 'review',
+          };
+          if (await routeImportedMaterial(activeLesson, resource, [segment])) return;
+          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: [...current.transcript, segment] }));
+        }
       }
       if (resource.kind === 'audio' && !localSpeechEngine) setActionError('Audio imported. Connect a speech service in Settings to transcribe it.');
       if (resource.kind === 'audio' && localSpeechEngine) {
@@ -1325,6 +1379,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               text: page.text.trim(),
               status: 'review' as const,
             }));
+          if (pageSegments.length && await routeImportedMaterial(activeLesson, resource, pageSegments)) return;
           updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: [...current.transcript, ...pageSegments] }));
           notify(pageSegments.length > 0
             ? `${resource.name} indexed ${pageSegments.length} page${pageSegments.length === 1 ? '' : 's'} locally.`

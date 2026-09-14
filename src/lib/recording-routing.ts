@@ -14,6 +14,7 @@ export interface RecordingPlacementInput {
   resource: Resource;
   segments: TranscriptSegment[];
   duration?: string;
+  sourceType?: 'recording' | 'material';
   idFactory?: () => string;
   dateFactory?: () => string;
 }
@@ -37,7 +38,7 @@ function uniqueSegments(segments: TranscriptSegment[]) {
   return segments.filter((segment, index, all) => all.findIndex((candidate) => candidate.id === segment.id) === index);
 }
 
-function noteForRoute(lesson: Lesson, transcript: TranscriptSegment[], proposal: QuickStartProposal) {
+function noteForRoute(lesson: Lesson, transcript: TranscriptSegment[], proposal: QuickStartProposal, sourceType: 'recording' | 'material') {
   const note = buildCourseNote(lesson, transcript);
   return {
     ...note,
@@ -49,7 +50,7 @@ function noteForRoute(lesson: Lesson, transcript: TranscriptSegment[], proposal:
     detection: {
       method: 'LM Studio' as const,
       confidence: proposal.confidence,
-      basis: `LM Studio routed this recording: ${proposal.rationale}`,
+      basis: `LM Studio routed this ${sourceType}: ${proposal.rationale}`,
     },
     blocks: note.blocks.map((block) => block.id === 'note-title' && block.type === 'heading'
       ? { ...block, text: lesson.title }
@@ -66,6 +67,7 @@ export function applyRecordingPlacement(input: RecordingPlacementInput): Recordi
     resource,
     segments,
     duration = sourceLesson.duration,
+    sourceType = 'recording',
     idFactory = () => `lesson-${crypto.randomUUID()}`,
     dateFactory = () => new Date().toLocaleDateString('en-GB'),
   } = input;
@@ -108,7 +110,7 @@ export function applyRecordingPlacement(input: RecordingPlacementInput): Recordi
     ...targetWorkspace,
     resources: nextTargetResources,
     transcript: nextTargetTranscript,
-    courseNote: noteForRoute(targetLesson, nextTargetTranscript, proposal),
+    courseNote: noteForRoute(targetLesson, nextTargetTranscript, proposal, sourceType),
   };
   const nextWorkspaces = {
     ...lessonWorkspaces,
