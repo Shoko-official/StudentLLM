@@ -13,7 +13,7 @@ python scripts/local_asr_server.py --model small --language fr
 python scripts/local_document_server.py --port 8766
 ```
 
-Set the speech address to `http://127.0.0.1:8765` and the document address to `http://127.0.0.1:8766`. Speech requires `faster-whisper`; document extraction uses PyMuPDF and optional RapidOCR. Existing recordings can be transcribed from **Sources**. Text notes are imported directly without either service.
+Set the speech address to `http://127.0.0.1:8765` and the document address to `http://127.0.0.1:8766`. The development web app pre-fills the document address with this local default. Speech requires `faster-whisper`; document extraction uses PyMuPDF and optional RapidOCR. Existing recordings can be transcribed from **Sources**. Text notes are imported directly without either service.
 
 The Qwen3 adapter requests a direct answer using the model's documented `/no_think` instruction. Reasoning-only responses are treated as incomplete, not displayed as final answers. See the [Qwen3 model documentation](https://huggingface.co/Qwen/Qwen3-4B).
 

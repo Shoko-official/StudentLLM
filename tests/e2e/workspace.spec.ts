@@ -834,6 +834,9 @@ test.describe('StudentLLM workspace', () => {
       buffer: Buffer.from('%PDF-1.7'),
     });
 
+    await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+    await expect(page.getByRole('alert')).toContainText('slides.pdf is saved.');
+    await page.getByRole('button', { name: 'Done' }).click();
     await openSources(page);
     const source = page.getByRole('button', { name: /^slides\.pdf/ });
     await expect(source).toBeVisible();

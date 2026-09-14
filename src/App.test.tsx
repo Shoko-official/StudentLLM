@@ -873,6 +873,26 @@ describe('StudentLLM workspace', () => {
     expect(extract).toHaveBeenCalledWith(expect.any(Blob));
   });
 
+  it('keeps a PDF saved and opens document service recovery when extraction fails', async () => {
+    const user = userEvent.setup();
+    const extract = vi.fn().mockRejectedValue(new Error('Local document extraction timed out.'));
+
+    render(<App documentEngine={{ extract }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['%PDF-1.7'],
+      'Formulaire_Maths_BAC2.pdf',
+      { type: 'application/pdf' },
+    ));
+
+    expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Formulaire_Maths_BAC2.pdf is saved.');
+    expect(screen.getByRole('alert')).toHaveTextContent('document service is offline');
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Formulaire_Maths_BAC2.pdf', kind: 'document' }),
+    ]));
+  });
+
   it('removes an imported source from the active course', async () => {
     const user = userEvent.setup();
     render(<App />);

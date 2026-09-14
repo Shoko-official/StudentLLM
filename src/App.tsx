@@ -122,7 +122,7 @@ function loadServiceSettings(): ServiceSettings {
     llmUrl: import.meta.env.VITE_LM_STUDIO_BASE_URL?.trim() || (import.meta.env.DEV ? '/lm-studio/v1' : 'http://127.0.0.1:1234/v1'),
     model: import.meta.env.VITE_LM_STUDIO_MODEL?.trim() || 'openai/gpt-oss-20b',
     asrUrl: import.meta.env.VITE_LOCAL_ASR_BASE_URL?.trim() || '',
-    documentsUrl: import.meta.env.VITE_LOCAL_DOCUMENT_BASE_URL?.trim() || '',
+    documentsUrl: import.meta.env.VITE_LOCAL_DOCUMENT_BASE_URL?.trim() || (import.meta.env.DEV ? 'http://127.0.0.1:8766' : ''),
   };
   try {
     const saved = JSON.parse(localStorage.getItem(SERVICES_STORAGE_KEY) ?? '{}');
@@ -296,6 +296,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const hasCourse = Boolean(activeLesson.id);
   const activeWorkspace = lessonWorkspaces[activeLessonId] ?? emptyLessonWorkspace;
   const { resources, transcript, chat, artifacts } = activeWorkspace;
+  const hasStudyMaterial = transcript.length > 0 || resources.some(isTextResource);
 
   const updateLessonWorkspace = (lessonId: string, update: (current: LessonWorkspace) => LessonWorkspace) => {
     setLessonWorkspaces((current) => ({
@@ -1486,7 +1487,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         }
       }
       const isPdf = resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name));
-      if (!localDocumentEngine && (isPdf || resource.kind === 'image')) setActionError('File imported. Connect a document service in Settings to extract its text.');
+      if (!localDocumentEngine && (isPdf || resource.kind === 'image')) {
+        setActionError(`${resource.name} is saved. Connect the document service in Settings to extract its text.`);
+        setShowSettingsPanel(true);
+      }
       if (localDocumentEngine && (isPdf || resource.kind === 'image')) {
         try {
           const extraction = await localDocumentEngine.extract(file);
@@ -1508,8 +1512,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           notify(pageSegments.length > 0
             ? `${resource.name} indexed ${pageSegments.length} page${pageSegments.length === 1 ? '' : 's'} locally.`
             : `${resource.name} contains no extractable text.`);
-        } catch {
-          setActionError(`${resource.name} is saved. Text extraction is unavailable; check the document service in Settings.`);
+        } catch (error) {
+          const detail = error instanceof Error && /fetch|timed out|offline/i.test(error.message)
+            ? 'The document service is offline.'
+            : 'The document service could not extract this file.';
+          setActionError(`${resource.name} is saved. ${detail} Open Settings and refresh the local services.`);
+          setShowSettingsPanel(true);
         }
       }
     } catch {
@@ -2006,8 +2014,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
             </section>}
             {view === 'study' && <section className="study-view">
-              <h2>Study materials</h2><p className="muted">Choose what to create from this course's sources.</p>
-              <div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" disabled={generatingArtifact !== null} onClick={() => void createArtifact(artifact.kind)}><strong>{generatingArtifact === artifact.kind ? 'Generating...' : artifact.label}</strong><small>{artifact.description}</small></button>)}</div>
+              <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>
+              {!hasStudyMaterial && <p className="study-empty-hint">Import notes or finish a transcription to enable study material generation.</p>}
+              <div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" disabled={generatingArtifact !== null || !hasStudyMaterial} onClick={() => void createArtifact(artifact.kind)}><strong>{generatingArtifact === artifact.kind ? 'Generating...' : artifact.label}</strong><small>{artifact.description}</small></button>)}</div>
               {artifacts.length > 0 && <section className="recent-section"><h3>Saved materials</h3>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}>{artifact.label}</button>)}
               {(() => { const selected = artifacts.find((artifact) => artifact.id === selectedArtifactId); return selected && <article className="artifact-preview"><h3>{selected.label}</h3><RichText content={selected.content ?? ''} />{selected.citations && <div className="citation-list">{selected.citations.map((citation, index) => selected.citationTargets?.[index] ? <button key={citation} onClick={() => openCitation(selected.citationTargets![index])}>{citation}</button> : <span key={citation}>{citation}</span>)}</div>}</article>; })()}</section>}
             </section>}
