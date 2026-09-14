@@ -129,7 +129,7 @@ svg { flex-shrink: 0; }
 .transcript-item { display: grid; grid-template-columns: 75px minmax(0, 1fr) 36px; gap: 12px; padding: 18px 0; border-bottom: 1px solid var(--line); }
 .transcript-time { color: var(--muted); font: 12px/1.6 var(--mono); }
 .transcript-body { min-width: 0; }
-.transcript-body p { margin: 8px 0 0; font-size: 14px; white-space: pre-wrap; }
+.transcript-text { margin: 8px 0 0; font-size: 14px; }
 .speaker-line { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 12px; }
 .speaker-line span { color: var(--muted); }
 .transcript-more { align-self: start; min-height: 36px; }
@@ -144,14 +144,16 @@ svg { flex-shrink: 0; }
 .resource-open > span { display: grid; flex: 1; min-width: 0; gap: 5px; }
 .resource-open strong { overflow-wrap: anywhere; font-size: 14px; font-weight: 500; }
 .resource-open small { color: var(--muted); font-size: 12px; }
-.chat-view { display: grid; gap: 24px; }
+.chat-view { display: grid; gap: 24px; width: min(100%, 860px); margin: 0 auto; }
 .chat-intro p { color: var(--muted); font-size: 14px; margin-bottom: 0; }
-.chat-list { display: grid; gap: 14px; }
-.chat-message { min-width: 0; padding: 16px; border: 1px solid var(--line); border-left: 3px solid var(--line-strong); border-radius: 6px; background: var(--surface); }
-.message-role { font-size: 12px; color: var(--muted); }
-.message-content { margin-top: 8px; color: var(--text); font-size: 15px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
-.chat-message.user { margin-left: 12%; border-left-color: var(--line-strong); background: var(--surface-2); }
-.chat-message.assistant { margin-right: 8%; border-left-color: var(--accent); }
+.chat-list { display: grid; gap: 4px; }
+.chat-message { min-width: 0; padding: 20px 0; border-bottom: 1px solid var(--line); background: transparent; }
+.chat-message.user { width: min(78%, 650px); margin-left: auto; padding: 13px 16px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); }
+.message-header { display: flex; align-items: center; min-height: 18px; }
+.message-role { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.message-content { margin-top: 9px; color: var(--text); font-size: 15px; line-height: 1.7; overflow-wrap: anywhere; }
+.chat-message.user .message-content { margin-top: 5px; }
+.chat-message.user .message-role { color: var(--text); }
 .chat-composer { display: flex; align-items: center; gap: 10px; padding: 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); }
 .chat-composer input { flex: 1; min-width: 0; width: 100%; border: 0; padding: 8px; font-size: 15px; background: transparent; }
 .chat-composer .primary-action { flex-shrink: 0; }
@@ -171,7 +173,7 @@ svg { flex-shrink: 0; }
 .recent-section h3 { margin: 0 0 12px; }
 .recent-artifact { padding: 10px 12px; margin: 0 8px 8px 0; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); font-size: 14px; }
 .recent-artifact:hover, .recent-artifact:focus-visible { background: var(--surface-2); border-color: var(--line-strong); }
-.artifact-preview { margin-top: 8px; padding: 20px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); line-height: 1.8; font-size: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.artifact-preview { margin-top: 8px; padding: 24px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); line-height: 1.8; font-size: 15px; overflow-wrap: anywhere; }
 .artifact-preview h3 { margin-top: 0; }
 .action-error { border-left: 3px solid var(--danger); color: var(--status-text); padding: 12px 16px; margin: 0 0 24px; background: var(--status-surface); font-size: 14px; line-height: 1.5; }
 .action-error p { margin: 0; }
@@ -219,7 +221,33 @@ svg { flex-shrink: 0; }
 .sidecar-status-list span { color: var(--muted); overflow-wrap: anywhere; }
 .toast { position: fixed; z-index: 20; right: 20px; bottom: 20px; max-width: min(440px, calc(100vw - 40px)); padding: 14px 18px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); color: var(--text); font-size: 14px; line-height: 1.5; }
 .latex-inline { font-family: 'Cambria Math', serif; overflow-wrap: anywhere; }
-.latex-block, .course-note-formula { display: block; max-width: 100%; overflow-x: auto; padding: 14px 0; text-align: center; font-family: 'Cambria Math', serif; font-size: 20px; }
+.latex-block { display: block; max-width: 100%; overflow-x: auto; padding: 6px 0; text-align: center; font-family: 'Cambria Math', serif; font-size: 20px; }
+.rich-text { min-width: 0; overflow-wrap: anywhere; }
+.rich-text > :first-child { margin-top: 0; }
+.rich-text > :last-child { margin-bottom: 0; }
+.rich-text h1, .rich-text h2, .rich-text h3, .rich-text h4 { line-height: 1.25; letter-spacing: -.015em; }
+.rich-text h1 { font-size: 1.45em; }
+.rich-text h2 { font-size: 1.25em; }
+.rich-text h3 { font-size: 1.08em; }
+.rich-text p { margin: 0 0 1em; }
+.rich-text ul, .rich-text ol { margin: .4em 0 1em; padding-left: 1.35em; }
+.rich-text li + li { margin-top: .35em; }
+.rich-text blockquote { margin: 1em 0; padding: 2px 0 2px 16px; border-left: 2px solid var(--line-strong); color: var(--muted); }
+.rich-text hr { border: 0; border-top: 1px solid var(--line); margin: 1.25em 0; }
+.rich-text code { padding: .12em .35em; border-radius: 3px; background: var(--code-surface); font: .9em var(--mono); }
+.rich-text pre { max-width: 100%; overflow: auto; margin: 1em 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 4px; background: var(--code-surface); }
+.rich-text pre code { padding: 0; background: transparent; white-space: pre; }
+.rich-text table { width: 100%; margin: 1em 0; border-collapse: collapse; font-size: .94em; }
+.rich-text th, .rich-text td { padding: 8px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.rich-text th { background: var(--surface-2); font-weight: 600; }
+.rich-text .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 6px 0; }
+.course-note-markdown { margin: 20px 0; }
+.course-note-markdown + .course-note-markdown { margin-top: 8px; }
+.course-note-formula { display: grid; justify-items: center; gap: 8px; max-width: 100%; overflow-x: auto; margin: 4px 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); text-align: center; font-family: 'Cambria Math', serif; font-size: 20px; }
+.course-note-formula small { color: var(--muted); font-family: var(--sans); font-size: 12px; }
+.course-note-formula-image { display: flex; justify-content: center; max-width: 100%; margin: 4px 0; padding: 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.course-note-formula-image img { display: block; width: auto; max-width: 100%; height: auto; min-width: 0; }
+.extracted-math-line { display: block; width: fit-content; max-width: 100%; overflow-x: auto; margin: 12px auto; padding: 10px 14px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-2); color: var(--text); font-family: 'Cambria Math', serif; font-size: 1.08em; line-height: 1.5; text-align: center; white-space: nowrap; }
 .course-note-code { max-width: 100%; overflow-x: auto; background: var(--code-surface); padding: 16px; font: 13px/1.7 var(--mono); }
 .course-note-code-language { display: block; color: var(--muted); font-size: 11px; margin-bottom: 8px; }
 .course-note-schema { display: flex; flex-wrap: wrap; gap: 12px; font-size: 14px; }
@@ -284,6 +312,8 @@ svg { flex-shrink: 0; }
 :root[data-theme='dark'] .course-actions-menu button:hover { background: var(--surface-2); }
 :root[data-theme='dark'] .action-error { color: #ffaaa4; background: #3a2827; }
 :root[data-theme='dark'] .course-note-code { background: #20201f; }
+:root[data-theme='dark'] .course-note-formula-image { background: var(--surface-2); border-color: var(--line-strong); }
+:root[data-theme='dark'] .course-note-formula-image img { filter: invert(1) hue-rotate(180deg); }
 :root[data-theme='dark'] .course-note-chart-row i { background: #4b4b48; }
 :root[data-theme='dark'] .course-note-chart-row em { background: #d8d8d2; }
 :root[data-theme='dark'] .setting-row input[type='checkbox'] { accent-color: #ededeb; }

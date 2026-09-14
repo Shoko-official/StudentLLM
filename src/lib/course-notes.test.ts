@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCourseNote, buildDocumentCourseNote, courseNoteMarkdown, detectCourse, detectCourseWithProvider, formatCourseNoteWithProvider } from './course-notes';
+import { buildCourseNote, buildDocumentCourseNote, courseNoteMarkdown, detectCourse, detectCourseWithProvider, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider } from './course-notes';
 import type { Lesson, TranscriptSegment } from '../types';
 
 const lesson: Lesson = {
@@ -112,6 +112,24 @@ Pour f(x), on d\u00e9rive.` },
     expect(JSON.stringify(note)).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
   });
 
+  it('asks the local model to reconstruct document content as semantic Markdown', async () => {
+    let receivedMaxTokens: number | undefined;
+    const note = await formatDocumentCourseNoteWithProvider(lesson, [{
+      pageNumber: 1,
+      text: 'Definition\nUne fonction associe x a y.\n∂f/∂x',
+      blocks: [{ x: 0, y: 0, width: 400, height: 80, text: 'Definition\nUne fonction associe x a y.\n∂f/∂x' }],
+    }], 'calculus.pdf', {
+      generate: async (_messages, options) => {
+        receivedMaxTokens = options?.maxTokens;
+        return { model: 'openai/gpt-oss-20b', content: JSON.stringify({ markdown: '## Definition\n\nUne fonction associe $x$ a $y$.\n\n$$\\frac{\\partial f}{\\partial x}$$' }) };
+      },
+    });
+
+    expect(receivedMaxTokens).toBe(8192);
+    expect(note.detection.method).toBe('LM Studio');
+    expect(note.blocks).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'markdown', markdown: expect.stringContaining('\\frac') })]));
+  });
+
   it('does not promote incomplete PDF equation fragments to LaTeX', () => {
     const note = buildDocumentCourseNote(lesson, [{
       pageNumber: 1,
@@ -126,6 +144,42 @@ Pour f(x), on d\u00e9rive.` },
       expect.objectContaining({ type: 'paragraph', text: '∂x + ∂Fy' }),
     ]));
     expect(note.blocks.some((block) => block.type === 'formula')).toBe(false);
+  });
+
+  it('keeps extracted mathematical source on its own display line', () => {
+    const note = buildDocumentCourseNote(lesson, [{
+      pageNumber: 1,
+      text: 'Divergence\n∂Fₓ/∂x + ∂Fᵧ/∂y',
+      blocks: [{ x: 99, y: 486, width: 153, height: 34, text: 'Divergence\n∂Fₓ/∂x + ∂Fᵧ/∂y' }],
+    }], 'Formulaire_Maths_BAC2.pdf');
+
+    expect(note.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'paragraph', text: 'Divergence\n∂Fₓ/∂x + ∂Fᵧ/∂y' }),
+    ]));
+  });
+
+  it('turns a sidecar mathematical block into semantic source text', () => {
+    const note = buildDocumentCourseNote(lesson, [{
+      pageNumber: 1,
+      text: 'Example\n∂f\n∂x = 3x2y4ez',
+      blocks: [
+        { x: 49, y: 298, width: 40, height: 10, text: 'Example' },
+        {
+          x: 147, y: 312, width: 64, height: 24, text: '∂f\n∂x = 3x2y4ez',
+          imageData: 'data:image/png;base64,iVBORw0KGgo=',
+        },
+      ],
+    }], 'Formulaire_Maths_BAC2.pdf');
+
+    expect(note.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'formula-image',
+        alt: '∂f ∂x = 3x2y4ez',
+        sourceName: 'Formulaire_Maths_BAC2.pdf',
+        imageData: 'data:image/png;base64,iVBORw0KGgo=',
+      }),
+    ]));
+    expect(note.blocks.some((block) => block.type === 'paragraph' && block.text.includes('∂f'))).toBe(false);
   });
 
   it('keeps numbered table fragments as text instead of document headings', () => {

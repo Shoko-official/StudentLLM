@@ -6,6 +6,7 @@ export interface DocumentBlock {
   width: number;
   height: number;
   text: string;
+  imageData?: string;
 }
 
 export interface DocumentPage {
@@ -31,6 +32,12 @@ export interface LocalDocumentEngineOptions {
 
 function endpointUrl(baseUrl: string) {
   return `${baseUrl.replace(/\/$/, '')}/extract`;
+}
+
+function isFormulaImageData(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length <= 900_000
+    && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
 }
 
 export class LocalDocumentEngine implements DocumentEngine {
@@ -67,7 +74,14 @@ export class LocalDocumentEngine implements DocumentEngine {
           if (!block || typeof block !== 'object') return [];
           const item = block as Record<string, unknown>;
           if (![item.x, item.y, item.width, item.height].every((coordinate) => typeof coordinate === 'number' && Number.isFinite(coordinate)) || typeof item.text !== 'string') return [];
-          return [{ x: item.x, y: item.y, width: item.width, height: item.height, text: item.text }];
+          return [{
+            x: item.x,
+            y: item.y,
+            width: item.width,
+            height: item.height,
+            text: item.text,
+            ...(isFormulaImageData(item.imageData) ? { imageData: item.imageData } : {}),
+          }];
         }) : [];
         return [{
           pageNumber: value.pageNumber,

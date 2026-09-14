@@ -2,6 +2,9 @@ import type { CourseNote, CourseNoteBlock, Lesson, TranscriptSegment } from '../
 import type { LLMProvider, ProviderResponseFormat } from './llm-provider';
 import type { DocumentPage } from './document-engine';
 import { normalizeDocumentLine, normalizeExtractedDocumentText } from './document-text';
+import { isExtractedMathSourceLine } from './extracted-math';
+
+export const DOCUMENT_NOTE_LAYOUT_VERSION = 'layout-v11';
 
 const SUBJECT_SIGNALS: Record<string, string[]> = {
   Mathematics: ['equation', 'matrix', 'vector', 'derivative', 'integral', 'theorem', 'proof', 'probability', 'softmax', 'logit', 'gradient'],
@@ -105,6 +108,20 @@ const richNoteResponseFormat: ProviderResponseFormat = {
         },
       },
       required: ['blocks'],
+    },
+  },
+};
+
+const documentMarkdownResponseFormat: ProviderResponseFormat = {
+  type: 'json_schema',
+  json_schema: {
+    name: 'course_document_markdown',
+    strict: true,
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { markdown: { type: 'string' } },
+      required: ['markdown'],
     },
   },
 };
@@ -268,6 +285,14 @@ function documentBlockText(text: string) {
   return normalizeExtractedDocumentText(text).split('\n').map(normalizeDocumentLine).filter(Boolean);
 }
 
+function joinDocumentParagraphLines(lines: string[]) {
+  return lines.reduce((paragraph, line, index) => {
+    if (!index) return line;
+    const previous = lines[index - 1];
+    return `${paragraph}${isExtractedMathSourceLine(previous) || isExtractedMathSourceLine(line) ? '\n' : ' '}${line}`;
+  }, '');
+}
+
 function extractDocumentSourceTitle(pages: DocumentPage[], sourceName: string) {
   const normalizedSource = normalizeDocumentLine(sourceName).replace(/\.[^.]+$/, '');
   const lines = pages
@@ -305,6 +330,19 @@ export function buildDocumentCourseNote(
       : [{ x: 0, y: 0, width: 0, height: 0, text: page.text }];
     pageBlocks.forEach((documentBlock) => {
       const lines = documentBlockText(documentBlock.text);
+      if (documentBlock.imageData) {
+        const alt = lines.join(' ');
+        if (alt) {
+          blocks.push({
+            id: `document-formula-image-${page.pageNumber}-${index++}`,
+            type: 'formula-image',
+            imageData: documentBlock.imageData,
+            alt,
+            sourceName,
+          });
+        }
+        return;
+      }
       let lineIndex = 0;
       while (lineIndex < lines.length) {
         const line = lines[lineIndex];
@@ -334,7 +372,7 @@ export function buildDocumentCourseNote(
         blocks.push({
           id: `document-paragraph-${page.pageNumber}-${index++}`,
           type: 'paragraph',
-          text: paragraphLines.join(' '),
+          text: joinDocumentParagraphLines(paragraphLines),
           speaker: sourceName,
         });
       }
@@ -349,7 +387,7 @@ export function buildDocumentCourseNote(
     fileName: `${slug(lesson.title)}-course-notes.md`,
     updatedAt: now(),
     ...(lesson.sublesson ? { sublesson: lesson.sublesson } : {}),
-    detection: { method: 'active course', confidence: 1, basis: `Imported from ${sourceName} with layout-aware text extraction (layout-v4).` },
+    detection: { method: 'active course', confidence: 1, basis: `Imported from ${sourceName} with layout-aware text extraction (${DOCUMENT_NOTE_LAYOUT_VERSION}).` },
     blocks,
   };
 }
@@ -435,6 +473,74 @@ export async function formatCourseNoteWithProvider(
   }
 }
 
+function parseDocumentMarkdown(content: string) {
+  const candidates = [
+    content.trim(),
+    content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? '',
+    content.match(/\{[\s\S]*\}/)?.[0] ?? '',
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = JSON.parse(candidate) as Record<string, unknown>;
+      if (typeof parsed.markdown === 'string' && parsed.markdown.trim()) return parsed.markdown.trim();
+    } catch {
+      // Try the next common provider wrapper.
+    }
+  }
+  return null;
+}
+
+export async function formatDocumentCourseNoteWithProvider(
+  lesson: Lesson,
+  pages: DocumentPage[],
+  sourceName: string,
+  provider: LLMProvider | null | undefined,
+  now: () => string = () => new Date().toISOString(),
+): Promise<CourseNote> {
+  const fallback = buildDocumentCourseNote(lesson, pages, sourceName, now);
+  if (!provider || !pages.length) return fallback;
+  const evidence = pages
+    .slice()
+    .sort((left, right) => left.pageNumber - right.pageNumber)
+    .map((page) => `PAGE ${page.pageNumber}\n${page.blocks.length ? page.blocks.slice().sort((left, right) => left.y - right.y || left.x - right.x).map((block) => block.text).join('\n') : page.text}`)
+    .join('\n\n')
+    .slice(0, 60_000);
+  try {
+    const result = await provider.generate([
+      {
+        role: 'system',
+        content: [
+          'Reconstruct a source-faithful study note from the extracted document text below.',
+          'Return only valid JSON matching the supplied schema, with one Markdown string.',
+          'Preserve all meaningful source content and its order. Do not summarize, invent, or correct facts without evidence.',
+          'Use clean GitHub-Flavored Markdown: headings, paragraphs, lists, Markdown tables, and fenced code blocks when the source contains code.',
+          'Convert mathematical expressions into valid LaTeX using $...$ for inline math and $$...$$ on its own lines for display math.',
+          'Never use image Markdown, HTML, or colored text. If an equation cannot be reconstructed confidently, keep its extracted source as plain text instead of guessing.',
+          `Document source: ${sourceName}`,
+          'BEGIN EXTRACTED DOCUMENT',
+          evidence,
+          'END EXTRACTED DOCUMENT',
+        ].join('\n'),
+      },
+      { role: 'user', content: 'Return the complete, readable Markdown note.' },
+    ], { responseFormat: documentMarkdownResponseFormat, maxTokens: 8_192 });
+    const markdown = parseDocumentMarkdown(result.content);
+    if (!markdown) return fallback;
+    return {
+      ...fallback,
+      updatedAt: now(),
+      detection: { method: 'LM Studio', confidence: 0.88, basis: `LM Studio reconstructed the document as semantic Markdown with ${result.model}.` },
+      blocks: [
+        ...fallback.blocks.filter((block) => block.id === 'note-title' || block.id === 'document-source-title' || block.id === 'note-context'),
+        { id: 'document-semantic-markdown', type: 'markdown', markdown, sourceName },
+      ],
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 export async function detectCourseWithProvider(lesson: Lesson, transcript: TranscriptSegment[], provider: LLMProvider): Promise<CourseNote | null> {
   const excerpt = transcript.slice(-12).map((segment) => `${segment.timestamp} ${segment.text}`).join('\n');
   if (!excerpt.trim()) return null;
@@ -472,8 +578,10 @@ export async function detectCourseWithProvider(lesson: Lesson, transcript: Trans
 export function courseNoteMarkdown(note: CourseNote) {
   return note.blocks.map((block) => {
     if (block.type === 'heading') return `${'#'.repeat(block.level)} ${block.text}`;
+    if (block.type === 'markdown') return block.markdown;
     if (block.type === 'paragraph') return `${block.timestamp ? `**${block.timestamp} · ${block.speaker ?? 'Lecture'}**\n` : ''}${block.text}`;
     if (block.type === 'formula') return `${block.caption ? `_${block.caption}_\n` : ''}${block.latex}`;
+    if (block.type === 'formula-image') return `[Formula from ${block.sourceName}: ${block.alt}]`;
     if (block.type === 'code') return `\`\`\`${block.language}\n${block.code}\n\`\`\``;
     if (block.type === 'schema') return `Schema: ${block.edges.map((edge) => `${edge.from} -> ${edge.to}`).join(', ')}`;
     return `### ${block.label}\n${block.values.map((item) => `- ${item.label}: ${item.value}`).join('\n')}`;

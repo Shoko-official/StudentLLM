@@ -44,7 +44,7 @@ import { buildCourseExport, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
-import { buildCourseNote, buildDocumentCourseNote, courseNoteMarkdown, formatCourseNoteWithProvider } from './lib/course-notes';
+import { buildCourseNote, courseNoteMarkdown, DOCUMENT_NOTE_LAYOUT_VERSION, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider } from './lib/course-notes';
 import { analyzeQuickStart } from './lib/quick-start';
 import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-routing';
 import type { QuickStartProposal } from './lib/quick-start';
@@ -181,7 +181,7 @@ function isTextResource(resource: Resource) {
 
 function hasCurrentDocumentNote(workspace: LessonWorkspace) {
   return workspace.courseNote?.blocks.some((block) => block.id === 'document-source-title') === true
-    && workspace.courseNote.detection.basis.includes('layout-v4');
+    && workspace.courseNote.detection.basis.includes(DOCUMENT_NOTE_LAYOUT_VERSION);
 }
 
 export interface AppProps {
@@ -613,11 +613,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     if (!localDocumentEngine) return undefined;
     const candidate = lessons.flatMap((lesson) => {
       const workspace = lessonWorkspaces[lesson.id] ?? emptyLessonWorkspace;
-      if (hasCurrentDocumentNote(workspace)) return [];
+      const noteNeedsSemanticReview = Boolean(localProvider
+        && hasCurrentDocumentNote(workspace)
+        && workspace.courseNote?.detection.method !== 'LM Studio'
+        && !workspace.courseNote?.blocks.some((block) => block.type === 'markdown'));
+      if (hasCurrentDocumentNote(workspace) && !noteNeedsSemanticReview) return [];
       return workspace.resources.flatMap((resource) => {
         const isPdf = resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name));
-        const hasIndexedPages = workspace.transcript.some((segment) => segment.sourceId === resource.id && /^Page \d+$/i.test(segment.timestamp));
-        return isPdf && hasIndexedPages && !rebuiltDocumentSourceIds.current.has(resource.id) ? [{ lesson, resource }] : [];
+        return isPdf && (noteNeedsSemanticReview || !rebuiltDocumentSourceIds.current.has(resource.id)) ? [{ lesson, resource }] : [];
       });
     })[0];
     if (!candidate) return undefined;
@@ -635,17 +638,17 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           rebuiltDocumentSourceIds.current.delete(candidate.resource.id);
           return;
         }
+        const formattedNote = await formatDocumentCourseNoteWithProvider(candidate.lesson, extraction.pages, candidate.resource.name, localProvider);
         setLessonWorkspaces((current) => {
           const workspace = current[candidate.lesson.id] ?? emptyLessonWorkspace;
           const hasLayoutNote = hasCurrentDocumentNote(workspace);
           const hasResource = workspace.resources.some((resource) => resource.id === candidate.resource.id);
-          const hasIndexedPages = workspace.transcript.some((segment) => segment.sourceId === candidate.resource.id && /^Page \d+$/i.test(segment.timestamp));
-          if (hasLayoutNote || !hasResource || !hasIndexedPages) return current;
+          if ((hasLayoutNote && formattedNote.detection.method !== 'LM Studio') || !hasResource) return current;
           return {
             ...current,
             [candidate.lesson.id]: {
               ...workspace,
-              courseNote: buildDocumentCourseNote(candidate.lesson, extraction.pages, candidate.resource.name),
+              courseNote: formattedNote,
             },
           };
         });
@@ -653,7 +656,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         rebuiltDocumentSourceIds.current.delete(candidate.resource.id);
       }
     })();
-  }, [lessonWorkspaces, lessons, localDocumentEngine, sourceBlobStore]);
+  }, [lessonWorkspaces, lessons, localDocumentEngine, localProvider, sourceBlobStore]);
 
   useEffect(() => {
     if (!nativeStorageReady) return;
@@ -1307,6 +1310,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             'Never claim that course evidence is unavailable when text is present.',
             'If the evidence does not answer the question, say: Not enough evidence in this course.',
             'Do not add facts from outside the evidence. Preserve technical terms, notation, and formulas exactly when they appear.',
+            'Answer in clean GitHub-Flavored Markdown. Use headings, short paragraphs, lists, and fenced code blocks when useful. Use $...$ for inline math and $$...$$ on separate lines for display math. Never emit HTML or image Markdown.',
             `Course: ${activeLesson.title}`,
             'BEGIN COURSE EVIDENCE',
             context,
@@ -1314,7 +1318,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           ].join('\n'),
         },
         { role: 'user', content: message },
-      ]);
+      ], { maxTokens: 2_048 });
       updateActiveWorkspace((current) => ({
         ...current,
         chat: [...current.chat, {
@@ -1385,11 +1389,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             'The evidence between BEGIN COURSE EVIDENCE and END COURSE EVIDENCE is present and authoritative.',
             'If the evidence does not support a claim, omit it or say: Not enough evidence in this course.',
             'Do not add facts from outside the evidence. Preserve technical terms, notation, and formulas exactly when they appear.',
+            'Return clean GitHub-Flavored Markdown only. Use headings, lists, tables, fenced code blocks, and valid LaTeX ($...$ or $$...$$) when the source supports them. Never emit HTML or image Markdown.',
             context,
           ].join('\n'),
         },
         { role: 'user', content: `Generate the ${definition.label.toLowerCase()}.` },
-      ]);
+      ], { maxTokens: 4_096 });
       if (!result.content.trim()) throw new Error('The model returned no study material. Try again.');
       const artifact: Artifact = {
         id: `${kind}-${crypto.randomUUID()}`, kind, label: definition.label,
@@ -1451,7 +1456,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               ...routed.lessonWorkspaces,
               [routed.targetLesson.id]: {
                 ...routed.lessonWorkspaces[routed.targetLesson.id],
-                courseNote: buildDocumentCourseNote(routed.targetLesson, documentPages, resource.name),
+                courseNote: await formatDocumentCourseNoteWithProvider(routed.targetLesson, documentPages, resource.name, localProvider),
               },
             },
           }
@@ -1479,6 +1484,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     try {
       const resource = await createSourceResource(file);
       await sourceBlobStore.save(resource.id, file);
+      const isPdfResource = resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name));
+      if (localDocumentEngine && (isPdfResource || resource.kind === 'image')) rebuiltDocumentSourceIds.current.add(resource.id);
       updateLessonWorkspace(lessonId, (current) => ({ ...current, resources: [resource, ...current.resources] }));
       notify(`${resource.name} added to course sources${sourceBlobStore.durability === 'durable' ? ' and saved locally.' : ' in memory only.'}`);
       if (isTextResource(resource)) {
@@ -1581,15 +1588,17 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           if (pageSegments.length && await routeImportedMaterial(activeLesson, resource, pageSegments, extraction.pages)) return;
           const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
           const nextTranscript = [...previousWorkspace.transcript, ...pageSegments];
+          const documentCourseNote = await formatDocumentCourseNoteWithProvider(activeLesson, extraction.pages, resource.name, localProvider);
           updateLessonWorkspace(lessonId, (current) => ({
             ...current,
             transcript: nextTranscript,
-            courseNote: buildDocumentCourseNote(activeLesson, extraction.pages, resource.name),
+            courseNote: documentCourseNote,
           }));
           notify(pageSegments.length > 0
             ? `${resource.name} indexed ${pageSegments.length} page${pageSegments.length === 1 ? '' : 's'} locally.`
             : `${resource.name} contains no extractable text.`);
         } catch (error) {
+          rebuiltDocumentSourceIds.current.delete(resource.id);
           const detail = error instanceof Error && /fetch|timed out|offline/i.test(error.message)
             ? 'The document service is offline.'
             : 'The document service could not extract this file.';
@@ -1943,7 +1952,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const renderTranscriptSegment = (segment: TranscriptSegment) => (
     <article className={`transcript-item ${segment.status === 'review' ? 'needs-review' : ''}`} key={segment.id}>
       <div className="transcript-time">{segment.timestamp}</div>
-      <div className="transcript-body"><div className="speaker-line"><strong>{segment.speaker}</strong>{segment.provisional ? <span className="review-badge">Live preview</span> : segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><p><RichText content={segment.text} /></p></div>
+      <div className="transcript-body"><div className="speaker-line"><strong>{segment.speaker}</strong>{segment.provisional ? <span className="review-badge">Live preview</span> : segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><div className="transcript-text"><RichText content={segment.text} /></div></div>
       {!segment.provisional && <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => toggleTranscriptReview(segment.id)}>...</button>}
     </article>
   );
@@ -1954,11 +1963,17 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       const Heading = block.level === 1 ? 'h2' : 'h3';
       return <Heading key={block.id}>{block.text}</Heading>;
     }
+    if (block.type === 'markdown') {
+      return <section className="course-note-markdown" key={block.id}><RichText content={block.markdown} /></section>;
+    }
     if (block.type === 'paragraph') {
-      return <p className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp} · {block.speaker ?? 'Lecture'}</span>}<RichText content={block.text} /></p>;
+      return <div className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp} · {block.speaker ?? 'Lecture'}</span>}<RichText content={block.text} highlightExtractedMath /></div>;
     }
     if (block.type === 'formula') {
       return <div className="course-note-formula" key={block.id}><RichText content={block.latex} />{block.caption && <small>{block.caption}</small>}</div>;
+    }
+    if (block.type === 'formula-image') {
+      return <figure className="course-note-formula-image" key={block.id}><img src={block.imageData} alt={`Formula from ${block.sourceName}: ${block.alt}`} /></figure>;
     }
     if (block.type === 'code') {
       return <pre className="course-note-code" key={block.id}><code><span className="course-note-code-language">{block.language}</span>{block.code}</code></pre>;
@@ -2090,7 +2105,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             {view === 'chat' && <section className="chat-view">
               <div className="chat-intro"><h2>Ask about this course</h2><p>{localProvider ? 'Answers use your notes and sources. LM Studio must be running with a loaded model.' : 'Connect LM Studio in Settings to generate answers. You can still search and open your sources.'}</p></div>
               {!resources.length && !transcript.length && <p className="empty-state">Import material or record a lecture before asking a question.</p>}
-              <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span><div className="message-content"><RichText content={message.content} /></div>{message.citations && <div className="citation-list">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button key={citation} onClick={() => openCitation(message.citationTargets![index])}>{citation}</button> : <span key={citation}>{citation}</span>)}</div>}</article>)}</div>
+              <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button key={citation} onClick={() => openCitation(message.citationTargets![index])}>{citation}</button> : <span key={citation}>{citation}</span>)}</div>}</article>)}</div>
               <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
             </section>}
             {view === 'study' && <section className="study-view">
@@ -2098,7 +2113,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               {!hasStudyMaterial && <p className="study-empty-hint">Import notes or finish a transcription to enable study material generation.</p>}
               <div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" disabled={generatingArtifact !== null || !hasStudyMaterial} onClick={() => void createArtifact(artifact.kind)}><strong>{generatingArtifact === artifact.kind ? 'Generating...' : artifact.label}</strong><small>{artifact.description}</small></button>)}</div>
               {artifacts.length > 0 && <section className="recent-section"><h3>Saved materials</h3>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}>{artifact.label}</button>)}
-              {(() => { const selected = artifacts.find((artifact) => artifact.id === selectedArtifactId); return selected && <article className="artifact-preview"><h3>{selected.label}</h3><RichText content={selected.content ?? ''} />{selected.citations && <div className="citation-list">{selected.citations.map((citation, index) => selected.citationTargets?.[index] ? <button key={citation} onClick={() => openCitation(selected.citationTargets![index])}>{citation}</button> : <span key={citation}>{citation}</span>)}</div>}</article>; })()}</section>}
+              {(() => { const selected = artifacts.find((artifact) => artifact.id === selectedArtifactId); return selected && <article className="artifact-preview"><h3>{selected.label}</h3><RichText content={selected.content ?? ''} className="study-markdown" />{selected.citations && <div className="citation-list">{selected.citations.map((citation, index) => selected.citationTargets?.[index] ? <button key={citation} onClick={() => openCitation(selected.citationTargets![index])}>{citation}</button> : <span key={citation}>{citation}</span>)}</div>}</article>; })()}</section>}
             </section>}
           </>}
         </main>

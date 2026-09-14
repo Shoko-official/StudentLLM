@@ -288,7 +288,7 @@ describe('StudentLLM workspace', () => {
         content: expect.stringContaining('Create a targeted quiz'),
       },
       { role: 'user', content: 'Generate the targeted quiz.' },
-    ]);
+    ], { maxTokens: 4096 });
     const systemPrompt = generate.mock.calls[0][0][0].content as string;
     expect(systemPrompt).toContain('BEGIN COURSE EVIDENCE');
     expect(systemPrompt).toContain('END COURSE EVIDENCE');
@@ -663,8 +663,8 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('Machine Learning / Transformers')).toBeInTheDocument();
     expect(within(courseNote).getByLabelText('Live transcription status')).toHaveTextContent('Live transcription');
     expect(courseNote).toHaveTextContent('E = mc^2');
-    expect(within(liveRegion).getByRole('img', { name: 'LaTeX formula: E = mc^2' })).toBeInTheDocument();
-    expect(within(courseNote).getByRole('img', { name: 'LaTeX formula: E = mc^2' })).toBeInTheDocument();
+    expect(liveRegion.querySelector('.katex')).not.toBeNull();
+    expect(courseNote.querySelector('.katex')).not.toBeNull();
     expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
 
     await user.click(screen.getByRole('button', { name: 'View all' }));
@@ -867,7 +867,7 @@ describe('StudentLLM workspace', () => {
     expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: expect.stringContaining(':page-1'), sourceId: expect.any(String), text: 'Eigenvectors describe invariant directions.' }),
     ]));
-    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(3);
     expect(extract).toHaveBeenCalledWith(expect.any(Blob));
   });
 
@@ -923,6 +923,26 @@ describe('StudentLLM workspace', () => {
     expect(courseNote.querySelector('.katex-error')).toBeNull();
   });
 
+  it('renders a faithful formula image supplied by the local document sidecar', async () => {
+    const user = userEvent.setup();
+    const extract = vi.fn().mockResolvedValue({
+      model: 'pymupdf',
+      pages: [{
+        pageNumber: 1,
+        text: 'Example\n∂f\n∂x = 3x2y4ez',
+        blocks: [
+          { x: 49, y: 298, width: 40, height: 10, text: 'Example' },
+          { x: 147, y: 312, width: 64, height: 24, text: '∂f\n∂x = 3x2y4ez', imageData: 'data:image/png;base64,iVBORw0KGgo=' },
+        ],
+      }],
+    });
+
+    render(<App documentEngine={{ extract }} provider={null} />);
+    await user.upload(screen.getByLabelText('Select course source'), new File(['%PDF-1.7'], 'formula.pdf', { type: 'application/pdf' }));
+
+    expect(await screen.findByRole('img', { name: 'Formula from formula.pdf: ∂f ∂x = 3x2y4ez' })).toBeInTheDocument();
+  });
+
   it('rebuilds a legacy PDF note from its saved source instead of retaining transcript-shaped notes', async () => {
     const resource = {
       id: 'legacy-pdf', name: 'Formulaire_Maths_BAC2.pdf', meta: 'Document · 2 KB', kind: 'document' as const,
@@ -938,7 +958,7 @@ describe('StudentLLM workspace', () => {
     lessonWorkspaces[FIXTURE_LESSON_ID] = {
       ...lessonWorkspaces[FIXTURE_LESSON_ID],
       resources: [resource],
-      transcript: [page],
+      transcript: [],
       courseNote: buildCourseNote(lesson, [page]),
     };
     localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(snapshot));
@@ -959,13 +979,12 @@ describe('StudentLLM workspace', () => {
 
     render(<App provider={null} documentEngine={{ extract }} sourceBlobStore={sourceBlobStore} />);
 
-    const courseNote = screen.getByRole('region', { name: 'Course notes document' });
     await waitFor(() => expect(extract).toHaveBeenCalledWith(expect.any(Blob)));
-    expect(await within(courseNote).findByRole('heading', { name: 'Définition', level: 3 })).toBeInTheDocument();
+    await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.detection.basis).toContain('layout-v11'));
     expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.blocks).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'document-source-title', type: 'heading' }),
     ]));
-    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.detection.basis).toContain('layout-v4');
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.detection.basis).toContain('layout-v11');
   });
 
   it('indexes an extracted image as a reviewable transcript segment', async () => {

@@ -1,6 +1,11 @@
 import { Fragment, type ReactNode } from 'react';
+import ReactMarkdown from 'react-markdown';
+import rehypeKatex from 'rehype-katex';
+import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
+import { isExtractedMathSourceLine } from './extracted-math';
 
 const mathPattern = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$(?!\$)(?:\\.|[^$\\\n])+\$)/g;
 const renderedMathCache = new Map<string, string>();
@@ -15,13 +20,15 @@ function unwrapMath(token: string) {
 function renderPlainText(text: string, keyPrefix: string): ReactNode[] {
   return text.split('\n').map((line, index, lines) => (
     <Fragment key={`${keyPrefix}-${index}`}>
-      {line}
+      {isExtractedMathSourceLine(line)
+        ? <span className="extracted-math-line" aria-label="Extracted mathematical source">{line}</span>
+        : line}
       {index < lines.length - 1 && <br />}
     </Fragment>
   ));
 }
 
-function renderRichText(content: string): ReactNode[] {
+function renderExtractedText(content: string): ReactNode[] {
   const parts: ReactNode[] = [];
   let cursor = 0;
   let match: RegExpExecArray | null;
@@ -67,6 +74,32 @@ function renderRichText(content: string): ReactNode[] {
   return parts;
 }
 
-export function RichText({ content }: { content: string }) {
-  return <>{renderRichText(content)}</>;
+function normalizeMathDelimiters(content: string) {
+  return content
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, source: string) => `$$${source.trim()}$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, source: string) => `$${source.trim()}$`)
+    .replace(/([^\n])\$\$/g, (_match, before: string) => `${before}\n\n$$`)
+    .replace(/\$\$(?!\n)/g, () => '$$\n\n');
+}
+
+interface RichTextProps {
+  content: string;
+  highlightExtractedMath?: boolean;
+  className?: string;
+}
+
+export function RichText({ content, highlightExtractedMath = false, className }: RichTextProps) {
+  const classes = ['rich-text', className].filter(Boolean).join(' ');
+  if (highlightExtractedMath) return <div className={classes}>{renderExtractedText(content)}</div>;
+
+  return (
+    <div className={classes}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore', errorColor: 'currentColor' }]]}
+      >
+        {normalizeMathDelimiters(content)}
+      </ReactMarkdown>
+    </div>
+  );
 }
