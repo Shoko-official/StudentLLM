@@ -855,7 +855,19 @@ The resulting prediction file is passed to IBM's official evaluation scripts fro
 | BERTScore recall | `0.211188` | 842 | 839 | 3 |
 | RB aggregate | `0.360065` | 842 | 839 | 3 |
 
-The run used the public `mtrag-human/generation_tasks/RAG.jsonl` file and IBM's algorithmic evaluation output. The local generation artifact is `artifacts/benchmarks/mtrag/rag-gpt-oss-20b-full.jsonl` with SHA-256 `8560AD97FC101DA51F4494B02D32AB5D4BA71AA2078637E1D44CA6603F734125`; the evaluated output is `artifacts/benchmarks/mtrag/rag-gpt-oss-20b-official-algorithmic.jsonl` with SHA-256 `B89F137E130030EACD6E5F632776D0F31E0821E8CC3F500A3F5435182BBD6D0B`. These are complete public-split measurements for this model and protocol, not a frontier or leaderboard claim. The separate reference-only and reference-plus-RAG campaigns remain open.
+The run used the public `mtrag-human/generation_tasks/RAG.jsonl` file and IBM's algorithmic evaluation output. The local generation artifact is `artifacts/benchmarks/mtrag/rag-gpt-oss-20b-full.jsonl` with SHA-256 `8560AD97FC101DA51F4494B02D32AB5D4BA71AA2078637E1D44CA6603F734125`; the evaluated output is `artifacts/benchmarks/mtrag/rag-gpt-oss-20b-official-algorithmic.jsonl` with SHA-256 `B89F137E130030EACD6E5F632776D0F31E0821E8CC3F500A3F5435182BBD6D0B`. These are complete public-split measurements for this model and protocol, not a frontier or leaderboard claim.
+
+The complete reference-only campaign was then run on 2026-09-14 with one worker, the full available task context, `max-tokens 512`, and the same NVIDIA `openai/gpt-oss-20b` endpoint. The official `reference.jsonl` file was evaluated by IBM's algorithmic evaluator after generation:
+
+| Metric | Aggregate | Tasks | Non-empty predictions | Generation errors |
+| --- | ---: | ---: | ---: | ---: |
+| Recall | `0.401087` | 842 | 837 | 5 |
+| ROUGE-L (unstemmed) | `0.268139` | 842 | 837 | 5 |
+| BERTScore precision | `0.193058` | 842 | 837 | 5 |
+| BERTScore recall | `0.278742` | 842 | 837 | 5 |
+| RB aggregate | `0.386583` | 842 | 837 | 5 |
+
+The source file SHA-256 is `55a0097efdad05d9bf9564884f36a246a3a86c2429891649a0a6528c1867f4b9`. The local generation artifact is `artifacts/benchmarks/mtrag/reference-gpt-oss-20b-full.jsonl` with SHA-256 `FBED8B265483FD7070A4203A1ADB62372BA237B8A5E62AAF3AF26B5C5EA4F187`; the evaluated output is `artifacts/benchmarks/mtrag/reference-gpt-oss-20b-official-algorithmic.jsonl` with SHA-256 `1B0C57BDC70433C669EDACC5CE8223FD359CB42696A9E5EEFEA962AE89B79D79`. This is a complete public-split diagnostic, but it supplies the benchmark's reference passages directly to the generator. It therefore acts as a generation ceiling for this model and protocol, not as evidence that the product's retrieval or RAG pipeline reaches the same score. The 436-task `reference+RAG.jsonl` campaign remains open.
 
 Example command:
 
