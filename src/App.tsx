@@ -43,7 +43,7 @@ import { buildCourseExport, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
-import { buildCourseNote, courseNoteMarkdown } from './lib/course-notes';
+import { buildCourseNote, courseNoteMarkdown, formatCourseNoteWithProvider } from './lib/course-notes';
 import { analyzeQuickStart } from './lib/quick-start';
 import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-routing';
 import type { QuickStartProposal } from './lib/quick-start';
@@ -299,6 +299,36 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   };
 
   const updateActiveWorkspace = (update: (current: LessonWorkspace) => LessonWorkspace) => updateLessonWorkspace(activeLessonId, update);
+
+  async function formatPlacedCourseNote<T extends { targetLesson: Lesson; lessonWorkspaces: Record<string, LessonWorkspace> }>(placement: T): Promise<T> {
+    if (!localProvider) return placement;
+    const workspace = placement.lessonWorkspaces[placement.targetLesson.id] ?? emptyLessonWorkspace;
+    const formatted = await formatCourseNoteWithProvider(placement.targetLesson, workspace.transcript, localProvider);
+    if (formatted.detection.method !== 'LM Studio') return placement;
+    return {
+      ...placement,
+      lessonWorkspaces: {
+        ...placement.lessonWorkspaces,
+        [placement.targetLesson.id]: { ...workspace, courseNote: formatted },
+      },
+    };
+  }
+
+  const formatExistingCourseNote = (lessonId: string, candidateTranscript: TranscriptSegment[]) => {
+    if (!localProvider || !candidateTranscript.length) return;
+    const lesson = lessons.find((item) => item.id === lessonId);
+    if (!lesson) return;
+    void formatCourseNoteWithProvider(lesson, candidateTranscript, localProvider).then((formatted) => {
+      if (formatted.detection.method !== 'LM Studio') return;
+      setLessonWorkspaces((current) => {
+        const workspace = current[lessonId] ?? emptyLessonWorkspace;
+        const currentIds = workspace.transcript.map((segment) => segment.id).join('|');
+        const candidateIds = candidateTranscript.map((segment) => segment.id).join('|');
+        if (currentIds !== candidateIds) return current;
+        return { ...current, [lessonId]: { ...workspace, courseNote: formatted } };
+      });
+    }).catch(() => undefined);
+  };
 
   const visibleLessons = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
@@ -661,7 +691,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       const previous = lessonWorkspaces[targetLesson.id] ?? emptyLessonWorkspace;
       const nextTranscript = [...previous.transcript, segment];
       const baseNote = buildCourseNote(targetLesson, nextTranscript);
-      const courseNote = {
+      const routedNote = {
         ...baseNote,
         subject: targetLesson.subject,
         chapter: targetLesson.chapter,
@@ -672,6 +702,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           basis: `Quick Start classified this material: ${proposal.rationale}`,
         },
       };
+      const aiNote = await formatCourseNoteWithProvider(targetLesson, nextTranscript, localProvider);
+      const courseNote = aiNote.detection.method === 'LM Studio' ? aiNote : routedNote;
       setLessonWorkspaces((current) => ({
         ...current,
         [targetLesson.id]: { ...previous, resources: [resource, ...previous.resources], transcript: nextTranscript, courseNote },
@@ -927,15 +959,18 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           mimeType: 'audio/webm',
         };
         const saveRecordingFallback = (segments: TranscriptSegment[] = []) => {
+          const previousWorkspace = lessonWorkspaces[recordingLessonId] ?? emptyLessonWorkspace;
+          const nextTranscript = segments.length
+            ? [...previousWorkspace.transcript, ...segments.filter((segment) => !previousWorkspace.transcript.some((existing) => existing.id === segment.id))]
+            : previousWorkspace.transcript;
           updateLessonWorkspace(recordingLessonId, (current) => ({
             ...current,
             resources: current.resources.some((resource) => resource.id === recordingResource.id)
               ? current.resources
               : [recordingResource, ...current.resources],
-            transcript: segments.length
-              ? [...current.transcript, ...segments.filter((segment) => !current.transcript.some((existing) => existing.id === segment.id))]
-              : current.transcript,
+            transcript: nextTranscript,
           }));
+          formatExistingCourseNote(recordingLessonId, nextTranscript);
         };
         setLessons((current) => current.map((lesson) => lesson.id === recordingLessonId ? { ...lesson, duration: formatElapsed(recordingSeconds) } : lesson));
         if (persistenceError) {
@@ -991,12 +1026,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 segments,
                 duration: formatElapsed(recordingSeconds),
               });
-              setLessons(routed.lessons);
-              setLessonWorkspaces(routed.lessonWorkspaces);
-              setActiveLessonId(routed.targetLesson.id);
-              setSelectedArtifactId(routed.lessonWorkspaces[routed.targetLesson.id]?.artifacts[0]?.id ?? null);
+              const formatted = await formatPlacedCourseNote(routed);
+              setLessons(formatted.lessons);
+              setLessonWorkspaces(formatted.lessonWorkspaces);
+              setActiveLessonId(formatted.targetLesson.id);
+              setSelectedArtifactId(formatted.lessonWorkspaces[formatted.targetLesson.id]?.artifacts[0]?.id ?? null);
               setView('course');
-              notify(`Local transcription added and routed to ${routed.targetLesson.title}.`);
+              notify(`Local transcription added and routed to ${formatted.targetLesson.title}.`);
               return;
             } catch {
               // Keep the recording in its selected course when the classifier is unavailable or uncertain.
@@ -1265,13 +1301,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         segments,
         sourceType: 'material',
       });
-      setLessons(routed.lessons);
-      setLessonWorkspaces(routed.lessonWorkspaces);
-      setActiveLessonId(routed.targetLesson.id);
-      setSelectedArtifactId(routed.lessonWorkspaces[routed.targetLesson.id]?.artifacts[0]?.id ?? null);
+      const formatted = await formatPlacedCourseNote(routed);
+      setLessons(formatted.lessons);
+      setLessonWorkspaces(formatted.lessonWorkspaces);
+      setActiveLessonId(formatted.targetLesson.id);
+      setSelectedArtifactId(formatted.lessonWorkspaces[formatted.targetLesson.id]?.artifacts[0]?.id ?? null);
       setView('course');
       setShowAllResources(false);
-      notify(`Imported material routed to ${routed.targetLesson.title}.`);
+      notify(`Imported material routed to ${formatted.targetLesson.title}.`);
       return true;
     } catch {
       // Keep imported material in the selected course when classification is unavailable or uncertain.
@@ -1298,7 +1335,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             id: `${resource.id}:text`, sourceId: resource.id, timestamp: 'Notes', speaker: resource.name, text, status: 'review',
           };
           if (await routeImportedMaterial(activeLesson, resource, [segment])) return;
-          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: [...current.transcript, segment] }));
+          const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
+          const nextTranscript = [...previousWorkspace.transcript, segment];
+          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: nextTranscript }));
+          formatExistingCourseNote(lessonId, nextTranscript);
         }
       }
       if (resource.kind === 'audio' && !localSpeechEngine) setActionError('Audio imported. Connect a speech service in Settings to transcribe it.');
@@ -1337,20 +1377,24 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                   resource,
                   segments,
                 });
-                setLessons(routed.lessons);
-                setLessonWorkspaces(routed.lessonWorkspaces);
-                setActiveLessonId(routed.targetLesson.id);
-                setSelectedArtifactId(routed.lessonWorkspaces[routed.targetLesson.id]?.artifacts[0]?.id ?? null);
+                const formatted = await formatPlacedCourseNote(routed);
+                setLessons(formatted.lessons);
+                setLessonWorkspaces(formatted.lessonWorkspaces);
+                setActiveLessonId(formatted.targetLesson.id);
+                setSelectedArtifactId(formatted.lessonWorkspaces[formatted.targetLesson.id]?.artifacts[0]?.id ?? null);
                 setView('course');
                 setShowAllResources(false);
-                notify(`Local transcription added and routed to ${routed.targetLesson.title}.`);
+                notify(`Local transcription added and routed to ${formatted.targetLesson.title}.`);
                 return;
               }
             } catch {
               // Keep imported audio in the selected course when classification is unavailable or uncertain.
             }
           }
-          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: [...current.transcript, ...segments] }));
+          const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
+          const nextTranscript = [...previousWorkspace.transcript, ...segments];
+          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: nextTranscript }));
+          formatExistingCourseNote(lessonId, nextTranscript);
           notify(segments.length
             ? `Local transcription added ${segments.length} segments from ${resource.name}.`
             : `${resource.name} contains no detected speech.`);
@@ -1380,7 +1424,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               status: 'review' as const,
             }));
           if (pageSegments.length && await routeImportedMaterial(activeLesson, resource, pageSegments)) return;
-          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: [...current.transcript, ...pageSegments] }));
+          const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
+          const nextTranscript = [...previousWorkspace.transcript, ...pageSegments];
+          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: nextTranscript }));
+          formatExistingCourseNote(lessonId, nextTranscript);
           notify(pageSegments.length > 0
             ? `${resource.name} indexed ${pageSegments.length} page${pageSegments.length === 1 ? '' : 's'} locally.`
             : `${resource.name} contains no extractable text.`);
@@ -1440,20 +1487,24 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               resource,
               segments,
             });
-            setLessons(routed.lessons);
-            setLessonWorkspaces(routed.lessonWorkspaces);
-            setActiveLessonId(routed.targetLesson.id);
-            setSelectedArtifactId(routed.lessonWorkspaces[routed.targetLesson.id]?.artifacts[0]?.id ?? null);
+            const formatted = await formatPlacedCourseNote(routed);
+            setLessons(formatted.lessons);
+            setLessonWorkspaces(formatted.lessonWorkspaces);
+            setActiveLessonId(formatted.targetLesson.id);
+            setSelectedArtifactId(formatted.lessonWorkspaces[formatted.targetLesson.id]?.artifacts[0]?.id ?? null);
             setView('course');
             setShowAllResources(false);
-            notify(`Transcription added and routed to ${routed.targetLesson.title}.`);
+            notify(`Transcription added and routed to ${formatted.targetLesson.title}.`);
             return;
           }
         } catch {
           // Keep the source in its current course when classification is unavailable or uncertain.
         }
       }
-      updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: [...current.transcript.filter((segment) => segment.sourceId !== resource.id), ...segments] }));
+      const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
+      const nextTranscript = [...previousWorkspace.transcript.filter((segment) => segment.sourceId !== resource.id), ...segments];
+      updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: nextTranscript }));
+      formatExistingCourseNote(lessonId, nextTranscript);
       notify('Transcription added to your course notes.');
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Transcription failed. Check the speech service and try again.');
