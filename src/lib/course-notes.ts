@@ -1,5 +1,5 @@
 import type { CourseNote, CourseNoteBlock, Lesson, TranscriptSegment } from '../types';
-import type { LLMProvider } from './llm-provider';
+import type { LLMProvider, ProviderResponseFormat } from './llm-provider';
 
 const SUBJECT_SIGNALS: Record<string, string[]> = {
   Mathematics: ['equation', 'matrix', 'vector', 'derivative', 'integral', 'theorem', 'proof', 'probability', 'softmax', 'logit', 'gradient'],
@@ -50,6 +50,109 @@ function extractChart(text: string) {
     .map((match) => ({ label: match[1].trim(), value: Number(match[2]) }))
     .filter((item) => Number.isFinite(item.value));
   return values.length >= 2 ? { label: 'Values mentioned in the lecture', values } : null;
+}
+
+const richNoteResponseFormat: ProviderResponseFormat = {
+  type: 'json_schema',
+  json_schema: {
+    name: 'course_note_rich_blocks',
+    strict: true,
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        blocks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              type: { type: 'string', enum: ['formula', 'code', 'schema', 'chart'] },
+              sourceId: { type: 'string' },
+              latex: { type: 'string' },
+              caption: { type: 'string' },
+              language: { type: 'string' },
+              code: { type: 'string' },
+              label: { type: 'string' },
+              nodes: { type: 'array', items: { type: 'string' } },
+              edges: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: { from: { type: 'string' }, to: { type: 'string' } },
+                  required: ['from', 'to'],
+                },
+              },
+              values: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: { label: { type: 'string' }, value: { type: 'number' } },
+                  required: ['label', 'value'],
+                },
+              },
+            },
+            required: ['type', 'sourceId'],
+          },
+        },
+      },
+      required: ['blocks'],
+    },
+  },
+};
+
+const richBlockTypes = new Set(['formula', 'code', 'schema', 'chart']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function parseRichBlocks(content: string, transcript: TranscriptSegment[]): Array<CourseNoteBlock & { sourceId: string }> | null {
+  const candidate = content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? content.match(/\{[\s\S]*\}/)?.[0];
+  if (!candidate) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.blocks)) return null;
+  const sourceIds = new Set(transcript.map((segment) => segment.id));
+  const blocks: Array<CourseNoteBlock & { sourceId: string }> = [];
+  for (const rawBlock of parsed.blocks) {
+    if (!isRecord(rawBlock) || typeof rawBlock.type !== 'string' || !richBlockTypes.has(rawBlock.type) || typeof rawBlock.sourceId !== 'string' || !sourceIds.has(rawBlock.sourceId)) return null;
+    if (rawBlock.type === 'formula') {
+      if (typeof rawBlock.latex !== 'string' || !rawBlock.latex.trim()) return null;
+      blocks.push({ id: `ai-formula-${blocks.length}`, type: 'formula', latex: rawBlock.latex.trim(), ...(typeof rawBlock.caption === 'string' && rawBlock.caption.trim() ? { caption: rawBlock.caption.trim() } : {}), sourceId: rawBlock.sourceId });
+      continue;
+    }
+    if (rawBlock.type === 'code') {
+      if (typeof rawBlock.language !== 'string' || !rawBlock.language.trim() || typeof rawBlock.code !== 'string' || !rawBlock.code.trim()) return null;
+      blocks.push({ id: `ai-code-${blocks.length}`, type: 'code', language: rawBlock.language.trim(), code: rawBlock.code.trim(), sourceId: rawBlock.sourceId });
+      continue;
+    }
+    if (rawBlock.type === 'schema') {
+      if (!Array.isArray(rawBlock.nodes) || !rawBlock.nodes.length || !rawBlock.nodes.every((node) => typeof node === 'string' && node.trim()) || !Array.isArray(rawBlock.edges) || !rawBlock.edges.length) return null;
+      const nodes = rawBlock.nodes.map((node) => node.trim());
+      const edges = rawBlock.edges.map((edge) => {
+        if (!isRecord(edge) || typeof edge.from !== 'string' || typeof edge.to !== 'string' || !nodes.includes(edge.from.trim()) || !nodes.includes(edge.to.trim())) return null;
+        return { from: edge.from.trim(), to: edge.to.trim() };
+      });
+      if (edges.some((edge) => edge === null)) return null;
+      blocks.push({ id: `ai-schema-${blocks.length}`, type: 'schema', nodes, edges: edges as Array<{ from: string; to: string }>, sourceId: rawBlock.sourceId });
+      continue;
+    }
+    if (typeof rawBlock.label !== 'string' || !rawBlock.label.trim() || !Array.isArray(rawBlock.values) || rawBlock.values.length < 2) return null;
+    const values = rawBlock.values.map((value) => {
+      if (!isRecord(value) || typeof value.label !== 'string' || !value.label.trim() || typeof value.value !== 'number' || !Number.isFinite(value.value)) return null;
+      return { label: value.label.trim(), value: value.value };
+    });
+    if (values.some((value) => value === null)) return null;
+    blocks.push({ id: `ai-chart-${blocks.length}`, type: 'chart', label: rawBlock.label.trim(), values: values as Array<{ label: string; value: number }>, sourceId: rawBlock.sourceId });
+  }
+  return blocks;
 }
 
 export function detectCourse(lesson: Lesson, transcript: TranscriptSegment[]): CourseNote['detection'] {
@@ -108,6 +211,62 @@ export function buildCourseNote(lesson: Lesson, transcript: TranscriptSegment[],
       ...transcript.flatMap(blocksForSegment),
     ],
   };
+}
+
+export async function formatCourseNoteWithProvider(
+  lesson: Lesson,
+  transcript: TranscriptSegment[],
+  provider: LLMProvider | null | undefined,
+  now: () => string = () => new Date().toISOString(),
+): Promise<CourseNote> {
+  const fallback = buildCourseNote(lesson, transcript, now);
+  if (!provider || !transcript.length) return fallback;
+  const evidence = transcript.map((segment) => `SOURCE ${segment.id} | ${segment.timestamp} | ${segment.speaker}\n${segment.text}`).join('\n\n').slice(0, 24_000);
+  try {
+    const result = await provider.generate([
+      {
+        role: 'system',
+        content: [
+          'Format a course transcript into rich note annotations.',
+          'Return only valid JSON matching the supplied schema. Do not return headings or paragraphs.',
+          'Every block must use a sourceId from the supplied evidence. Add a formula, code block, causal schema, or numeric chart only when it is clearly supported by that source.',
+          'Do not invent facts, values, relationships, code, or formulas. Return an empty blocks array when no rich annotation is justified.',
+        ].join('\n'),
+      },
+      { role: 'user', content: evidence },
+    ], { responseFormat: richNoteResponseFormat });
+    const richBlocks = parseRichBlocks(result.content, transcript);
+    if (!richBlocks?.length) return fallback;
+    const segmentBySource = new Map<string, TranscriptSegment>();
+    transcript.forEach((segment) => {
+      segmentBySource.set(segment.id, segment);
+      if (segment.sourceId) segmentBySource.set(segment.sourceId, segment);
+    });
+    const bySource = new Map<string, Array<CourseNoteBlock & { sourceId: string }>>();
+    richBlocks.forEach((block) => {
+      const segment = segmentBySource.get(block.sourceId);
+      if (segment) bySource.set(segment.id, [...(bySource.get(segment.id) ?? []), block]);
+    });
+    const blocks: CourseNoteBlock[] = [];
+    fallback.blocks.forEach((block) => {
+      const segment = 'sourceId' in block && block.sourceId
+        ? segmentBySource.get(block.sourceId)
+        : transcript.find((candidate) => block.id.endsWith(candidate.id));
+      const sourceId = segment?.id;
+      if (block.type !== 'paragraph' && sourceId && bySource.has(sourceId)) return;
+      const nextBlock = block.type === 'paragraph' && sourceId && !block.sourceId ? { ...block, sourceId } : block;
+      blocks.push(nextBlock);
+      if (block.type === 'paragraph' && sourceId) blocks.push(...(bySource.get(sourceId) ?? []));
+    });
+    return {
+      ...fallback,
+      updatedAt: now(),
+      detection: { method: 'LM Studio', confidence: 0.9, basis: `LM Studio formatted source-linked rich blocks with ${result.model}.` },
+      blocks,
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 export async function detectCourseWithProvider(lesson: Lesson, transcript: TranscriptSegment[], provider: LLMProvider): Promise<CourseNote | null> {

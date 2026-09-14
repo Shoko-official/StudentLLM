@@ -27,6 +27,7 @@ StudentLLM is built around three principles:
 - Optional local faster-whisper sidecar transcription after durable recording, with timestamped review segments.
 - Configured local ASR can also show an incremental transcript preview while recording; the post-recording transcription remains authoritative.
 - The live lesson is assembled at the same time into a Word-like course note with timestamped paragraphs, readable formulas, code blocks, concept schemas, and small data visualizations when the transcript contains the relevant signals.
+- Finalized recordings, imported material, OCR pages, and Quick Start sources can receive a second local GPT OSS formatting pass that adds source-linked LaTeX, code, schemas, and charts; invalid or unsupported model output keeps the deterministic note.
 - Course routing keeps notes under `Courses/<subject>/<chapter>/<lesson>/` in the persisted workspace, uses transcript signals as a fallback, and can refine the route through LM Studio JSON classification. After a durable recording is transcribed, the same classifier can move the audio and transcript into an existing course or create a structured new course when confidence is sufficient; uncertain or unavailable classifications stay in the selected course.
 - Course notes can be saved as a clean Markdown document using the detected course filename.
 - Imported audio can use the same local ASR path, with transcript segments linked back to the audio source.
@@ -120,6 +121,7 @@ src/
   lib/source-storage.ts       IndexedDB source blob storage
   lib/source-chunking.ts      bounded text passages for retrieval
   lib/rich-text.tsx           accessible KaTeX and MathML formula rendering
+  lib/course-notes.ts         deterministic and provider-backed course note formatting
   lib/workspace-storage.ts   versioned workspace persistence
   *.test.tsx                 UI and storage tests
 scripts/
@@ -147,6 +149,7 @@ docs/
   local-asr.md               local transcription sidecar setup
   local-documents.md         local PDF and image extraction setup
   desktop.md                 Tauri desktop runtime setup and validation
+  course-notes.md             live note lifecycle and rich-block provider contract
 ```
 
 ## Roadmap
