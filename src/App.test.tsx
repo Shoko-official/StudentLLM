@@ -310,6 +310,21 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByRole('button', { name: 'Source · optimization.md · part 1' })).toBeInTheDocument();
   }, 15000);
 
+  it('renders repeated chart labels without duplicate React keys', async () => {
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    render(<App />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['Value: 1. Value: 2.'],
+      'repeated-values.txt',
+      { type: 'text/plain' },
+    ));
+
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Course notes document' })).toHaveTextContent('Values mentioned in the lecture'));
+    expect(consoleError.mock.calls.some(([message]) => String(message).includes('Encountered two children with the same key'))).toBe(false);
+  });
+
   it('opens an imported source from a chat citation', async () => {
     const user = userEvent.setup();
     render(<App />);
