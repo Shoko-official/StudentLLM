@@ -809,6 +809,7 @@ test.describe('StudentLLM workspace', () => {
   });
 
   test('opens an imported image source preview locally', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('studentllm.services.v1', JSON.stringify({ documentsUrl: '' })));
     await page.goto('/');
     await page.setInputFiles('input[aria-label="Select course source"]', {
       name: 'image-preview.png',
@@ -816,6 +817,9 @@ test.describe('StudentLLM workspace', () => {
       buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
     });
 
+    await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+    await expect(page.getByRole('alert')).toContainText('image-preview.png is saved.');
+    await page.getByRole('button', { name: 'Done' }).click();
     await openSources(page);
     const source = page.getByRole('button', { name: /^image-preview\.png/ });
     await expect(source).toBeVisible();
@@ -827,6 +831,7 @@ test.describe('StudentLLM workspace', () => {
   });
 
   test('imports and persists a PDF source in the browser workspace', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('studentllm.services.v1', JSON.stringify({ documentsUrl: '' })));
     await page.goto('/');
     await page.setInputFiles('input[aria-label="Select course source"]', {
       name: 'slides.pdf',
