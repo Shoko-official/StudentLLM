@@ -24,6 +24,8 @@ export interface ProviderGenerateOptions {
 
 export interface LLMProvider {
   generate: (messages: ProviderMessage[], options?: ProviderGenerateOptions) => Promise<ProviderResponse>;
+  embed?: (inputs: string[]) => Promise<number[][]>;
+  supportsStructuredOutputs?: boolean;
 }
 
 export interface OpenAICompatibleProviderOptions {
@@ -37,11 +39,16 @@ function providerUrl(baseUrl: string) {
   return `${baseUrl.replace(/\/$/, '')}/chat/completions`;
 }
 
+function embeddingsUrl(baseUrl: string) {
+  return `${baseUrl.replace(/\/$/, '')}/embeddings`;
+}
+
 function isRetryableProviderFailure(status: number, detail: string) {
   return status === 408 || status === 429 || status >= 500 || /engine protocol predict stream returned an error/i.test(detail);
 }
 
 export class OpenAICompatibleProvider implements LLMProvider {
+  readonly supportsStructuredOutputs = true;
   private readonly baseUrl: string;
   private readonly model: string;
   private readonly fetchImpl: typeof fetch;
@@ -95,6 +102,35 @@ export class OpenAICompatibleProvider implements LLMProvider {
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw new Error('Provider request timed out.');
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async embed(inputs: string[]): Promise<number[][]> {
+    if (!inputs.length) return [];
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await this.fetchImpl(embeddingsUrl(this.baseUrl), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: this.model, input: inputs }),
+        signal: controller.signal,
+      });
+      const responseBody = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error('Embedding endpoint unavailable.');
+      const data = Array.isArray(responseBody?.data) ? responseBody.data : [];
+      const vectors = data.map((item: unknown) => {
+        if (!item || typeof item !== 'object' || !Array.isArray((item as { embedding?: unknown }).embedding)) return null;
+        const embedding = (item as { embedding: unknown[] }).embedding;
+        return embedding.every((value) => typeof value === 'number' && Number.isFinite(value)) ? embedding as number[] : null;
+      });
+      if (vectors.length !== inputs.length || vectors.some((vector: number[] | null) => !vector?.length)) throw new Error('Embedding endpoint returned an invalid response.');
+      return vectors as number[][];
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw new Error('Embedding request timed out.');
       throw error;
     } finally {
       clearTimeout(timer);

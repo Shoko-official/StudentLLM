@@ -27,6 +27,27 @@ describe('local document engine', () => {
     }));
   });
 
+  it('preserves structured block metadata for document parsers', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      model: 'docx-xml',
+      pages: [{
+        pageNumber: 1,
+        text: 'Title\nA | B',
+        blocks: [
+          { x: 0, y: 0, width: 0, height: 0, text: 'Title', kind: 'heading' },
+          { x: 0, y: 20, width: 0, height: 0, text: 'A | B', kind: 'table', rows: [['A', 'B']] },
+        ],
+      }],
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+
+    const extraction = await new LocalDocumentEngine({ baseUrl: 'http://127.0.0.1:8766', fetchImpl }).extract(new Blob(['docx'], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+
+    expect(extraction.pages[0].blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'heading' }),
+      expect.objectContaining({ kind: 'table', rows: [['A', 'B']] }),
+    ]));
+  });
+
   it('surfaces sidecar failures', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ error: 'PyMuPDF is not installed.' }), { status: 422 }));
 

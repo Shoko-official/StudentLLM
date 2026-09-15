@@ -1,3 +1,5 @@
+import type { VisualBlock } from './lib/visual-blocks';
+
 export type ViewMode = 'course' | 'chat';
 export type ResourceKind = 'audio' | 'image' | 'document' | 'transcript';
 export type ArtifactKind = 'summary' | 'guide' | 'quiz' | 'flashcards' | 'mindmap' | 'glossary';
@@ -59,7 +61,8 @@ export type CourseNoteBlock =
   | { id: string; type: 'formula-image'; imageData: string; alt: string; sourceName: string; sourceId?: string }
   | { id: string; type: 'code'; language: string; code: string; sourceId?: string }
   | { id: string; type: 'chart'; label: string; values: Array<{ label: string; value: number }>; sourceId?: string }
-  | { id: string; type: 'schema'; nodes: string[]; edges: Array<{ from: string; to: string }>; sourceId?: string };
+  | { id: string; type: 'schema'; nodes: string[]; edges: Array<{ from: string; to: string }>; sourceId?: string }
+  | { id: string; type: 'visual'; visual: VisualBlock; sourceId?: string };
 
 export interface CourseDetection {
   method: 'active course' | 'transcript signals' | 'LM Studio';
@@ -86,6 +89,7 @@ export interface Artifact {
   label: string;
   createdAt: string;
   content?: string;
+  visuals?: VisualBlock[];
   citations?: string[];
   citationTargets?: string[];
 }

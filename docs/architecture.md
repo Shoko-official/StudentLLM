@@ -6,11 +6,11 @@ StudentLLM keeps three kinds of information separate:
 
 ```text
 Immutable sources
-  audio, images, PDF, documents
+  audio, images, PDF, text, Markdown, HTML, RTF, DOCX, PPTX
           |
           v
 Traceable derived content
-  transcript, OCR, segments, embeddings
+  transcript, OCR, structured blocks, segments, embeddings
           |
           v
 Versioned generated content
@@ -29,7 +29,7 @@ The React and TypeScript application defines the product interaction contract:
 - chunked `MediaRecorder` capture with an IndexedDB store when available;
 - interrupted durable recordings are reattached to their course from a local recovery manifest on the next launch;
 - optional local faster-whisper transcription of persisted recordings through `SpeechEngine`;
-- optional local PDF and image extraction through `DocumentEngine`, with page-level transcript provenance;
+- optional local PDF, image, text, Markdown, HTML, RTF, DOCX, and PPTX extraction through `DocumentEngine`, with page/section-level transcript provenance;
 - versioned local workspace persistence with per-lesson sources, transcript segments, chat history, and artifacts;
 - legacy flat workspace data migrates into the active lesson without exposing it to newly created lessons;
 - local source import with MIME classification and SHA-256 provenance fingerprints;
@@ -38,7 +38,7 @@ The React and TypeScript application defines the product interaction contract:
 - Studio artifact actions;
 - chat with visible context citations;
 - optional local LM Studio chat through an OpenAI-compatible provider adapter;
-- local lexical retrieval over transcript and bounded imported text passages with actionable source-part citations that open local originals;
+- local hybrid retrieval over transcript and bounded imported passages: deterministic lexical ranking is always available, and an OpenAI-compatible local embeddings endpoint is used when the configured LM Studio-compatible server exposes one; citations retain the exact source part;
 - deterministic course-note assembly during capture, followed by optional strict source-linked rich-block formatting through the local LLM provider;
 - provider smoke checks kept independent from the UI.
 
@@ -58,7 +58,7 @@ Tauri 2 + Rust
   |-- durable job queue
   |-- sidecar workers
         |-- SpeechEngine (whisper.cpp, NeMo, faster-whisper)
-        |-- DocumentEngine (PDF text and RapidOCR now; structured vision planned)
+        |-- DocumentEngine (PDF text, RapidOCR, Office XML, and structured source blocks)
         |-- LLMProvider (LM Studio, NIM, vLLM)
   v
 Knowledge store
@@ -103,13 +103,13 @@ interface DocumentEngine {
     pages: Array<{
       pageNumber: number;
       text: string;
-      blocks: Array<{ x: number; y: number; width: number; height: number; text: string }>;
+      blocks: Array<{ x: number; y: number; width: number; height: number; text: string; kind?: string; rows?: string[][] }>;
     }>;
   }>;
 }
 ```
 
-The current browser adapter sends PDF or image bytes to a local PyMuPDF and RapidOCR sidecar. Extracted pages are added as reviewable transcript segments with the source filename and page number. OCR returns text and bounding boxes; structured table, formula, diagram, and handwriting understanding remain separate engine requirements.
+The current browser adapter sends supported source bytes to a local PyMuPDF, RapidOCR, and Office XML sidecar. Extracted pages or logical sections are added as reviewable transcript segments with source and page provenance. Structured tables and document blocks are retained for rendering and retrieval. Formula and diagram interpretation remains conservative: the original source and extracted text remain available whenever a semantic reconstruction is uncertain.
 
 ## Reliability and privacy
 

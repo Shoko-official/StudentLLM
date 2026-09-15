@@ -1,6 +1,6 @@
 import unittest
 
-from scripts.local_document_server import formula_aware_pdf_blocks, group_formula_blocks, is_block_covered_by_formula_crop, is_formula_block, is_formula_group
+from scripts.local_document_server import extract_document, formula_aware_pdf_blocks, group_formula_blocks, is_block_covered_by_formula_crop, is_formula_block, is_formula_group
 
 
 class LocalDocumentServerTests(unittest.TestCase):
@@ -64,6 +64,51 @@ class LocalDocumentServerTests(unittest.TestCase):
         ]
 
         self.assertTrue(is_formula_group(table_rows))
+
+    def test_extracts_markdown_as_ordered_provenance_blocks(self):
+        model, pages = extract_document(b'# Title\n\nA paragraph.\n\n- One\n- Two', 'text/markdown')
+
+        self.assertEqual(model, 'text-markdown')
+        self.assertEqual([block['kind'] for block in pages[0]['blocks']], ['heading', 'paragraph', 'list'])
+        self.assertEqual(pages[0]['blocks'][0]['text'], 'Title')
+
+    def test_extracts_docx_paragraphs_and_tables_without_flattening_everything(self):
+        import io
+        import zipfile
+
+        document_xml = '''<?xml version="1.0" encoding="UTF-8"?>
+        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+          <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Course title</w:t></w:r></w:p>
+          <w:p><w:r><w:t>Important paragraph.</w:t></w:r></w:p>
+          <w:tbl><w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Value</w:t></w:r></w:p></w:tc></w:tr>
+          <w:tr><w:tc><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>2</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+        </w:body></w:document>'''
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w') as archive:
+            archive.writestr('word/document.xml', document_xml)
+
+        model, pages = extract_document(buffer.getvalue(), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+
+        self.assertEqual(model, 'docx-xml')
+        self.assertEqual([block['kind'] for block in pages[0]['blocks']], ['heading', 'paragraph', 'table'])
+        self.assertEqual(pages[0]['blocks'][2]['rows'], [['Name', 'Value'], ['A', '2']])
+
+    def test_extracts_html_tables_as_structured_blocks(self):
+        model, pages = extract_document(
+            b'<h1>Results</h1><table><tr><th>Term</th><th>Value</th></tr><tr><td>Loss</td><td>0.2</td></tr></table>',
+            'text/html',
+        )
+
+        self.assertEqual(model, 'html-text')
+        self.assertEqual([block['kind'] for block in pages[0]['blocks']], ['heading', 'table'])
+        self.assertEqual(pages[0]['blocks'][1]['rows'], [['Term', 'Value'], ['Loss', '0.2']])
+
+    def test_extracts_rtf_paragraphs_without_control_words(self):
+        model, pages = extract_document(b'{\\rtf1\\ansi Course\\par Formula: E = mc^2}', 'application/rtf')
+
+        self.assertEqual(model, 'rtf-text')
+        self.assertIn('Course', pages[0]['text'])
+        self.assertNotIn('\\rtf', pages[0]['text'])
 
 
 if __name__ == "__main__":
