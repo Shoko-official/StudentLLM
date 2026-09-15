@@ -48,4 +48,11 @@ describe('RichText', () => {
 
     expect(container.querySelector('li .katex')).not.toBeNull();
   });
+
+  it('renders LaTeX fragments embedded in prose list items', () => {
+    const { container } = render(<RichText content={'- Connect operators: (\\operatorname{div}(\\nabla f)=\\Delta f).'} />);
+
+    expect(container.querySelector('li .katex')).not.toBeNull();
+    expect(container.querySelector('li')?.firstChild?.textContent).toBe('Connect operators: (');
+  });
 });
