@@ -9,6 +9,11 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+try:
+    from scripts.local_server_security import MAX_ASR_UPLOAD_BYTES, allowed_origin, validate_content_length, validate_local_host
+except ModuleNotFoundError:  # Running this file directly from the scripts directory.
+    from local_server_security import MAX_ASR_UPLOAD_BYTES, allowed_origin, validate_content_length, validate_local_host
+
 
 class TranscriptionHandler(BaseHTTPRequestHandler):
     server_version = "StudentLLM-ASR/1.0"
@@ -16,9 +21,14 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
     def _write_json(self, status: int, payload: dict[str, object]) -> None:
         encoded = json.dumps(payload).encode("utf-8")
         self.send_response(status)
-        self.send_header("Access-Control-Allow-Headers", "content-type")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS, POST")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = allowed_origin(self.headers.get("Origin"))
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Headers", "content-type")
+            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS, POST")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(encoded)))
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
@@ -42,8 +52,10 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
-        if length <= 0:
-            self._write_json(400, {"error": "The request body is empty."})
+        try:
+            validate_content_length(length, MAX_ASR_UPLOAD_BYTES)
+        except ValueError as error:
+            self._write_json(413 if length > MAX_ASR_UPLOAD_BYTES else 400, {"error": str(error)})
             return
 
         audio = self.rfile.read(length)
@@ -73,8 +85,8 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
                 "duration": getattr(info, "duration", None),
                 "segments": result_segments,
             })
-        except Exception as error:
-            self._write_json(422, {"error": f"Transcription failed: {error}"})
+        except Exception:
+            self._write_json(422, {"error": "Transcription failed."})
 
     def log_message(self, format: str, *args: object) -> None:
         print(f"{self.address_string()} - {format % args}")
@@ -93,15 +105,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     arguments = parse_args()
+    host = validate_local_host(arguments.host)
     from faster_whisper import WhisperModel
 
     model = WhisperModel(arguments.model, device=arguments.device, compute_type=arguments.compute_type)
-    server = ThreadingHTTPServer((arguments.host, arguments.port), TranscriptionHandler)
+    server = ThreadingHTTPServer((host, arguments.port), TranscriptionHandler)
+    server.daemon_threads = True
     server.model = model
     server.model_lock = threading.Lock()
     server.model_name = arguments.model
     server.default_language = arguments.language
-    print(f"StudentLLM local ASR listening on http://{arguments.host}:{arguments.port}")
+    print(f"StudentLLM local ASR listening on http://{host}:{arguments.port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

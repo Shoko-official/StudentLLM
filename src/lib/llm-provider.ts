@@ -55,7 +55,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly timeoutMs: number;
 
   constructor(options: OpenAICompatibleProviderOptions) {
-    this.baseUrl = options.baseUrl;
+    this.baseUrl = normalizeServiceBaseUrl(options.baseUrl);
     this.model = options.model;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? 60_000;
@@ -74,6 +74,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       stream: false,
       ...(options?.responseFormat ? { response_format: options.responseFormat } : {}),
     });
+    if (requestBody.length > MAX_JSON_REQUEST_BYTES) throw new Error('The provider request is too large.');
     let attempt = 0;
     try {
       while (true) {
@@ -83,9 +84,14 @@ export class OpenAICompatibleProvider implements LLMProvider {
           body: requestBody,
           signal: controller.signal,
         });
-        const responseBody = await response.json().catch(() => ({}));
+        const responseBody = await readJsonResponse(response, 'provider');
         if (!response.ok) {
-          const detail = typeof responseBody?.error === 'string' ? responseBody.error : responseBody?.error?.message;
+          const errorValue = responseBody.error;
+          const detail = typeof errorValue === 'string'
+            ? errorValue
+            : errorValue && typeof errorValue === 'object' && typeof (errorValue as { message?: unknown }).message === 'string'
+              ? (errorValue as { message: string }).message
+              : undefined;
           if (attempt === 0 && isRetryableProviderFailure(response.status, detail ?? '')) {
             attempt += 1;
             continue;
@@ -93,9 +99,11 @@ export class OpenAICompatibleProvider implements LLMProvider {
           throw new Error(`Provider request failed (${response.status})${detail ? `: ${detail}` : ''}`);
         }
 
-        const message = responseBody?.choices?.[0]?.message ?? {};
-        const content = typeof message.content === 'string'
-          ? message.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+        const choices = Array.isArray(responseBody.choices) ? responseBody.choices : [];
+        const message = choices[0] && typeof choices[0] === 'object' ? (choices[0] as { message?: unknown }).message : undefined;
+        const messageRecord = message && typeof message === 'object' ? message as { content?: unknown } : {};
+        const content = typeof messageRecord.content === 'string'
+          ? messageRecord.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
           : '';
         if (!content || content.startsWith('<think>')) throw new Error('The model returned no final answer. Try again or choose another model in Settings.');
         return { content: content.trim(), model: typeof responseBody.model === 'string' ? responseBody.model : this.model };
@@ -119,7 +127,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         body: JSON.stringify({ model: this.model, input: inputs }),
         signal: controller.signal,
       });
-      const responseBody = await response.json().catch(() => ({}));
+      const responseBody = await readJsonResponse(response, 'embedding provider');
       if (!response.ok) throw new Error('Embedding endpoint unavailable.');
       const data = Array.isArray(responseBody?.data) ? responseBody.data : [];
       const vectors = data.map((item: unknown) => {
@@ -142,8 +150,14 @@ export function createLocalLLMProvider(env: Record<string, string | undefined> =
   if (env.VITE_LM_STUDIO_AUTO_CONNECT?.trim().toLowerCase() === 'false') return null;
   const baseUrl = env.VITE_LM_STUDIO_BASE_URL?.trim() || (env.MODE === 'development' ? '/lm-studio/v1' : undefined);
   if (!baseUrl) return null;
-  return new OpenAICompatibleProvider({
-    baseUrl,
-    model: env.VITE_LM_STUDIO_MODEL?.trim() || 'openai/gpt-oss-20b',
-  });
+  try {
+    return new OpenAICompatibleProvider({
+      baseUrl,
+      model: env.VITE_LM_STUDIO_MODEL?.trim() || 'openai/gpt-oss-20b',
+    });
+  } catch {
+    return null;
+  }
 }
+import { MAX_JSON_REQUEST_BYTES, readJsonResponse } from './response-json';
+import { normalizeServiceBaseUrl } from './service-url';

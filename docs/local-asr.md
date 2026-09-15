@@ -2,6 +2,8 @@
 
 StudentLLM can send a saved browser recording to a local `faster-whisper` sidecar. The browser persists the original audio chunks first. The sidecar returns timestamped segments, and the application adds them to the active course with `review` status so they can be checked before study artifacts are generated.
 
+Audio uploads are capped at 250 MB. The sidecar binds to localhost by default and only responds with browser CORS headers for the local application origins. Invalid or oversized requests fail without exposing model or filesystem details.
+
 ## Start the sidecar
 
 Install the Python dependency in the benchmark environment or another isolated environment:

@@ -4,6 +4,8 @@ StudentLLM sends imported sources to a local extraction sidecar. The original fi
 
 The sidecar currently supports digital and scanned PDFs, images, plain text, Markdown, HTML, RTF, DOCX, and PPTX. PDFs use PyMuPDF, scanned pages and images use RapidOCR when installed, and Office formats are read from their native XML packages. Headings, lists, tables, slide boundaries, and formula-like PDF regions are preserved as typed blocks instead of being flattened immediately into one text string. Formula reconstruction remains source-faithful: ambiguous glyphs stay as extracted text rather than being guessed.
 
+The service accepts documents up to 100 MB and rejects oversized or malformed Office archives before parsing. It binds to localhost by default and only grants browser access to the local application origins. A document that cannot be extracted is still retained as the original source, with a recoverable error shown in the workspace.
+
 ## Start the sidecar
 
 Install the local document dependencies in an isolated Python environment:

@@ -9,6 +9,7 @@ const DATABASE_FILE: &str = "studentllm.sqlite3";
 const SCHEMA_VERSION: i32 = 1;
 const WAL_ENABLE_ATTEMPTS: usize = 8;
 const BOOTSTRAP_SNAPSHOT: &str = r#"{"version":1,"bootstrap":true}"#;
+const MAX_SNAPSHOT_BYTES: usize = 16 * 1024 * 1024;
 
 fn is_busy_error(error: &SqliteError) -> bool {
     matches!(
@@ -108,10 +109,30 @@ fn read_snapshot(path: &Path) -> Result<Option<String>, String> {
             |row| row.get(0),
         )
         .optional()
+        .and_then(|snapshot| {
+            if snapshot
+                .as_ref()
+                .is_some_and(|value: &String| value.len() > MAX_SNAPSHOT_BYTES)
+            {
+                return Err(SqliteError::ToSqlConversionFailure(Box::new(
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "workspace snapshot exceeds the supported size",
+                    ),
+                )));
+            }
+            Ok(snapshot)
+        })
         .map_err(|error| format!("Unable to read workspace database: {error}"))
 }
 
 fn write_snapshot(path: &Path, snapshot: &str) -> Result<(), String> {
+    if snapshot.len() > MAX_SNAPSHOT_BYTES {
+        return Err(format!(
+            "Workspace snapshot exceeds the {} MB limit",
+            MAX_SNAPSHOT_BYTES / (1024 * 1024)
+        ));
+    }
     let connection = open_database(path)?;
     let updated_at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -150,7 +171,7 @@ pub fn smoke_frontend_ipc() -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{open_database, read_snapshot, write_snapshot};
+    use super::{open_database, read_snapshot, write_snapshot, MAX_SNAPSHOT_BYTES};
     use std::fs;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -284,5 +305,14 @@ mod tests {
         assert!(snapshot.starts_with("{\"version\":1,\"writer\":"));
 
         let _ = fs::remove_dir_all(path.parent().expect("concurrent database parent"));
+    }
+
+    #[test]
+    fn rejects_workspace_snapshots_that_are_too_large() {
+        let path = test_database_path();
+        let error = write_snapshot(&path, &"x".repeat(MAX_SNAPSHOT_BYTES + 1))
+            .expect_err("oversized snapshots should be rejected");
+        assert!(error.contains("exceeds the 16 MB limit"));
+        assert!(!path.exists());
     }
 }
