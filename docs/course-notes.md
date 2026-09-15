@@ -6,7 +6,7 @@ StudentLLM keeps a course note readable while a lesson is being captured, then e
 
 1. Transcript segments are appended to the selected lesson and immediately produce a deterministic note.
 2. Each segment keeps its timestamp, speaker, source resource, and review state.
-3. The deterministic formatter extracts only evidence-shaped blocks: paragraphs, formulas, code, concept schemas, and numeric charts.
+3. The deterministic formatter preserves evidence-shaped blocks: headings, paragraphs, lists, tables, formulas, code, concept schemas, and numeric charts.
 4. After an imported source, recording, transcription, OCR result, or Quick Start placement is finalized, the local provider may add richer annotations.
 5. The formatted note is persisted with the lesson workspace and remains exportable as Markdown.
 
@@ -14,7 +14,7 @@ The live path never waits for the enrichment request. If the provider is unavail
 
 ## Provider contract
 
-The formatter sends a bounded, source-labelled transcript envelope to the configured OpenAI-compatible local provider. The request asks for strict JSON with this shape:
+The formatter sends a bounded, source-labelled transcript or document envelope to the configured OpenAI-compatible local provider. The request asks for strict JSON with this shape:
 
 ```json
 {
@@ -26,6 +26,22 @@ The formatter sends a bounded, source-labelled transcript envelope to the config
   ]
 }
 ```
+
+Document and Study responses may also use the declarative visual envelope:
+
+```json
+{
+  "markdown": "## Review\n\nThe source-supported explanation.",
+  "visuals": [
+    {
+      "type": "diagram | chart | table",
+      "sourceId": "source.pdf:page-2"
+    }
+  ]
+}
+```
+
+The local renderer owns the visual implementation. The provider supplies only bounded data and source relationships, so a chart, table, or diagram is inspectable text data and a visual at the same time. Model-generated code, HTML, images, unknown source IDs, invented values, and invalid graph endpoints are rejected before they reach the DOM.
 
 Each block type adds its own fields:
 
@@ -43,7 +59,8 @@ Course notes use a document-like layout:
 - inline and display LaTeX are rendered with KaTeX and accessible MathML;
 - code is shown in a labelled code block;
 - schemas are rendered as compact directed relationships;
-- charts use simple proportional bars and retain the original values;
+- charts use simple SVG bars, lines, or slices and retain the original values;
+- document tables use semantic HTML table cells and keep their source page;
 - transcript paragraphs retain their timestamp and speaker metadata.
 
 The note renderer accepts both transcript segment IDs and source resource IDs when joining an enriched block to its original paragraph. This matters for imported files, where the transcript segment ID is derived from the resource ID.

@@ -6,6 +6,8 @@ export interface DocumentBlock {
   width: number;
   height: number;
   text: string;
+  kind?: 'text' | 'heading' | 'paragraph' | 'list' | 'code' | 'formula' | 'table' | 'diagram' | 'image';
+  rows?: string[][];
   imageData?: string;
 }
 
@@ -80,6 +82,8 @@ export class LocalDocumentEngine implements DocumentEngine {
             width: item.width,
             height: item.height,
             text: item.text,
+            ...(typeof item.kind === 'string' && ['text', 'heading', 'paragraph', 'list', 'code', 'formula', 'table', 'diagram', 'image'].includes(item.kind) ? { kind: item.kind as DocumentBlock['kind'] } : {}),
+            ...(Array.isArray(item.rows) && item.rows.every((row) => Array.isArray(row) && row.every((cell) => typeof cell === 'string')) ? { rows: item.rows as string[][] } : {}),
             ...(isFormulaImageData(item.imageData) ? { imageData: item.imageData } : {}),
           }];
         }) : [];

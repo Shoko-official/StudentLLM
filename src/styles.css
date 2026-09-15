@@ -256,6 +256,24 @@ svg { flex-shrink: 0; }
 .course-note-chart-row { display: grid; grid-template-columns: 80px minmax(0, 1fr) 48px; gap: 12px; font-size: 13px; }
 .course-note-chart-row i { background: var(--chart-track); height: 10px; }
 .course-note-chart-row em { display: block; height: 100%; background: var(--chart-fill); }
+.visual-block { margin: 20px 0; padding: 16px; border: 1px solid var(--line); background: var(--surface-2); overflow-x: auto; }
+.visual-block figcaption { margin-bottom: 12px; color: var(--text); font-size: 14px; font-weight: 600; }
+.visual-block svg { display: block; width: min(100%, 560px); min-width: 420px; height: auto; margin: 0 auto; overflow: visible; }
+.visual-block svg text { fill: var(--text); font: 12px var(--sans); }
+.visual-axis { stroke: var(--line-strong); stroke-width: 1; }
+.visual-axis-label, .visual-edge-label { fill: var(--muted) !important; }
+.visual-bar, .visual-line, .visual-point, .visual-pie-slice { fill: var(--chart-fill); stroke: var(--chart-fill); }
+.visual-line { fill: none; stroke-width: 3; }
+.visual-point { stroke: var(--surface-2); stroke-width: 2; }
+.visual-pie-slice:nth-child(3n + 2) { fill: var(--line-strong); stroke: var(--surface-2); stroke-width: 2; }
+.visual-pie-slice:nth-child(3n + 3) { fill: var(--muted); stroke: var(--surface-2); stroke-width: 2; }
+.visual-edge { stroke: var(--line-strong); stroke-width: 1.5; }
+.visual-edge-label { font-size: 11px !important; }
+.visual-diagram marker path { fill: var(--line-strong); }
+.visual-node rect { fill: var(--surface); stroke: var(--line-strong); }
+.visual-node text { font-size: 12px !important; }
+.visual-table table { margin: 0; min-width: 360px; }
+.visual-source { display: block; margin-top: 10px; color: var(--muted); font-size: 11px; }
 .managed-sidecar-tray { display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; padding: 16px; border-top: 1px solid var(--line); }
 .navigation-scrim { display: none; }
 
