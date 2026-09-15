@@ -73,4 +73,19 @@ describe('visual block protocol', () => {
     expect(screen.getByText('Start')).toBeInTheDocument();
     expect(screen.getByText('next')).toBeInTheDocument();
   });
+
+  it('renders Markdown and LaTeX inside source table cells', () => {
+    const visual: VisualBlock = {
+      type: 'table',
+      title: 'Primitives',
+      sourceId: 'page-1',
+      columns: ['Function', 'Primitive'],
+      rows: [['1 / x', '$\\text{ln}']],
+    };
+
+    const { container } = render(<VisualBlockView visual={visual} />);
+
+    expect(container.querySelector('.katex')).not.toBeNull();
+    expect(container.textContent).not.toContain('$\\text{ln}');
+  });
 });
