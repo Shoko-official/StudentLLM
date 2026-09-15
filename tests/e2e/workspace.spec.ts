@@ -17,6 +17,26 @@ async function openCourseActions(page: Page) {
 const openSources = (page: Page) => page.getByRole('tab', { name: /^Sources/ }).click();
 const savedWorkspace = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getItem('studentllm.workspace.v1')!));
 
+function minimalPdf() {
+  const objects = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 180] /Resources <<>> /Contents 4 0 R >>\nendobj\n',
+    '4 0 obj\n<< /Length 34 >>\nstream\n0.2 0.5 0.8 rg 20 20 200 140 re f\nendstream\nendobj\n',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  for (const object of objects) {
+    offsets.push(pdf.length);
+    pdf += object;
+  }
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('');
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(pdf);
+}
+
 async function expectNoOverflow(page: Page) {
   const dimensions = await page.evaluate(() => {
     const elements = [document.documentElement, document.body, ...document.querySelectorAll<HTMLElement>('main, aside, .course-note-document, .study-view')];
@@ -840,7 +860,7 @@ test.describe('StudentLLM workspace', () => {
     await page.setInputFiles('input[aria-label="Select course source"]', {
       name: 'slides.pdf',
       mimeType: 'application/pdf',
-      buffer: Buffer.from('%PDF-1.7'),
+      buffer: minimalPdf(),
     });
 
     await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
@@ -850,6 +870,11 @@ test.describe('StudentLLM workspace', () => {
     const source = page.getByRole('button', { name: /^slides\.pdf/ });
     await expect(source).toBeVisible();
     await expect(page.getByText(/slides\.pdf added to course sources and saved locally\./)).toBeVisible();
+    await source.click();
+    const preview = page.getByRole('dialog', { name: 'slides.pdf' });
+    await expect(preview.locator('.pdf-preview')).toBeVisible({ timeout: 20_000 });
+    await expect(preview.locator('canvas[aria-label="PDF page 1"]')).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: 'Close source preview' }).click();
 
     await page.reload();
     await openSources(page);
