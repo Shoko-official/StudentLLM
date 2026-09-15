@@ -1490,9 +1490,9 @@ describe('StudentLLM workspace', () => {
 
     resolveGeneration({ content: 'The completed summary.', model: 'fixture-model' });
     expect(await screen.findByText('The completed summary.')).toBeInTheDocument();
-    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].artifacts).toEqual([
+    await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].artifacts).toEqual([
       expect.objectContaining({ content: 'The completed summary.' }),
-    ]);
+    ]));
   });
 
   it('reports microphone unavailability without recording or adding fake content', async () => {
