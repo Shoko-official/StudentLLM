@@ -82,6 +82,17 @@ function normalizeMathDelimiters(content: string) {
     .replace(/\$\$(?!\n)/g, () => '$$\n\n');
 }
 
+function safeUrlTransform(url: string) {
+  try {
+    const parsed = new URL(url, 'https://studentllm.invalid');
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'mailto:') return url;
+    if (url.startsWith('#') || url.startsWith('/') || url.startsWith('./') || url.startsWith('../')) return url;
+  } catch {
+    // Invalid URLs are omitted from rendered content.
+  }
+  return '';
+}
+
 interface RichTextProps {
   content: string;
   highlightExtractedMath?: boolean;
@@ -97,6 +108,10 @@ export function RichText({ content, highlightExtractedMath = false, className }:
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore', errorColor: 'currentColor' }]]}
+        urlTransform={safeUrlTransform}
+        components={{
+          img: ({ alt }) => <span className="rich-image-alt" role="img" aria-label={alt || 'Image omitted'}>{alt || 'Image omitted'}</span>,
+        }}
       >
         {normalizeMathDelimiters(content)}
       </ReactMarkdown>

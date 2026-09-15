@@ -194,14 +194,14 @@ The observed run evaluated 100 public FLEURS examples across clean, 10 dB, and 0
 
 `run_covost2_st.py` evaluates French-to-English speech translation on the public CoVoST 2 `fr_en/test` split. The runner uses the public `fixie-ai/covost2` parquet mirror, decodes its embedded Common Voice audio with PyAV, and scores model output with SacreBLEU and chrF. The default model is the official `facebook/s2t-small-covost2-fr-en-st` checkpoint and the default local CUDA precision is FP32. FP16 is available for comparison but is not the selected profile because the observed RTX 5080 run produced degenerate output in that mode.
 
-Install the optional COMET scorer when a learned translation-quality metric is required:
+Install the supported speech-translation runtime for BLEU/chrF evaluation:
 
 ```powershell
 $env:USE_TF = '0'
 .\.venv-bench-sys\Scripts\python.exe -m pip install -r requirements-speech-translation.txt
 ```
 
-Set `USE_TF=0` in this Windows benchmark environment before importing the scorer. Add `--comet-model Unbabel/wmt22-comet-da` to a run to score each source, hypothesis, and reference triplet with COMET. The receipt records the model name and aggregate score. COMET is optional because it downloads a separate checkpoint and is not needed for SacreBLEU/chrF-only runs.
+The legacy Unbabel COMET scorer is intentionally not part of the supported default environment because its latest package requires an older Transformers line. Existing COMET receipts remain historical evidence; a new `--comet-model` run requires an isolated, separately managed legacy environment. BLEU/chrF runs do not need COMET.
 
 Install the benchmark dependencies in the isolated benchmark environment:
 
