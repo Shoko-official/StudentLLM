@@ -171,7 +171,7 @@ pub fn smoke_frontend_ipc() -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{open_database, read_snapshot, write_snapshot};
+    use super::{open_database, read_snapshot, write_snapshot, MAX_SNAPSHOT_BYTES};
     use std::fs;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
