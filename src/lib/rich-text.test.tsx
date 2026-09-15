@@ -62,4 +62,11 @@ describe('RichText', () => {
     expect(container.querySelector('table .katex')).not.toBeNull();
     expect(container.textContent).not.toContain('$\\text{ln}');
   });
+
+  it('repairs a truncated Markdown table cell without a trailing row pipe', () => {
+    const { container } = render(<RichText content={'| Function | Primitive |\n| --- | --- |\n| 1/x | $\\text{ln}'} />);
+
+    expect(container.querySelector('table .katex')).not.toBeNull();
+    expect(container.textContent).not.toContain('$\\text{ln}');
+  });
 });
