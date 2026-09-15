@@ -84,6 +84,7 @@ function normalizeMathDelimiters(content: string) {
 }
 
 const bareLatexCommand = /\\(?:alpha|arccos|arcsin|arctan|begin|cdot|end|frac|int|left|lim|nabla|operatorname|partial|pmatrix|right|sqrt|sum|text|times|vec)\b/u;
+const inlineLatexFragment = /\\operatorname\{[^{}\n]+\}\([^()\n]*\)(?:\s*=\s*(?:(?:\\[A-Za-z]+(?:\{[^{}\n]*\})?|[A-Za-zΔ∇][A-Za-z0-9Δ∇]*)(?:\s+(?:\\[A-Za-z]+(?:\{[^{}\n]*\})?|[A-Za-z0-9Δ∇]+))*))?|\\(?:frac|sqrt|text|vec|partial|nabla|times|cdot|int|sum|lim)\{[^{}\n]*\}(?:\{[^{}\n]*\})?/gu;
 
 function wrapBareLatexCell(cell: string) {
   const trimmed = cell.trim();
@@ -96,7 +97,9 @@ function wrapBareLatexCell(cell: string) {
 function wrapBareLatexListItem(line: string) {
   const match = /^(\s*(?:[-*+]|\d+[.)])\s+)(.+?)\s*$/u.exec(line);
   if (!match || match[2].includes('$') || !bareLatexCommand.test(match[2])) return line;
-  return match[1] + '$' + match[2] + '$';
+  const body = match[2];
+  if (body.trimStart().startsWith('\\')) return match[1] + '$' + body + '$';
+  return match[1] + body.replace(inlineLatexFragment, (fragment) => `$${fragment}$`);
 }
 
 function normalizeMarkdownLatex(content: string) {
