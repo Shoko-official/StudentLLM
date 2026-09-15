@@ -139,3 +139,9 @@ export function parseVisualEnvelope(content: string, sourceIds: Set<string>): Vi
   }
   return null;
 }
+
+export function isValidVisualBlock(value: unknown, sourceIds: Set<string>): value is VisualBlock {
+  if (!isRecord(value) || typeof value.type !== 'string' || !visualTypes.has(value.type)) return false;
+  const parsed = parseVisualEnvelope(JSON.stringify({ visuals: [value] }), sourceIds);
+  return parsed?.length === 1;
+}

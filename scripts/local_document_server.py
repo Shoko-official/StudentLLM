@@ -12,6 +12,23 @@ from io import BytesIO
 from urllib.parse import urlparse
 from xml.etree import ElementTree
 
+try:
+    from scripts.local_server_security import (
+        MAX_DOCUMENT_UPLOAD_BYTES,
+        allowed_origin,
+        validate_content_length,
+        validate_local_host,
+        validate_zip_members,
+    )
+except ModuleNotFoundError:  # Running this file directly from the scripts directory.
+    from local_server_security import (
+        MAX_DOCUMENT_UPLOAD_BYTES,
+        allowed_origin,
+        validate_content_length,
+        validate_local_host,
+        validate_zip_members,
+    )
+
 
 class DocumentHandler(BaseHTTPRequestHandler):
     server_version = "StudentLLM-Documents/1.2"
@@ -19,9 +36,14 @@ class DocumentHandler(BaseHTTPRequestHandler):
     def _write_json(self, status: int, payload: dict[str, object]) -> None:
         encoded = json.dumps(payload).encode("utf-8")
         self.send_response(status)
-        self.send_header("Access-Control-Allow-Headers", "content-type")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS, POST")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = allowed_origin(self.headers.get("Origin"))
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Headers", "content-type")
+            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS, POST")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(encoded)))
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.end_headers()
@@ -66,8 +88,10 @@ class DocumentHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
-        if length <= 0:
-            self._write_json(400, {"error": "The request body is empty."})
+        try:
+            validate_content_length(length, MAX_DOCUMENT_UPLOAD_BYTES)
+        except ValueError as error:
+            self._write_json(413 if length > MAX_DOCUMENT_UPLOAD_BYTES else 400, {"error": str(error)})
             return
 
         try:
@@ -90,8 +114,8 @@ class DocumentHandler(BaseHTTPRequestHandler):
                 self._write_json(415, {"error": "This document type is not supported by the local extractor."})
                 return
             self._write_json(200, {"model": model, "pages": pages})
-        except Exception as error:
-            self._write_json(422, {"error": f"Document extraction failed: {error}"})
+        except Exception:
+            self._write_json(422, {"error": "Document extraction failed."})
 
     def log_message(self, format: str, *args: object) -> None:
         print(f"{self.address_string()} - {format % args}")
@@ -274,6 +298,7 @@ def extract_plain_document(payload: bytes, content_type: str) -> tuple[str, list
 def extract_docx(payload: bytes) -> tuple[str, list[dict[str, object]]]:
     namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
     with zipfile.ZipFile(BytesIO(payload)) as archive:
+        validate_zip_members(archive.infolist())
         root = ElementTree.fromstring(archive.read("word/document.xml"))
     blocks: list[dict[str, object]] = []
     for child in root.iter(f"{namespace}body"):
@@ -300,6 +325,7 @@ def extract_docx(payload: bytes) -> tuple[str, list[dict[str, object]]]:
 def extract_pptx(payload: bytes) -> tuple[str, list[dict[str, object]]]:
     namespace = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
     with zipfile.ZipFile(BytesIO(payload)) as archive:
+        validate_zip_members(archive.infolist())
         slide_names = sorted(
             (name for name in archive.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", name)),
             key=lambda name: int(re.search(r"slide(\d+)\.xml$", name).group(1)),
@@ -459,6 +485,9 @@ def extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
     import fitz
 
     document = fitz.open(stream=pdf_bytes, filetype="pdf")
+    if document.page_count > 500:
+        document.close()
+        raise ValueError("The PDF contains too many pages.")
     pages = []
     used_ocr = False
     try:
@@ -478,8 +507,10 @@ def extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
 
 def main() -> None:
     arguments = parse_args()
-    server = ThreadingHTTPServer((arguments.host, arguments.port), DocumentHandler)
-    print(f"StudentLLM local document extraction listening on http://{arguments.host}:{arguments.port}")
+    host = validate_local_host(arguments.host)
+    server = ThreadingHTTPServer((host, arguments.port), DocumentHandler)
+    server.daemon_threads = True
+    print(f"StudentLLM local document extraction listening on http://{host}:{arguments.port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

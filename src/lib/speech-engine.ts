@@ -1,4 +1,6 @@
 import type { TranscriptSegment } from '../types';
+import { MAX_AUDIO_REQUEST_BYTES, readJsonResponse } from './response-json';
+import { normalizeServiceBaseUrl } from './service-url';
 
 export interface SpeechTranscription {
   segments: TranscriptSegment[];
@@ -36,13 +38,14 @@ export class LocalSpeechEngine implements SpeechEngine {
   private readonly timeoutMs: number;
 
   constructor(options: LocalSpeechEngineOptions) {
-    this.baseUrl = options.baseUrl;
+    this.baseUrl = normalizeServiceBaseUrl(options.baseUrl);
     this.language = options.language;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? 120_000;
   }
 
   async transcribe(audio: Blob): Promise<SpeechTranscription> {
+    if (audio.size > MAX_AUDIO_REQUEST_BYTES) throw new Error('The audio is too large.');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -53,7 +56,7 @@ export class LocalSpeechEngine implements SpeechEngine {
         body: audio,
         signal: controller.signal,
       });
-      const body = await response.json().catch(() => ({}));
+      const body = await readJsonResponse(response, 'speech engine');
       if (!response.ok) {
         const detail = typeof body?.error === 'string' ? body.error : 'The local speech engine rejected the audio.';
         throw new Error(`Local transcription failed (${response.status}): ${detail}`);
@@ -89,8 +92,12 @@ export class LocalSpeechEngine implements SpeechEngine {
 export function createLocalSpeechEngine(env: Record<string, string | undefined> = import.meta.env) {
   const baseUrl = env.VITE_LOCAL_ASR_BASE_URL?.trim();
   if (!baseUrl) return null;
-  return new LocalSpeechEngine({
-    baseUrl,
-    language: env.VITE_LOCAL_ASR_LANGUAGE?.trim() || undefined,
-  });
+  try {
+    return new LocalSpeechEngine({
+      baseUrl,
+      language: env.VITE_LOCAL_ASR_LANGUAGE?.trim() || undefined,
+    });
+  } catch {
+    return null;
+  }
 }

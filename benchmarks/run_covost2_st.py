@@ -67,7 +67,10 @@ def score_comet(
         for source, hypothesis, reference in zip(sources, hypotheses, references, strict=True)
     ]
     if predictor is None:
-        from comet import download_model, load_from_checkpoint
+        try:
+            from comet import download_model, load_from_checkpoint
+        except ImportError as error:
+            raise RuntimeError("The optional COMET scorer is not installed. Use BLEU/chrF or install it in an isolated legacy environment.") from error
 
         checkpoint = download_model(model_name)
         predictor = load_from_checkpoint(checkpoint).predict

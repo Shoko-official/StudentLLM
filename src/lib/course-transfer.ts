@@ -1,8 +1,13 @@
 import type { AudioChunkRecord } from './recording-storage';
 import type { Artifact, ChatMessage, CourseNote, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from '../types';
+import { isValidVisualBlock } from './visual-blocks';
 
 const EXPORT_FORMAT = 'studentllm-course';
 const EXPORT_VERSION = 1;
+export const MAX_COURSE_EXPORT_BYTES = 256 * 1024 * 1024;
+const MAX_COURSE_EXPORT_ASSETS = 512;
+const MAX_COURSE_EXPORT_CHUNKS = 20_000;
+const MAX_COURSE_EXPORT_CHUNK_BASE64_BYTES = 192 * 1024 * 1024;
 
 export interface CourseExportChunk {
   data: string;
@@ -55,6 +60,9 @@ async function encodeBlob(blob: Blob) {
 }
 
 function decodeBlob(data: string, mimeType: string) {
+  if (data.length > MAX_COURSE_EXPORT_CHUNK_BASE64_BYTES || !/^[A-Za-z0-9+/]*={0,2}$/.test(data) || data.length % 4 === 1) {
+    throw new Error('The course export contains an invalid asset chunk.');
+  }
   const binary = atob(data);
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
   return new Blob([bytes], { type: mimeType });
@@ -144,16 +152,17 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (value.citationTargets === undefined || (Array.isArray(value.citationTargets) && value.citationTargets.every(isString)));
 }
 
-function isArtifact(value: unknown): value is Artifact {
+function isArtifact(value: unknown, sourceIds = new Set<string>()): value is Artifact {
   if (!isRecord(value)) return false;
   return isString(value.id) && isString(value.kind) && ['summary', 'guide', 'quiz', 'flashcards', 'mindmap', 'glossary'].includes(value.kind)
     && isString(value.label) && isString(value.createdAt)
     && (value.content === undefined || isString(value.content))
+    && (value.visuals === undefined || (Array.isArray(value.visuals) && value.visuals.length <= 32 && value.visuals.every((visual) => isValidVisualBlock(visual, sourceIds))))
     && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every(isString)))
     && (value.citationTargets === undefined || (Array.isArray(value.citationTargets) && value.citationTargets.every(isString)));
 }
 
-function isCourseNoteBlock(value: unknown): value is CourseNoteBlock {
+function isCourseNoteBlock(value: unknown, sourceIds = new Set<string>()): value is CourseNoteBlock {
   if (!isRecord(value) || !isString(value.id) || !isString(value.type)) return false;
   if (value.type === 'heading') return (value.level === 1 || value.level === 2) && isString(value.text);
   if (value.type === 'markdown') return isString(value.markdown)
@@ -170,32 +179,37 @@ function isCourseNoteBlock(value: unknown): value is CourseNoteBlock {
     && value.values.every((item) => isRecord(item) && isString(item.label) && typeof item.value === 'number' && Number.isFinite(item.value));
   if (value.type === 'schema') return Array.isArray(value.nodes) && value.nodes.every(isString)
     && Array.isArray(value.edges) && value.edges.every((edge) => isRecord(edge) && isString(edge.from) && isString(edge.to));
+  if (value.type === 'visual') return isValidVisualBlock(value.visual, sourceIds)
+    && (value.sourceId === undefined || value.sourceId === value.visual.sourceId);
   return false;
 }
 
-function isCourseNote(value: unknown): value is CourseNote {
+function isCourseNote(value: unknown, sourceIds = new Set<string>()): value is CourseNote {
   if (!isRecord(value)) return false;
   return isString(value.id) && isString(value.title) && isString(value.subject) && isString(value.chapter)
     && Array.isArray(value.folderPath) && value.folderPath.every(isString) && isString(value.fileName) && isString(value.updatedAt)
     && isRecord(value.detection)
     && ['active course', 'transcript signals', 'LM Studio'].includes(String(value.detection.method))
     && typeof value.detection.confidence === 'number' && isString(value.detection.basis)
-    && Array.isArray(value.blocks) && value.blocks.every(isCourseNoteBlock);
+    && Array.isArray(value.blocks) && value.blocks.every((block) => isCourseNoteBlock(block, sourceIds));
 }
 
 function isWorkspace(value: unknown): value is LessonWorkspace {
   if (!isRecord(value)) return false;
+  const sourceIds = new Set(Array.isArray(value.resources) ? value.resources.filter(isResource).map((resource) => resource.id) : []);
   return Array.isArray(value.resources) && value.resources.every(isResource)
     && Array.isArray(value.transcript) && value.transcript.every(isTranscriptSegment)
     && Array.isArray(value.chat) && value.chat.every(isChatMessage)
-    && Array.isArray(value.artifacts) && value.artifacts.every(isArtifact)
-    && (value.courseNote === undefined || isCourseNote(value.courseNote));
+    && Array.isArray(value.artifacts) && value.artifacts.every((artifact) => isArtifact(artifact, sourceIds))
+    && (value.courseNote === undefined || isCourseNote(value.courseNote, sourceIds));
 }
 
 function isExportAsset(value: unknown): value is CourseExportAsset {
   if (!isRecord(value) || !isString(value.resourceId) || (value.storage !== 'source' && value.storage !== 'audio') || !isString(value.mimeType)) return false;
-  return Array.isArray(value.chunks) && value.chunks.length > 0 && value.chunks.every((chunk) => (
-    isRecord(chunk) && isString(chunk.data) && typeof chunk.recordedAt === 'number' && Number.isFinite(chunk.recordedAt)
+  return Array.isArray(value.chunks) && value.chunks.length > 0 && value.chunks.length <= MAX_COURSE_EXPORT_CHUNKS && value.chunks.every((chunk) => (
+    isRecord(chunk) && isString(chunk.data) && chunk.data.length <= MAX_COURSE_EXPORT_CHUNK_BASE64_BYTES
+      && /^[A-Za-z0-9+/]*={0,2}$/.test(chunk.data) && chunk.data.length % 4 !== 1
+      && typeof chunk.recordedAt === 'number' && Number.isFinite(chunk.recordedAt)
   ));
 }
 
@@ -207,10 +221,13 @@ function parsePayload(value: unknown): value is CourseExportPayload {
     && isLesson(value.lesson)
     && isWorkspace(value.workspace)
     && Array.isArray(value.assets)
+    && value.assets.length <= MAX_COURSE_EXPORT_ASSETS
     && value.assets.every(isExportAsset);
 }
 
 export async function readCourseExport(input: Blob | string, idFactory: CourseIdFactory = createId): Promise<ImportedCourse> {
+  if (typeof input !== 'string' && input.size > MAX_COURSE_EXPORT_BYTES) throw new Error('The course export is too large.');
+  if (typeof input === 'string' && input.length > MAX_COURSE_EXPORT_BYTES) throw new Error('The course export is too large.');
   let parsed: unknown;
   try {
     parsed = JSON.parse(typeof input === 'string' ? input : await input.text());

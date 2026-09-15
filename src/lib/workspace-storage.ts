@@ -2,9 +2,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { Artifact, ChatMessage, CourseNote, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from '../types';
 import { migrateLegacyDemoWorkspace } from './workspace-migration';
 import { RECORDING_RECOVERY_STORAGE_KEY } from './recording-recovery';
+import { isValidVisualBlock } from './visual-blocks';
 
 export const WORKSPACE_STORAGE_KEY = 'studentllm.workspace.v1';
 export const WORKSPACE_MIGRATION_BACKUP_KEY = 'studentllm.workspace.v1.legacy-demo-backup';
+export const MAX_WORKSPACE_SNAPSHOT_BYTES = 16 * 1024 * 1024;
 
 export interface WorkspaceSnapshot {
   activeLessonId: string;
@@ -77,7 +79,7 @@ function isResource(value: unknown): value is Resource {
     && (value.lastModified === undefined || typeof value.lastModified === 'number');
 }
 
-function isArtifact(value: unknown): value is Artifact {
+function isArtifact(value: unknown, sourceIds = new Set<string>()): value is Artifact {
   if (!isRecord(value)) return false;
   return typeof value.id === 'string'
     && (value.kind === 'summary'
@@ -89,11 +91,12 @@ function isArtifact(value: unknown): value is Artifact {
     && typeof value.label === 'string'
     && typeof value.createdAt === 'string'
     && (value.content === undefined || typeof value.content === 'string')
+    && (value.visuals === undefined || (Array.isArray(value.visuals) && value.visuals.length <= 32 && value.visuals.every((visual) => isValidVisualBlock(visual, sourceIds))))
     && (value.citations === undefined || (Array.isArray(value.citations) && value.citations.every((citation) => typeof citation === 'string')))
     && (value.citationTargets === undefined || (Array.isArray(value.citationTargets) && value.citationTargets.every((target) => typeof target === 'string')));
 }
 
-function isCourseNoteBlock(value: unknown): value is CourseNoteBlock {
+function isCourseNoteBlock(value: unknown, sourceIds = new Set<string>()): value is CourseNoteBlock {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.type !== 'string') return false;
   if (value.type === 'heading') return (value.level === 1 || value.level === 2) && typeof value.text === 'string';
   if (value.type === 'markdown') return typeof value.markdown === 'string'
@@ -115,10 +118,12 @@ function isCourseNoteBlock(value: unknown): value is CourseNoteBlock {
     && value.values.every((item) => isRecord(item) && typeof item.label === 'string' && typeof item.value === 'number' && Number.isFinite(item.value));
   if (value.type === 'schema') return Array.isArray(value.nodes) && value.nodes.every((node) => typeof node === 'string')
     && Array.isArray(value.edges) && value.edges.every((edge) => isRecord(edge) && typeof edge.from === 'string' && typeof edge.to === 'string');
+  if (value.type === 'visual') return isValidVisualBlock(value.visual, sourceIds)
+    && (value.sourceId === undefined || value.sourceId === value.visual.sourceId);
   return false;
 }
 
-function isCourseNote(value: unknown): value is CourseNote {
+function isCourseNote(value: unknown, sourceIds = new Set<string>()): value is CourseNote {
   if (!isRecord(value)) return false;
   return typeof value.id === 'string'
     && typeof value.title === 'string'
@@ -132,7 +137,7 @@ function isCourseNote(value: unknown): value is CourseNote {
     && (value.detection.method === 'active course' || value.detection.method === 'transcript signals' || value.detection.method === 'LM Studio')
     && typeof value.detection.confidence === 'number'
     && typeof value.detection.basis === 'string'
-    && Array.isArray(value.blocks) && value.blocks.every(isCourseNoteBlock);
+    && Array.isArray(value.blocks) && value.blocks.length <= 10_000 && value.blocks.every((block) => isCourseNoteBlock(block, sourceIds));
 }
 
 function isChatMessage(value: unknown): value is ChatMessage {
@@ -147,13 +152,15 @@ function isChatMessage(value: unknown): value is ChatMessage {
 function parseLessonWorkspace(value: unknown): LessonWorkspace | undefined {
   if (!isRecord(value)) return undefined;
   const { courseNote, ...fields } = value;
+  const resources = Array.isArray(value.resources) ? value.resources.filter(isResource) : [];
+  const sourceIds = new Set(resources.map((resource) => resource.id));
   return {
     ...fields,
-    resources: Array.isArray(value.resources) ? value.resources.filter(isResource) : [],
+    resources,
     transcript: Array.isArray(value.transcript) ? value.transcript.filter(isTranscriptSegment) : [],
     chat: Array.isArray(value.chat) ? value.chat.filter(isChatMessage) : [],
-    artifacts: Array.isArray(value.artifacts) ? value.artifacts.filter(isArtifact) : [],
-    ...(isCourseNote(courseNote) ? { courseNote } : {}),
+    artifacts: Array.isArray(value.artifacts) ? value.artifacts.filter((artifact) => isArtifact(artifact, sourceIds)) : [],
+    ...(isCourseNote(courseNote, sourceIds) ? { courseNote } : {}),
   };
 }
 
@@ -188,7 +195,7 @@ function invokeNative<T>(command: string, args?: Record<string, unknown>) {
 }
 
 function parseWorkspaceRaw(raw: string | null, fallback: WorkspaceSnapshot): WorkspaceSnapshot {
-  if (!raw) return fallback;
+  if (!raw || raw.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return fallback;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.lessons)) return fallback;
@@ -202,7 +209,8 @@ function parseWorkspaceRaw(raw: string | null, fallback: WorkspaceSnapshot): Wor
     const resources = Array.isArray(parsed.resources) ? parsed.resources.filter(isResource) : [];
     const transcript = Array.isArray(parsed.transcript) ? parsed.transcript.filter(isTranscriptSegment) : [];
     const chat = Array.isArray(parsed.chat) ? parsed.chat.filter(isChatMessage) : [];
-    const artifacts = Array.isArray(parsed.artifacts) ? parsed.artifacts.filter(isArtifact) : [];
+    const sourceIds = new Set(resources.map((resource) => resource.id));
+    const artifacts = Array.isArray(parsed.artifacts) ? parsed.artifacts.filter((artifact) => isArtifact(artifact, sourceIds)) : [];
     const lessonWorkspaces = parseLessonWorkspaces(parsed.lessonWorkspaces, lessons);
 
     return { activeLessonId, lessons, resources, transcript, chat, artifacts, ...(lessonWorkspaces ? { lessonWorkspaces } : {}) };
@@ -286,7 +294,9 @@ export function saveWorkspace(snapshot: WorkspaceSnapshot, storage: Storage | un
   if (!storage) return false;
 
   try {
-    storage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify({ version: 1, ...snapshot }));
+    const serialized = JSON.stringify({ version: 1, ...snapshot });
+    if (serialized.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return false;
+    storage.setItem(WORKSPACE_STORAGE_KEY, serialized);
     return true;
   } catch {
     return false;

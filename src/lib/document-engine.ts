@@ -1,4 +1,6 @@
 import { normalizeExtractedDocumentText } from './document-text';
+import { MAX_DOCUMENT_REQUEST_BYTES, readJsonResponse } from './response-json';
+import { normalizeServiceBaseUrl } from './service-url';
 
 export interface DocumentBlock {
   x: number;
@@ -48,12 +50,13 @@ export class LocalDocumentEngine implements DocumentEngine {
   private readonly timeoutMs: number;
 
   constructor(options: LocalDocumentEngineOptions) {
-    this.baseUrl = options.baseUrl;
+    this.baseUrl = normalizeServiceBaseUrl(options.baseUrl);
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? 60_000;
   }
 
   async extract(document: Blob): Promise<DocumentExtraction> {
+    if (document.size > MAX_DOCUMENT_REQUEST_BYTES) throw new Error('The document is too large.');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
@@ -63,7 +66,7 @@ export class LocalDocumentEngine implements DocumentEngine {
         body: document,
         signal: controller.signal,
       });
-      const body = await response.json().catch(() => ({}));
+      const body = await readJsonResponse(response, 'document engine');
       if (!response.ok) {
         const detail = typeof body?.error === 'string' ? body.error : 'The local document engine rejected the file.';
         throw new Error(`Local document extraction failed (${response.status}): ${detail}`);
@@ -76,11 +79,15 @@ export class LocalDocumentEngine implements DocumentEngine {
           if (!block || typeof block !== 'object') return [];
           const item = block as Record<string, unknown>;
           if (![item.x, item.y, item.width, item.height].every((coordinate) => typeof coordinate === 'number' && Number.isFinite(coordinate)) || typeof item.text !== 'string') return [];
+          const x = item.x as number;
+          const y = item.y as number;
+          const width = item.width as number;
+          const height = item.height as number;
           return [{
-            x: item.x,
-            y: item.y,
-            width: item.width,
-            height: item.height,
+            x,
+            y,
+            width,
+            height,
             text: item.text,
             ...(typeof item.kind === 'string' && ['text', 'heading', 'paragraph', 'list', 'code', 'formula', 'table', 'diagram', 'image'].includes(item.kind) ? { kind: item.kind as DocumentBlock['kind'] } : {}),
             ...(Array.isArray(item.rows) && item.rows.every((row) => Array.isArray(row) && row.every((cell) => typeof cell === 'string')) ? { rows: item.rows as string[][] } : {}),
