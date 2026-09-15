@@ -95,8 +95,30 @@ test.describe('StudentLLM workspace', () => {
       if (localStorage.getItem('studentllm.workspace.v1') === null) {
         localStorage.setItem('studentllm.workspace.v1', JSON.stringify(workspace));
       }
+      if (localStorage.getItem('studentllm.recording-notice.v1') === null) {
+        localStorage.setItem('studentllm.recording-notice.v1', JSON.stringify({ version: 1, acknowledgedAt: new Date().toISOString() }));
+      }
     }, createFixtureWorkspace());
   });
+
+  test('requires a recording responsibility acknowledgement before microphone access', async ({ page }) => {
+    await installRecorderFixture(page);
+    await page.addInitScript(() => localStorage.removeItem('studentllm.recording-notice.v1'));
+    await page.goto('/');
+
+    await page.getByRole('button', { name: 'Start recording' }).click();
+    const notice = page.getByRole('dialog', { name: 'Before you record' });
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText('Do not record private or confidential speech without consent.');
+    await expect(notice.getByRole('button', { name: 'I understand and agree' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Stop recording' })).toHaveCount(0);
+
+    await notice.getByRole('checkbox', { name: /I will only record lawfully/ }).check();
+    await notice.getByRole('button', { name: 'I understand and agree' }).click();
+    await expect(page.getByRole('button', { name: 'Stop recording' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('studentllm.recording-notice.v1')!).version)).toBe(1);
+  });
+
   test('serves the application icon without a browser error', async ({ page }) => {
     const response = await page.request.get('/favicon.svg');
 

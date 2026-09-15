@@ -198,6 +198,15 @@ svg { flex-shrink: 0; }
 .modal form { display: grid; gap: 18px; }
 .modal label { display: grid; gap: 7px; font-size: 14px; }
 .modal input, .modal select { width: 100%; min-width: 0; min-height: 42px; padding: 10px; border: 1px solid var(--field-border); border-radius: 4px; color: var(--text); background: var(--field-surface); font-size: 16px; }
+.recording-notice-modal { width: min(100%, 580px); }
+.recording-notice-copy { display: grid; gap: 12px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.recording-notice-copy p { margin: 0; }
+.recording-notice-copy strong { color: var(--text); }
+.recording-notice-links { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+.recording-notice-links a { color: var(--text); text-underline-offset: 3px; }
+.consent-checkbox { display: flex !important; grid-template-columns: none !important; align-items: flex-start; gap: 10px !important; margin-top: 22px; padding: 12px; border: 1px solid var(--line); background: var(--surface-2); line-height: 1.5; }
+.consent-checkbox input { width: 18px; min-height: 18px; height: 18px; margin-top: 2px; flex: 0 0 auto; accent-color: var(--accent); }
+.consent-checkbox span { color: var(--text); }
 .modal-footer { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 .danger-submit { background: var(--danger); color: #fff; padding: 10px 14px; min-height: 42px; border-radius: 4px; font-size: 14px; }
 .modal-search { display: flex !important; align-items: center; gap: 8px; margin-top: 24px; }

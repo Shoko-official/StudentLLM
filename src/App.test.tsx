@@ -24,6 +24,7 @@ async function openCourseActions(user: User) {
 
 const openSources = (user: User) => user.click(screen.getByRole('tab', { name: /^Sources/ }));
 const savedWorkspace = () => JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY)!);
+const RECORDING_NOTICE_STORAGE_KEY = 'studentllm.recording-notice.v1';
 
 function bookmarkRecorder() {
   return {
@@ -40,6 +41,7 @@ describe('StudentLLM workspace', () => {
     vi.stubEnv('VITE_LM_STUDIO_AUTO_CONNECT', 'false');
     localStorage.clear();
     localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(createFixtureWorkspace()));
+    localStorage.setItem(RECORDING_NOTICE_STORAGE_KEY, JSON.stringify({ version: 1, acknowledgedAt: new Date().toISOString() }));
   });
   afterEach(() => {
     delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
@@ -446,6 +448,27 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText(/Bookmark added at/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Stop recording' }));
     expect(session.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires one recording responsibility acknowledgement before microphone access', async () => {
+    const user = userEvent.setup();
+    const session = bookmarkRecorder();
+    localStorage.removeItem(RECORDING_NOTICE_STORAGE_KEY);
+    render(<App recorderSessionFactory={async () => session} />);
+
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+
+    expect(screen.getByText('Before you record')).toBeInTheDocument();
+    expect(screen.getByText(/Do not record private or confidential speech without consent/)).toBeInTheDocument();
+    expect(session.readChunks).not.toHaveBeenCalled();
+    expect(session.stop).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('checkbox', { name: /I will only record lawfully/ }));
+    await user.click(screen.getByRole('button', { name: 'I understand and agree' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Before you record' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Stop recording' })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(RECORDING_NOTICE_STORAGE_KEY)!)).toMatchObject({ version: 1 });
   });
 
   it('toggles a transcript segment between review and verified', async () => {
