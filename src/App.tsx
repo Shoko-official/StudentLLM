@@ -34,6 +34,8 @@ import type { SpeechEngine } from './lib/speech-engine';
 import { createLocalDocumentEngine } from './lib/document-engine';
 import type { DocumentPage } from './lib/document-engine';
 import type { DocumentEngine } from './lib/document-engine';
+import { readJsonResponse } from './lib/response-json';
+import { normalizeServiceBaseUrl } from './lib/service-url';
 import { probeSidecar, SidecarHealth } from './lib/sidecar-health';
 import { getManagedSidecarStatus, ManagedSidecarStatus, startManagedSidecars, stopManagedSidecars } from './lib/sidecar-supervisor';
 import { createSourceResource } from './lib/source-ingest';
@@ -928,9 +930,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     setManagedSidecars(managed);
     try {
       if (!settings.llmUrl) throw new Error('Set an LM Studio address.');
-      const response = await fetch(`${settings.llmUrl.replace(/\/$/, '')}/models`, { signal: AbortSignal.timeout(3000) });
+      const response = await fetch(`${normalizeServiceBaseUrl(settings.llmUrl)}/models`, { signal: AbortSignal.timeout(3000) });
       if (!response.ok) throw new Error('LM Studio is not responding.');
-      const body = await response.json();
+      const body = await readJsonResponse(response, 'LM Studio');
       const models = Array.isArray(body.data)
         ? body.data.map((model: { id?: unknown }) => typeof model?.id === 'string' ? model.id.trim() : '').filter(Boolean)
         : [];
@@ -1631,8 +1633,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           setShowSettingsPanel(true);
         }
       }
-    } catch {
-      setActionError('The file could not be stored. Please try importing it again.');
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'The file could not be stored. Please try importing it again.');
     }
   };
 

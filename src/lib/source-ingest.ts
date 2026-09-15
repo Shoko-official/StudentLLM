@@ -17,6 +17,21 @@ function sourceKind(file: SourceFileLike): ResourceKind {
   return 'document';
 }
 
+export const MAX_SOURCE_BYTES: Record<ResourceKind, number> = {
+  audio: 250 * 1024 * 1024,
+  image: 50 * 1024 * 1024,
+  document: 100 * 1024 * 1024,
+  transcript: 10 * 1024 * 1024,
+};
+
+export function validateSourceFile(file: SourceFileLike, kind = sourceKind(file)) {
+  if (!Number.isFinite(file.size) || file.size < 0) throw new Error('The file size is invalid.');
+  const limit = MAX_SOURCE_BYTES[kind];
+  if (file.size > limit) {
+    throw new Error(`The file exceeds the ${Math.round(limit / (1024 * 1024))} MB ${kind} limit.`);
+  }
+}
+
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -33,6 +48,7 @@ async function sha256(file: SourceFileLike, digest: DigestFunction = crypto.subt
 
 export async function createSourceResource(file: SourceFileLike, digest?: DigestFunction): Promise<Resource> {
   const kind = sourceKind(file);
+  validateSourceFile(file, kind);
   const hash = await sha256(file, digest);
   const typeLabel = kind === 'audio' ? 'Audio' : kind === 'image' ? 'Image' : kind === 'transcript' ? 'Text' : 'Document';
   return {

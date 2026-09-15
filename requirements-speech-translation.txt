@@ -1,2 +1,4 @@
-unbabel-comet==2.2.7
-transformers==4.44.2
+# Keep the supported speech-translation runtime on the current secure major.
+# The legacy COMET scorer has an incompatible transformers<5 constraint and is
+# intentionally not part of the default environment.
+transformers>=5.10,<6

@@ -10,7 +10,12 @@ export interface SidecarHealthOptions {
 }
 
 export async function probeSidecar(baseUrl: string | undefined, options: SidecarHealthOptions = {}): Promise<SidecarHealth> {
-  const normalizedUrl = baseUrl?.trim().replace(/\/$/, '');
+  let normalizedUrl: string | undefined;
+  try {
+    normalizedUrl = baseUrl ? normalizeServiceBaseUrl(baseUrl) : undefined;
+  } catch {
+    return { available: false, detail: 'The service URL is invalid.' };
+  }
   if (!normalizedUrl) return { available: false, detail: 'Not configured.' };
 
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
@@ -18,7 +23,7 @@ export async function probeSidecar(baseUrl: string | undefined, options: Sidecar
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 2_500);
   try {
     const response = await fetchImpl(`${normalizedUrl}/health`, { signal: controller.signal });
-    const body = await response.json().catch(() => ({}));
+    const body = await readJsonResponse(response, 'sidecar');
     if (!response.ok) {
       const detail = typeof body?.error === 'string' ? body.error : `Health endpoint returned HTTP ${response.status}.`;
       return { available: false, detail };
@@ -35,3 +40,5 @@ export async function probeSidecar(baseUrl: string | undefined, options: Sidecar
     clearTimeout(timer);
   }
 }
+import { readJsonResponse } from './response-json';
+import { normalizeServiceBaseUrl } from './service-url';
