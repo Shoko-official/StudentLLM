@@ -119,13 +119,27 @@ function normalizeMarkdownLatex(content: string) {
 
 function repairUnclosedInlineLatex(content: string) {
   return content.split('\n').map((line) => {
-    if ((line.match(/\$/g) ?? []).length % 2 === 0) return line;
-    const delimiterIndex = line.indexOf('$');
-    const candidate = line.slice(delimiterIndex + 1).trimStart();
-    if (!/^\\[A-Za-z]+/u.test(candidate)) return line;
-    const nextPipe = line.indexOf('|', delimiterIndex + 1);
-    const insertionIndex = nextPipe === -1 ? line.length : nextPipe;
-    return `${line.slice(0, insertionIndex)}$${line.slice(insertionIndex)}`;
+    let repaired = '';
+    let cursor = 0;
+    while (cursor < line.length) {
+      const delimiterIndex = line.indexOf('$', cursor);
+      if (delimiterIndex === -1) {
+        repaired += line.slice(cursor);
+        break;
+      }
+      repaired += line.slice(cursor, delimiterIndex + 1);
+      const candidate = line.slice(delimiterIndex + 1).trimStart();
+      const nextDelimiter = line.indexOf('$', delimiterIndex + 1);
+      const nextPipe = line.indexOf('|', delimiterIndex + 1);
+      const boundary = nextPipe === -1 ? line.length : nextPipe;
+      if (/^\\[A-Za-z]+/u.test(candidate) && (nextDelimiter === -1 || nextDelimiter > boundary)) {
+        repaired += line.slice(delimiterIndex + 1, boundary) + '$';
+        cursor = boundary;
+      } else {
+        cursor = delimiterIndex + 1;
+      }
+    }
+    return repaired;
   }).join('\n');
 }
 
