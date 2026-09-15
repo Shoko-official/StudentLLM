@@ -55,4 +55,11 @@ describe('RichText', () => {
     expect(container.querySelector('li .katex')).not.toBeNull();
     expect(container.querySelector('li')?.firstChild?.textContent).toBe('Connect operators: (');
   });
+
+  it('repairs an unclosed inline LaTeX delimiter in a Markdown table cell', () => {
+    const { container } = render(<RichText content={'| Function | Primitive |\n| --- | --- |\n| 1/x | $\\text{ln} |'} />);
+
+    expect(container.querySelector('table .katex')).not.toBeNull();
+    expect(container.textContent).not.toContain('$\\text{ln}');
+  });
 });
