@@ -123,6 +123,8 @@ const emptyLessonWorkspace: LessonWorkspace = {
 
 const sourceAccept = 'audio/*,image/*,.pdf,.txt,.md,.html,.htm,.rtf,.docx,.pptx';
 const PREFERENCES_STORAGE_KEY = 'studentllm.preferences.v1';
+const RECORDING_NOTICE_STORAGE_KEY = 'studentllm.recording-notice.v1';
+const RECORDING_NOTICE_VERSION = 1;
 const SERVICES_STORAGE_KEY = 'studentllm.services.v1';
 type ServiceSettings = { llmUrl: string; model: string; asrUrl: string; documentsUrl: string };
 function loadServiceSettings(): ServiceSettings {
@@ -150,6 +152,28 @@ function loadPreference(name: 'compactTranscript' | 'showVerifiedTranscript' | '
     return typeof preferences[name] === 'boolean' ? preferences[name] : fallback;
   } catch {
     return fallback;
+  }
+}
+
+function hasAcknowledgedRecordingNotice() {
+  try {
+    const raw = window.localStorage.getItem(RECORDING_NOTICE_STORAGE_KEY);
+    if (!raw) return false;
+    const value = JSON.parse(raw) as { version?: unknown };
+    return value.version === RECORDING_NOTICE_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+function saveRecordingNoticeAcknowledgement() {
+  try {
+    window.localStorage.setItem(RECORDING_NOTICE_STORAGE_KEY, JSON.stringify({
+      version: RECORDING_NOTICE_VERSION,
+      acknowledgedAt: new Date().toISOString(),
+    }));
+  } catch {
+    // The acknowledgement remains valid for the current session if storage is unavailable.
   }
 }
 
@@ -268,6 +292,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [showReviewPanel, setShowReviewPanel] = useState(false);
   const [showTranscriptPanel, setShowTranscriptPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  const [showRecordingNotice, setShowRecordingNotice] = useState(false);
+  const [recordingNoticeChecked, setRecordingNoticeChecked] = useState(false);
+  const [recordingNoticeAcknowledged, setRecordingNoticeAcknowledged] = useState(hasAcknowledgedRecordingNotice);
   const [showQuickStart, setShowQuickStart] = useState(false);
   const [showEditCourse, setShowEditCourse] = useState(false);
   const [courseEditDraft, setCourseEditDraft] = useState({ title: '', subject: '', chapter: '', sublesson: '' });
@@ -1100,6 +1127,40 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     notify('This citation source is no longer available.');
   };
 
+  const startRecording = async () => {
+    startingRecorderRef.current = true;
+    setIsStartingRecording(true);
+    try {
+      const session = await recorderSessionFactory();
+      if (!session.stream) throw new Error('Microphone recording is unavailable in this browser.');
+      if (session.stream && session.durability === 'durable') {
+        const recoverySaved = savePendingRecording({
+          recordingId: session.recordingId,
+          lessonId: activeLesson.id,
+          lessonTitle: activeLesson.title,
+          startedAt: Date.now(),
+        });
+        if (!recoverySaved) {
+          await session.stop().catch(() => undefined);
+          const message = 'Recording was not started because interrupted-session recovery is unavailable.';
+          setRecordingError(message);
+          notify(message);
+          return;
+        }
+      }
+      recorderRef.current = session;
+      setLiveRecordingLessonId(activeLesson.id);
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      notify('Recording started.');
+    } catch (error) {
+      setRecordingError(error instanceof Error ? `Cannot start recording: ${error.message}` : 'The microphone is unavailable. Check permission and try again.');
+    } finally {
+      startingRecorderRef.current = false;
+      setIsStartingRecording(false);
+    }
+  };
+
   const toggleRecording = async () => {
     if (!hasCourse || startingRecorderRef.current) return;
     setRecordingError('');
@@ -1226,37 +1287,20 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       return;
     }
 
-    startingRecorderRef.current = true;
-    setIsStartingRecording(true);
-    try {
-      const session = await recorderSessionFactory();
-      if (!session.stream) throw new Error('Microphone recording is unavailable in this browser.');
-      if (session.stream && session.durability === 'durable') {
-        const recoverySaved = savePendingRecording({
-          recordingId: session.recordingId,
-          lessonId: activeLesson.id,
-          lessonTitle: activeLesson.title,
-          startedAt: Date.now(),
-        });
-        if (!recoverySaved) {
-          await session.stop().catch(() => undefined);
-          const message = 'Recording was not started because interrupted-session recovery is unavailable.';
-          setRecordingError(message);
-          notify(message);
-          return;
-        }
-      }
-      recorderRef.current = session;
-      setLiveRecordingLessonId(activeLesson.id);
-      setIsRecording(true);
-      setRecordingSeconds(0);
-      notify('Recording started.');
-    } catch (error) {
-      setRecordingError(error instanceof Error ? `Cannot start recording: ${error.message}` : 'The microphone is unavailable. Check permission and try again.');
-    } finally {
-      startingRecorderRef.current = false;
-      setIsStartingRecording(false);
+    if (!recordingNoticeAcknowledged) {
+      setRecordingNoticeChecked(false);
+      setShowRecordingNotice(true);
+      return;
     }
+    await startRecording();
+  };
+
+  const acceptRecordingNotice = () => {
+    if (!recordingNoticeChecked) return;
+    saveRecordingNoticeAcknowledgement();
+    setRecordingNoticeAcknowledged(true);
+    setShowRecordingNotice(false);
+    void startRecording();
   };
 
   const addBookmark = () => {
@@ -2170,6 +2214,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       </div>
 
       {resourcePreview && <div className="modal-backdrop" role="presentation" onMouseDown={() => setResourcePreview(null)}><section className="modal resource-preview-modal" role="dialog" aria-modal="true" aria-labelledby="resource-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Original source</span><h2 id="resource-preview-title">{resourcePreview.resource.name}</h2></div><button className="icon-button" aria-label="Close source preview" onClick={() => setResourcePreview(null)}><X size={17} /></button></div><p className="modal-description">{resourcePreview.resource.meta}{resourcePreview.resource.sha256 ? ` · SHA-256 ${resourcePreview.resource.sha256.slice(0, 12)}…` : ''}</p>{resourcePreview.state === 'loading' && <p className="empty-state">Opening the locally stored source…</p>}{resourcePreview.state === 'missing' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'error' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'ready' && resourcePreview.text !== undefined && <div className="source-text-preview"><pre>{resourcePreview.text}</pre>{resourcePreview.truncated && <small>Preview truncated to 12,000 characters. The original source remains unchanged.</small>}</div>}{resourcePreview.state === 'ready' && resourcePreview.blob && isPdfResource(resourcePreview.resource) && <Suspense fallback={<p className="source-preview-loading">Loading PDF renderer…</p>}><PdfPreview blob={resourcePreview.blob} initialPage={resourcePreview.page} /></Suspense>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'image' && <img className="source-image-preview" src={resourcePreview.blobUrl} alt={`Preview of ${resourcePreview.resource.name}`} />}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'audio' && <audio className="source-audio-preview" controls src={resourcePreview.blobUrl}>Your browser cannot play this audio source.</audio>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'document' && !isPdfResource(resourcePreview.resource) && <iframe className="source-document-preview" title={`Preview of ${resourcePreview.resource.name}`} src={resourcePreview.blobUrl} />}</section></div>}
+      {showRecordingNotice && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowRecordingNotice(false)}><section className="modal recording-notice-modal" role="dialog" aria-modal="true" aria-labelledby="recording-notice-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Recording notice</span><h2 id="recording-notice-title">Before you record</h2></div><button className="icon-button" aria-label="Close recording notice" onClick={() => setShowRecordingNotice(false)}><X size={17} /></button></div><p className="modal-description">Only record people who have been clearly informed and have given any consent required by applicable law.</p><div className="recording-notice-copy"><p><strong>Do not record private or confidential speech without consent.</strong></p><p>You are responsible for using this feature lawfully, including informing participants, obtaining consent, respecting their rights, and deleting recordings when required. StudentLLM does not verify consent, and this acknowledgement does not make unlawful recording lawful.</p><p>Audio and transcripts remain in this workspace unless you configure another local or compatible processing service. Review your service settings before recording sensitive material.</p><p className="recording-notice-links"><a href="https://www.legifrance.gouv.fr/loda/article_lc/LEGIARTI000049312755/2024-06-26" target="_blank" rel="noreferrer">French Penal Code, Article 226-1</a><a href="https://www.cnil.fr/fr/les-bases-legales/consentement" target="_blank" rel="noreferrer">CNIL consent guidance</a></p></div><label className="consent-checkbox"><input type="checkbox" checked={recordingNoticeChecked} onChange={(event) => setRecordingNoticeChecked(event.target.checked)} /><span>I will only record lawfully and will inform participants before recording.</span></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowRecordingNotice(false)}>Cancel</button><button type="button" className="primary-submit" disabled={!recordingNoticeChecked} onClick={acceptRecordingNotice}>I understand and agree</button></div></section></div>}
       {showQuickStart && <div className="modal-backdrop" role="presentation" onMouseDown={() => { setShowQuickStart(false); resetQuickStart(); }}><section className="modal quick-start-modal" role="dialog" aria-modal="true" aria-labelledby="quick-start-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">AI course organizer</span><h2 id="quick-start-title">Organize material with AI</h2></div><button className="icon-button" aria-label="Close AI organizer" onClick={() => { setShowQuickStart(false); resetQuickStart(); }}><X size={17} /></button></div><p className="modal-description">Paste a lecture excerpt or course description. AI proposes the hierarchy and destination; review it before saving.</p>{!quickStartProposal ? <form onSubmit={analyzeQuickStartInput}><label>Lecture excerpt or course description<textarea autoFocus rows={8} value={quickStartInput} onChange={(event) => setQuickStartInput(event.target.value)} placeholder="Paste what you are studying, or a few paragraphs from the lecture..." /></label><label>Source name <span className="muted">optional</span><input value={quickStartSourceName} onChange={(event) => setQuickStartSourceName(event.target.value)} placeholder="e.g. week-04-notes" /></label>{!localProvider && <p className="quick-start-note">Connect LM Studio in Settings to analyze and organize this material.</p>}{quickStartError && <p className="action-error" role="alert">{quickStartError}</p>}<div className="modal-footer"><button type="button" className="secondary-action" onClick={() => { setShowQuickStart(false); resetQuickStart(); }}>Cancel</button><button className="primary-submit" type="submit" disabled={!quickStartInput.trim() || isAnalyzingQuickStart}><Sparkles size={15} /> {isAnalyzingQuickStart ? 'Analyzing...' : 'Analyze structure'}</button></div></form> : <div className="quick-start-review"><div className="quick-start-fields"><label>Course group<input value={quickStartProposal.course} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, course: event.target.value } : current)} /></label><label>Subject<input value={quickStartProposal.subject} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, subject: event.target.value } : current)} /></label><label>Lesson<input value={quickStartProposal.lesson} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, lesson: event.target.value } : current)} /></label><label>Title<input value={quickStartProposal.title} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, title: event.target.value } : current)} /></label><label>Sublesson <span className="muted">optional</span><input value={quickStartProposal.sublesson} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, sublesson: event.target.value } : current)} placeholder="No sublesson detected" /></label></div><label>Place this material in<select aria-label="Place this material in" value={quickStartPlacement} onChange={(event) => setQuickStartPlacement(event.target.value)}><option value="new">Create a new course</option>{lessons.map((lesson) => <option key={lesson.id} value={lesson.id}>{lesson.subject} / {lesson.chapter} / {lesson.title}</option>)}</select></label><div className="quick-start-summary"><strong>{Math.round(quickStartProposal.confidence * 100)}% confidence</strong><span>{quickStartProposal.rationale}</span><small>{quickStartPlacement === 'new' ? `Creates ${quickStartProposal.course} / ${quickStartProposal.lesson} / ${quickStartProposal.title}` : 'Adds the source to the selected existing course.'}</small></div>{quickStartError && <p className="action-error" role="alert">{quickStartError}</p>}<div className="modal-footer"><button type="button" className="text-action" onClick={() => { setQuickStartProposal(null); setQuickStartError(''); }}>Edit material</button><button type="button" className="primary-submit" onClick={() => void applyQuickStart()}><Check size={15} /> Apply structure</button></div></div>}</section></div>}
       {showNewCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="new-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">New session</span><h2 id="new-course-title">Start a course</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowNewCourse(false)}><X size={17} /></button></div><p className="modal-description">Give your course a name. You can add recordings and files next.</p><form onSubmit={createCourse}><label>Course title<input autoFocus value={newCourseTitle} onChange={(event) => setNewCourseTitle(event.target.value)} placeholder="e.g. Introduction to probability" /></label><label>Subject<input list="course-subject-suggestions" value={newCourseSubject} onChange={(event) => setNewCourseSubject(event.target.value)} placeholder="e.g. Machine Learning" /></label><datalist id="course-subject-suggestions">{subjectOptions.map((subjectOption) => <option key={subjectOption} value={subjectOption} />)}</datalist><label>Chapter<input value={newCourseChapter} onChange={(event) => setNewCourseChapter(event.target.value)} placeholder="e.g. Transformers" /></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowNewCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!newCourseTitle.trim()}><Mic size={15} /> Create course</button></div></form></section></div>}
       {showEditCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowEditCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Course structure</span><h2 id="edit-course-title">Edit course</h2></div><button className="icon-button" aria-label="Close edit course" onClick={() => setShowEditCourse(false)}><X size={17} /></button></div><p className="modal-description">Update the names used in the course tree and saved note location.</p><div className="edit-course-tools"><button type="button" className="secondary-action" onClick={() => void suggestCourseDetails()} disabled={isSuggestingCourseDetails || !localProvider || !transcript.length && !resources.length}><Sparkles size={15} /> {isSuggestingCourseDetails ? 'Suggesting...' : 'Suggest with AI'}</button><small>{transcript.length || resources.length ? 'Use the saved material to propose a title and hierarchy.' : 'Record or import material first.'}</small></div>{actionError && <p className="action-error" role="alert">{actionError}</p>}<form onSubmit={updateCourse}><label>Course title<input autoFocus value={courseEditDraft.title} onChange={(event) => setCourseEditDraft((current) => ({ ...current, title: event.target.value }))} /></label><label>Subject<input list="course-subject-suggestions" value={courseEditDraft.subject} onChange={(event) => setCourseEditDraft((current) => ({ ...current, subject: event.target.value }))} /></label><label>Chapter<input value={courseEditDraft.chapter} onChange={(event) => setCourseEditDraft((current) => ({ ...current, chapter: event.target.value }))} /></label><label>Sublesson <span className="muted">optional</span><input value={courseEditDraft.sublesson} onChange={(event) => setCourseEditDraft((current) => ({ ...current, sublesson: event.target.value }))} placeholder="No sublesson" /></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowEditCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!courseEditDraft.title.trim()}><Check size={15} /> Save course changes</button></div></form></section></div>}
