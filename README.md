@@ -9,7 +9,7 @@ StudentLLM is a local-first learning studio that turns lectures into searchable,
 StudentLLM is built around three principles:
 
 - Original audio, documents, and images remain recoverable and traceable.
-- PDFs and images can be indexed locally with page-level provenance through the optional PyMuPDF and RapidOCR sidecar.
+- PDFs, images, text, Markdown, HTML, RTF, DOCX, and PPTX can be indexed locally with page or section provenance through the optional document sidecar.
 - Generated answers and study artifacts link back to a source, page, or timestamp.
 - Local processing is the default; remote providers are explicit integrations.
 
@@ -31,7 +31,7 @@ StudentLLM is built around three principles:
 - Course routing keeps notes under `Courses/<subject>/<chapter>/<lesson>/` in the persisted workspace, uses transcript signals as a fallback, and can refine the route through LM Studio JSON classification. After a durable recording is transcribed, the same classifier can move the audio and transcript into an existing course or create a structured new course when confidence is sufficient; uncertain or unavailable classifications stay in the selected course.
 - Course notes can be saved as a clean Markdown document using the detected course filename.
 - Imported audio can use the same local ASR path, with transcript segments linked back to the audio source.
-- Optional local PDF text extraction and RapidOCR for images or scanned PDF pages, with page-level review segments.
+- Optional local PDF text extraction, RapidOCR, Office XML parsing, and typed document blocks for headings, lists, tables, code, and formula-like regions.
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.
 - Original imported source blobs are stored in IndexedDB when available, alongside their fingerprints.
 - Imported text, image, audio, and PDF sources can be opened from the workspace through a local preview.
@@ -47,7 +47,7 @@ StudentLLM is built around three principles:
 - Persistent light/dark workspace themes, compact course navigation, and visually distinct user and assistant chat messages.
 - Text imports appear in course notes immediately. Saved audio can be transcribed or retried from Sources.
 - Study material is saved only after a model returns content; failed requests do not create placeholder artifacts.
-- Local lexical retrieval selects transcript or bounded imported text passages and preserves source-part citations before a live provider request.
+- Local hybrid retrieval selects transcript or bounded imported passages with deterministic lexical ranking and optional OpenAI-compatible embeddings, while preserving source-part citations before a live provider request.
 - Audio-derived transcript citations retain their source filename and timestamp, and removing the audio removes its derived segments.
 - Vitest unit and integration coverage, Playwright browser coverage, axe accessibility checks, and GitHub Actions CI.
 - Tauri v2 desktop shell with a native-window build path, SQLite WAL persistence, crash-recovery coverage, and CI build/test gates.
@@ -117,7 +117,7 @@ src/
   lib/recording-storage.ts   IndexedDB audio chunk storage
   lib/recording-recovery.ts  interrupted-session recovery manifest
   lib/speech-engine.ts       local faster-whisper HTTP adapter
-  lib/document-engine.ts     local PDF and image extraction adapter
+  lib/document-engine.ts     local multi-format document extraction adapter
   lib/source-ingest.ts        local source classification and fingerprinting
   lib/source-storage.ts       IndexedDB source blob storage
   lib/source-chunking.ts      bounded text passages for retrieval
@@ -128,7 +128,7 @@ src/
 scripts/
   provider-smoke.mjs         NVIDIA and LM Studio smoke check
   local_asr_server.py        local faster-whisper transcription sidecar
-  local_document_server.py   local PyMuPDF and RapidOCR document sidecar
+  local_document_server.py   local PDF/OCR/Office/XML document sidecar
   requirements-local-documents.txt  Python sidecar dependencies
 benchmarks/
   run_asr_fleurs.py         full public FLEURS French ASR baseline
@@ -157,8 +157,8 @@ docs/
 
 - Produce self-contained desktop release bundles with isolated ASR and document sidecar runtimes, then add signed release artifacts.
 - Extend the `SpeechEngine` contract to diarization and crash-resumable jobs while preserving the current live partial transcript path.
-- Extend OCR with structured tables, formulas, diagrams, handwriting, and richer page or region provenance.
-- Add hybrid BM25 plus dense retrieval, reranking, and a permissioned citation-first agent loop.
+- Extend OCR with handwriting recognition, richer formula recovery, diagram understanding, and region-level provenance.
+- Add reranking and a citation-first retrieval loop on top of the current hybrid lexical/dense adapter.
 - Expand public benchmark coverage and the versioned LectureBench described in [docs/benchmarks.md](./docs/benchmarks.md).
 
 ## Contributing

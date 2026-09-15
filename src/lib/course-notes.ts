@@ -3,6 +3,7 @@ import type { LLMProvider, ProviderResponseFormat } from './llm-provider';
 import type { DocumentPage } from './document-engine';
 import { normalizeDocumentLine, normalizeExtractedDocumentText } from './document-text';
 import { isExtractedMathSourceLine } from './extracted-math';
+import { parseVisualEnvelope, type VisualBlock } from './visual-blocks';
 
 export const DOCUMENT_NOTE_LAYOUT_VERSION = 'layout-v11';
 
@@ -120,7 +121,30 @@ const documentMarkdownResponseFormat: ProviderResponseFormat = {
     schema: {
       type: 'object',
       additionalProperties: false,
-      properties: { markdown: { type: 'string' } },
+      properties: {
+        markdown: { type: 'string' },
+        visuals: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              type: { type: 'string', enum: ['chart', 'diagram', 'table'] },
+              chartType: { type: 'string', enum: ['bar', 'line', 'pie'] },
+              title: { type: 'string' },
+              sourceId: { type: 'string' },
+              sourcePage: { type: 'integer', minimum: 1 },
+              sourceLabel: { type: 'string' },
+              values: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { label: { type: 'string' }, value: { type: 'number' } }, required: ['label', 'value'] } },
+              nodes: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { id: { type: 'string' }, label: { type: 'string' } }, required: ['id', 'label'] } },
+              edges: { type: 'array', items: { type: 'object', additionalProperties: false, properties: { from: { type: 'string' }, to: { type: 'string' }, label: { type: 'string' } }, required: ['from', 'to'] } },
+              columns: { type: 'array', items: { type: 'string' } },
+              rows: { type: 'array', items: { type: 'array', items: { type: 'string' } } },
+            },
+            required: ['type', 'sourceId'],
+          },
+        },
+      },
       required: ['markdown'],
     },
   },
@@ -343,6 +367,45 @@ export function buildDocumentCourseNote(
         }
         return;
       }
+      const sourceId = `${sourceName}:page-${page.pageNumber}`;
+      if (documentBlock.kind === 'table' && documentBlock.rows && documentBlock.rows.length >= 2) {
+        const [header, ...rows] = documentBlock.rows;
+        if (header.length && rows.every((row) => row.length === header.length)) {
+          blocks.push({
+            id: `document-table-${page.pageNumber}-${index++}`,
+            type: 'visual',
+            visual: {
+              type: 'table',
+              title: lines[0] && lines[0] !== header.join(' | ') ? lines[0] : undefined,
+              sourceId,
+              sourcePage: page.pageNumber,
+              sourceLabel: sourceName,
+              columns: header,
+              rows,
+            },
+            sourceId,
+          });
+          return;
+        }
+      }
+      if (documentBlock.kind === 'list' && lines.length) {
+        blocks.push({
+          id: `document-list-${page.pageNumber}-${index++}`,
+          type: 'markdown',
+          markdown: lines.map((line) => `- ${line.replace(/^[-*•]\s*/, '')}`).join('\n'),
+          sourceName,
+          sourceId,
+        });
+        return;
+      }
+      if (documentBlock.kind === 'heading' && lines.length) {
+        blocks.push({ id: `document-heading-${page.pageNumber}-${index++}`, type: 'heading', level: 2, text: lines.join(' ') });
+        return;
+      }
+      if (documentBlock.kind === 'code' && lines.length) {
+        blocks.push({ id: `document-code-${page.pageNumber}-${index++}`, type: 'code', language: 'text', code: lines.join('\n'), sourceId });
+        return;
+      }
       let lineIndex = 0;
       while (lineIndex < lines.length) {
         const line = lines[lineIndex];
@@ -473,7 +536,7 @@ export async function formatCourseNoteWithProvider(
   }
 }
 
-function parseDocumentMarkdown(content: string) {
+function parseDocumentResult(content: string, sourceIds: Set<string>): { markdown: string; visuals: VisualBlock[] } | null {
   const candidates = [
     content.trim(),
     content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? '',
@@ -483,7 +546,13 @@ function parseDocumentMarkdown(content: string) {
     if (!candidate) continue;
     try {
       const parsed = JSON.parse(candidate) as Record<string, unknown>;
-      if (typeof parsed.markdown === 'string' && parsed.markdown.trim()) return parsed.markdown.trim();
+      if (typeof parsed.markdown === 'string' && parsed.markdown.trim()) {
+        const visuals = parsed.visuals === undefined
+          ? []
+          : parseVisualEnvelope(JSON.stringify({ visuals: parsed.visuals }), sourceIds);
+        if (visuals === null) return null;
+        return { markdown: parsed.markdown.trim(), visuals };
+      }
     } catch {
       // Try the next common provider wrapper.
     }
@@ -503,9 +572,10 @@ export async function formatDocumentCourseNoteWithProvider(
   const evidence = pages
     .slice()
     .sort((left, right) => left.pageNumber - right.pageNumber)
-    .map((page) => `PAGE ${page.pageNumber}\n${page.blocks.length ? page.blocks.slice().sort((left, right) => left.y - right.y || left.x - right.x).map((block) => block.text).join('\n') : page.text}`)
+    .map((page) => `SOURCE ${sourceName}:page-${page.pageNumber} | PAGE ${page.pageNumber}\n${page.blocks.length ? page.blocks.slice().sort((left, right) => left.y - right.y || left.x - right.x).map((block) => block.text).join('\n') : page.text}`)
     .join('\n\n')
     .slice(0, 60_000);
+  const sourceIds = new Set(pages.map((page) => `${sourceName}:page-${page.pageNumber}`));
   try {
     const result = await provider.generate([
       {
@@ -516,6 +586,7 @@ export async function formatDocumentCourseNoteWithProvider(
           'Preserve all meaningful source content and its order. Do not summarize, invent, or correct facts without evidence.',
           'Use clean GitHub-Flavored Markdown: headings, paragraphs, lists, Markdown tables, and fenced code blocks when the source contains code.',
           'Convert mathematical expressions into valid LaTeX using $...$ for inline math and $$...$$ on its own lines for display math.',
+          'Return a visuals array when the source contains a clearly supported chart, table, or diagram. Each visual must cite the exact SOURCE id from the evidence. Use chart for numeric values, table for tabular data, and diagram for explicit node relationships. Never invent coordinates, values, nodes, or edges.',
           'Never use image Markdown, HTML, or colored text. If an equation cannot be reconstructed confidently, keep its extracted source as plain text instead of guessing.',
           `Document source: ${sourceName}`,
           'BEGIN EXTRACTED DOCUMENT',
@@ -525,15 +596,16 @@ export async function formatDocumentCourseNoteWithProvider(
       },
       { role: 'user', content: 'Return the complete, readable Markdown note.' },
     ], { responseFormat: documentMarkdownResponseFormat, maxTokens: 8_192 });
-    const markdown = parseDocumentMarkdown(result.content);
-    if (!markdown) return fallback;
+    const parsed = parseDocumentResult(result.content, sourceIds);
+    if (!parsed) return fallback;
     return {
       ...fallback,
       updatedAt: now(),
       detection: { method: 'LM Studio', confidence: 0.88, basis: `LM Studio reconstructed the document as semantic Markdown with ${result.model}.` },
       blocks: [
         ...fallback.blocks.filter((block) => block.id === 'note-title' || block.id === 'document-source-title' || block.id === 'note-context'),
-        { id: 'document-semantic-markdown', type: 'markdown', markdown, sourceName },
+        { id: 'document-semantic-markdown', type: 'markdown', markdown: parsed.markdown, sourceName },
+        ...parsed.visuals.map((visual, index) => ({ id: `document-visual-${index}`, type: 'visual' as const, visual, sourceId: visual.sourceId })),
       ],
     };
   } catch {
@@ -584,6 +656,11 @@ export function courseNoteMarkdown(note: CourseNote) {
     if (block.type === 'formula-image') return `[Formula from ${block.sourceName}: ${block.alt}]`;
     if (block.type === 'code') return `\`\`\`${block.language}\n${block.code}\n\`\`\``;
     if (block.type === 'schema') return `Schema: ${block.edges.map((edge) => `${edge.from} -> ${edge.to}`).join(', ')}`;
+    if (block.type === 'visual') {
+      if (block.visual.type === 'chart') return `Chart: ${block.visual.title ?? 'Values'}\n${block.visual.values.map((item) => `- ${item.label}: ${item.value}`).join('\n')}`;
+      if (block.visual.type === 'table') return `${block.visual.title ? `${block.visual.title}\n` : ''}| ${block.visual.columns.join(' | ')} |\n| ${block.visual.columns.map(() => '---').join(' | ')} |\n${block.visual.rows.map((row) => `| ${row.join(' | ')} |`).join('\n')}`;
+      return `Diagram: ${block.visual.title ?? 'Relationships'}\n${block.visual.edges.map((edge) => `- ${edge.from} -> ${edge.to}${edge.label ? ` (${edge.label})` : ''}`).join('\n')}`;
+    }
     return `### ${block.label}\n${block.values.map((item) => `- ${item.label}: ${item.value}`).join('\n')}`;
   }).join('\n\n');
 }
