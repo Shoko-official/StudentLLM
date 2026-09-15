@@ -1,4 +1,5 @@
 import type { VisualBlock, VisualChart, VisualDiagram, VisualTable } from './visual-blocks';
+import { RichText } from './rich-text';
 
 function titleFor(visual: VisualBlock) {
   return visual.title || (visual.type === 'chart' ? 'Course chart' : visual.type === 'diagram' ? 'Course diagram' : 'Course table');
@@ -106,8 +107,8 @@ function TableView({ visual }: { visual: VisualTable }) {
   return <figure className="visual-block visual-table">
     <figcaption>{title}</figcaption>
     <table aria-label={title}>
-      <thead><tr>{visual.columns.map((column) => <th key={column} scope="col">{column}</th>)}</tr></thead>
-      <tbody>{visual.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
+      <thead><tr>{visual.columns.map((column) => <th key={column} scope="col"><RichText content={column} /></th>)}</tr></thead>
+      <tbody>{visual.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}><RichText content={cell} /></td>)}</tr>)}</tbody>
     </table>
     <small className="visual-source">Source: {visual.sourceLabel ?? visual.sourceId}{visual.sourcePage ? ` · page ${visual.sourcePage}` : ''}</small>
   </figure>;
