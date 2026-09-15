@@ -130,6 +130,30 @@ Pour f(x), on d\u00e9rive.` },
     expect(note.blocks).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'markdown', markdown: expect.stringContaining('\\frac') })]));
   });
 
+  it('keeps source-linked charts and diagrams beside reconstructed document Markdown', async () => {
+    const note = await formatDocumentCourseNoteWithProvider(lesson, [{
+      pageNumber: 2,
+      text: 'Pipeline: input to output. A: 2. B: 3.',
+      blocks: [{ x: 0, y: 0, width: 400, height: 80, text: 'Pipeline: input to output. A: 2. B: 3.' }],
+    }], 'pipeline.pdf', {
+      generate: async () => ({ model: 'openai/gpt-oss-20b', content: JSON.stringify({
+        markdown: '## Pipeline',
+        visuals: [{
+          type: 'diagram',
+          title: 'Pipeline',
+          sourceId: 'pipeline.pdf:page-2',
+          sourcePage: 2,
+          nodes: [{ id: 'input', label: 'Input' }, { id: 'output', label: 'Output' }],
+          edges: [{ from: 'input', to: 'output', label: 'flows to' }],
+        }],
+      }) }),
+    });
+
+    expect(note.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'visual', visual: expect.objectContaining({ type: 'diagram', sourceId: 'pipeline.pdf:page-2', sourcePage: 2 }) }),
+    ]));
+  });
+
   it('does not promote incomplete PDF equation fragments to LaTeX', () => {
     const note = buildDocumentCourseNote(lesson, [{
       pageNumber: 1,
@@ -193,6 +217,23 @@ Pour f(x), on d\u00e9rive.` },
       expect.objectContaining({ type: 'paragraph', text: '2 (impaire ↗) 1 √ 1 + x2' }),
     ]));
     expect(note.blocks.some((block) => block.type === 'heading' && block.id.startsWith('document-heading') && /^(?:2 \(|1 √|1 \+)/.test(block.text))).toBe(false);
+  });
+
+  it('preserves parser-provided tables and lists in the offline document note', () => {
+    const note = buildDocumentCourseNote(lesson, [{
+      pageNumber: 1,
+      text: 'Methods\nA | 2\nB | 3\nFirst\nSecond',
+      blocks: [
+        { x: 0, y: 0, width: 0, height: 0, text: 'Methods', kind: 'heading' },
+        { x: 0, y: 20, width: 0, height: 0, text: 'A | 2\nB | 3', kind: 'table', rows: [['Name', 'Value'], ['A', '2'], ['B', '3']] },
+        { x: 0, y: 80, width: 0, height: 0, text: 'First\nSecond', kind: 'list' },
+      ],
+    }], 'methods.docx');
+
+    expect(note.blocks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'visual', visual: expect.objectContaining({ type: 'table', columns: ['Name', 'Value'], rows: [['A', '2'], ['B', '3']] }) }),
+      expect.objectContaining({ type: 'markdown', markdown: '- First\n- Second' }),
+    ]));
   });
 
   it('keeps lower-case mathematical expressions out of numbered headings', () => {

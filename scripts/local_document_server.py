@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import zipfile
+from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from urllib.parse import urlparse
+from xml.etree import ElementTree
 
 
 class DocumentHandler(BaseHTTPRequestHandler):
@@ -33,7 +38,23 @@ class DocumentHandler(BaseHTTPRequestHandler):
         self._write_json(200, {
             "status": "ok",
             "model": "pymupdf+rapidocr" if ocr_available else "pymupdf",
-            "capabilities": ["pdf-text", "image-ocr", "scanned-pdf-ocr"] if ocr_available else ["pdf-text"],
+            "capabilities": [
+                "pdf-text",
+                "image-ocr",
+                "scanned-pdf-ocr",
+                "markdown-text",
+                "html-text",
+                "rtf-text",
+                "docx-xml",
+                "pptx-xml",
+            ] if ocr_available else [
+                "pdf-text",
+                "markdown-text",
+                "html-text",
+                "rtf-text",
+                "docx-xml",
+                "pptx-xml",
+            ],
             "ocrAvailable": ocr_available,
         })
 
@@ -56,8 +77,17 @@ class DocumentHandler(BaseHTTPRequestHandler):
                 model, pages = extract_pdf(payload)
             elif content_type.startswith("image/"):
                 model, pages = extract_image(payload)
+            elif content_type in {
+                "text/plain",
+                "text/markdown",
+                "text/html",
+                "application/rtf",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            }:
+                model, pages = extract_document(payload, content_type)
             else:
-                self._write_json(415, {"error": "Only application/pdf and image/* inputs are supported."})
+                self._write_json(415, {"error": "This document type is not supported by the local extractor."})
                 return
             self._write_json(200, {"model": model, "pages": pages})
         except Exception as error:
@@ -102,13 +132,198 @@ def ocr_image(image: bytes) -> tuple[str, list[dict[str, object]]]:
         top = min(point[1] for point in points)
         right = max(point[0] for point in points)
         bottom = max(point[1] for point in points)
-        blocks.append({"x": left, "y": top, "width": right - left, "height": bottom - top, "text": value})
+        blocks.append({"x": left, "y": top, "width": right - left, "height": bottom - top, "text": value, "kind": "text"})
     return "rapidocr", blocks
 
 
 def extract_image(image: bytes) -> tuple[str, list[dict[str, object]]]:
     model, blocks = ocr_image(image)
     return model, [{"pageNumber": 1, "text": "\n".join(block["text"] for block in blocks), "blocks": blocks}]
+
+
+def _text_from_xml(element: ElementTree.Element) -> str:
+    return "".join(value for value in element.itertext() if value).strip()
+
+
+def _document_page(blocks: list[dict[str, object]], page_number: int = 1) -> dict[str, object]:
+    text = "\n".join(str(block["text"]) for block in blocks if str(block.get("text", "")).strip())
+    return {"pageNumber": page_number, "text": text, "blocks": blocks}
+
+
+class _HtmlTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.blocks: list[dict[str, object]] = []
+        self._parts: list[str] = []
+        self._tag_stack: list[str] = []
+        self._table_rows: list[list[str]] | None = None
+        self._current_row: list[str] | None = None
+        self._cell_parts: list[str] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "table":
+            self._flush()
+            self._table_rows = []
+            self._current_row = None
+            return
+        if tag == "tr" and self._table_rows is not None:
+            self._finish_row()
+            self._current_row = []
+            return
+        if tag in {"th", "td"} and self._table_rows is not None:
+            self._cell_parts = []
+            return
+        if tag in {"p", "div", "section", "article", "li", "h1", "h2", "h3", "h4", "pre", "table", "tr"}:
+            self._flush()
+            self._tag_stack.append(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"th", "td"} and self._table_rows is not None:
+            value = " ".join(self._cell_parts or []).strip()
+            if self._current_row is None:
+                self._current_row = []
+            self._current_row.append(value)
+            self._cell_parts = None
+            return
+        if tag == "tr" and self._table_rows is not None:
+            self._finish_row()
+            return
+        if tag == "table" and self._table_rows is not None:
+            self._finish_row()
+            rows = [row for row in self._table_rows if any(row)]
+            if rows:
+                width = len(rows[0])
+                if width and all(len(row) == width for row in rows):
+                    self.blocks.append({
+                        "x": 0, "y": len(self.blocks) * 20, "width": 0, "height": 0,
+                        "text": "\n".join(" | ".join(row) for row in rows), "kind": "table", "rows": rows,
+                    })
+            self._table_rows = None
+            self._current_row = None
+            return
+        if tag in {"p", "div", "section", "article", "li", "h1", "h2", "h3", "h4", "pre", "table", "tr"}:
+            self._flush()
+            if self._tag_stack and self._tag_stack[-1] == tag:
+                self._tag_stack.pop()
+
+    def handle_data(self, data: str) -> None:
+        value = " ".join(data.split())
+        if value:
+            if self._cell_parts is not None:
+                self._cell_parts.append(value)
+            else:
+                self._parts.append(value)
+
+    def _finish_row(self) -> None:
+        if self._table_rows is not None and self._current_row:
+            self._table_rows.append(self._current_row)
+        self._current_row = None
+
+    def _flush(self) -> None:
+        value = " ".join(self._parts).strip()
+        self._parts = []
+        if not value:
+            return
+        current_tag = self._tag_stack[-1] if self._tag_stack else "p"
+        kind = "heading" if current_tag.startswith("h") else "code" if current_tag == "pre" else "list" if current_tag == "li" else "paragraph"
+        self.blocks.append({"x": 0, "y": len(self.blocks) * 20, "width": 0, "height": 0, "text": value, "kind": kind})
+
+
+def extract_plain_document(payload: bytes, content_type: str) -> tuple[str, list[dict[str, object]]]:
+    text = payload.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+    if content_type == "text/html":
+        parser = _HtmlTextParser()
+        parser.feed(text)
+        blocks = parser.blocks
+        return "html-text", [_document_page(blocks)]
+
+    if content_type == "application/rtf":
+        text = re.sub(r"\\'[0-9a-fA-F]{2}", lambda match: bytes.fromhex(match.group(0)[2:]).decode("cp1252", errors="replace"), text)
+        text = text.replace(r"\par", "\n").replace(r"\line", "\n")
+        text = re.sub(r"\\[a-zA-Z]+-?\d* ?", "", text)
+        text = text.replace("{", "").replace("}", "")
+    lines = [line.strip() for line in text.split("\n")]
+    blocks: list[dict[str, object]] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line:
+            index += 1
+            continue
+        if content_type == "text/markdown" and line.startswith("#"):
+            blocks.append({"x": 0, "y": len(blocks) * 20, "width": 0, "height": 0, "text": line.lstrip("# ").strip(), "kind": "heading"})
+            index += 1
+            continue
+        if content_type == "text/markdown" and re.match(r"^[-*+]\s+", line):
+            items = []
+            while index < len(lines) and re.match(r"^[-*+]\s+", lines[index]):
+                items.append(re.sub(r"^[-*+]\s+", "", lines[index]).strip())
+                index += 1
+            blocks.append({"x": 0, "y": len(blocks) * 20, "width": 0, "height": 0, "text": "\n".join(items), "kind": "list"})
+            continue
+        paragraph = [line]
+        index += 1
+        while index < len(lines) and lines[index]:
+            paragraph.append(lines[index].strip())
+            index += 1
+        blocks.append({"x": 0, "y": len(blocks) * 20, "width": 0, "height": 0, "text": " ".join(paragraph), "kind": "paragraph"})
+    model = "text-markdown" if content_type == "text/markdown" else "rtf-text" if content_type == "application/rtf" else "text"
+    return model, [_document_page(blocks)]
+
+
+def extract_docx(payload: bytes) -> tuple[str, list[dict[str, object]]]:
+    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    with zipfile.ZipFile(BytesIO(payload)) as archive:
+        root = ElementTree.fromstring(archive.read("word/document.xml"))
+    blocks: list[dict[str, object]] = []
+    for child in root.iter(f"{namespace}body"):
+        for item in list(child):
+            if item.tag == f"{namespace}p":
+                text = _text_from_xml(item)
+                if not text:
+                    continue
+                style = item.find(f"{namespace}pPr/{namespace}pStyle")
+                style_name = style.get(f"{namespace}val", "") if style is not None else ""
+                kind = "heading" if style_name.lower().startswith("heading") else "paragraph"
+                blocks.append({"x": 0, "y": len(blocks) * 20, "width": 0, "height": 0, "text": text, "kind": kind})
+            elif item.tag == f"{namespace}tbl":
+                rows: list[list[str]] = []
+                for row in item.findall(f"{namespace}tr"):
+                    cells = [_text_from_xml(cell) for cell in row.findall(f"{namespace}tc")]
+                    if any(cells):
+                        rows.append(cells)
+                if rows:
+                    blocks.append({"x": 0, "y": len(blocks) * 20, "width": 0, "height": 0, "text": "\n".join(" | ".join(row) for row in rows), "kind": "table", "rows": rows})
+    return "docx-xml", [_document_page(blocks)]
+
+
+def extract_pptx(payload: bytes) -> tuple[str, list[dict[str, object]]]:
+    namespace = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    with zipfile.ZipFile(BytesIO(payload)) as archive:
+        slide_names = sorted(
+            (name for name in archive.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", name)),
+            key=lambda name: int(re.search(r"slide(\d+)\.xml$", name).group(1)),
+        )
+        pages = []
+        for page_number, name in enumerate(slide_names, start=1):
+            root = ElementTree.fromstring(archive.read(name))
+            blocks = []
+            for shape in root.findall(f".//{namespace}txBody"):
+                text = _text_from_xml(shape)
+                if text:
+                    blocks.append({"x": 0, "y": len(blocks) * 20, "width": 0, "height": 0, "text": text, "kind": "paragraph"})
+            pages.append(_document_page(blocks, page_number))
+    return "pptx-xml", pages
+
+
+def extract_document(payload: bytes, content_type: str) -> tuple[str, list[dict[str, object]]]:
+    if content_type in {"text/plain", "text/markdown", "text/html", "application/rtf"}:
+        return extract_plain_document(payload, content_type)
+    if content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        return extract_docx(payload)
+    if content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+        return extract_pptx(payload)
+    raise ValueError(f"Unsupported document content type: {content_type}")
 
 
 def block_text(block: dict[str, object]) -> str:
@@ -220,7 +435,7 @@ def formula_aware_pdf_blocks(page: object) -> list[dict[str, object]]:
         if index not in grouped_indexes and any(is_block_covered_by_formula_crop(block, crop) for crop in formula_crops)
     }
     rendered: list[dict[str, object]] = [
-        {"x": block["bbox"][0], "y": block["bbox"][1], "width": block["bbox"][2] - block["bbox"][0], "height": block["bbox"][3] - block["bbox"][1], "text": block["text"]}
+        {"x": block["bbox"][0], "y": block["bbox"][1], "width": block["bbox"][2] - block["bbox"][0], "height": block["bbox"][3] - block["bbox"][1], "text": block["text"], "kind": "formula" if block["math"] else "paragraph"}
         for index, block in enumerate(blocks)
         if index not in grouped_indexes and index not in covered_indexes
     ]
@@ -235,6 +450,7 @@ def formula_aware_pdf_blocks(page: object) -> list[dict[str, object]]:
             "width": x1 - x0,
             "height": y1 - y0,
             "text": "\n".join(blocks[index]["text"] for index in sorted(covered_group)),
+            "kind": "formula",
         })
     return sorted(rendered, key=lambda block: (block["y"], block["x"]))
 

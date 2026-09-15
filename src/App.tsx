@@ -42,8 +42,10 @@ import { AudioChunkStore, createRecordingChunkStore } from './lib/recording-stor
 import { listPendingRecordings, removePendingRecording, savePendingRecording } from './lib/recording-recovery';
 import { buildCourseExport, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
-import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
+import { RetrievalDocument, searchDocumentsHybrid } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
+import { VisualBlockView } from './lib/visual-blocks-view';
+import { parseStudyArtifactResponse, studyArtifactResponseFormat } from './lib/study-artifacts';
 import { buildCourseNote, courseNoteMarkdown, DOCUMENT_NOTE_LAYOUT_VERSION, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider } from './lib/course-notes';
 import { analyzeQuickStart } from './lib/quick-start';
 import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-routing';
@@ -114,7 +116,7 @@ const emptyLessonWorkspace: LessonWorkspace = {
   artifacts: [],
 };
 
-const sourceAccept = 'audio/*,image/*,.pdf,.txt,.md';
+const sourceAccept = 'audio/*,image/*,.pdf,.txt,.md,.html,.htm,.rtf,.docx,.pptx';
 const PREFERENCES_STORAGE_KEY = 'studentllm.preferences.v1';
 const SERVICES_STORAGE_KEY = 'studentllm.services.v1';
 type ServiceSettings = { llmUrl: string; model: string; asrUrl: string; documentsUrl: string };
@@ -177,6 +179,18 @@ function resourceIcon(kind: Resource['kind']) {
 
 function isTextResource(resource: Resource) {
   return resource.kind === 'transcript' || resource.mimeType?.startsWith('text/') === true;
+}
+
+function isExtractableDocument(resource: Resource) {
+  if (resource.kind === 'image') return true;
+  if (resource.kind !== 'document') return false;
+  return [
+    'application/pdf',
+    'application/rtf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/html',
+  ].includes(resource.mimeType ?? '') || /\.(pdf|rtf|html?|docx|pptx)$/i.test(resource.name);
 }
 
 function hasCurrentDocumentNote(workspace: LessonWorkspace) {
@@ -619,8 +633,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         && !workspace.courseNote?.blocks.some((block) => block.type === 'markdown'));
       if (hasCurrentDocumentNote(workspace) && !noteNeedsSemanticReview) return [];
       return workspace.resources.flatMap((resource) => {
-        const isPdf = resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name));
-        return isPdf && (noteNeedsSemanticReview || !rebuiltDocumentSourceIds.current.has(resource.id)) ? [{ lesson, resource }] : [];
+        const isExtractable = isExtractableDocument(resource);
+        return isExtractable && (noteNeedsSemanticReview || !rebuiltDocumentSourceIds.current.has(resource.id)) ? [{ lesson, resource }] : [];
       });
     })[0];
     if (!candidate) return undefined;
@@ -1267,7 +1281,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     setIsSending(true);
     try {
       const retrievalDocuments = await loadRetrievalDocuments();
-      const retrievalHits = searchDocuments(retrievalDocuments, message, 4);
+      const retrievalHits = await searchDocumentsHybrid(
+        retrievalDocuments,
+        message,
+        localProvider?.embed ? { embed: (inputs) => localProvider.embed!(inputs) } : undefined,
+        4,
+      );
       const retrievedCitations = retrievalHits.slice(0, 2).map((hit) => formatRetrievalCitation(hit.document));
       if (!retrievalHits.length) {
         updateActiveWorkspace((current) => ({
@@ -1368,7 +1387,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         const label = resourceName
           ? `[Source: ${resourceName}${part ? `, part ${part}` : ''}]`
           : `[${timestamp}] ${speaker}:`;
-        const evidence = `${label} ${document.text}`;
+        const evidence = `${label} ${document.text} [sourceId: ${document.id}]`;
         const remainingCharacters = 24_000 - evidenceCharacters;
         if (remainingCharacters <= 0) break;
         evidenceDocuments.push(document);
@@ -1389,16 +1408,22 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             'The evidence between BEGIN COURSE EVIDENCE and END COURSE EVIDENCE is present and authoritative.',
             'If the evidence does not support a claim, omit it or say: Not enough evidence in this course.',
             'Do not add facts from outside the evidence. Preserve technical terms, notation, and formulas exactly when they appear.',
-            'Return clean GitHub-Flavored Markdown only. Use headings, lists, tables, fenced code blocks, and valid LaTeX ($...$ or $$...$$) when the source supports them. Never emit HTML or image Markdown.',
+            'Return JSON with a markdown string and an optional visuals array. The markdown must be clean GitHub-Flavored Markdown with headings, lists, tables, fenced code blocks, and valid LaTeX ($...$ or $$...$$) when the source supports them. Use a visual only for a clearly supported chart, table, or diagram and cite the exact sourceId from the evidence. Never emit HTML or image Markdown, and never invent values or relationships.',
             context,
           ].join('\n'),
         },
         { role: 'user', content: `Generate the ${definition.label.toLowerCase()}.` },
-      ], { maxTokens: 4_096 });
+      ], {
+        maxTokens: 4_096,
+        ...(localProvider.supportsStructuredOutputs ? { responseFormat: studyArtifactResponseFormat } : {}),
+      });
       if (!result.content.trim()) throw new Error('The model returned no study material. Try again.');
+      const parsed = parseStudyArtifactResponse(result.content, new Set(evidenceDocuments.map((document) => document.id)));
+      if (!parsed) throw new Error('The model returned an invalid study material response. Try again.');
       const artifact: Artifact = {
         id: `${kind}-${crypto.randomUUID()}`, kind, label: definition.label,
-        createdAt: new Date().toLocaleString('en-GB'), content: result.content,
+        createdAt: new Date().toLocaleString('en-GB'), content: parsed.markdown,
+        ...(parsed.visuals.length ? { visuals: parsed.visuals } : {}),
         citations: evidenceDocuments.slice(0, 3).map(formatRetrievalCitation),
         citationTargets: evidenceDocuments.slice(0, 3).map((document) => document.id),
       };
@@ -1484,8 +1509,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     try {
       const resource = await createSourceResource(file);
       await sourceBlobStore.save(resource.id, file);
-      const isPdfResource = resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name));
-      if (localDocumentEngine && (isPdfResource || resource.kind === 'image')) rebuiltDocumentSourceIds.current.add(resource.id);
+      const isExtractable = isExtractableDocument(resource);
+      if (localDocumentEngine && isExtractable) rebuiltDocumentSourceIds.current.add(resource.id);
       updateLessonWorkspace(lessonId, (current) => ({ ...current, resources: [resource, ...current.resources] }));
       notify(`${resource.name} added to course sources${sourceBlobStore.durability === 'durable' ? ' and saved locally.' : ' in memory only.'}`);
       if (isTextResource(resource)) {
@@ -1567,12 +1592,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           });
         }
       }
-      const isPdf = resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name));
-      if (!localDocumentEngine && (isPdf || resource.kind === 'image')) {
+      const extractableResource = isExtractableDocument(resource);
+      if (!localDocumentEngine && extractableResource) {
         setActionError(`${resource.name} is saved. Connect the document service in Settings to extract its text.`);
         setShowSettingsPanel(true);
       }
-      if (localDocumentEngine && (isPdf || resource.kind === 'image')) {
+      if (localDocumentEngine && extractableResource) {
         try {
           const extraction = await localDocumentEngine.extract(file);
           const pageSegments = extraction.pages
@@ -1981,6 +2006,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     if (block.type === 'schema') {
       return <div className="course-note-schema" key={block.id} aria-label="Course concept schema">{block.edges.map((edge) => <span key={`${block.id}-${edge.from}-${edge.to}`}><b>{edge.from}</b><span aria-hidden="true"> → </span><b>{edge.to}</b></span>)}</div>;
     }
+    if (block.type === 'visual') return <VisualBlockView key={block.id} visual={block.visual} />;
     const maximum = Math.max(...block.values.map((item) => Math.abs(item.value)), 1);
     return <figure className="course-note-chart" key={block.id}><figcaption>{block.label}</figcaption>{block.values.map((item, index) => <div className="course-note-chart-row" key={`${block.id}-${index}-${item.label}`}><span>{item.label}</span><i><em style={{ width: `${Math.max(4, Math.round(Math.abs(item.value) / maximum * 100))}%` }} /></i><strong>{item.value}</strong></div>)}</figure>;
   };
@@ -2113,7 +2139,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               {!hasStudyMaterial && <p className="study-empty-hint">Import notes or finish a transcription to enable study material generation.</p>}
               <div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" disabled={generatingArtifact !== null || !hasStudyMaterial} onClick={() => void createArtifact(artifact.kind)}><strong>{generatingArtifact === artifact.kind ? 'Generating...' : artifact.label}</strong><small>{artifact.description}</small></button>)}</div>
               {artifacts.length > 0 && <section className="recent-section"><h3>Saved materials</h3>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}>{artifact.label}</button>)}
-              {(() => { const selected = artifacts.find((artifact) => artifact.id === selectedArtifactId); return selected && <article className="artifact-preview"><h3>{selected.label}</h3><RichText content={selected.content ?? ''} className="study-markdown" />{selected.citations && <div className="citation-list">{selected.citations.map((citation, index) => selected.citationTargets?.[index] ? <button key={citation} onClick={() => openCitation(selected.citationTargets![index])}>{citation}</button> : <span key={citation}>{citation}</span>)}</div>}</article>; })()}</section>}
+              {(() => { const selected = artifacts.find((artifact) => artifact.id === selectedArtifactId); return selected && <article className="artifact-preview"><h3>{selected.label}</h3><RichText content={selected.content ?? ''} className="study-markdown" />{selected.visuals?.map((visual, index) => <VisualBlockView key={`${selected.id}-visual-${index}`} visual={visual} />)}{selected.citations && <div className="citation-list">{selected.citations.map((citation, index) => selected.citationTargets?.[index] ? <button key={citation} onClick={() => openCitation(selected.citationTargets![index])}>{citation}</button> : <span key={citation}>{citation}</span>)}</div>}</article>; })()}</section>}
             </section>}
           </>}
         </main>
