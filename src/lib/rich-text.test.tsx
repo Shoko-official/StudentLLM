@@ -36,4 +36,16 @@ describe('RichText', () => {
     expect(source).toHaveClass('extracted-math-line');
     expect(source).toHaveAttribute('aria-label', 'Extracted mathematical source');
   });
+  it('repairs legacy LaTeX controls and renders bare formulas in Markdown tables', () => {
+    const { container } = render(<RichText content={'| Formula |\n| --- |\n| \u000crac{x}{2} |'} />);
+
+    expect(container.querySelector('td .katex')).not.toBeNull();
+    expect(container.textContent).not.toContain('\u000c');
+  });
+
+  it('renders bare LaTeX formulas inside Markdown list items', () => {
+    const { container } = render(<RichText content={"- \\\\operatorname{th}'x=1-\\\\operatorname{th}^2x=\\\\frac{1}{\\\\operatorname{ch}^2x}"} />);
+
+    expect(container.querySelector('li .katex')).not.toBeNull();
+  });
 });

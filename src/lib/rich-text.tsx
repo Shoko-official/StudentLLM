@@ -6,6 +6,7 @@ import remarkMath from 'remark-math';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { isExtractedMathSourceLine } from './extracted-math';
+import { repairCorruptedLatexCommands } from './document-text';
 
 const mathPattern = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$(?!\$)(?:\\.|[^$\\\n])+\$)/g;
 const renderedMathCache = new Map<string, string>();
@@ -82,6 +83,37 @@ function normalizeMathDelimiters(content: string) {
     .replace(/\$\$(?!\n)/g, () => '$$\n\n');
 }
 
+const bareLatexCommand = /\\(?:alpha|arccos|arcsin|arctan|begin|cdot|end|frac|int|left|lim|nabla|operatorname|partial|pmatrix|right|sqrt|sum|text|times|vec)\b/u;
+
+function wrapBareLatexCell(cell: string) {
+  const trimmed = cell.trim();
+  if (!trimmed || trimmed.includes('$') || trimmed.startsWith('---') || !bareLatexCommand.test(trimmed)) return cell;
+  const start = cell.indexOf(trimmed);
+  const end = start + trimmed.length;
+  return cell.slice(0, start) + '$' + trimmed + '$' + cell.slice(end);
+}
+
+function wrapBareLatexListItem(line: string) {
+  const match = /^(\s*(?:[-*+]|\d+[.)])\s+)(.+?)\s*$/u.exec(line);
+  if (!match || match[2].includes('$') || !bareLatexCommand.test(match[2])) return line;
+  return match[1] + '$' + match[2] + '$';
+}
+
+function normalizeMarkdownLatex(content: string) {
+  const repaired = repairCorruptedLatexCommands(content);
+  let inCodeFence = false;
+
+  return repaired.split('\n').map((line) => {
+    if (line.trimStart().startsWith(String.fromCharCode(96, 96, 96))) {
+      inCodeFence = !inCodeFence;
+      return line;
+    }
+    if (inCodeFence) return line;
+    if (line.includes('|')) return line.split('|').map(wrapBareLatexCell).join('|');
+    return wrapBareLatexListItem(line);
+  }).join('\n');
+}
+
 function safeUrlTransform(url: string) {
   try {
     const parsed = new URL(url, 'https://studentllm.invalid');
@@ -113,7 +145,7 @@ export function RichText({ content, highlightExtractedMath = false, className }:
           img: ({ alt }) => <span className="rich-image-alt" role="img" aria-label={alt || 'Image omitted'}>{alt || 'Image omitted'}</span>,
         }}
       >
-        {normalizeMathDelimiters(content)}
+        {normalizeMathDelimiters(normalizeMarkdownLatex(content))}
       </ReactMarkdown>
     </div>
   );

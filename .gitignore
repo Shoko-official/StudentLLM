@@ -15,5 +15,6 @@ playwright-report/
 test-results/
 debug.log
 tmp/
+.worktrees/
 .pytest_cache/
 *.local
