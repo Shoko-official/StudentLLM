@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ArrowUpRight,
@@ -18,6 +18,7 @@ import {
   Search,
   Send,
   Settings2,
+  Shuffle,
   Sparkles,
   Square,
   Trash2,
@@ -53,6 +54,8 @@ import { analyzeQuickStart } from './lib/quick-start';
 import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-routing';
 import type { QuickStartProposal } from './lib/quick-start';
 import { Artifact, ArtifactKind, ChatMessage, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from './types';
+
+const PdfPreview = lazy(() => import('./lib/pdf-preview').then(({ PdfPreview: Preview }) => ({ default: Preview })));
 
 const initialLessons: Lesson[] = [];
 const emptyLesson: Lesson = { id: '', subject: 'General', chapter: 'General notes', title: '', teacher: '', duration: '00:00:00', date: '', progress: 0 };
@@ -183,6 +186,10 @@ function isTextResource(resource: Resource) {
   return resource.kind === 'transcript' || resource.mimeType?.startsWith('text/') === true;
 }
 
+function isPdfResource(resource: Resource) {
+  return resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name));
+}
+
 function isExtractableDocument(resource: Resource) {
   if (resource.kind === 'image') return true;
   if (resource.kind !== 'document') return false;
@@ -213,7 +220,9 @@ export interface AppProps {
 interface ResourcePreview {
   resource: Resource;
   state: 'loading' | 'ready' | 'missing' | 'error';
+  blob?: Blob;
   blobUrl?: string;
+  page?: number;
   text?: string;
   truncated?: boolean;
   detail?: string;
@@ -995,7 +1004,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
   };
 
-  const openResource = async (resource: Resource) => {
+  const openResource = async (resource: Resource, page?: number) => {
     const requestId = ++resourcePreviewRequest.current;
     setResourcePreview({ resource, state: 'loading' });
 
@@ -1016,6 +1025,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         if (requestId !== resourcePreviewRequest.current) return;
         const maxCharacters = 12_000;
         setResourcePreview({ resource, state: 'ready', text: text.slice(0, maxCharacters), truncated: text.length > maxCharacters });
+        return;
+      }
+
+      if (isPdfResource(resource)) {
+        setResourcePreview({ resource, state: 'ready', blob, page });
         return;
       }
 
@@ -1079,7 +1093,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const resourceId = transcriptSegment?.sourceId ?? target.split(':', 1)[0];
     const resource = resources.find((item) => item.id === resourceId);
     if (resource) {
-      void openResource(resource);
+      const page = Number(target.match(/:page-(\d+)$/)?.[1]);
+      void openResource(resource, Number.isFinite(page) && page > 0 ? page : undefined);
       return;
     }
     notify('This citation source is no longer available.');
@@ -1289,8 +1304,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         localProvider?.embed ? { embed: (inputs) => localProvider.embed!(inputs) } : undefined,
         4,
       );
+      const generalCreationRequest = /\b(génère|genere|generate|visuali[sz]ation|diagram|schéma|schema|draw|trace|plot)\b/i.test(message);
+      const courseSpecificQuestion = /\b(in this course|in the course|according to|from (this|the) (source|document|notes)|dans ce cours|dans le cours|selon|d['’]?après|source|document|notes|transcription|formulaire)\b/i.test(message)
+        || (retrievalHits.length > 0 && !generalCreationRequest);
       const retrievedCitations = retrievalHits.slice(0, 2).map((hit) => formatRetrievalCitation(hit.document));
-      if (!retrievalHits.length) {
+      if (!retrievalHits.length && (!localProvider || courseSpecificQuestion || !generalCreationRequest)) {
         updateActiveWorkspace((current) => ({
           ...current,
           chat: [...current.chat, {
@@ -1321,16 +1339,20 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             ? `[Source: ${resourceName}${part ? `, part ${part}` : ''}] ${hit.document.text}`
             : `[${hit.document.metadata.timestamp}] ${hit.document.metadata.speaker}: ${hit.document.text}`;
         }).join('\n')
-        : 'No course excerpt matched the question.';
+        : 'No relevant course excerpt matched the question.';
       const result = await localProvider.generate([
         {
           role: 'system',
           content: [
-            'Answer the user question using only the course evidence below.',
-            'The evidence between BEGIN COURSE EVIDENCE and END COURSE EVIDENCE is present and authoritative.',
+            courseSpecificQuestion
+              ? 'Answer the user question using the course evidence below. Keep course-specific claims grounded in that evidence.'
+              : 'Answer this as a general educational request. Use your general knowledge when the user asks for a standard explanation, example, diagram, or mathematical visualization.',
+            'The evidence between BEGIN COURSE EVIDENCE and END COURSE EVIDENCE may be relevant, absent, or unrelated.',
+            courseSpecificQuestion
+              ? 'If the evidence does not answer a course-specific question, say: Not enough evidence in this course.'
+              : 'Do not refuse a general educational request merely because the course evidence is absent or unrelated. Do not invent course-specific attribution.',
             'Never claim that course evidence is unavailable when text is present.',
-            'If the evidence does not answer the question, say: Not enough evidence in this course.',
-            'Do not add facts from outside the evidence. Preserve technical terms, notation, and formulas exactly when they appear.',
+            'Preserve technical terms, notation, and formulas exactly when they appear in the evidence. Clearly distinguish general explanation from course-specific claims when both are present.',
             'Answer in clean GitHub-Flavored Markdown. Use headings, short paragraphs, lists, and fenced code blocks when useful. Use $...$ for inline math and $$...$$ on separate lines for display math. Never emit HTML or image Markdown.',
             `Course: ${activeLesson.title}`,
             'BEGIN COURSE EVIDENCE',
@@ -1347,10 +1369,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           role: 'assistant',
           content: result.content,
           citations: [
-            ...retrievedCitations,
+            ...(courseSpecificQuestion ? retrievedCitations : []),
             `LM Studio · ${result.model}`,
           ],
-          citationTargets: retrievalHits.slice(0, 2).map((hit) => hit.document.id),
+          citationTargets: courseSpecificQuestion ? retrievalHits.slice(0, 2).map((hit) => hit.document.id) : [],
         }],
       }));
     } catch (error) {
@@ -2032,7 +2054,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <div className="sidebar-brand"><div><strong>StudentLLM</strong><ChevronDown size={13} aria-hidden="true" /></div><span>Workspace</span></div>
             </div>
             <div className="sidebar-start-actions">
-              <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={startQuickCourse}><Sparkles size={16} /><span>Quick start</span></button>
+              <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={startQuickCourse}><Shuffle size={16} /><span>Quick start</span></button>
               <button className="sidebar-row" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={() => setShowNewCourse(true)}><Plus size={16} /><span>New course</span></button>
             </div>
             {lessons.length > 0 && <label className="search-field"><Search size={16} /><input aria-label="Search courses" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Find a course" /></label>}
@@ -2066,7 +2088,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <BookOpen size={32} strokeWidth={1.3} aria-hidden="true" />
               <h1>A place for your courses.</h1>
               <p>Create a course, then record a lecture or import your notes.<br />Your material stays together here.</p>
-              <button className="primary-action" onClick={startQuickCourse}><Sparkles size={17} /> Quick start</button>
+              <button className="primary-action" onClick={startQuickCourse}><Shuffle size={17} /> Quick start</button>
               <button className="text-action" onClick={openAiOrganizer}><Sparkles size={16} /> Organize notes with AI</button>
               <button className="text-action" onClick={() => setShowNewCourse(true)}><Plus size={16} /> Create your first course</button>
             </section>
@@ -2133,7 +2155,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             {view === 'chat' && <section className="chat-view">
               <div className="chat-intro"><h2>Ask about this course</h2><p>{localProvider ? 'Answers use your notes and sources. LM Studio must be running with a loaded model.' : 'Connect LM Studio in Settings to generate answers. You can still search and open your sources.'}</p></div>
               {!resources.length && !transcript.length && <p className="empty-state">Import material or record a lecture before asking a question.</p>}
-              <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button key={citation} onClick={() => openCitation(message.citationTargets![index])}>{citation}</button> : <span key={citation}>{citation}</span>)}</div>}</article>)}</div>
+               <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list" aria-label="Response sources">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button className="citation-chip" key={citation} onClick={() => openCitation(message.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className={citation.startsWith('LM Studio') ? 'citation-model' : 'citation-context'} key={citation}>{citation}</span>)}</div>}</article>)}</div>
               <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
             </section>}
             {view === 'study' && <section className="study-view">
@@ -2147,7 +2169,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         </main>
       </div>
 
-      {resourcePreview && <div className="modal-backdrop" role="presentation" onMouseDown={() => setResourcePreview(null)}><section className="modal resource-preview-modal" role="dialog" aria-modal="true" aria-labelledby="resource-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Original source</span><h2 id="resource-preview-title">{resourcePreview.resource.name}</h2></div><button className="icon-button" aria-label="Close source preview" onClick={() => setResourcePreview(null)}><X size={17} /></button></div><p className="modal-description">{resourcePreview.resource.meta}{resourcePreview.resource.sha256 ? ` · SHA-256 ${resourcePreview.resource.sha256.slice(0, 12)}…` : ''}</p>{resourcePreview.state === 'loading' && <p className="empty-state">Opening the locally stored source…</p>}{resourcePreview.state === 'missing' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'error' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'ready' && resourcePreview.text !== undefined && <div className="source-text-preview"><pre>{resourcePreview.text}</pre>{resourcePreview.truncated && <small>Preview truncated to 12,000 characters. The original source remains unchanged.</small>}</div>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'image' && <img className="source-image-preview" src={resourcePreview.blobUrl} alt={`Preview of ${resourcePreview.resource.name}`} />}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'audio' && <audio className="source-audio-preview" controls src={resourcePreview.blobUrl}>Your browser cannot play this audio source.</audio>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'document' && <iframe className="source-document-preview" title={`Preview of ${resourcePreview.resource.name}`} src={resourcePreview.blobUrl} />}</section></div>}
+      {resourcePreview && <div className="modal-backdrop" role="presentation" onMouseDown={() => setResourcePreview(null)}><section className="modal resource-preview-modal" role="dialog" aria-modal="true" aria-labelledby="resource-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Original source</span><h2 id="resource-preview-title">{resourcePreview.resource.name}</h2></div><button className="icon-button" aria-label="Close source preview" onClick={() => setResourcePreview(null)}><X size={17} /></button></div><p className="modal-description">{resourcePreview.resource.meta}{resourcePreview.resource.sha256 ? ` · SHA-256 ${resourcePreview.resource.sha256.slice(0, 12)}…` : ''}</p>{resourcePreview.state === 'loading' && <p className="empty-state">Opening the locally stored source…</p>}{resourcePreview.state === 'missing' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'error' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'ready' && resourcePreview.text !== undefined && <div className="source-text-preview"><pre>{resourcePreview.text}</pre>{resourcePreview.truncated && <small>Preview truncated to 12,000 characters. The original source remains unchanged.</small>}</div>}{resourcePreview.state === 'ready' && resourcePreview.blob && isPdfResource(resourcePreview.resource) && <Suspense fallback={<p className="source-preview-loading">Loading PDF renderer…</p>}><PdfPreview blob={resourcePreview.blob} initialPage={resourcePreview.page} /></Suspense>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'image' && <img className="source-image-preview" src={resourcePreview.blobUrl} alt={`Preview of ${resourcePreview.resource.name}`} />}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'audio' && <audio className="source-audio-preview" controls src={resourcePreview.blobUrl}>Your browser cannot play this audio source.</audio>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'document' && !isPdfResource(resourcePreview.resource) && <iframe className="source-document-preview" title={`Preview of ${resourcePreview.resource.name}`} src={resourcePreview.blobUrl} />}</section></div>}
       {showQuickStart && <div className="modal-backdrop" role="presentation" onMouseDown={() => { setShowQuickStart(false); resetQuickStart(); }}><section className="modal quick-start-modal" role="dialog" aria-modal="true" aria-labelledby="quick-start-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">AI course organizer</span><h2 id="quick-start-title">Organize material with AI</h2></div><button className="icon-button" aria-label="Close AI organizer" onClick={() => { setShowQuickStart(false); resetQuickStart(); }}><X size={17} /></button></div><p className="modal-description">Paste a lecture excerpt or course description. AI proposes the hierarchy and destination; review it before saving.</p>{!quickStartProposal ? <form onSubmit={analyzeQuickStartInput}><label>Lecture excerpt or course description<textarea autoFocus rows={8} value={quickStartInput} onChange={(event) => setQuickStartInput(event.target.value)} placeholder="Paste what you are studying, or a few paragraphs from the lecture..." /></label><label>Source name <span className="muted">optional</span><input value={quickStartSourceName} onChange={(event) => setQuickStartSourceName(event.target.value)} placeholder="e.g. week-04-notes" /></label>{!localProvider && <p className="quick-start-note">Connect LM Studio in Settings to analyze and organize this material.</p>}{quickStartError && <p className="action-error" role="alert">{quickStartError}</p>}<div className="modal-footer"><button type="button" className="secondary-action" onClick={() => { setShowQuickStart(false); resetQuickStart(); }}>Cancel</button><button className="primary-submit" type="submit" disabled={!quickStartInput.trim() || isAnalyzingQuickStart}><Sparkles size={15} /> {isAnalyzingQuickStart ? 'Analyzing...' : 'Analyze structure'}</button></div></form> : <div className="quick-start-review"><div className="quick-start-fields"><label>Course group<input value={quickStartProposal.course} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, course: event.target.value } : current)} /></label><label>Subject<input value={quickStartProposal.subject} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, subject: event.target.value } : current)} /></label><label>Lesson<input value={quickStartProposal.lesson} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, lesson: event.target.value } : current)} /></label><label>Title<input value={quickStartProposal.title} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, title: event.target.value } : current)} /></label><label>Sublesson <span className="muted">optional</span><input value={quickStartProposal.sublesson} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, sublesson: event.target.value } : current)} placeholder="No sublesson detected" /></label></div><label>Place this material in<select aria-label="Place this material in" value={quickStartPlacement} onChange={(event) => setQuickStartPlacement(event.target.value)}><option value="new">Create a new course</option>{lessons.map((lesson) => <option key={lesson.id} value={lesson.id}>{lesson.subject} / {lesson.chapter} / {lesson.title}</option>)}</select></label><div className="quick-start-summary"><strong>{Math.round(quickStartProposal.confidence * 100)}% confidence</strong><span>{quickStartProposal.rationale}</span><small>{quickStartPlacement === 'new' ? `Creates ${quickStartProposal.course} / ${quickStartProposal.lesson} / ${quickStartProposal.title}` : 'Adds the source to the selected existing course.'}</small></div>{quickStartError && <p className="action-error" role="alert">{quickStartError}</p>}<div className="modal-footer"><button type="button" className="text-action" onClick={() => { setQuickStartProposal(null); setQuickStartError(''); }}>Edit material</button><button type="button" className="primary-submit" onClick={() => void applyQuickStart()}><Check size={15} /> Apply structure</button></div></div>}</section></div>}
       {showNewCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="new-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">New session</span><h2 id="new-course-title">Start a course</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowNewCourse(false)}><X size={17} /></button></div><p className="modal-description">Give your course a name. You can add recordings and files next.</p><form onSubmit={createCourse}><label>Course title<input autoFocus value={newCourseTitle} onChange={(event) => setNewCourseTitle(event.target.value)} placeholder="e.g. Introduction to probability" /></label><label>Subject<input list="course-subject-suggestions" value={newCourseSubject} onChange={(event) => setNewCourseSubject(event.target.value)} placeholder="e.g. Machine Learning" /></label><datalist id="course-subject-suggestions">{subjectOptions.map((subjectOption) => <option key={subjectOption} value={subjectOption} />)}</datalist><label>Chapter<input value={newCourseChapter} onChange={(event) => setNewCourseChapter(event.target.value)} placeholder="e.g. Transformers" /></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowNewCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!newCourseTitle.trim()}><Mic size={15} /> Create course</button></div></form></section></div>}
       {showEditCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowEditCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Course structure</span><h2 id="edit-course-title">Edit course</h2></div><button className="icon-button" aria-label="Close edit course" onClick={() => setShowEditCourse(false)}><X size={17} /></button></div><p className="modal-description">Update the names used in the course tree and saved note location.</p><div className="edit-course-tools"><button type="button" className="secondary-action" onClick={() => void suggestCourseDetails()} disabled={isSuggestingCourseDetails || !localProvider || !transcript.length && !resources.length}><Sparkles size={15} /> {isSuggestingCourseDetails ? 'Suggesting...' : 'Suggest with AI'}</button><small>{transcript.length || resources.length ? 'Use the saved material to propose a title and hierarchy.' : 'Record or import material first.'}</small></div>{actionError && <p className="action-error" role="alert">{actionError}</p>}<form onSubmit={updateCourse}><label>Course title<input autoFocus value={courseEditDraft.title} onChange={(event) => setCourseEditDraft((current) => ({ ...current, title: event.target.value }))} /></label><label>Subject<input list="course-subject-suggestions" value={courseEditDraft.subject} onChange={(event) => setCourseEditDraft((current) => ({ ...current, subject: event.target.value }))} /></label><label>Chapter<input value={courseEditDraft.chapter} onChange={(event) => setCourseEditDraft((current) => ({ ...current, chapter: event.target.value }))} /></label><label>Sublesson <span className="muted">optional</span><input value={courseEditDraft.sublesson} onChange={(event) => setCourseEditDraft((current) => ({ ...current, sublesson: event.target.value }))} placeholder="No sublesson" /></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowEditCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!courseEditDraft.title.trim()}><Check size={15} /> Save course changes</button></div></form></section></div>}

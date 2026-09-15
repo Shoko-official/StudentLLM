@@ -81,7 +81,7 @@ svg { flex-shrink: 0; }
 .tree-subject { width: 100%; display: flex; align-items: center; justify-content: space-between; text-align: left; gap: 8px; padding: 7px 8px; border-radius: 5px; font-size: 13px; color: var(--sidebar-text); }
 .tree-subject:hover, .tree-subject:focus-visible { color: var(--sidebar-strong); background: var(--sidebar-hover); }
 .tree-subject span { overflow-wrap: anywhere; }
-.tree-children { display: grid; gap: 1px; margin: 4px 0 5px 8px; padding: 4px 0 4px 8px; border-left: 1px solid var(--line-strong); border-radius: 6px; background: var(--sidebar-child-surface); }
+.tree-children { display: grid; gap: 1px; margin: 4px 0 5px 10px; padding: 4px 0; border-radius: 6px; background: transparent; }
 .tree-chapter { display: block; padding: 5px 8px 4px; color: var(--sidebar-muted); font-size: 11px; font-weight: 600; overflow-wrap: anywhere; }
 .tree-lesson { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; margin: 1px 0; padding: 7px 8px; border-radius: 5px; color: var(--sidebar-text); text-align: left; font-size: 13px; line-height: 1.3; }
 .tree-lesson span { overflow-wrap: anywhere; min-width: 0; }
@@ -146,19 +146,22 @@ svg { flex-shrink: 0; }
 .resource-open small { color: var(--muted); font-size: 12px; }
 .chat-view { display: grid; gap: 24px; width: min(100%, 860px); margin: 0 auto; }
 .chat-intro p { color: var(--muted); font-size: 14px; margin-bottom: 0; }
-.chat-list { display: grid; gap: 4px; }
-.chat-message { min-width: 0; padding: 20px 0; border-bottom: 1px solid var(--line); background: transparent; }
-.chat-message.user { width: min(78%, 650px); margin-left: auto; padding: 13px 16px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); }
+.chat-list { display: grid; gap: 18px; }
+.chat-message { min-width: 0; padding: 20px 0 22px; border-bottom: 1px solid var(--line); background: transparent; }
+.chat-message.user { width: min(78%, 650px); margin-left: auto; padding: 13px 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); }
 .message-header { display: flex; align-items: center; min-height: 18px; }
 .message-role { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .message-content { margin-top: 9px; color: var(--text); font-size: 15px; line-height: 1.7; overflow-wrap: anywhere; }
 .chat-message.user .message-content { margin-top: 5px; }
 .chat-message.user .message-role { color: var(--text); }
-.chat-composer { display: flex; align-items: center; gap: 10px; padding: 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--surface); }
-.chat-composer input { flex: 1; min-width: 0; width: 100%; border: 0; padding: 8px; font-size: 15px; background: transparent; }
-.chat-composer .primary-action { flex-shrink: 0; }
-.citation-list { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 12px; font-size: 12px; color: var(--muted); }
-.citation-list button { padding: 6px 8px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; text-align: left; overflow-wrap: anywhere; }
+.chat-composer { display: flex; align-items: center; gap: 10px; padding: 9px 10px 9px 14px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--surface); }
+.chat-composer input { flex: 1; min-width: 0; width: 100%; min-height: 28px; border: 0; padding: 6px 0; font-size: 15px; background: transparent; }
+.chat-composer .primary-action { flex-shrink: 0; width: 38px; min-height: 38px; padding: 8px; border-radius: 7px; }
+.citation-list { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 16px; font-size: 12px; color: var(--muted); }
+.citation-chip, .citation-model, .citation-context { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; }
+.citation-chip { max-width: 100%; padding: 5px 8px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; text-align: left; overflow-wrap: anywhere; }
+.citation-chip span { overflow-wrap: anywhere; }
+.citation-model { padding-left: 3px; color: var(--faint); }
 .study-view { display: grid; gap: 18px; }
 .study-view > h2 { margin-bottom: 5px; }
 .study-view > .muted { margin: 0; }
@@ -207,6 +210,13 @@ svg { flex-shrink: 0; }
 .source-image-preview { width: 100%; max-height: 60vh; object-fit: contain; }
 .source-audio-preview { width: 100%; }
 .source-document-preview { width: 100%; height: 60vh; border: 1px solid var(--line); }
+.pdf-preview { display: grid; gap: 12px; }
+.pdf-preview-toolbar { display: flex; align-items: center; justify-content: center; gap: 14px; color: var(--muted); font-size: 13px; }
+.pdf-preview-toolbar .secondary-action { min-height: 34px; padding: 6px 10px; font-size: 12px; }
+.pdf-preview-page { position: relative; display: flex; justify-content: center; min-height: 320px; padding: 18px; overflow: auto; background: var(--surface-2); border: 1px solid var(--line); }
+.pdf-preview-page canvas { display: block; max-width: 100%; height: auto !important; box-shadow: 0 1px 3px #0003; background: #fff; }
+.pdf-preview-status, .source-preview-loading, .source-preview-error { color: var(--muted); font-size: 13px; }
+.pdf-preview-status { position: absolute; top: 10px; right: 12px; }
 .settings-list { display: grid; gap: 18px; }
 .setting-row { display: flex !important; align-items: center; gap: 16px; justify-content: space-between; }
 .setting-row span, .setting-info span { display: grid; gap: 6px; }
@@ -320,7 +330,7 @@ svg { flex-shrink: 0; }
 :root[data-theme='dark'] .sidebar-row:hover:not(:disabled), :root[data-theme='dark'] .sidebar-row:focus-visible, :root[data-theme='dark'] .tree-subject:hover, :root[data-theme='dark'] .tree-subject:focus-visible { color: var(--text); background: var(--surface-3); }
 :root[data-theme='dark'] .sidebar-row-primary, :root[data-theme='dark'] .tree-lesson.active, :root[data-theme='dark'] .tree-lesson:hover, :root[data-theme='dark'] .tree-lesson:focus-visible { color: var(--text); background: #3b3b39; }
 :root[data-theme='dark'] .sidebar-brand svg { color: var(--muted); }
-:root[data-theme='dark'] .tree-children { border-color: var(--line-strong); background: var(--sidebar-child-surface); }
+:root[data-theme='dark'] .tree-children { background: transparent; }
 :root[data-theme='dark'] .tree-chapter { color: var(--muted); }
 :root[data-theme='dark'] .search-field, :root[data-theme='dark'] .course-actions-menu, :root[data-theme='dark'] .course-note-document, :root[data-theme='dark'] .modal, :root[data-theme='dark'] .toast, :root[data-theme='dark'] .secondary-action { background: var(--surface); border-color: var(--line-strong); }
 :root[data-theme='dark'] .search-field input, :root[data-theme='dark'] .modal input, :root[data-theme='dark'] .modal select, :root[data-theme='dark'] .quick-start-modal textarea { color: var(--text); background: var(--surface); border-color: var(--line-strong); }
