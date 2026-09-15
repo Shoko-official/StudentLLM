@@ -117,6 +117,18 @@ function normalizeMarkdownLatex(content: string) {
   }).join('\n');
 }
 
+function repairUnclosedInlineLatex(content: string) {
+  return content.split('\n').map((line) => {
+    if ((line.match(/\$/g) ?? []).length % 2 === 0) return line;
+    const delimiterIndex = line.indexOf('$');
+    const candidate = line.slice(delimiterIndex + 1).trimStart();
+    if (!/^\\[A-Za-z]+/u.test(candidate)) return line;
+    const nextPipe = line.indexOf('|', delimiterIndex + 1);
+    const insertionIndex = nextPipe === -1 ? line.length : nextPipe;
+    return `${line.slice(0, insertionIndex)}$${line.slice(insertionIndex)}`;
+  }).join('\n');
+}
+
 function safeUrlTransform(url: string) {
   try {
     const parsed = new URL(url, 'https://studentllm.invalid');
@@ -148,7 +160,7 @@ export function RichText({ content, highlightExtractedMath = false, className }:
           img: ({ alt }) => <span className="rich-image-alt" role="img" aria-label={alt || 'Image omitted'}>{alt || 'Image omitted'}</span>,
         }}
       >
-        {normalizeMathDelimiters(normalizeMarkdownLatex(content))}
+        {normalizeMathDelimiters(repairUnclosedInlineLatex(normalizeMarkdownLatex(content)))}
       </ReactMarkdown>
     </div>
   );
