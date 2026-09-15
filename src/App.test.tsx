@@ -416,6 +416,23 @@ describe('StudentLLM workspace', () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
+  it('answers a general visualization request without requiring course evidence', async () => {
+    const user = userEvent.setup();
+    const generate = vi.fn().mockResolvedValue({
+      content: 'Here is the unit circle with $\\cos(\\theta)$ and $\\sin(\\theta)$.',
+      model: 'mock-local-model',
+    });
+    render(<App provider={{ generate }} />);
+
+    await user.click(screen.getByRole('tab', { name: /Chat/ }));
+    await user.type(screen.getByLabelText('Ask the course chat'), 'génère une visualisation du cercle trigo');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText(/Here is the unit circle/)).toBeInTheDocument();
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: /Source ·/ })).not.toBeInTheDocument();
+  });
+
   it('records a bookmark and exposes a review segment', async () => {
     const user = userEvent.setup();
     const session = bookmarkRecorder();
