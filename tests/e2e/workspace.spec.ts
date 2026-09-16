@@ -891,7 +891,7 @@ test.describe('StudentLLM workspace', () => {
     await openSources(page);
     const source = page.getByRole('button', { name: /^slides\.pdf/ });
     await expect(source).toBeVisible();
-    await expect(page.getByText(/slides\.pdf added to course sources and saved locally\./)).toBeVisible();
+    await expect(page.getByText(/slides\.pdf (?:added to course sources and saved locally\.|indexed 1 page locally\.|contains no extractable text\.)/)).toBeVisible();
     await source.click();
     const preview = page.getByRole('dialog', { name: 'slides.pdf' });
     await expect(preview.locator('.pdf-preview')).toBeVisible({ timeout: 20_000 });

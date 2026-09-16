@@ -30,6 +30,7 @@ import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, runPackagedIpcSmoke
 import type { WorkspaceStorageError } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import type { LLMProvider } from './lib/llm-provider';
+import { classifyChatQuestion } from './lib/chat-intent';
 import { createLocalSpeechEngine } from './lib/speech-engine';
 import type { SpeechEngine } from './lib/speech-engine';
 import { createLocalDocumentEngine } from './lib/document-engine';
@@ -1348,9 +1349,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         localProvider?.embed ? { embed: (inputs) => localProvider.embed!(inputs) } : undefined,
         4,
       );
-      const generalCreationRequest = /\b(génère|genere|generate|visuali[sz]ation|diagram|schéma|schema|draw|trace|plot)\b/i.test(message);
-      const courseSpecificQuestion = /\b(in this course|in the course|according to|from (this|the) (source|document|notes)|dans ce cours|dans le cours|selon|d['’]?après|source|document|notes|transcription|formulaire)\b/i.test(message)
-        || (retrievalHits.length > 0 && !generalCreationRequest);
+      const { generalEducationalRequest: generalCreationRequest, courseSpecificQuestion } = classifyChatQuestion(message, retrievalHits.length > 0);
       const retrievedCitations = retrievalHits.slice(0, 2).map((hit) => formatRetrievalCitation(hit.document));
       if (!retrievalHits.length && (!localProvider || courseSpecificQuestion || !generalCreationRequest)) {
         updateActiveWorkspace((current) => ({
