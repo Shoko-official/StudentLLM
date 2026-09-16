@@ -6,6 +6,7 @@ import argparse
 import io
 import json
 import threading
+import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -15,11 +16,45 @@ except ModuleNotFoundError:  # Running this file directly from the scripts direc
     from local_server_security import MAX_ASR_UPLOAD_BYTES, allowed_origin, validate_content_length, validate_local_host
 
 
+MAX_PREVIEW_UPLOAD_BYTES = 8 * 1024 * 1024
+MAX_PREVIEW_SECONDS = 30
+MAX_PROMPT_CHARACTERS = 500
+MAX_QUERY_CHARACTERS = 8192
+
+
+def preview_wav(audio: bytes) -> bytes:
+    """Validate a bounded PCM window before any model work or media decoding."""
+    try:
+        with wave.open(io.BytesIO(audio), "rb") as source:
+            channels = source.getnchannels()
+            rate = source.getframerate()
+            frames = source.getnframes()
+            if source.getsampwidth() != 2 or channels not in (1, 2) or not 8000 <= rate <= 48000:
+                raise ValueError("Preview requires 16-bit PCM WAV, mono or stereo, at 8-48 kHz.")
+            if frames <= 0 or frames > MAX_PREVIEW_SECONDS * rate:
+                raise ValueError(f"Preview audio must contain more than 0 and at most {MAX_PREVIEW_SECONDS} seconds.")
+            pcm = source.readframes(frames)
+            if len(pcm) != frames * channels * 2:
+                raise ValueError("Preview WAV data is incomplete.")
+    except (wave.Error, EOFError, RuntimeError) as error:
+        # wave also raises RuntimeError when a malformed chunk seeks past its RIFF boundary.
+        raise ValueError("Preview requires a complete PCM WAV file.") from error
+
+    # Forward only the checked frames, never unchecked trailing data or streams.
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as target:
+        target.setnchannels(channels)
+        target.setsampwidth(2)
+        target.setframerate(rate)
+        target.writeframes(pcm)
+    return buffer.getvalue()
+
+
 class TranscriptionHandler(BaseHTTPRequestHandler):
     server_version = "StudentLLM-ASR/1.0"
 
     def _write_json(self, status: int, payload: dict[str, object]) -> None:
-        encoded = json.dumps(payload).encode("utf-8")
+        encoded = json.dumps(payload, allow_nan=False).encode("utf-8")
         self.send_response(status)
         origin = allowed_origin(self.headers.get("Origin"))
         if origin:
@@ -41,7 +76,13 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
         if urlparse(self.path).path != "/health":
             self._write_json(404, {"error": "Not found."})
             return
-        self._write_json(200, {"status": "ok", "model": self.server.model_name})
+        self._write_json(200, {
+            "status": "ok",
+            "model": self.server.model_name,
+            "device": self.server.device,
+            "compute_type": self.server.compute_type,
+            "diarization": False,
+        })
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
@@ -49,42 +90,97 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
             self._write_json(404, {"error": "Not found."})
             return
         try:
+            if len(parsed.query) > MAX_QUERY_CHARACTERS:
+                raise ValueError("The transcription query is too long.")
+            query = parse_qs(parsed.query, keep_blank_values=True, max_num_fields=8, errors="strict")
+            if any(len(query.get(name, [])) > 1 for name in ("mode", "language", "prompt")):
+                raise ValueError("Transcription options must not be repeated.")
+            mode = query.get("mode", ["full"])[0]
+            if mode not in ("full", "preview"):
+                raise ValueError("Mode must be full or preview.")
+            language = query.get("language", [self.server.default_language])[0] or None
+            prompt = query.get("prompt", [""])[0]
+            if len(prompt) > MAX_PROMPT_CHARACTERS:
+                raise ValueError(f"Vocabulary context must not exceed {MAX_PROMPT_CHARACTERS} characters.")
+            if any(not character.isprintable() for character in prompt) or "<|" in prompt or "|>" in prompt:
+                raise ValueError("Vocabulary context must be plain text without control characters or model tokens.")
+            prompt = prompt.strip() or None
+        except ValueError:
+            self._write_json(400, {"error": "Invalid transcription options."})
+            return
+
+        if self.headers.get("Transfer-Encoding") is not None or len(self.headers.get_all("Content-Length", [])) != 1:
+            self._write_json(400, {"error": "A single Content-Length header is required; chunked uploads are unsupported."})
+            return
+        try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
+        maximum = MAX_PREVIEW_UPLOAD_BYTES if mode == "preview" else MAX_ASR_UPLOAD_BYTES
         try:
-            validate_content_length(length, MAX_ASR_UPLOAD_BYTES)
+            validate_content_length(length, maximum)
         except ValueError as error:
-            self._write_json(413 if length > MAX_ASR_UPLOAD_BYTES else 400, {"error": str(error)})
+            self._write_json(413 if length > maximum else 400, {"error": str(error)})
             return
 
         audio = self.rfile.read(length)
-        language = parse_qs(parsed.query).get("language", [self.server.default_language])[0] or None
+        if len(audio) != length:
+            self._write_json(400, {"error": "The request body is incomplete."})
+            return
+        if mode == "preview":
+            try:
+                audio = preview_wav(audio)
+            except ValueError as error:
+                self._write_json(400, {"error": str(error)})
+                return
         try:
             with self.server.model_lock:
                 segments, info = self.server.model.transcribe(
                     io.BytesIO(audio),
                     language=language,
-                    beam_size=5,
+                    task="transcribe",
+                    beam_size=1 if mode == "preview" else 5,
+                    temperature=0.0,
+                    condition_on_previous_text=False,
+                    initial_prompt=prompt,
                     vad_filter=True,
+                    vad_parameters={"min_silence_duration_ms": 1000, "speech_pad_ms": 400},
+                    no_speech_threshold=0.6,
+                    log_prob_threshold=-1.0,
+                    compression_ratio_threshold=2.4,
+                    word_timestamps=True,
+                    hallucination_silence_threshold=2.0,
                 )
-                result_segments = [
-                    {
-                        "id": f"local-asr-{index}",
-                        "start": segment.start,
-                        "end": segment.end,
-                        "speaker": "Speaker",
-                        "text": segment.text.strip(),
-                    }
-                    for index, segment in enumerate(segments)
-                    if segment.text.strip()
-                ]
+                # faster-whisper performs inference while this generator is consumed.
+                transcribed_segments = list(segments)
+            result_segments = []
+            for index, segment in enumerate(transcribed_segments):
+                if not segment.text.strip():
+                    continue
+                result = {
+                    "id": f"local-asr-{index}",
+                    "start": float(segment.start),
+                    "end": float(segment.end),
+                    "speaker": "",
+                    "text": segment.text.strip(),
+                }
+                if mode == "preview":
+                    result["words"] = [
+                        {"start": float(word.start), "end": float(word.end), "word": word.word}
+                        for word in (getattr(segment, "words", None) or [])
+                    ]
+                result_segments.append(result)
             self._write_json(200, {
                 "model": self.server.model_name,
+                "mode": mode,
+                "diarization": False,
                 "language": getattr(info, "language", language),
                 "duration": getattr(info, "duration", None),
                 "segments": result_segments,
             })
+        except (BrokenPipeError, ConnectionResetError):
+            # A client may abort a superseded preview while inference finishes.
+            return
         except Exception:
             self._write_json(422, {"error": "Transcription failed."})
 
@@ -94,7 +190,7 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="small", help="faster-whisper model name or local path")
+    parser.add_argument("--model", default="large-v3-turbo", help="faster-whisper model name or local path (default: large-v3-turbo; small is a lighter option)")
     parser.add_argument("--language", default="fr", help="default language code")
     parser.add_argument("--device", default="cpu", choices=("cpu", "cuda"))
     parser.add_argument("--compute-type", default="int8")
@@ -115,6 +211,8 @@ def main() -> None:
     server.model_lock = threading.Lock()
     server.model_name = arguments.model
     server.default_language = arguments.language
+    server.device = arguments.device
+    server.compute_type = arguments.compute_type
     print(f"StudentLLM local ASR listening on http://{host}:{arguments.port}")
     try:
         server.serve_forever()

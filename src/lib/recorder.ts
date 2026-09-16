@@ -1,4 +1,5 @@
 import { AudioChunkRecord, AudioChunkStore, createRecordingChunkStore, RecordingDurability } from './recording-storage';
+import { captureLiveAudio, type AudioPreviewWindow } from './live-audio';
 
 export interface RecorderStopSummary {
   recordingId: string;
@@ -9,6 +10,7 @@ export interface RecorderStopSummary {
 export interface RecorderSession {
   stop: () => Promise<RecorderStopSummary>;
   readChunks: () => Promise<AudioChunkRecord[]>;
+  readPreviewWindow?: (fromSeconds: number) => AudioPreviewWindow | null;
   stream: MediaStream | null;
   recordingId: string;
   durability: RecordingDurability | 'unavailable';
@@ -80,6 +82,7 @@ export async function requestRecorderSession(options: RecorderOptions = {}): Pro
   let persistenceError = false;
   let pendingWrites = Promise.resolve();
   let stopPromise: Promise<RecorderStopSummary> | undefined;
+  const preview = await captureLiveAudio(stream);
 
   recorder.ondataavailable = (event) => {
     if (!event.data.size) return;
@@ -109,6 +112,7 @@ export async function requestRecorderSession(options: RecorderOptions = {}): Pro
         recorder.stop();
         await stopped;
       } finally {
+        preview?.close();
         stream.getTracks().forEach((track) => track.stop());
       }
       await pendingWrites;
@@ -120,6 +124,7 @@ export async function requestRecorderSession(options: RecorderOptions = {}): Pro
   try {
     recorder.start(options.chunkIntervalMs ?? 1000);
   } catch (error) {
+    preview?.close();
     stream.getTracks().forEach((track) => track.stop());
     throw error;
   }
@@ -127,6 +132,7 @@ export async function requestRecorderSession(options: RecorderOptions = {}): Pro
     stream,
     stop,
     readChunks: () => chunkStore.list(recordingId),
+    ...(preview ? { readPreviewWindow: preview.read } : {}),
     recordingId,
     durability: chunkStore.durability,
   };

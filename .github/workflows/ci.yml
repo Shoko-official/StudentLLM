@@ -43,7 +43,7 @@ jobs:
       - name: Typecheck
         run: npm run check
       - name: Benchmark adapter checks
-        run: npm run benchmarks:check
+        run: npm run benchmarks:check && npm run asr:test
       - name: Unit and integration tests
         run: npm run test:run
       - name: Production build

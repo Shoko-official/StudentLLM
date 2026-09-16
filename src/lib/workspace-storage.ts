@@ -64,6 +64,11 @@ function isTranscriptSegment(value: unknown): value is TranscriptSegment {
     && typeof value.timestamp === 'string'
     && typeof value.speaker === 'string'
     && typeof value.text === 'string'
+    && (value.start === undefined || (typeof value.start === 'number' && Number.isFinite(value.start) && value.start >= 0))
+    && (value.end === undefined || (typeof value.end === 'number' && Number.isFinite(value.end) && value.end >= (typeof value.start === 'number' ? value.start : 0)))
+    && (value.words === undefined || (Array.isArray(value.words) && value.words.every(word => isRecord(word) && typeof word.word === 'string'
+      && typeof word.start === 'number' && Number.isFinite(word.start) && word.start >= 0
+      && typeof word.end === 'number' && Number.isFinite(word.end) && word.end >= word.start)))
     && (value.status === undefined || value.status === 'verified' || value.status === 'review');
 }
 
@@ -100,6 +105,7 @@ function isCourseNoteBlock(value: unknown, sourceIds = new Set<string>()): value
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.type !== 'string') return false;
   if (value.type === 'heading') return (value.level === 1 || value.level === 2) && typeof value.text === 'string';
   if (value.type === 'markdown') return typeof value.markdown === 'string'
+    && (value.transcriptIds === undefined || (Array.isArray(value.transcriptIds) && value.transcriptIds.every(id => typeof id === 'string')))
     && (value.sourceName === undefined || typeof value.sourceName === 'string')
     && (value.sourceId === undefined || typeof value.sourceId === 'string');
   if (value.type === 'paragraph') return typeof value.text === 'string'
