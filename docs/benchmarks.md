@@ -12,9 +12,9 @@ Regression checks complement the public benchmark results below. Each reported s
 | --- | --- | --- | --- |
 | TypeScript | TypeScript project check | `npm run check` | PASS |
 | Benchmark adapters | Python bytecode compilation | `npm run benchmarks:check` | PASS |
-| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 234 tests |
+| UI and storage | Vitest + Testing Library | `npm run test:run` | PASS, 310 tests |
 | Production artifact | Vite | `npm run build` | PASS |
-| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 41 tests |
+| Browser workflow | Playwright Chromium + axe | `npm run test:e2e` | PASS, 44 tests |
 | Live web smoke | Python Playwright against the running Vite interface | `$env:PYTHONUTF8='1'; python scripts/live_web_smoke.py` | PASS observed on 2026-09-01; page load, new-course dialog, Escape dismissal, and zero page or console errors |
 | FLEURS French ASR | Full public test split, faster-whisper small on CPU | `benchmarks/run_asr_fleurs.py --config fr_fr --split test` | WER 0.1357, CER 0.0491, RTF 0.184 |
 | FLEURS French ASR, CUDA profile | Full public test split, faster-whisper large-v3-turbo on local CUDA | `benchmarks/run_asr_fleurs.py --model large-v3-turbo --config fr_fr --split test --device cuda --compute-type float16` | WER 0.0656, CER 0.0213, RTF 0.0235; 676 examples; selected quality profile |
@@ -82,6 +82,10 @@ The provider latencies are point observations on the development machine, not pr
 The CUDA ArguAna run evaluated all 1,406 public test queries against 8,674 corpus documents with BAAI/bge-small-en-v1.5, normalized embeddings, and batch size 64. It reproduced the earlier CPU metrics while reducing embedding and scoring time to 21.863 seconds. The receipt is `artifacts/benchmarks/beir-arguana-bge-small-cuda.json`; this is an independent hardware comparison, not a change to the model or retrieval protocol.
 
 The browser chat result uses the built-in Vite same-origin proxy because the unchanged LM Studio endpoint did not return CORS headers. It validates the application request, response, citation, and rendering path without restarting LM Studio; it is not evidence that the endpoint is directly browser-callable without CORS configuration.
+
+## Fresh benchmark campaign availability
+
+The 2026-09-16 verification reran the complete local BEIR SciFact comparison and retained the strongest instructed BGE-large profile. A fresh MTRAG or CRAG rerun was not claimed: the local Hugging Face dataset cache contains no MTRAG or CRAG dataset directory, and the repository runners require the official corpus/development files. The repository still contains the validated adapters, their historical public receipts, and the complete CRAG split 1 receipt documented below. A new full MTRAG/CRAG measurement requires obtaining the corresponding official files or an available benchmark mirror; until then, those historical receipts are evidence of prior runs, not fresh 2026-09-16 measurements.
 
 ## Observed public result: DROP
 
