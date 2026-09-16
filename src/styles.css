@@ -134,7 +134,9 @@ svg { flex-shrink: 0; }
 .speaker-line span { color: var(--muted); }
 .transcript-more { align-self: start; min-height: 36px; }
 .transcript-list.compact .transcript-item { padding-block: 8px; }
-.live-transcript-panel { border-left: 2px solid var(--line-strong); padding-left: 12px; }
+.live-transcript-panel { border-top: 1px solid var(--line); padding-top: 20px; }
+.live-transcript-header { display: grid; gap: 6px; margin-bottom: 20px; }
+.live-transcript-header span { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .live-transcript-panel > div { max-height: 300px; overflow-y: auto; }
 .section-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 20px; }
 .section-toolbar h2 { margin: 0; }

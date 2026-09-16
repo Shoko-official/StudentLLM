@@ -349,6 +349,8 @@ describe('workspace storage', () => {
         block.text += ' My correction.';
       }
       if (edit === 'formula') {
+        // Simulate a persisted legacy formula; current notes no longer guess it from a name.
+        if (!note.blocks.some(item => item.type === 'formula')) note.blocks.push({ id: 'legacy-formula', type: 'formula', latex: '$$F = ma$$' });
         const block = note.blocks.find((item) => item.type === 'formula');
         if (block?.type !== 'formula') throw new Error('Missing generated formula');
         block.latex = '$$x = 1$$';

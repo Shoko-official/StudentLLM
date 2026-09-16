@@ -204,8 +204,9 @@ test.describe('StudentLLM workspace', () => {
 
     const courseNote = page.getByRole('region', { name: 'Course notes document' });
     await expect(courseNote).toContainText('Cross-attention lets decoder queries read encoder keys and values.');
-    expect(await courseNote.locator('.course-note-formula .katex').count()).toBeGreaterThan(0);
-    expect(await courseNote.locator('.course-note-formula math').count()).toBeGreaterThan(0);
+    // Inline source math stays in its sentence instead of being removed into a separate block.
+    expect(await courseNote.locator('.course-note-paragraph .katex').count()).toBeGreaterThan(0);
+    await expect(courseNote.locator('math annotation')).toContainText([String.raw`\frac{QK^T}{\sqrt{d_k}}`]);
     const workspace = await savedWorkspace(page);
     expect(workspace.lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ meta: 'Quick Start notes · text source', kind: 'transcript' }),

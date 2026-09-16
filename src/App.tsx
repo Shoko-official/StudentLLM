@@ -33,6 +33,8 @@ import type { LLMProvider } from './lib/llm-provider';
 import { classifyChatQuestion } from './lib/chat-intent';
 import { createLocalSpeechEngine } from './lib/speech-engine';
 import type { SpeechEngine } from './lib/speech-engine';
+import { groupTranscript, mergeLiveWindow, speakerLabel } from './lib/live-transcript';
+import { useLiveNotes } from './lib/use-live-notes';
 import { createLocalDocumentEngine } from './lib/document-engine';
 import type { DocumentPage } from './lib/document-engine';
 import type { DocumentEngine } from './lib/document-engine';
@@ -282,6 +284,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [generatingArtifact, setGeneratingArtifact] = useState<ArtifactKind | null>(null);
   const [actionError, setActionError] = useState('');
   const [liveTranscriptionError, setLiveTranscriptionError] = useState('');
+  const [liveSettledThrough, setLiveSettledThrough] = useState(0);
   const startingRecorderRef = useRef(false);
   const [isStartingRecording, setIsStartingRecording] = useState(false);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(workspace.lessonWorkspaces?.[workspace.activeLessonId]?.artifacts[0]?.id ?? workspace.artifacts[0]?.id ?? null);
@@ -330,7 +333,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [newCourseSubject, setNewCourseSubject] = useState('General');
   const [newCourseChapter, setNewCourseChapter] = useState('General notes');
   const recorderRef = useRef<RecorderSession | null>(null);
-  const liveTranscriptionInFlight = useRef(false);
   const liveTranscriptFeedRef = useRef<HTMLDivElement | null>(null);
   const storageIssueRef = useRef<WorkspaceStorageError['operation'] | null>(null);
   const resourcePreviewRequest = useRef(0);
@@ -446,8 +448,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       if (formatted.detection.method !== 'LM Studio') return;
       setLessonWorkspaces((current) => {
         const workspace = current[lessonId] ?? emptyLessonWorkspace;
-        const currentIds = workspace.transcript.map((segment) => segment.id).join('|');
-        const candidateIds = candidateTranscript.map((segment) => segment.id).join('|');
+        const currentIds = JSON.stringify(workspace.transcript);
+        const candidateIds = JSON.stringify(candidateTranscript);
         if (currentIds !== candidateIds) return current;
         return { ...current, [lessonId]: { ...workspace, courseNote: formatted } };
       });
@@ -526,35 +528,67 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const session = recorderRef.current;
     if (!session?.stream || session.durability !== 'durable') return undefined;
     let cancelled = false;
+    let inFlight = false;
+    let fromSeconds = 0;
+    let lastAudioEnd = -1;
+    let lastChunkCount = -1;
+    let previewSegments: TranscriptSegment[] = [];
+    const controller = new AbortController();
     const transcribeLatestAudio = async () => {
-      if (cancelled || liveTranscriptionInFlight.current) return;
-      liveTranscriptionInFlight.current = true;
+      if (cancelled || inFlight) return;
+      inFlight = true;
       try {
-        const chunks = await session.readChunks();
-        if (cancelled || !chunks.length) return;
-        const audio = new Blob(chunks.map((chunk) => chunk.blob), { type: chunks[0].blob.type || 'audio/webm' });
-        const transcription = await localSpeechEngine.transcribe(audio);
+        const window = session.readPreviewWindow?.(fromSeconds);
+        let audio: Blob;
+        if (session.readPreviewWindow) {
+          if (!window || window.end <= lastAudioEnd) return;
+          audio = window.audio;
+        } else {
+          // Compatibility for browsers without AudioWorklet. Never grow live uploads indefinitely.
+          const chunks = await session.readChunks();
+          if (cancelled || !chunks.length || chunks.length === lastChunkCount) return;
+          if (chunks.length > 60) {
+            setLiveTranscriptionError('This browser cannot stream bounded audio previews. Audio is saved; full transcription runs after stopping. Use a browser with AudioWorklet support for live notes.');
+            return;
+          }
+          lastChunkCount = chunks.length;
+          audio = new Blob(chunks.map((chunk) => chunk.blob), { type: chunks[0].blob.type || 'audio/webm' });
+        }
+        const transcription = await localSpeechEngine.transcribe(audio, { ...(window ? { mode: 'preview' as const } : {}), signal: controller.signal });
         if (cancelled) return;
-        setLiveTranscript(transcription.segments.map((segment, index) => ({
-          ...segment,
-          id: `${session.recordingId}:live:${segment.id || index}`,
-          sourceId: session.recordingId,
-          provisional: true,
-          status: 'review' as const,
-        })));
-        setLiveTranscriptionError('');
+        if (window) {
+          const merged = mergeLiveWindow(previewSegments, transcription.segments, window, session.recordingId);
+          previewSegments = merged.segments;
+          setLiveTranscript(previewSegments);
+          setLiveTranscriptionError(window.start > fromSeconds + 1 ? 'Live transcription fell behind. The complete audio is saved for final transcription.' : '');
+          fromSeconds = merged.nextStart;
+          setLiveSettledThrough(merged.nextStart);
+          lastAudioEnd = window.end;
+        } else {
+          setLiveTranscript(transcription.segments.map((segment, index) => ({
+            ...segment,
+            id: `${session.recordingId}:live:${segment.id || index}`,
+            sourceId: session.recordingId,
+            provisional: true,
+            status: 'review' as const,
+          })));
+          setLiveTranscriptionError('');
+        }
       } catch {
-        setLiveTranscriptionError('Live transcription is unavailable. Audio is still recording. Check the speech service in Settings.');
+        lastChunkCount = -1;
+        if (!cancelled) setLiveTranscriptionError('Live transcription is unavailable. Audio is still recording. Check the speech service in Settings.');
       } finally {
-        liveTranscriptionInFlight.current = false;
+        inFlight = false;
       }
     };
     void transcribeLatestAudio();
     const interval = window.setInterval(() => void transcribeLatestAudio(), Math.max(liveTranscriptionIntervalMs, 250));
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearInterval(interval);
       setLiveTranscript([]);
+      setLiveSettledThrough(0);
     };
   }, [isRecording, liveTranscriptionIntervalMs, localSpeechEngine]);
 
@@ -927,13 +961,17 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     : [];
   const courseTranscript = [...visibleTranscript, ...visibleLiveTranscript];
   const noteTranscript = [...visibleTranscript, ...visibleLiveTranscript];
+  const liveDraft = useLiveNotes(isRecording ? recorderRef.current?.recordingId : undefined, lessons.find(lesson => lesson.id === liveRecordingLessonId) ?? activeLesson, liveTranscript, localProvider, liveSettledThrough);
   const activeCourseNote = useMemo(() => {
     const note = activeWorkspace.courseNote ?? buildCourseNote(activeLesson, transcript);
-    if (isRecording || visibleTranscript.length !== transcript.length || visibleLiveTranscript.length) {
+    if (isRecording && liveRecordingLessonId === activeLessonId && localProvider) {
+      return { ...note, blocks: [...note.blocks, ...liveDraft.blocks] };
+    }
+    if ((isRecording && liveRecordingLessonId === activeLessonId) || visibleTranscript.length !== transcript.length || visibleLiveTranscript.length) {
       return buildCourseNote(activeLesson, noteTranscript);
     }
     return note;
-  }, [activeLesson, activeWorkspace.courseNote, isRecording, noteTranscript, transcript, visibleLiveTranscript.length, visibleTranscript.length]);
+  }, [activeLesson, activeWorkspace.courseNote, isRecording, noteTranscript, transcript, visibleLiveTranscript, visibleTranscript.length, liveDraft, liveRecordingLessonId, activeLessonId, localProvider]);
 
   useEffect(() => {
     setLessonWorkspaces((current) => {
@@ -2045,7 +2083,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const renderTranscriptSegment = (segment: TranscriptSegment) => (
     <article className={`transcript-item ${segment.status === 'review' ? 'needs-review' : ''}`} key={segment.id}>
       <div className="transcript-time">{segment.timestamp}</div>
-      <div className="transcript-body"><div className="speaker-line"><strong>{segment.speaker}</strong>{segment.provisional ? <span className="review-badge">Live preview</span> : segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><div className="transcript-text"><RichText content={segment.text} /></div></div>
+      <div className="transcript-body"><div className="speaker-line">{speakerLabel(segment.speaker) && <strong>{speakerLabel(segment.speaker)}</strong>}{segment.provisional ? <span className="review-badge">Live preview</span> : segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><div className="transcript-text"><RichText content={segment.text} /></div></div>
       {!segment.provisional && <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => toggleTranscriptReview(segment.id)}>...</button>}
     </article>
   );
@@ -2060,7 +2098,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       return <section className="course-note-markdown" key={block.id}><RichText content={block.markdown} /></section>;
     }
     if (block.type === 'paragraph') {
-      return <div className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp} · {block.speaker ?? 'Lecture'}</span>}<RichText content={block.text} highlightExtractedMath /></div>;
+      return <div className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp}{speakerLabel(block.speaker) ? ` · ${speakerLabel(block.speaker)}` : ''}</span>}<RichText content={block.text} highlightExtractedMath /></div>;
     }
     if (block.type === 'formula') {
       return <div className="course-note-formula" key={block.id}><RichText content={block.latex} />{block.caption && <small>{block.caption}</small>}</div>;
@@ -2173,12 +2211,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <section className="course-note-document" aria-label="Course notes document">
                 <div className="course-note-toolbar"><span>Course notes</span><div className="course-note-toolbar-actions">{isRecording && <span className="course-note-status" role="status" aria-label="Live transcription status">{localSpeechEngine ? visibleLiveTranscript.length ? 'Live transcription' : 'Waiting for transcription' : 'Audio recording'}</span>}{(transcript.length > 0 || visibleLiveTranscript.length > 0) && <button className="text-action" onClick={exportCourseNote}><Download size={15} /> Save note</button>}</div></div>
                 <div className="course-note-content" aria-live={isRecording ? 'polite' : 'off'}>
+                  {isRecording && <p className="course-note-meta" role="status">{localProvider ? !recorderRef.current?.readPreviewWindow ? 'This browser cannot draft live notes. The transcript is shown below; notes are written after recording stops.' : liveDraft.status || 'Waiting for a complete passage to write notes. The verbatim transcript appears below.' : 'Verbatim transcript. Connect a language model in Settings for structured notes.'}</p>}
                   {transcript.length || visibleLiveTranscript.length ? activeCourseNote.blocks.map(renderCourseNoteBlock) : <div className="note-empty"><h2>Your notes start here.</h2><p>Record your lecture or import a file above.</p><p>Text notes appear directly. Audio transcription and PDF extraction need a connected service.</p><button className="text-action" onClick={() => setShowSettingsPanel(true)}>Set up transcription</button></div>}
                 </div>
               </section>
               {isRecording && localSpeechEngine && <section className="live-transcript-panel" aria-label="Live course transcription">
-                <div className="live-transcript-header"><strong>Live transcript</strong><span>Updates as audio is processed. Segments remain marked for review until recording is finalized.</span></div>
-                <div ref={liveTranscriptFeedRef} aria-live="polite">{visibleLiveTranscript.length ? visibleLiveTranscript.map(renderTranscriptSegment) : <p className="empty-state">Waiting for the first transcribed passage.</p>}</div>
+                <div className="live-transcript-header"><strong>Live transcript</strong><span>Original speech, separate from the notes. The latest words may change. Speaker identification is not enabled by the local speech service.</span></div>
+                <div ref={liveTranscriptFeedRef} aria-live="polite">{visibleLiveTranscript.length ? groupTranscript(visibleLiveTranscript).map(renderTranscriptSegment) : <p className="empty-state">Waiting for the first transcribed passage.</p>}</div>
               </section>}
               {(transcript.length > 0 || isRecording) && <details className="transcript-disclosure">
                 <summary>Transcript {isRecording ? '(recording)' : `(${transcript.length})`}</summary>
