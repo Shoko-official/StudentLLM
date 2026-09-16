@@ -729,7 +729,7 @@ describe('StudentLLM workspace', () => {
     expect(courseNote).toHaveTextContent('E = mc^2');
     expect(liveRegion.querySelector('.katex')).not.toBeNull();
     expect(courseNote.querySelector('.katex')).not.toBeNull();
-    expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
+    expect(transcribe).toHaveBeenCalledWith(expect.any(Blob), expect.objectContaining({ signal: expect.any(AbortSignal) }));
 
     await user.click(screen.getByRole('button', { name: 'View all' }));
     const transcriptDialog = screen.getByRole('dialog', { name: 'Full transcript 3' });
@@ -740,6 +740,38 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Stop recording' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled());
     expect(screen.queryByText('Live preview')).not.toBeInTheDocument();
+  });
+
+  it('uses bounded previews and cancels them before final transcription without leaking late errors', async () => {
+    const user = userEvent.setup();
+    let rejectPreview!: (reason: Error) => void;
+    let previewSignal: AbortSignal | undefined;
+    const session = {
+      recordingId: 'bounded-preview', stream: {} as MediaStream, durability: 'durable' as const,
+      readPreviewWindow: vi.fn(() => ({ audio: new Blob(['pcm'], { type: 'audio/wav' }), start: 0, end: 12 })),
+      readChunks: vi.fn(async () => [{ recordingId: 'bounded-preview', sequence: 0, recordedAt: 0, blob: new Blob(['complete archive']) }]),
+      stop: vi.fn(async () => ({ recordingId: 'bounded-preview', chunksPersisted: 1, persistenceError: false })),
+    };
+    const speech = { transcribe: vi.fn(async (_audio: Blob, options?: { mode?: 'preview'; signal?: AbortSignal }) => {
+      if (options?.mode === 'preview') {
+        previewSignal = options.signal;
+        return new Promise<{ model: string; segments: typeof finalSegments }>((_resolve, reject) => { rejectPreview = reject; });
+      }
+      return { model: 'test', segments: finalSegments };
+    }) };
+    const finalSegments = [{ id: 'final', speaker: '', timestamp: '00:00:00', text: 'The complete final transcript.', status: 'review' as const }];
+    render(<App recorderSessionFactory={async () => session} speechEngine={speech} provider={null} />);
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    await waitFor(() => expect(previewSignal).toBeDefined());
+    expect(session.readChunks).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Stop recording' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled());
+    expect(previewSignal?.aborted).toBe(true);
+    rejectPreview(new Error('Late network error'));
+    await openTranscript(user);
+    expect(transcriptPreview().getByText('The complete final transcript.')).toBeInTheDocument();
+    expect(screen.queryByText(/Live transcription is unavailable/)).not.toBeInTheDocument();
+    expect(speech.transcribe).toHaveBeenCalledTimes(2);
   });
 
   it('waits for native workspace hydration before processing recording recovery', async () => {
@@ -888,7 +920,7 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('Imported material routed to Matrices and Linear Maps.')).toBeInTheDocument();
     const note = savedWorkspace().lessonWorkspaces['fixture-linear-algebra'].courseNote;
     expect(note.detection.method).toBe('LM Studio');
-    expect(note.detection.basis).toContain('formatted source-linked');
+    expect(note.detection.basis).toContain('Source-linked lecture notes');
     expect(note.blocks).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'formula', sourceId: expect.stringContaining(':text'), latex: 'f(x) = 2x' }),
       expect.objectContaining({ type: 'schema', sourceId: expect.stringContaining(':text') }),
