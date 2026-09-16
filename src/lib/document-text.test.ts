@@ -19,4 +19,8 @@ describe('document text normalization', () => {
     expect(normalized).toBe('\\begin{pmatrix}\\frac{x}{2} + \\text{ln}(x)\\right');
     expect(normalized).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
   });
+
+  it('repairs common UTF-8 mojibake operators at the extraction boundary', () => {
+    expect(normalizeExtractedDocumentText('Gradient âˆ‡f â†’ âˆ‚f')).toBe('Gradient ∇f → ∂f');
+  });
 });
