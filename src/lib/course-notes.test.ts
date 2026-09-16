@@ -16,6 +16,28 @@ const lesson: Lesson = {
 const segment = (text: string): TranscriptSegment => ({ id: 'segment-1', timestamp: '00:01:00', speaker: 'Professor', text, status: 'review' });
 
 describe('course notes', () => {
+  it('keeps every inline formula when adjacent transcript fragments are grouped', () => {
+    const note = buildCourseNote(lesson, [segment('On pose $x=1$.'), { ...segment('Puis $y=2$.'), id: 'segment-2' }]);
+    const exported = courseNoteMarkdown(note);
+    expect(exported).toContain('$x=1$');
+    expect(exported).toContain('$y=2$');
+    expect(exported).not.toContain('On pose .');
+  });
+  it('writes coherent sourced prose instead of repeating every decoder fragment', async () => {
+    const transcript = [segment('Le pas diminue.'), { ...segment('L erreur diminue aussi.'), id: 'segment-2' }];
+    const note = await formatCourseNoteWithProvider(lesson, transcript, {
+      generate: async () => ({ model: 'test', content: JSON.stringify({ blocks: [{ type: 'markdown', sourceId: 'segment-1', transcriptIds: ['segment-1', 'segment-2'], markdown: '## Pas de calcul\n\nLa diminution du pas diminue l’erreur.' }] }) }),
+    });
+    expect(note.blocks).toContainEqual(expect.objectContaining({ type: 'markdown', transcriptIds: ['segment-1', 'segment-2'] }));
+    expect(note.blocks.filter(block => block.type === 'paragraph' && block.timestamp)).toHaveLength(0);
+    expect(transcript[0].text).toBe('Le pas diminue.');
+  });
+
+  it('does not infer a formula just because a physicist is mentioned', () => {
+    const note = buildCourseNote(lesson, [segment('Einstein discussed philosophy. Newton described force.')]);
+    expect(note.blocks.filter(block => block.type === 'formula')).toHaveLength(0);
+  });
+
   it('builds a routed note with semantic blocks from transcript evidence', () => {
     const note = buildCourseNote(lesson, [segment('The force leads to acceleration. F = ma. accuracy: 0.8 loss: 0.2')]);
     expect(note.folderPath).toEqual(['Courses', 'Machine Learning', 'Transformers', 'Attention']);

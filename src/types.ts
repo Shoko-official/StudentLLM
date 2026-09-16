@@ -31,6 +31,9 @@ export interface TranscriptSegment {
   id: string;
   sourceId?: string;
   provisional?: boolean;
+  start?: number;
+  end?: number;
+  words?: Array<{ start: number; end: number; word: string }>;
   timestamp: string;
   speaker: string;
   text: string;
@@ -55,7 +58,7 @@ export interface LessonWorkspace {
 
 export type CourseNoteBlock =
   | { id: string; type: 'heading'; level: 1 | 2; text: string }
-  | { id: string; type: 'markdown'; markdown: string; sourceName?: string; sourceId?: string }
+  | { id: string; type: 'markdown'; markdown: string; sourceName?: string; sourceId?: string; transcriptIds?: string[] }
   | { id: string; type: 'paragraph'; text: string; timestamp?: string; speaker?: string; sourceId?: string }
   | { id: string; type: 'formula'; latex: string; caption?: string; sourceId?: string }
   | { id: string; type: 'formula-image'; imageData: string; alt: string; sourceName: string; sourceId?: string }
