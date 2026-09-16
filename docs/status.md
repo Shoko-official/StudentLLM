@@ -6,14 +6,14 @@ StudentLLM is an active local-first learning workspace. The application workflow
 
 ## 2026-09-16 completion baseline
 
-The current completion branch is based on `d63998d` and adds `45be1ae`, which separates general educational requests from course-specific evidence requirements. This fixes the reported regression where an accented request such as `génère une visualisation du cercle trigo` was rejected as lacking course evidence even when the request did not depend on the uploaded course.
+The current `main` is `f4f54ef`, the squash merge of PRs [#321](https://github.com/Shoko-official/StudentLLM/pull/321) and [#322](https://github.com/Shoko-official/StudentLLM/pull/322). These deliveries separate general educational requests from course-specific evidence requirements, preserve extracted math structure, and make chat and Study citations open the original local source.
 
 Fresh local evidence for this baseline:
 
 | Check | Result |
 | --- | --- |
 | TypeScript and repository checks | `npm run check` passed |
-| Vitest | 32 files, 306 tests passed |
+| Vitest | 32 files, 310 tests passed |
 | Production build | `npm run build` passed; Vite emitted only the existing large-chunk advisory |
 | Browser E2E | 44 scenarios passed in 1.7 minutes |
 | Benchmark adapter checks | 61 Python checks passed through `npm run benchmarks:check` |
@@ -30,7 +30,7 @@ These checks establish a verified development baseline, not a claim that every q
 
 | Area | Evidence | Current result |
 | --- | --- | --- |
-| Application verification | Fresh TypeScript, Vitest, build, Playwright, benchmark-adapter, audit, and live-service checks | The 2026-09-16 baseline above passes 32 Vitest files / 306 tests, 44 Playwright scenarios, 61 benchmark adapter checks, the production build, and the high-severity dependency audit. The post-merge ten-job GitHub Actions gate [34954637923](https://github.com/Shoko-official/StudentLLM/actions/runs/34954637923) remains the latest recorded cross-platform gate for quality, browser E2E, desktop builds, packaged runtime, and packaged UI. |
+| Application verification | Fresh TypeScript, Vitest, build, Playwright, benchmark-adapter, audit, and live-service checks | The post-merge `main` verification passes 32 Vitest files / 310 tests, 44 Playwright scenarios, 61 benchmark adapter checks, the production build, and the high-severity dependency audit. PR [#322](https://github.com/Shoko-official/StudentLLM/pull/322) passed all ten cross-platform GitHub Actions jobs, including packaged desktop runtime and UI checks, before squash merge. |
 | Browser accessibility | Playwright plus axe and live responsive preview | No serious or critical violations observed; mobile overflow, navigation, Escape dismissal, compact sidebar navigation, and Quick Start entry regressions pass |
 | Local persistence | Vitest and Playwright | Course isolation, reload recovery, corrupted export rejection, source blob fidelity, local source previews, audio recovery, recording finalization feedback, source-linked imported and recorded transcript cleanup, course deletion cleanup, locally persisted Settings preferences, and native storage failure fallback feedback pass |
 | LM Studio integration | Existing local endpoint, live provider smoke, browser chat, Quick Start, and public DROP probe | The local endpoint is reachable through the LM Studio router on `127.0.0.1:1234`; the app exposes `Live via LM Studio` when the provider is available and falls back to `Offline source mode` otherwise. A fresh 2026-09-16 provider smoke passed with `openai/gpt-oss-20b` at 1,263 ms, with 15 models exposed. The provider now retries one bounded LM Studio engine-protocol failure before surfacing an error. Quick Start sends an explicit JSON Schema for GPT OSS compatibility, course chat sends explicit evidence boundaries, and the current branch classifies general educational requests separately from course-specific questions. A larger local DROP run was interrupted before writing a receipt and is not counted as a score |

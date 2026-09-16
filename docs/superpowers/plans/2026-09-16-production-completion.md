@@ -69,27 +69,27 @@ Use commit message `docs: refresh production completion baseline`.
 - Consumes: PDF/image/text/Markdown/HTML/RTF/DOCX/PPTX bytes and typed extraction blocks.
 - Produces: deterministic normalized blocks with page/region provenance, safe formula fallback, semantic tables, and declarative diagrams/charts that render identically in Notes, Chat, and Study.
 
-- [ ] **Step 1: Add failing fixtures for the reported failure classes**
+- [x] **Step 1: Add failing fixtures for the reported failure classes**
 
 Cover escaped `\\partial` commands, mojibake operators, unclosed delimiters, multi-line display math, tables containing formulas, code fences containing dollar signs, empty OCR pages, and diagram/chart blocks with invalid source IDs.
 
-- [ ] **Step 2: Run the focused tests and confirm each regression is red**
+- [x] **Step 2: Run the focused tests and confirm each regression is red**
 
 Run `npm run test:run -- src/lib/document-engine.test.ts src/lib/document-text.test.ts src/lib/rich-text.test.tsx src/lib/visual-blocks.test.tsx` and the targeted Python document tests.
 
-- [ ] **Step 3: Implement boundary normalization and strict typed-block validation**
+- [x] **Step 3: Implement boundary normalization and strict typed-block validation**
 
 Keep ambiguous formulas as readable source text, reject malformed visual blocks, preserve page numbers, and never turn untrusted extracted content into executable HTML or script URLs.
 
-- [ ] **Step 4: Implement visual regression assertions**
+- [x] **Step 4: Implement visual regression assertions**
 
 Render a source preview and a course note from the same fixture, assert that formulas use KaTeX/MathML when valid, tables have semantic rows and cells, code remains code, and invalid formulas remain readable instead of showing raw broken commands in red.
 
-- [ ] **Step 5: Run the focused tests and the browser source-preview flow**
+- [x] **Step 5: Run the focused tests and the browser source-preview flow**
 
 Confirm the focused suites pass, then verify that a cited PDF source opens its original preview and that a missing blob produces a recoverable message without losing the metadata.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Use commit message `fix: preserve structure across document rendering`.
 
@@ -150,7 +150,7 @@ Cover a source-grounded question, a general trigonometry question with no releva
 
 Use retrieval relevance thresholds and question intent so a generic mathematical request is not incorrectly rejected as “not enough evidence,” while course-specific claims still require cited evidence.
 
-- [ ] **Step 3: Make citations actionable and readable**
+- [x] **Step 3: Make citations actionable and readable**
 
 Render filename, page or timestamp, and source type in a compact citation control; clicking it must open the original local source or a recoverable missing-source state. Do not display a citation chip that has no action.
 
@@ -158,7 +158,7 @@ Render filename, page or timestamp, and source type in a compact citation contro
 
 Run the provider smoke and isolated browser smoke against the configured LM Studio model and NVIDIA `NVIDIA_API_KEY`. Capture model IDs, latency, HTTP status, and failure reasons without logging credentials.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Use commit message `fix: improve grounded and general chat behavior`.
 
@@ -175,19 +175,19 @@ Use commit message `fix: improve grounded and general chat behavior`.
 - Consumes: the stabilized document, recording, provider, and retrieval flows.
 - Produces: a minimal responsive interface with clear user/assistant separation, consistent light/dark surfaces, predictable sidebar hierarchy, readable source chips, and no fake course data in a fresh workspace.
 
-- [ ] **Step 1: Add failing responsive assertions**
+- [x] **Step 1: Add failing responsive assertions**
 
 At 320px, 768px, and desktop widths assert no horizontal overflow, visible composer focus, usable source preview, separated message groups, aligned provider metadata, and a sidebar without decorative child borders.
 
-- [ ] **Step 2: Fix the smallest CSS/component boundaries**
+- [x] **Step 2: Fix the smallest CSS/component boundaries**
 
 Preserve the existing visual language, remove redundant controls, keep Quick Start visibly random/provisional, and ensure every modal and menu has keyboard dismissal and an accessible name.
 
-- [ ] **Step 3: Run browser and desktop UI tests with axe**
+- [x] **Step 3: Run browser and desktop UI tests with axe**
 
 Treat console errors, failed source opening, broken formulas, layout overflow, and serious/critical accessibility violations as failures.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Use commit message `fix: finish responsive workspace interaction states`.
 
@@ -203,11 +203,11 @@ Use commit message `fix: finish responsive workspace interaction states`.
 - Consumes: public datasets, official qrels/evaluators, one-worker GPT OSS generation, local CUDA embeddings where available, and the configured NVIDIA/LM Studio endpoints.
 - Produces: reproducible receipts with commit, dataset split, model, parameters, counts, failures, latency, and SHA-256; no self-made easy benchmark is accepted as a frontier score.
 
-- [ ] **Step 1: Verify dataset and evaluator availability before spending compute**
+- [x] **Step 1: Verify dataset and evaluator availability before spending compute**
 
 Run each runner's `--help` and adapter tests, confirm the exact public files and official evaluator versions, and stop any campaign whose source or evaluator is unavailable rather than substituting a private or synthetic set.
 
-- [ ] **Step 2: Run complete selected BEIR collections**
+- [x] **Step 2: Run complete selected BEIR collections**
 
 Run BM25, dense, hybrid, and rerank profiles on the documented complete collections with fixed seeds and receipt output. Compare retrieval metrics without silently promoting a weaker profile.
 
@@ -219,7 +219,7 @@ Run the official four-collection retrieval qrels and the selected public generat
 
 Run the available official split(s) with the corrected judge protocol, deterministic exact match before judge calls, one worker, and resumable checkpoints. Report quality honestly even when the target is missed.
 
-- [ ] **Step 5: Update benchmark docs and add receipt integrity tests**
+- [x] **Step 5: Update benchmark docs and add receipt integrity tests**
 
 Validate required fields and SHA-256 values, document exact commands, and mark each target as met, measured-but-unmet, or blocked by external data/access.
 
@@ -241,15 +241,15 @@ Use commit message `docs: publish reproducible public benchmark evidence`.
 - Consumes: all completed slices, receipts, and CI artifacts.
 - Produces: a professional English repository, a release decision based on evidence, and a squash-merged PR with deleted branch.
 
-- [ ] **Step 1: Reconcile README, status, roadmap, and benchmark claims**
+- [x] **Step 1: Reconcile README, status, roadmap, and benchmark claims**
 
 Remove stale counts, distinguish local proof from external-service proof, and keep all remaining blockers explicit.
 
-- [ ] **Step 2: Run the full verification matrix from a clean checkout state**
+- [x] **Step 2: Run the full verification matrix from a clean checkout state**
 
 Run TypeScript, all Vitest suites, benchmark adapter tests, production build, Playwright, desktop checks, provider smoke when services are available, npm audit, and `git diff --check`.
 
-- [ ] **Step 3: Create a focused feature branch and PR**
+- [x] **Step 3: Create a focused feature branch and PR**
 
 Push one coherent slice, wait for all required CI jobs, squash merge only after green checks, delete the remote/local branch and worktree, then fast-forward `main`.
 
