@@ -34,23 +34,23 @@
 - Consumes: current `main` at `d63998d`, existing test suites, provider/service availability, and current benchmark receipts.
 - Produces: a dated baseline separating implemented behavior, fresh evidence, and external blockers.
 
-- [ ] **Step 1: Run the complete local application verification**
+- [x] **Step 1: Run the complete local application verification**
 
 Run `npm run check`, `npm run test:run`, `npm run build`, `npm run test:e2e`, `npm run benchmarks:check`, and `npm audit --omit=dev --audit-level=high`. Record counts and failures, not impressions.
 
-- [ ] **Step 2: Probe configured local services**
+- [x] **Step 2: Probe configured local services**
 
 Run `npm run providers:smoke`, query LM Studio `/v1/models`, query the configured ASR `/health`, and query the configured document `/health`. If a service is unavailable, retain that fact as an external blocker instead of replacing it with a mock.
 
-- [ ] **Step 3: Inspect the browser workflows against the acceptance matrix**
+- [x] **Step 3: Inspect the browser workflows against the acceptance matrix**
 
 Exercise empty workspace, Quick Start, course routing, import, source preview, chat, Study, recording consent, recording, reload, export/import, deletion, theme switching, responsive widths, and citation opening with Playwright or the existing browser harness.
 
-- [ ] **Step 4: Update the status documents with only observed evidence**
+- [x] **Step 4: Update the status documents with only observed evidence**
 
 Add the current commit, test counts, provider states, and explicit open gates. Do not mark benchmark targets complete merely because an adapter or partial dataset exists.
 
-- [ ] **Step 5: Run `git diff --check` and commit the baseline documentation**
+- [x] **Step 5: Run `git diff --check` and commit the baseline documentation**
 
 Use commit message `docs: refresh production completion baseline`.
 
@@ -142,11 +142,11 @@ Use commit message `fix: make live transcription state authoritative`.
 - Consumes: local OpenAI-compatible chat/embedding endpoints, bounded course evidence, and general-knowledge questions.
 - Produces: clear provider state, source-grounded answers when evidence is relevant, useful general answers when the question is not source-dependent, and an explicit uncertainty response only when the question actually requires missing course evidence.
 
-- [ ] **Step 1: Add failing chat cases**
+- [x] **Step 1: Add failing chat cases**
 
 Cover a source-grounded question, a general trigonometry question with no relevant source, an intentionally unanswerable course-specific question, an empty provider response, a reasoning-only response, a citation whose blob is missing, and a provider timeout.
 
-- [ ] **Step 2: Separate relevance from evidence absence**
+- [x] **Step 2: Separate relevance from evidence absence**
 
 Use retrieval relevance thresholds and question intent so a generic mathematical request is not incorrectly rejected as “not enough evidence,” while course-specific claims still require cited evidence.
 
@@ -154,7 +154,7 @@ Use retrieval relevance thresholds and question intent so a generic mathematical
 
 Render filename, page or timestamp, and source type in a compact citation control; clicking it must open the original local source or a recoverable missing-source state. Do not display a citation chip that has no action.
 
-- [ ] **Step 4: Exercise LM Studio and NVIDIA through the real adapters**
+- [x] **Step 4: Exercise LM Studio and NVIDIA through the real adapters**
 
 Run the provider smoke and isolated browser smoke against the configured LM Studio model and NVIDIA `NVIDIA_API_KEY`. Capture model IDs, latency, HTTP status, and failure reasons without logging credentials.
 
@@ -256,4 +256,3 @@ Push one coherent slice, wait for all required CI jobs, squash merge only after 
 - [ ] **Step 4: Perform the final release gate**
 
 Report exact evidence, exact external blockers, and whether the application is production-ready, release-candidate-ready, or still blocked. Never use “100%” as a substitute for a missing measurement.
-
