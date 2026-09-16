@@ -6,7 +6,7 @@ import remarkMath from 'remark-math';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { isExtractedMathSourceLine } from './extracted-math';
-import { repairCorruptedLatexCommands } from './document-text';
+import { decodeMojibakeUtf8, repairBareLatexCommandPrefixes, repairCorruptedLatexCommands } from './document-text';
 
 const mathPattern = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$(?!\$)(?:\\.|[^$\\\n])+\$)/g;
 const renderedMathCache = new Map<string, string>();
@@ -102,18 +102,28 @@ function wrapBareLatexListItem(line: string) {
   return match[1] + body.replace(inlineLatexFragment, (fragment) => `$${fragment}$`);
 }
 
+function wrapBareLatexParagraph(line: string) {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.includes('$') || trimmed.startsWith('>') || trimmed.startsWith('#')) return line;
+  if (!bareLatexCommand.test(trimmed) || !trimmed.startsWith('\\')) return line;
+  const start = line.indexOf(trimmed);
+  const end = start + trimmed.length;
+  return line.slice(0, start) + '$' + trimmed + '$' + line.slice(end);
+}
+
 function normalizeMarkdownLatex(content: string) {
-  const repaired = repairCorruptedLatexCommands(content);
   let inCodeFence = false;
 
-  return repaired.split('\n').map((line) => {
+  return content.split('\n').map((line) => {
     if (line.trimStart().startsWith(String.fromCharCode(96, 96, 96))) {
       inCodeFence = !inCodeFence;
       return line;
     }
     if (inCodeFence) return line;
-    if (line.includes('|')) return line.split('|').map(wrapBareLatexCell).join('|');
-    return wrapBareLatexListItem(line);
+    const repaired = decodeMojibakeUtf8(repairBareLatexCommandPrefixes(repairCorruptedLatexCommands(line)));
+    if (repaired.includes('|')) return repaired.split('|').map(wrapBareLatexCell).join('|');
+    if (/^\s*(?:[-*+]|\d+[.)])\s+/u.test(repaired)) return wrapBareLatexListItem(repaired);
+    return wrapBareLatexParagraph(repaired);
   }).join('\n');
 }
 

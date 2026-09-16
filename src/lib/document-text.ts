@@ -21,6 +21,31 @@ function repairMojibakeUtf8(value: string) {
 }
 
 /**
+ * Decode common UTF-8-as-Windows-1252 sequences emitted by PDF extractors.
+ */
+export function decodeMojibakeUtf8(value: string) {
+  const typographyRepaired = value
+    .replaceAll('\u00e2\u02c6\u2021', '∇')
+    .replaceAll('\u00e2\u2020\u2019', '→')
+    .replaceAll('\u00e2\u02c6\u201a', '∂');
+  if (typographyRepaired !== value) return typographyRepaired;
+  const legacyDecoded = repairMojibakeUtf8(value);
+  if (legacyDecoded !== value) return legacyDecoded;
+  if (!/[\u00c3\u00c2]|\u00e2[\u0080-\u00bf]/u.test(value)) return value;
+  try {
+    const decoded = new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from([...value].map((character) => character.charCodeAt(0) & 0xff)));
+    return decoded.includes('\ufffd') ? value : decoded;
+  } catch {
+    return value;
+  }
+}
+
+/** Extractors can join a known LaTeX command to its following symbol. */
+export function repairBareLatexCommandPrefixes(value: string) {
+  return value.replace(/\\(alpha|beta|cdot|Delta|gamma|lambda|mu|nabla|omega|partial|rho|sigma|sum|theta|times|vec)(?=[A-Za-z])/gu, '\\$1 ');
+}
+
+/**
  * Some imported LaTeX has passed through a JavaScript-style escape decoder.
  * Sequences such as `\\frac` can therefore arrive as form-feed + `rac`.
  * Repair only known command prefixes so ordinary document whitespace remains whitespace.
@@ -41,7 +66,7 @@ export function repairCorruptedLatexCommands(value: string) {
  * transcript review all see the same readable source text.
  */
 export function normalizeExtractedDocumentText(value: string) {
-  let normalized = repairCorruptedLatexCommands(repairMojibakeUtf8(value.normalize('NFC')));
+  let normalized = repairCorruptedLatexCommands(decodeMojibakeUtf8(value.normalize('NFC')));
   Object.entries(PDF_LIGATURES).forEach(([character, replacement]) => {
     normalized = normalized.replaceAll(character, replacement);
   });

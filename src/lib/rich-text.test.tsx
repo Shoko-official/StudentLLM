@@ -49,6 +49,21 @@ describe('RichText', () => {
     expect(container.querySelector('li .katex')).not.toBeNull();
   });
 
+  it('renders extracted bare derivative lines instead of exposing raw commands', () => {
+    const { container } = render(<RichText content={'Gradient\n\\partialx + \\partialFy\n\\partialz'} />);
+
+    expect(container.querySelectorAll('.katex')).toHaveLength(2);
+    expect(container.textContent).not.toContain('\\partialx');
+    expect(container.textContent).not.toContain('\\partialFy');
+  });
+
+  it('keeps dollar signs inside code fences untouched', () => {
+    const { container } = render(<RichText content={'```python\nprice = "$5"\n```'} />);
+
+    expect(container.querySelector('code')).toHaveTextContent('price = "$5"');
+    expect(container.querySelector('.katex')).toBeNull();
+  });
+
   it('renders LaTeX fragments embedded in prose list items', () => {
     const { container } = render(<RichText content={'- Connect operators: (\\operatorname{div}(\\nabla f)=\\Delta f).'} />);
 

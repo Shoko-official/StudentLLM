@@ -362,6 +362,30 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('Gradient descent updates parameters using the learning rate.')).toBeInTheDocument();
   }, 15000);
 
+  it('opens a cited document source and preserves its page target', async () => {
+    const user = userEvent.setup();
+    const extract = vi.fn().mockResolvedValue({
+      model: 'pymupdf',
+      pages: [{ pageNumber: 4, text: 'The divergence identity is stated on this page.', blocks: [] }],
+    });
+    render(<App documentEngine={{ extract }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['%PDF-1.7'],
+      'vector-calculus.pdf',
+      { type: 'application/pdf' },
+    ));
+    await user.click(screen.getByRole('tab', { name: /Chat/ }));
+    await user.type(screen.getByLabelText('Ask the course chat'), 'What identity is stated on the document page?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const citation = await screen.findByRole('button', { name: 'Source · vector-calculus.pdf · Page 4' });
+    await user.click(citation);
+
+    const dialog = await screen.findByRole('dialog', { name: 'vector-calculus.pdf' });
+    expect(dialog).toHaveTextContent('Original source');
+  }, 15000);
+
   it('sends retrieved source context to an injected live provider', async () => {
     const user = userEvent.setup();
     const generate = vi.fn().mockResolvedValue({ content: 'The source explains gradient descent.', model: 'mock-local-model' });
