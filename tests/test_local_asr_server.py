@@ -158,7 +158,7 @@ class LocalAsrServerTests(unittest.TestCase):
         self.assertIs(options.get("word_timestamps"), True)
         self.assertIs(options.get("vad_filter"), True)
         self.assertEqual(options.get("vad_parameters"), {
-            "min_silence_duration_ms": 1000, "speech_pad_ms": 400,
+            "threshold": 0.25, "min_silence_duration_ms": 1000, "speech_pad_ms": 400,
         })
         self.assertEqual(options.get("no_speech_threshold"), 0.6)
         self.assertEqual(options.get("log_prob_threshold"), -1.0)
@@ -198,6 +198,9 @@ class LocalAsrServerTests(unittest.TestCase):
         ])
         self.assertEqual(self.model.calls[0][0], audio)
         self.assertEqual(self.model.calls[0][1]["beam_size"], 1)
+        self.assertEqual(self.model.calls[0][1]["vad_parameters"], {
+            "threshold": 0.25, "min_silence_duration_ms": 1000, "speech_pad_ms": 400,
+        })
         self.assertIs(self.model.calls[0][1].get("word_timestamps"), True)
         self.assertTrue(self.model.exhausted)
         self.assertTrue(all(self.model.lock_states))
