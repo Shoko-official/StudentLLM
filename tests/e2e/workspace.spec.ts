@@ -73,6 +73,8 @@ async function connectFixtureProvider(page: Page, content: string, status = 200)
 
 async function installRecorderFixture(page: Page) {
   await page.addInitScript(() => {
+    // This UI-only recorder has no MediaStream; do not initialize host audio hardware.
+    Object.defineProperty(window, 'AudioContext', { configurable: true, value: undefined });
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: { getUserMedia: async () => ({ getTracks: () => [{ stop: () => undefined }] }) },

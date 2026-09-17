@@ -144,7 +144,8 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
                     condition_on_previous_text=False,
                     initial_prompt=prompt,
                     vad_filter=True,
-                    vad_parameters={"min_silence_duration_ms": 1000, "speech_pad_ms": 400},
+                    # The default 0.5 gate drops quiet lecture phrases before decoding.
+                    vad_parameters={"threshold": 0.25, "min_silence_duration_ms": 1000, "speech_pad_ms": 400},
                     no_speech_threshold=0.6,
                     log_prob_threshold=-1.0,
                     compression_ratio_threshold=2.4,
