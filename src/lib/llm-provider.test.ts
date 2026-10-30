@@ -148,5 +148,51 @@ describe('OpenAI-compatible LLM provider', () => {
     await expect(provider.generate([{ role: 'user', content: 'Explain' }])).resolves.toMatchObject({ content: 'Photosynthesis converts light into chemical energy.' });
     const sent = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
     expect(sent.messages[0].content).toContain('/no_think');
+    expect(sent.reasoning_effort).toBe('none');
+  });
+
+  it('turns reasoning off for Qwen3 point releases such as qwen3.8', async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response({ choices: [{ message: { content: 'Direct answer.' } }] }));
+    const provider = new OpenAICompatibleProvider({ baseUrl: '/lm-studio/v1', model: 'qwen3.8-9b-distill', fetchImpl });
+    await expect(provider.generate([{ role: 'user', content: 'Explain' }])).resolves.toMatchObject({ content: 'Direct answer.' });
+    const sent = JSON.parse(fetchImpl.mock.calls[0][1]?.body as string);
+    expect(sent.reasoning_effort).toBe('none');
+    expect(sent.messages[0].content).toContain('/no_think');
+  });
+
+  it('retries without the reasoning switch when a server rejects it', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(response({ error: { message: 'Unsupported value for reasoning_effort' } }, false, 400))
+      .mockResolvedValueOnce(response({ choices: [{ message: { content: 'Answer.' } }] }));
+    const provider = new OpenAICompatibleProvider({ baseUrl: '/lm-studio/v1', model: 'qwen/qwen3-4b', fetchImpl });
+    await expect(provider.generate([{ role: 'user', content: 'Explain' }])).resolves.toMatchObject({ content: 'Answer.' });
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).reasoning_effort).toBeUndefined();
+  });
+
+  it('gives long generations more time than the base timeout on slow local hardware', async () => {
+    vi.useFakeTimers();
+    try {
+      let aborted = false;
+      const fetchImpl = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => { aborted = true; reject(new DOMException('Aborted', 'AbortError')); });
+      }));
+      const provider = new OpenAICompatibleProvider({ baseUrl: '/lm-studio/v1', model: 'openai/gpt-oss-20b', fetchImpl, timeoutMs: 1_000 });
+      const pending = provider.generate([{ role: 'user', content: 'Explain' }], { maxTokens: 4_096 });
+      pending.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(4_096 * 150);
+      expect(aborted).toBe(true);
+      await expect(pending).rejects.toThrow('timed out');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not send the reasoning switch to other models', async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => response({ choices: [{ message: { content: 'Answer.' } }] }));
+    const provider = new OpenAICompatibleProvider({ baseUrl: '/lm-studio/v1', model: 'openai/gpt-oss-20b', fetchImpl });
+    await provider.generate([{ role: 'user', content: 'Explain' }]);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1]?.body as string).reasoning_effort).toBeUndefined();
   });
 });

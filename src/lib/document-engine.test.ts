@@ -82,4 +82,24 @@ describe('local document engine', () => {
     expect(createLocalDocumentEngine({})).toBeNull();
     expect(createLocalDocumentEngine({ VITE_LOCAL_DOCUMENT_BASE_URL: 'http://127.0.0.1:8766' })).toBeInstanceOf(LocalDocumentEngine);
   });
+  it('allows large scanned documents more time for OCR', async () => {
+    vi.useFakeTimers();
+    try {
+      let aborted = false;
+      const fetchImpl = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => { aborted = true; reject(new DOMException('Aborted', 'AbortError')); });
+      }));
+      const engine = new LocalDocumentEngine({ baseUrl: 'http://127.0.0.1:8766', timeoutMs: 1_000, fetchImpl });
+      const scan = new Blob([new Uint8Array(20 * 1024 * 1024)], { type: 'application/pdf' });
+      const pending = engine.extract(scan);
+      pending.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(20 * 15_000);
+      expect(aborted).toBe(true);
+      await expect(pending).rejects.toThrow('timed out');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
