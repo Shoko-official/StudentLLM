@@ -16,6 +16,35 @@ const lesson: Lesson = {
 const segment = (text: string): TranscriptSegment => ({ id: 'segment-1', timestamp: '00:01:00', speaker: 'Professor', text, status: 'review' });
 
 describe('course notes', () => {
+  it('keeps schema edges from multi-line lists and long natural-language sentences', () => {
+    const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
+    const list = schemaOf('Inflation -> unemployment\nSupply -> price');
+    expect(list).toMatchObject({ type: 'schema', edges: [{ from: 'Inflation', to: 'unemployment' }, { from: 'Supply', to: 'price' }] });
+    expect(schemaOf('Increasing the temperature of a gas in a closed container causes pressure to rise.')).toBeDefined();
+    expect(schemaOf('Heat causes expansion of the metal bar in the long run today.')).toBeDefined();
+  });
+
+  it('produces no schema for reaction equations', () => {
+    const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
+    expect(schemaOf('Key equation: 6CO2 + 6H2O -> C6H12O6 + 6O2.')).toBeUndefined();
+    expect(schemaOf('H2 + O2 -> H2O')).toBeUndefined();
+  });
+
+  it('does not turn a chemical equation into a garbled concept schema', () => {
+    const note = buildCourseNote(lesson, [segment('Key equation: 6CO2 + 6H2O -> C6H12O6 + 6O2.')]);
+    expect(note.blocks.filter(block => block.type === 'schema')).toHaveLength(0);
+    const relation = buildCourseNote(lesson, [segment('The force leads to acceleration.')]);
+    expect(relation.blocks.filter(block => block.type === 'schema')).toHaveLength(1);
+  });
+
+  it('omits the separator in the context line when no teacher is set', () => {
+    const note = buildCourseNote({ ...lesson, teacher: '' }, [segment('Hello.')]);
+    expect(note.blocks.find(block => block.id === 'note-context')).toMatchObject({ text: 'Machine Learning / Transformers' });
+    expect(courseNoteMarkdown(note)).not.toMatch(/·\s*$/m);
+    const withTeacher = buildCourseNote({ ...lesson, teacher: ' Dr Who ' }, [segment('Hello.')]);
+    expect(withTeacher.blocks.find(block => block.id === 'note-context')).toMatchObject({ text: 'Machine Learning / Transformers · Dr Who' });
+  });
+
   it('keeps every inline formula when adjacent transcript fragments are grouped', () => {
     const note = buildCourseNote(lesson, [segment('On pose $x=1$.'), { ...segment('Puis $y=2$.'), id: 'segment-2' }]);
     const exported = courseNoteMarkdown(note);
