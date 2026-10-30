@@ -40,6 +40,35 @@ $$
     expect(container.textContent).not.toContain('$\\begin');
   });
 
+  it('renders display math opened on the same line as an environment', () => {
+    const { container } = render(<RichText content={String.raw`Pour chacune des fonctions :
+
+$$\begin{aligned}
+f_1(t,y) &= t^2 y + 1 \\
+f_2(t,y) &= ty
+\end{aligned}$$`} />);
+
+    expect(container.querySelectorAll('.katex-display')).toHaveLength(1);
+    container.querySelectorAll('.katex').forEach((node) => node.remove());
+    expect(container.textContent).not.toMatch(/\\begin|\$/);
+  });
+
+  it('keeps absolute values inside display math instead of treating them as table cells', () => {
+    const { container } = render(<RichText content={String.raw`$$\forall \varepsilon > 0,\quad |z(t) - y(t)| \leq K\varepsilon$$`} />);
+
+    expect(container.querySelectorAll('.katex-display')).toHaveLength(1);
+    container.querySelectorAll('.katex').forEach((node) => node.remove());
+    expect(container.textContent).not.toContain('$');
+  });
+
+  it('repairs a \\tag whose backslash-t was decoded as a tab by a model', () => {
+    const { container } = render(<RichText content={'$$y(0) = 2 \u0009ag{1}$$'} />);
+
+    expect(container.querySelectorAll('.katex-display')).toHaveLength(1);
+    container.querySelectorAll('.katex').forEach((node) => node.remove());
+    expect(container.textContent).not.toContain('ag{1}');
+  });
+
   it('keeps malformed LaTeX legible instead of displaying a KaTeX error', () => {
     const { container } = render(<RichText content={'\\(\\notARealCommand{x}\\)'} />);
 

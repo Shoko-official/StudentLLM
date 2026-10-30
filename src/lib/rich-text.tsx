@@ -140,7 +140,16 @@ function normalizeMarkdownLatex(content: string) {
 }
 
 function repairUnclosedInlineLatex(content: string) {
+  let inDisplayMath = false;
   return content.split('\n').map((line) => {
+    // Display math ($$ ... $$, possibly over several lines) is never an unclosed inline formula.
+    const displayDelimiters = line.match(/\$\$/g)?.length ?? 0;
+    if (inDisplayMath || displayDelimiters % 2 === 1) {
+      if (displayDelimiters % 2 === 1) inDisplayMath = !inDisplayMath;
+      return line;
+    }
+    // Only a table row's pipes separate cells; elsewhere |x| is an absolute value.
+    const isTableRow = line.trimStart().startsWith('|');
     let repaired = '';
     let cursor = 0;
     while (cursor < line.length) {
@@ -149,10 +158,17 @@ function repairUnclosedInlineLatex(content: string) {
         repaired += line.slice(cursor);
         break;
       }
+      if (line[delimiterIndex + 1] === '$') {
+        const closing = line.indexOf('$$', delimiterIndex + 2);
+        const end = closing === -1 ? line.length : closing + 2;
+        repaired += line.slice(cursor, end);
+        cursor = end;
+        continue;
+      }
       repaired += line.slice(cursor, delimiterIndex + 1);
       const candidate = line.slice(delimiterIndex + 1).trimStart();
       const nextDelimiter = line.indexOf('$', delimiterIndex + 1);
-      const nextPipe = line.indexOf('|', delimiterIndex + 1);
+      const nextPipe = isTableRow ? line.indexOf('|', delimiterIndex + 1) : -1;
       const boundary = nextPipe === -1 ? line.length : nextPipe;
       if (/^\\[A-Za-z]+/u.test(candidate) && (nextDelimiter === -1 || nextDelimiter > boundary)) {
         repaired += line.slice(delimiterIndex + 1, boundary) + '$';
