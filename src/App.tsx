@@ -393,7 +393,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         const next = update(previous);
         const lesson = lessons.find((item) => item.id === lessonId);
         const hasDocumentNote = next.courseNote?.blocks?.some((block) => block.id === 'document-source-title');
-        return lesson && next.transcript !== previous.transcript && !localProvider && !hasDocumentNote
+        return lesson && next.transcript !== previous.transcript && !hasDocumentNote
           ? { ...next, courseNote: buildCourseNote(lesson, next.transcript) }
           : next;
       })(),
@@ -443,7 +443,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         ...targetWorkspace,
         resources: Array.from(new Map([...targetWorkspace.resources, resource].map((item) => [item.id, item])).values()),
         transcript: targetTranscript,
+        // Keep only a real AI or document note from the snapshot; otherwise rebuild the deterministic note so imported text shows even when the provider failed.
         courseNote: !targetChangedWhilePending && formattedCourseNote
+          && (formattedCourseNote.detection.method === 'LM Studio' || formattedCourseNote.blocks.some((block) => block.id === 'document-source-title'))
           ? formattedCourseNote
           : buildCourseNote(placement.targetLesson, targetTranscript),
       };

@@ -1185,6 +1185,25 @@ describe('StudentLLM workspace', () => {
     expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
   });
 
+  it('shows imported text in course notes immediately when the language model is configured but offline', async () => {
+    const user = userEvent.setup();
+    const generate = vi.fn().mockRejectedValue(new Error('fetch failed'));
+    render(<App provider={{ generate }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['Probability measures how likely an event is.'],
+      'probability.md',
+      { type: 'text/markdown' },
+    ));
+
+    const courseNote = screen.getByRole('region', { name: 'Course notes document' });
+    expect(await within(courseNote).findByText(/Probability measures how likely an event is\./)).toBeInTheDocument();
+    await waitFor(() => expect(generate).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(within(courseNote).getByText(/Probability measures how likely an event is\./)).toBeInTheDocument();
+    expect(JSON.stringify(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.blocks)).toContain('Probability measures');
+  });
+
   it('removes an imported source from the active course', async () => {
     const user = userEvent.setup();
     render(<App />);
