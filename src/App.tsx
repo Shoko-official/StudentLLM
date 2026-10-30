@@ -33,6 +33,7 @@ import {
   X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { useDismissibleMenu } from './lib/focus-management';
 import { AnimatedIcon, EmptyStateIcon } from './lib/animated-icon';
 import { folderNameOf, planBatchImport } from './lib/batch-import';
 import { BrandGlyph } from './lib/brand-mark';
@@ -357,6 +358,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [importTotals, setImportTotals] = useState<{ done: number; total: number } | null>(null);
   const importRunningRef = useRef(false);
   const lastFocusedElementRef = useRef<HTMLElement | null>(null);
+  const courseActionsRef = useRef<HTMLDetailsElement | null>(null);
+  const courseActionsSummaryRef = useRef<HTMLElement | null>(null);
   const rebuiltDocumentSourceIds = useRef(new Set<string>());
   // Pages already extracted at import, so the AI rewrite does not OCR the same scan again.
   const extractedDocumentPages = useRef(new Map<string, DocumentPage[]>());
@@ -638,6 +641,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  useDismissibleMenu(courseActionsOpen, courseActionsRef, () => setCourseActionsOpen(false), courseActionsSummaryRef, hasOpenDialog);
 
   useEffect(() => {
     if (!hasOpenDialog) return undefined;
@@ -2318,8 +2323,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           ) : <>
             <div className="main-header">
               <div className="main-heading" key={activeLesson.id}><p>{activeLesson.subject}{activeLesson.chapter !== 'General notes' ? ` / ${activeLesson.chapter}` : ''}</p><h1>{activeLesson.title}</h1></div>
-              <details className="course-actions" open={courseActionsOpen} onToggle={(event) => setCourseActionsOpen(event.currentTarget.open)}>
-                <summary aria-label="Course actions">More <ChevronDown size={15} /></summary>
+              <details className="course-actions" ref={courseActionsRef} open={courseActionsOpen} onToggle={(event) => setCourseActionsOpen(event.currentTarget.open)}>
+                <summary aria-label="Course actions" ref={courseActionsSummaryRef}>More <ChevronDown size={15} /></summary>
                 <div className="course-actions-menu" onClick={() => setCourseActionsOpen(false)}>
                   <button onClick={openEditCourse}><AnimatedIcon name="pencil" size={17} target="button" fallback={<Pencil size={15} />} /> Edit course</button>
                   <button onClick={openAiOrganizer}><Sparkles size={15} /> Organize material with AI</button>
