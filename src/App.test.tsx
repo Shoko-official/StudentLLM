@@ -1668,6 +1668,32 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled();
   });
 
+  it('follows the WAI-ARIA tabs pattern for the course views', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent?.replace(/ \(\d+\)$/, ''))).toEqual(['Notes', 'Sources', 'Chat', 'Study']);
+    expect(tabs.map((tab) => tab.getAttribute('tabindex'))).toEqual(['0', '-1', '-1', '-1']);
+    const panel = screen.getByRole('tabpanel');
+    expect(tabs[0]).toHaveAttribute('aria-controls', panel.id);
+    expect(panel).toHaveAttribute('aria-labelledby', tabs[0].id);
+
+    tabs[0].focus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tab', { name: /Sources/ })).toHaveFocus();
+    expect(screen.getByRole('tab', { name: /Sources/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', screen.getByRole('tab', { name: /Sources/ }).id);
+    await user.keyboard('{End}');
+    expect(screen.getByRole('tab', { name: 'Study' })).toHaveFocus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveFocus();
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.getByRole('tab', { name: 'Study' })).toHaveFocus();
+    await user.keyboard('{Home}');
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveFocus();
+  });
+
   it('keeps the hidden file pickers out of the tab order and accessibility tree', () => {
     render(<App />);
 
