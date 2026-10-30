@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AlignLeft,
   Archive,
@@ -36,6 +36,8 @@ import type { LucideIcon } from 'lucide-react';
 import { AnimatedIcon, EmptyStateIcon } from './lib/animated-icon';
 import { folderNameOf, planBatchImport } from './lib/batch-import';
 import { BrandGlyph } from './lib/brand-mark';
+import { textMatchesQuery } from './lib/snippet';
+import { Snippet } from './lib/snippet-view';
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
 import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspaceAsync } from './lib/workspace-storage';
 import type { WorkspaceStorageError } from './lib/workspace-storage';
@@ -356,6 +358,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [importQueue, setImportQueue] = useState<Array<{ file: File; lessonId: string }>>([]);
   const [importTotals, setImportTotals] = useState<{ done: number; total: number } | null>(null);
   const importRunningRef = useRef(false);
+  const startedImportRef = useRef<{ file: File; lessonId: string } | null>(null);
   const lastFocusedElementRef = useRef<HTMLElement | null>(null);
   const rebuiltDocumentSourceIds = useRef(new Set<string>());
   // Pages already extracted at import, so the AI rewrite does not OCR the same scan again.
@@ -516,7 +519,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         results.push({ id: lesson.id, lessonId: lesson.id, title: lesson.title, detail: `${lesson.subject} · ${lesson.chapter}` });
       }
       lessonWorkspace.transcript.forEach((segment) => {
-        if (`${segment.speaker} ${segment.text} ${segment.timestamp}`.toLocaleLowerCase().includes(query)) {
+        if (`${segment.speaker} ${segment.timestamp}`.toLocaleLowerCase().includes(query) || textMatchesQuery(segment.text, query)) {
           results.push({ id: segment.id, lessonId: lesson.id, title: segment.text, detail: `${lesson.title} · ${segment.timestamp}` });
         }
       });
@@ -620,6 +623,60 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setLiveSettledThrough(0);
     };
   }, [isRecording, liveTranscriptionIntervalMs, localSpeechEngine]);
+
+  const [narrowViewport, setNarrowViewport] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 900);
+  useEffect(() => {
+    const onResize = () => setNarrowViewport(window.innerWidth <= 900);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const drawerOpen = showLeftSidebar && narrowViewport;
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const drawerFocusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+  useEffect(() => {
+    if (!drawerOpen) return undefined;
+    const drawer = drawerRef.current;
+    const first = drawer?.querySelector<HTMLElement>(drawerFocusableSelector);
+    first?.focus();
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !document.querySelector('[role="dialog"]')) {
+        window.setTimeout(() => menuButtonRef.current?.focus(), 0);
+      }
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => {
+      window.removeEventListener('keydown', onEscape);
+      // Choosing a course unmounts the focused button; keep focus on a stable control.
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if (!active || active === document.body) menuButtonRef.current?.focus();
+      }, 0);
+    };
+  }, [drawerOpen]);
+  const trapDrawerTab = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (!drawerOpen || event.key !== 'Tab') return;
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(drawerFocusableSelector)).filter((item) => !item.hidden && !item.closest('[hidden]') && !(item as HTMLInputElement).disabled);
+    if (!items.length) { event.preventDefault(); return; }
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  };
+  const viewTabIds = ['course', 'sources', 'chat', 'study'] as const;
+  const onViewTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const current = viewTabIds.indexOf(view as typeof viewTabIds[number]);
+    const next = event.key === 'ArrowRight' ? (current + 1) % viewTabIds.length
+      : event.key === 'ArrowLeft' ? (current - 1 + viewTabIds.length) % viewTabIds.length
+      : event.key === 'Home' ? 0
+      : event.key === 'End' ? viewTabIds.length - 1 : -1;
+    if (next < 0) return;
+    event.preventDefault();
+    setCourseActionsOpen(false);
+    setView(viewTabIds[next]);
+    setActionError('');
+    document.getElementById(`view-tab-${viewTabIds[next]}`)?.focus();
+  };
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1868,7 +1925,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       return;
     }
     const [next] = importQueue;
+    // A passive effect from a render that predates the finished file can still run after
+    // `finally` resets the running flag; it sees the old queue head and must not restart it.
+    if (startedImportRef.current === next) return;
     const lesson = lessons.find((candidate) => candidate.id === next.lessonId);
+    startedImportRef.current = next;
     importRunningRef.current = true;
     void (lesson ? importSourceFile(next.file, lesson, false) : Promise.resolve()).finally(() => {
       importRunningRef.current = false;
@@ -2260,11 +2321,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   return (
     <div className="app-shell">
-      <input ref={sourceInputRef} className="visually-hidden" type="file" multiple aria-label="Select course source" accept={sourceAccept} onChange={importSource} />
-      <input ref={folderInputRef} className="visually-hidden" type="file" multiple aria-label="Select course folder" onChange={importFolder} />
+      <input ref={sourceInputRef} hidden tabIndex={-1} type="file" multiple aria-label="Select course source" accept={sourceAccept} onChange={importSource} />
+      <input ref={folderInputRef} hidden tabIndex={-1} type="file" multiple aria-label="Select course folder" onChange={importFolder} />
       <header className="topbar">
         <div className="topbar-leading">
-          <button className="icon-button" aria-label="Show or hide navigation" aria-expanded={showLeftSidebar} onClick={() => setShowLeftSidebar((value) => !value)}><Menu size={20} /></button>
+          <button ref={menuButtonRef} className="icon-button" aria-label="Show or hide navigation" aria-expanded={showLeftSidebar} onClick={() => setShowLeftSidebar((value) => !value)}><Menu size={20} /></button>
           <span className="brand-name"><span className="brand-mark" aria-hidden="true"><BrandGlyph size={24} /></span>StudentLLM</span>
         </div>
         <button className="icon-button" aria-label="Settings" onClick={() => setShowSettingsPanel(true)}><Settings2 size={19} /></button>
@@ -2272,8 +2333,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
       <div className={`workspace-grid ${showLeftSidebar ? 'with-navigation' : ''}`}>
         {showLeftSidebar && <>
-          <button className="navigation-scrim" aria-label="Close navigation" onClick={() => setShowLeftSidebar(false)} />
-          <aside className="left-sidebar workspace-sidebar" aria-label="Course navigation">
+          <button className="navigation-scrim" tabIndex={-1} aria-label="Close navigation" onClick={() => setShowLeftSidebar(false)} />
+          <aside ref={drawerRef} className="left-sidebar workspace-sidebar" aria-label="Course navigation" onKeyDown={trapDrawerTab}>
             <div className="sidebar-start-actions">
               <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={startQuickCourse}><Shuffle size={16} /><span>Quick start</span></button>
               <button className="sidebar-row" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={() => setShowNewCourse(true)}><Plus size={16} /><span>New course</span></button>
@@ -2304,7 +2365,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           </aside>
         </>}
 
-        <main className="main-panel">
+        <main className="main-panel" inert={drawerOpen}>
           {importTotals && <div className="import-progress">
             <span className="import-progress-label" role="status">Importing {Math.min(importTotals.done + 1, importTotals.total)} of {importTotals.total}{importQueue[0] ? ` · ${importQueue[0].file.name}` : ''}</span>
             <span className="import-progress-track" aria-hidden="true"><span style={{ width: `${(importTotals.done / importTotals.total) * 100}%` }} /></span>
@@ -2337,11 +2398,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               </details>
             </div>
             <div className="view-tabs" ref={viewTabsRef} role="tablist" aria-label="Course view">
-              {(['course', 'sources', 'chat', 'study'] as const).map((tab) => <button key={tab} role="tab" aria-selected={view === tab} className={view === tab ? 'active' : ''} onClick={() => { setCourseActionsOpen(false); setView(tab); setActionError(''); }}>{tab === 'course' ? 'Notes' : tab === 'sources' ? `Sources${resources.length ? ` (${resources.length})` : ''}` : tab === 'chat' ? 'Chat' : 'Study'}</button>)}
+              {viewTabIds.map((tab) => <button key={tab} id={`view-tab-${tab}`} role="tab" aria-selected={view === tab} aria-controls={`view-panel-${tab}`} tabIndex={view === tab ? 0 : -1} className={view === tab ? 'active' : ''} onKeyDown={onViewTabKeyDown} onClick={() => { setCourseActionsOpen(false); setView(tab); setActionError(''); }}>{tab === 'course' ? 'Notes' : tab === 'sources' ? `Sources${resources.length ? ` (${resources.length})` : ''}` : tab === 'chat' ? 'Chat' : 'Study'}</button>)}
             </div>
             {actionError && <div className="action-error" role="alert"><p>{actionError}</p><button className="text-action" onClick={() => setShowSettingsPanel(true)}>Open Settings</button></div>}
             {isRecording && view !== 'course' && <section className="recording-bar recording" aria-label="Course recording"><div className="recording-actions"><button className="primary-action stop" aria-label="Stop recording" onClick={toggleRecording}><Square size={16} /> Stop recording</button><span className="recording-time">{formatElapsed(recordingSeconds)}</span></div></section>}
-            {view === 'course' && <div className="course-view">
+            {view === 'course' && <div className="course-view" id="view-panel-course" role="tabpanel" aria-labelledby="view-tab-course">
               <section className={`recording-bar ${isRecording ? 'recording' : ''}`} aria-label="Course recording">
                 <div className="recording-actions">
                   <button className={`primary-action ${isRecording ? 'stop' : ''}`} onClick={toggleRecording} disabled={isFinalizingRecording || isStartingRecording} aria-label={isRecording ? 'Stop recording' : isFinalizingRecording ? 'Finishing recording' : isStartingRecording ? 'Starting recording' : 'Start recording'}>
@@ -2371,7 +2432,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 <button className="text-action" onClick={() => setShowTranscriptPanel(true)}>View all <ArrowUpRight size={13} /></button>
               </details>}
             </div>}
-            {view === 'sources' && <section className="sources-view" aria-label="Course sources">
+            {view === 'sources' && <section className="sources-view" id="view-panel-sources" role="tabpanel" aria-labelledby="view-tab-sources">
               <div className="section-toolbar"><h2>Sources</h2><button className="secondary-action" onClick={() => openSourcePicker(sourceAccept)}><Plus size={16} /> Import file</button></div>
               {!resources.length && <div className="empty-panel"><EmptyStateIcon name="folder" /><p className="empty-state">Add audio, a PDF, an image or text notes to this course.</p></div>}
               <div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}>
@@ -2381,14 +2442,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               </div>)}</div>
               {resources.length > 3 && <button className="text-action" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`}</button>}
             </section>}
-            {view === 'chat' && <section className="chat-view">
+            {view === 'chat' && <section className="chat-view" id="view-panel-chat" role="tabpanel" aria-labelledby="view-tab-chat">
               <div className="chat-intro">{!chat.length && <EmptyStateIcon name="magnifier" />}<h2>Ask about this course</h2><p>{localProvider ? 'Answers use your notes and sources. LM Studio must be running with a loaded model.' : 'Connect LM Studio in Settings to generate answers. You can still search and open your sources.'}</p></div>
               {!resources.length && !transcript.length && <p className="empty-state">Import material or record a lecture before asking a question.</p>}
                <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list" aria-label="Response sources">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button type="button" className="citation-chip" title="Open original source" key={citation} onClick={() => openCitation(message.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className={citation.startsWith('LM Studio') ? 'citation-model' : 'citation-context'} key={citation}>{citation}</span>)}</div>}</article>)}</div>
               {isSending && <div className="chat-typing" aria-hidden="true"><span /><span /><span /></div>}
               <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
             </section>}
-            {view === 'study' && <section className="study-view">
+            {view === 'study' && <section className="study-view" id="view-panel-study" role="tabpanel" aria-labelledby="view-tab-study">
               <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>
               {!hasStudyMaterial && <p className="study-empty-hint"><AnimatedIcon name="star" size={22} target=".study-empty-hint" intro="in-reveal" className="hint-icon" fallback={<Star size={20} />} />Import notes or finish a transcription to enable study material generation.</p>}
               <div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className={`artifact-button${generatingArtifact === artifact.kind ? ' is-generating' : ''}`} disabled={generatingArtifact !== null || !hasStudyMaterial} onClick={() => void createArtifact(artifact.kind)}><span className={`icon-tile tone-${artifact.tone}`} aria-hidden="true"><artifact.icon size={18} /></span><strong>{generatingArtifact === artifact.kind ? 'Generating...' : artifact.label}</strong><small>{artifact.description}</small></button>)}</div>
@@ -2405,8 +2466,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       {showNewCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="new-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">New session</span><h2 id="new-course-title">Start a course</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowNewCourse(false)}><X size={17} /></button></div><p className="modal-description">Give your course a name. You can add recordings and files next.</p><form onSubmit={createCourse}><label>Course title<input autoFocus value={newCourseTitle} onChange={(event) => setNewCourseTitle(event.target.value)} placeholder="e.g. Introduction to probability" /></label><label>Subject<input list="course-subject-suggestions" value={newCourseSubject} onChange={(event) => setNewCourseSubject(event.target.value)} placeholder="e.g. Machine Learning" /></label><datalist id="course-subject-suggestions">{subjectOptions.map((subjectOption) => <option key={subjectOption} value={subjectOption} />)}</datalist><label>Chapter<input value={newCourseChapter} onChange={(event) => setNewCourseChapter(event.target.value)} placeholder="e.g. Transformers" /></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowNewCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!newCourseTitle.trim()}><Mic size={15} /> Create course</button></div></form></section></div>}
       {showEditCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowEditCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Course structure</span><h2 id="edit-course-title">Edit course</h2></div><button className="icon-button" aria-label="Close edit course" onClick={() => setShowEditCourse(false)}><X size={17} /></button></div><p className="modal-description">Update the names used in the course tree and saved note location.</p><div className="edit-course-tools"><button type="button" className="secondary-action" onClick={() => void suggestCourseDetails()} disabled={isSuggestingCourseDetails || !localProvider || !transcript.length && !resources.length}><Sparkles size={15} /> {isSuggestingCourseDetails ? 'Suggesting...' : 'Suggest with AI'}</button><small>{transcript.length || resources.length ? 'Use the saved material to propose a title and hierarchy.' : 'Record or import material first.'}</small></div>{actionError && <p className="action-error" role="alert">{actionError}</p>}<form onSubmit={updateCourse}><label>Course title<input autoFocus value={courseEditDraft.title} onChange={(event) => setCourseEditDraft((current) => ({ ...current, title: event.target.value }))} /></label><label>Subject<input list="course-subject-suggestions" value={courseEditDraft.subject} onChange={(event) => setCourseEditDraft((current) => ({ ...current, subject: event.target.value }))} /></label><label>Chapter<input value={courseEditDraft.chapter} onChange={(event) => setCourseEditDraft((current) => ({ ...current, chapter: event.target.value }))} /></label><label>Sublesson <span className="muted">optional</span><input value={courseEditDraft.sublesson} onChange={(event) => setCourseEditDraft((current) => ({ ...current, sublesson: event.target.value }))} placeholder="No sublesson" /></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowEditCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!courseEditDraft.title.trim()}><Check size={15} /> Save course changes</button></div></form></section></div>}
       {showDeleteCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowDeleteCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="delete-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Delete session</span><h2 id="delete-course-title">Delete {activeLesson.title}?</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowDeleteCourse(false)}><X size={17} /></button></div><p className="modal-description">This removes the course workspace and its locally stored source and recording data. This action cannot be undone from the app.</p><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowDeleteCourse(false)}>Cancel</button><button className="danger-submit" type="button" onClick={() => void deleteActiveCourse()}><Trash2 size={14} /> Delete course permanently</button></div></section></div>}
-      {showGlobalSearch && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowGlobalSearch(false)}><section className="modal search-modal" role="dialog" aria-modal="true" aria-labelledby="global-search-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace index</span><h2 id="global-search-title">Search all course content</h2></div><button className="icon-button" aria-label="Close search" onClick={() => setShowGlobalSearch(false)}><X size={17} /></button></div><label className="modal-search"><Search size={15} /><input autoFocus aria-label="Search all course content" value={globalSearchValue} onChange={(event) => setGlobalSearchValue(event.target.value)} placeholder="Search courses, transcripts, and sources" /></label>{globalSearchValue.trim() && <div className="search-results" aria-live="polite">{globalSearchResults.length ? globalSearchResults.map((result) => <button className="search-result" key={`${result.lessonId}:${result.id}`} onClick={() => openSearchResult(result.lessonId)}><strong>{result.title}</strong><small>{result.detail}</small></button>) : <p className="empty-state">No matching course content.</p>}</div>}</section></div>}
-      {showReviewPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowReviewPanel(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="review-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Review queue</span><h2 id="review-panel-title">Needs review <span className="modal-count">{reviewItems.length}</span></h2></div><button className="icon-button" aria-label="Close review queue" onClick={() => setShowReviewPanel(false)}><X size={17} /></button></div><p className="modal-description">Transcript segments and imported pages that still need a quick human check.</p><div className="review-results">{reviewItems.length ? reviewItems.map(({ lesson, segment }) => <button className="review-result" key={`${lesson.id}:${segment.id}`} onClick={() => { selectLesson(lesson.id); setShowReviewPanel(false); }}><strong>{segment.text}</strong><small>{lesson.title} · {segment.timestamp}</small></button>) : <p className="empty-state">Nothing needs review.</p>}</div></section></div>}
+      {showGlobalSearch && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowGlobalSearch(false)}><section className="modal search-modal" role="dialog" aria-modal="true" aria-labelledby="global-search-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace index</span><h2 id="global-search-title">Search all course content</h2></div><button className="icon-button" aria-label="Close search" onClick={() => setShowGlobalSearch(false)}><X size={17} /></button></div><label className="modal-search"><Search size={15} /><input autoFocus aria-label="Search all course content" value={globalSearchValue} onChange={(event) => setGlobalSearchValue(event.target.value)} placeholder="Search courses, transcripts, and sources" /></label>{globalSearchValue.trim() && <div className="search-results" aria-live="polite">{globalSearchResults.length ? globalSearchResults.map((result) => <button className="search-result" key={`${result.lessonId}:${result.id}`} onClick={() => openSearchResult(result.lessonId)}><strong><Snippet text={result.title} query={globalSearchValue} /></strong><small>{result.detail}</small></button>) : <p className="empty-state">No matching course content.</p>}</div>}</section></div>}
+      {showReviewPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowReviewPanel(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="review-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Review queue</span><h2 id="review-panel-title">Needs review <span className="modal-count">{reviewItems.length}</span></h2></div><button className="icon-button" aria-label="Close review queue" onClick={() => setShowReviewPanel(false)}><X size={17} /></button></div><p className="modal-description">Transcript segments and imported pages that still need a quick human check.</p><div className="review-results">{reviewItems.length ? reviewItems.map(({ lesson, segment }) => <button className="review-result" key={`${lesson.id}:${segment.id}`} onClick={() => { selectLesson(lesson.id); setShowReviewPanel(false); }}><strong><Snippet text={segment.text} /></strong><small>{lesson.title} · {segment.timestamp}</small></button>) : <p className="empty-state">Nothing needs review.</p>}</div></section></div>}
       {showTranscriptPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowTranscriptPanel(false)}><section className="modal transcript-modal" role="dialog" aria-modal="true" aria-labelledby="transcript-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Transcript archive</span><h2 id="transcript-panel-title">Full transcript <span className="modal-count">{transcript.length}</span></h2>{visibleLiveTranscript.length > 0 && <span className="review-badge">Live preview</span>}</div><button className="icon-button" aria-label="Close full transcript" onClick={() => setShowTranscriptPanel(false)}><X size={17} /></button></div><p className="modal-description">Review every indexed segment from {activeLesson.title}. Changes are saved to this course workspace.</p><div className={`transcript-list modal-transcript-list ${compactTranscript ? 'compact' : ''}`}>{transcript.length || visibleLiveTranscript.length ? [...transcript, ...visibleLiveTranscript].map(renderTranscriptSegment) : <p className="empty-state">This course has no transcript segments yet.</p>}</div></section></div>}
       {showSettingsPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettingsPanel(false)}><section className="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace preferences</span><h2 id="settings-panel-title">Settings</h2></div><button className="icon-button" aria-label="Close settings" onClick={() => setShowSettingsPanel(false)}><X size={17} /></button></div><p className="modal-description">Connect your local services. Recording and text import work without an AI model.</p>
         <form className="connection-settings" onSubmit={saveServiceSettings}>
