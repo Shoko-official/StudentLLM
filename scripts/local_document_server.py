@@ -481,6 +481,14 @@ def formula_aware_pdf_blocks(page: object) -> list[dict[str, object]]:
     return sorted(rendered, key=lambda block: (block["y"], block["x"]))
 
 
+def has_unmapped_glyphs(text: str, threshold: float = 0.1) -> bool:
+    """True when a text layer is mostly unusable: fonts embedded without a Unicode map
+    come out as Private Use Area code points instead of letters."""
+    unmapped = sum(1 for character in text if 0xE000 <= ord(character) <= 0xF8FF)
+    letters = sum(1 for character in text if character.isalpha())
+    return unmapped > 0 and unmapped / (letters + unmapped) >= threshold
+
+
 def extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
     import fitz
 
@@ -494,7 +502,7 @@ def extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
         for page_number, page in enumerate(document, start=1):
             text = page.get_text("text").strip()
             blocks = formula_aware_pdf_blocks(page)
-            if not text:
+            if not text or (has_unmapped_glyphs(text) and has_ocr_dependencies()):
                 used_ocr = True
                 image = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False).tobytes("png")
                 _, blocks = ocr_image(image)
