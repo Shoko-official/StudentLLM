@@ -356,6 +356,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [importQueue, setImportQueue] = useState<Array<{ file: File; lessonId: string }>>([]);
   const [importTotals, setImportTotals] = useState<{ done: number; total: number } | null>(null);
   const importRunningRef = useRef(false);
+  const startedImportRef = useRef<{ file: File; lessonId: string } | null>(null);
   const lastFocusedElementRef = useRef<HTMLElement | null>(null);
   const rebuiltDocumentSourceIds = useRef(new Set<string>());
   // Pages already extracted at import, so the AI rewrite does not OCR the same scan again.
@@ -1865,7 +1866,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       return;
     }
     const [next] = importQueue;
+    // A passive effect from a render that predates the finished file can still run after
+    // `finally` resets the running flag; it sees the old queue head and must not restart it.
+    if (startedImportRef.current === next) return;
     const lesson = lessons.find((candidate) => candidate.id === next.lessonId);
+    startedImportRef.current = next;
     importRunningRef.current = true;
     void (lesson ? importSourceFile(next.file, lesson, false) : Promise.resolve()).finally(() => {
       importRunningRef.current = false;
