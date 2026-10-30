@@ -13,7 +13,6 @@ import {
   FileAudio,
   FileImage,
   FileText,
-  GraduationCap,
   Layers,
   ListChecks,
   Menu,
@@ -34,6 +33,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { AnimatedIcon, EmptyStateIcon } from './lib/animated-icon';
+import { BrandGlyph } from './lib/brand-mark';
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
 import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspaceAsync } from './lib/workspace-storage';
 import type { WorkspaceStorageError } from './lib/workspace-storage';
@@ -2156,7 +2156,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       <header className="topbar">
         <div className="topbar-leading">
           <button className="icon-button" aria-label="Show or hide navigation" aria-expanded={showLeftSidebar} onClick={() => setShowLeftSidebar((value) => !value)}><Menu size={20} /></button>
-          <span className="brand-name"><span className="brand-mark" aria-hidden="true"><GraduationCap size={16} /></span>StudentLLM</span>
+          <span className="brand-name"><span className="brand-mark" aria-hidden="true"><BrandGlyph size={18} /></span>StudentLLM</span>
         </div>
         <button className="icon-button" aria-label="Settings" onClick={() => setShowSettingsPanel(true)}><Settings2 size={19} /></button>
       </header>
