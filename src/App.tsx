@@ -2165,9 +2165,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         {showLeftSidebar && <>
           <button className="navigation-scrim" aria-label="Close navigation" onClick={() => setShowLeftSidebar(false)} />
           <aside className="left-sidebar workspace-sidebar" aria-label="Course navigation">
-            <div className="sidebar-header">
-              <div className="sidebar-brand"><div><strong>StudentLLM</strong><ChevronDown size={13} aria-hidden="true" /></div><span>Workspace</span></div>
-            </div>
             <div className="sidebar-start-actions">
               <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={startQuickCourse}><Shuffle size={16} /><span>Quick start</span></button>
               <button className="sidebar-row" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={() => setShowNewCourse(true)}><Plus size={16} /><span>New course</span></button>
