@@ -879,7 +879,9 @@ test.describe('StudentLLM workspace', () => {
   });
 
   test('imports and persists a PDF source in the browser workspace', async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem('studentllm.services.v1', JSON.stringify({ documentsUrl: '' })));
+    // Deterministic "service offline": point at a fixture URL and abort its requests, whatever listens on the default port.
+    await page.route('**/fixture-documents/**', (route) => route.abort());
+    await page.addInitScript(() => localStorage.setItem('studentllm.services.v1', JSON.stringify({ documentsUrl: '/fixture-documents' })));
     await page.goto('/');
     await page.setInputFiles('input[aria-label="Select course source"]', {
       name: 'slides.pdf',
@@ -887,8 +889,10 @@ test.describe('StudentLLM workspace', () => {
       buffer: minimalPdf(),
     });
 
-    await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
     await expect(page.getByRole('alert')).toContainText('slides.pdf is saved.');
+    await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Open Settings' }).click();
+    await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
     await page.getByRole('button', { name: 'Done' }).click();
     await openSources(page);
     const source = page.getByRole('button', { name: /^slides\.pdf/ });
