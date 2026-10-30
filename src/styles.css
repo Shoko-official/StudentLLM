@@ -288,6 +288,11 @@ html { scroll-padding-top: 72px; }
 .sidecar-status-list div { display: grid; gap: 5px; }
 .sidecar-status-list span { color: var(--muted); overflow-wrap: anywhere; }
 .toast { position: fixed; z-index: 20; right: 20px; bottom: var(--toast-bottom, 20px); max-width: min(440px, calc(100vw - 40px)); padding: 13px 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--text); font-size: 14px; line-height: 1.5; box-shadow: var(--shadow-pop); }
+.import-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 0 0 22px; padding: 12px 16px; border-radius: var(--radius); background: var(--surface-2); font-size: 13px; }
+.import-progress-label { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
+.import-progress-track { flex: 1 1 140px; height: 4px; overflow: hidden; border-radius: 999px; background: var(--line); }
+.import-progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--text); transition: width var(--dur-slow) var(--ease-out); }
+.import-progress .text-action { padding: 0; font-size: 13px; }
 .latex-inline { font-family: 'Cambria Math', serif; overflow-wrap: anywhere; }
 .latex-block { display: block; max-width: 100%; overflow-x: auto; padding: 6px 0; text-align: center; font-family: 'Cambria Math', serif; font-size: 20px; }
 .rich-text { min-width: 0; overflow-wrap: anywhere; }

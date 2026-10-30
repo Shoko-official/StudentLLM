@@ -13,6 +13,7 @@ import {
   FileAudio,
   FileImage,
   FileText,
+  FolderOpen,
   Layers,
   ListChecks,
   Menu,
@@ -33,6 +34,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { AnimatedIcon, EmptyStateIcon } from './lib/animated-icon';
+import { folderNameOf, planBatchImport } from './lib/batch-import';
 import { BrandGlyph } from './lib/brand-mark';
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
 import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspaceAsync } from './lib/workspace-storage';
@@ -135,6 +137,7 @@ const emptyLessonWorkspace: LessonWorkspace = {
   artifacts: [],
 };
 
+const LARGE_BATCH_IMPORT = 60;
 const sourceAccept = 'audio/*,image/*,.pdf,.txt,.md,.html,.htm,.rtf,.docx,.pptx';
 const PREFERENCES_STORAGE_KEY = 'studentllm.preferences.v1';
 const RECORDING_NOTICE_STORAGE_KEY = 'studentllm.recording-notice.v1';
@@ -361,8 +364,17 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const storageIssueRef = useRef<WorkspaceStorageError['operation'] | null>(null);
   const resourcePreviewRequest = useRef(0);
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const [importQueue, setImportQueue] = useState<Array<{ file: File; lessonId: string }>>([]);
+  const [importTotals, setImportTotals] = useState<{ done: number; total: number } | null>(null);
+  const importRunningRef = useRef(false);
   const lastFocusedElementRef = useRef<HTMLElement | null>(null);
   const rebuiltDocumentSourceIds = useRef(new Set<string>());
+  // Pages already extracted at import, so the AI rewrite does not OCR the same scan again.
+  const extractedDocumentPages = useRef(new Map<string, DocumentPage[]>());
+  const semanticReviewAttemptedIds = useRef(new Set<string>());
+  const semanticReviewRunning = useRef(false);
+  const [semanticReviewTick, setSemanticReviewTick] = useState(0);
   const localProvider = useMemo(() => {
     if (provider !== undefined) return provider;
     const connection = llmConnection(serviceSettings);
@@ -750,7 +762,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   }, []);
 
   useEffect(() => {
-    if (!localDocumentEngine) return undefined;
+    if (!localDocumentEngine || semanticReviewRunning.current || importQueue.length) return undefined;
+    const attemptKey = (resourceId: string) => `${resourceId}:${localProvider ? 'model' : 'layout'}`;
     const candidate = lessons.flatMap((lesson) => {
       const workspace = lessonWorkspaces[lesson.id] ?? emptyLessonWorkspace;
       const noteNeedsSemanticReview = Boolean(localProvider
@@ -760,25 +773,31 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       if (hasCurrentDocumentNote(workspace) && !noteNeedsSemanticReview) return [];
       return workspace.resources.flatMap((resource) => {
         const isExtractable = isExtractableDocument(resource);
-        return isExtractable && (noteNeedsSemanticReview || !rebuiltDocumentSourceIds.current.has(resource.id)) ? [{ lesson, resource }] : [];
+        const pending = noteNeedsSemanticReview || !rebuiltDocumentSourceIds.current.has(resource.id);
+        return isExtractable && pending && !semanticReviewAttemptedIds.current.has(attemptKey(resource.id)) ? [{ lesson, resource }] : [];
       });
     })[0];
     if (!candidate) return undefined;
 
     rebuiltDocumentSourceIds.current.add(candidate.resource.id);
+    semanticReviewAttemptedIds.current.add(attemptKey(candidate.resource.id));
+    semanticReviewRunning.current = true;
     void (async () => {
       try {
-        const source = await sourceBlobStore.load(candidate.resource.id);
-        if (!source) {
+        let pages = extractedDocumentPages.current.get(candidate.resource.id);
+        if (!pages) {
+          const source = await sourceBlobStore.load(candidate.resource.id);
+          if (!source) {
+            rebuiltDocumentSourceIds.current.delete(candidate.resource.id);
+            return;
+          }
+          pages = (await localDocumentEngine.extract(source)).pages;
+        }
+        if (!pages.some((page) => page.text.trim())) {
           rebuiltDocumentSourceIds.current.delete(candidate.resource.id);
           return;
         }
-        const extraction = await localDocumentEngine.extract(source);
-        if (!extraction.pages.some((page) => page.text.trim())) {
-          rebuiltDocumentSourceIds.current.delete(candidate.resource.id);
-          return;
-        }
-        const formattedNote = await formatDocumentCourseNoteWithProvider(candidate.lesson, extraction.pages, candidate.resource.name, localProvider);
+        const formattedNote = await formatDocumentCourseNoteWithProvider(candidate.lesson, pages, candidate.resource.name, localProvider);
         setLessonWorkspaces((current) => {
           const workspace = current[candidate.lesson.id] ?? emptyLessonWorkspace;
           const hasLayoutNote = hasCurrentDocumentNote(workspace);
@@ -794,9 +813,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         });
       } catch {
         rebuiltDocumentSourceIds.current.delete(candidate.resource.id);
+      } finally {
+        extractedDocumentPages.current.delete(candidate.resource.id);
+        semanticReviewRunning.current = false;
+        setSemanticReviewTick((tick) => tick + 1);
       }
     })();
-  }, [lessonWorkspaces, lessons, localDocumentEngine, localProvider, sourceBlobStore]);
+  }, [lessonWorkspaces, lessons, localDocumentEngine, localProvider, sourceBlobStore, semanticReviewTick, importQueue.length]);
 
   useEffect(() => {
     if (!nativeStorageReady) return;
@@ -1703,13 +1726,21 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
   };
 
-  const importSource = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const importSource = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
     event.target.value = '';
     event.target.accept = sourceAccept;
-    if (!file || !hasCourse) return;
+    if (files.length > 1) {
+      enqueueBatchImport(files);
+      return;
+    }
+    if (!files[0] || !hasCourse) return;
+    void importSourceFile(files[0], activeLesson);
+  };
+
+  const importSourceFile = async (file: File, targetLesson: Lesson, routeMaterial = true) => {
     setActionError('');
-    const lessonId = activeLesson.id;
+    const lessonId = targetLesson.id;
     try {
       const resource = await createSourceResource(file);
       await sourceBlobStore.save(resource.id, file);
@@ -1723,7 +1754,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           const segment: TranscriptSegment = {
             id: `${resource.id}:text`, sourceId: resource.id, timestamp: 'Notes', speaker: resource.name, text, status: 'review',
           };
-          if (await routeImportedMaterial(activeLesson, resource, [segment])) return;
+          if (routeMaterial && await routeImportedMaterial(targetLesson, resource, [segment])) return;
           const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
           const nextTranscript = [...previousWorkspace.transcript, segment];
           updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: nextTranscript }));
@@ -1741,7 +1772,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             id: `${resource.id}:${segment.id || index}`,
             sourceId: resource.id,
           }));
-          if (segments.length && localProvider) {
+          if (segments.length && localProvider && routeMaterial) {
             try {
               const proposal = await analyzeQuickStart(
                 segments.map((segment) => `${segment.timestamp} ${segment.text}`).join('\n'),
@@ -1759,7 +1790,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                   },
                 };
                 const routed = applyRecordingPlacement({
-                  sourceLesson: activeLesson,
+                  sourceLesson: targetLesson,
                   lessons,
                   lessonWorkspaces: routingWorkspaces,
                   proposal,
@@ -1814,10 +1845,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               text: page.text.trim(),
               status: 'review' as const,
             }));
-          if (pageSegments.length && await routeImportedMaterial(activeLesson, resource, pageSegments, extraction.pages)) return;
+          if (routeMaterial && pageSegments.length && await routeImportedMaterial(targetLesson, resource, pageSegments, extraction.pages)) return;
           const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
           const nextTranscript = [...previousWorkspace.transcript, ...pageSegments];
-          const documentCourseNote = await formatDocumentCourseNoteWithProvider(activeLesson, extraction.pages, resource.name, localProvider);
+          extractedDocumentPages.current.set(resource.id, extraction.pages);
+          // Show the extracted note right away; the background review rewrites it with the model.
+          const documentCourseNote = await formatDocumentCourseNoteWithProvider(targetLesson, extraction.pages, resource.name, null);
           updateLessonWorkspace(lessonId, (current) => ({
             ...current,
             transcript: nextTranscript,
@@ -1839,6 +1872,76 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setActionError(error instanceof Error ? error.message : 'The file could not be stored. Please try importing it again.');
     }
   };
+
+  const enqueueBatchImport = (files: File[]) => {
+    if (isRecording || isFinalizingRecording || isStartingRecording) {
+      notify('Stop and save the recording before importing several files.');
+      return;
+    }
+    const plan = planBatchImport(files);
+    if (!plan.length) {
+      setActionError('None of these files can be imported. Use PDF, Word, PowerPoint, text, image or audio files.');
+      return;
+    }
+    if (plan.length > LARGE_BATCH_IMPORT && !window.confirm(`Import ${plan.length} files as ${plan.length} lessons?`)) return;
+    const subject = folderNameOf(files) || (hasCourse ? activeLesson.subject : '') || 'Imported course';
+    const date = new Date().toLocaleDateString('en-GB');
+    const planned = plan.map(({ file, title, chapter }) => ({
+      file,
+      lesson: { id: `lesson-${crypto.randomUUID()}`, subject, chapter, title, teacher: '', duration: '00:00:00', date, progress: 0 } satisfies Lesson,
+    }));
+    setLessons((current) => [...planned.map(({ lesson }) => lesson), ...current]);
+    setLessonWorkspaces((current) => ({ ...current, ...Object.fromEntries(planned.map(({ lesson }) => [lesson.id, emptyLessonWorkspace])) }));
+    setExpandedSubjects((expanded) => ({ ...expanded, [subject]: true }));
+    setActiveLessonId(planned[0].lesson.id);
+    setSelectedArtifactId(null);
+    setView('course');
+    setActionError('');
+    setImportQueue((current) => [...current, ...planned.map(({ file, lesson }) => ({ file, lessonId: lesson.id }))]);
+    setImportTotals((current) => ({ done: current?.done ?? 0, total: (current?.total ?? 0) + planned.length }));
+    const skipped = files.length - plan.length;
+    notify(`${planned.length} lessons created in ${subject}${skipped ? `, ${skipped} unsupported file${skipped === 1 ? '' : 's'} skipped` : ''}. Importing them one by one.`);
+  };
+
+  const stopBatchImport = () => {
+    const dropped = new Set(importQueue.slice(1).map(({ lessonId }) => lessonId));
+    setImportQueue((current) => current.slice(0, 1));
+    setImportTotals((current) => current && { ...current, total: current.done + 1 });
+    setLessons((current) => current.filter((lesson) => !dropped.has(lesson.id)));
+    setLessonWorkspaces((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !dropped.has(id))));
+    notify(`Import stopped. ${dropped.size} remaining file${dropped.size === 1 ? ' was' : 's were'} not added.`);
+  };
+
+  const importFolder = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (files.length) enqueueBatchImport(files);
+  };
+
+  // Batch imports run one file at a time, each from a fresh render, so a file never
+  // overwrites what the previous one added and the local services are not flooded.
+  useEffect(() => {
+    if (importRunningRef.current) return;
+    if (!importQueue.length) {
+      if (importTotals) {
+        notify(`${importTotals.total} source${importTotals.total === 1 ? '' : 's'} imported.`);
+        setImportTotals(null);
+      }
+      return;
+    }
+    const [next] = importQueue;
+    const lesson = lessons.find((candidate) => candidate.id === next.lessonId);
+    importRunningRef.current = true;
+    void (lesson ? importSourceFile(next.file, lesson, false) : Promise.resolve()).finally(() => {
+      importRunningRef.current = false;
+      setImportTotals((current) => current && { ...current, done: current.done + 1 });
+      setImportQueue((current) => current.slice(1));
+    });
+  });
+
+  useEffect(() => {
+    folderInputRef.current?.setAttribute('webkitdirectory', '');
+  }, []);
 
   const transcribeSource = async (resource: Resource) => {
     if (transcribingResourceIds.has(resource.id)) return;
@@ -2217,7 +2320,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   return (
     <div className="app-shell">
-      <input ref={sourceInputRef} className="visually-hidden" type="file" aria-label="Select course source" accept={sourceAccept} onChange={importSource} />
+      <input ref={sourceInputRef} className="visually-hidden" type="file" multiple aria-label="Select course source" accept={sourceAccept} onChange={importSource} />
+      <input ref={folderInputRef} className="visually-hidden" type="file" multiple aria-label="Select course folder" onChange={importFolder} />
       <header className="topbar">
         <div className="topbar-leading">
           <button className="icon-button" aria-label="Show or hide navigation" aria-expanded={showLeftSidebar} onClick={() => setShowLeftSidebar((value) => !value)}><Menu size={20} /></button>
@@ -2233,6 +2337,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             <div className="sidebar-start-actions">
               <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={startQuickCourse}><Shuffle size={16} /><span>Quick start</span></button>
               <button className="sidebar-row" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={() => setShowNewCourse(true)}><Plus size={16} /><span>New course</span></button>
+              <button className="sidebar-row" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} /><span>Import folder</span></button>
             </div>
             {lessons.length > 0 && <label className="search-field"><Search size={16} /><input aria-label="Search courses" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Find a course" /></label>}
             <div className="sidebar-section-header"><span>Courses</span><span>{lessons.length}</span></div>
@@ -2260,6 +2365,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         </>}
 
         <main className="main-panel">
+          {importTotals && <div className="import-progress">
+            <span className="import-progress-label" role="status">Importing {Math.min(importTotals.done + 1, importTotals.total)} of {importTotals.total}{importQueue[0] ? ` · ${importQueue[0].file.name}` : ''}</span>
+            <span className="import-progress-track" aria-hidden="true"><span style={{ width: `${(importTotals.done / importTotals.total) * 100}%` }} /></span>
+            {importQueue.length > 1 && <button type="button" className="text-action" onClick={stopBatchImport}>Stop after this file</button>}
+          </div>}
           {!nativeStorageReady ? <p role="status">Opening your library...</p> : !hasCourse ? (
             <section className="welcome">
               <EmptyStateIcon name="file-text" />
@@ -2268,6 +2378,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <button className="primary-action" onClick={startQuickCourse}><Shuffle size={17} /> Quick start</button>
               <button className="text-action" onClick={openAiOrganizer}><Sparkles size={16} /> Organize notes with AI</button>
               <button className="text-action" onClick={() => setShowNewCourse(true)}><Plus size={16} /> Create your first course</button>
+              <button className="text-action" onClick={() => folderInputRef.current?.click()}><FolderOpen size={16} /> Import a course folder</button>
             </section>
           ) : <>
             <div className="main-header">

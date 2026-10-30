@@ -424,6 +424,56 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('Gradient descent updates parameters using the learning rate.')).toBeInTheDocument();
   }, 15000);
 
+  it('imports several files as one lesson each, one file at a time', async () => {
+    const user = userEvent.setup();
+    let running = 0;
+    let overlapped = false;
+    const extract = vi.fn(async (file: Blob) => {
+      running += 1;
+      if (running > 1) overlapped = true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      running -= 1;
+      const name = (file as File).name;
+      return { model: 'pymupdf', pages: [{ pageNumber: 1, text: `Content of ${name}.`, blocks: [] }] };
+    });
+    render(<App documentEngine={{ extract }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), [
+      new File(['%PDF-1.7'], 'TD2.pdf', { type: 'application/pdf' }),
+      new File(['%PDF-1.7'], 'chapitre1.pdf', { type: 'application/pdf' }),
+      new File(['%PDF-1.7'], 'TD1.pdf', { type: 'application/pdf' }),
+    ]);
+
+    await waitFor(() => expect(extract).toHaveBeenCalledTimes(3), { timeout: 5000 });
+    expect(await screen.findByText('3 sources imported.')).toBeInTheDocument();
+    expect(overlapped).toBe(false);
+    expect(extract.mock.calls.map(([file]) => (file as File).name)).toEqual(['chapitre1.pdf', 'TD1.pdf', 'TD2.pdf']);
+    const sidebar = screen.getByRole('complementary', { name: 'Course navigation' });
+    expect(within(sidebar).getByText('Travaux dirigés')).toBeInTheDocument();
+    for (const title of ['Chapitre 1', 'TD 1', 'TD 2']) {
+      await user.click(within(sidebar).getByRole('button', { name: title }));
+      expect((await screen.findAllByText(`Content of ${title === 'Chapitre 1' ? 'chapitre1' : title.replace(' ', '')}.pdf.`)).length).toBeGreaterThan(0);
+    }
+  }, 15000);
+
+  it('does not retry a failed extraction in a loop after a batch import', async () => {
+    const user = userEvent.setup();
+    const extract = vi.fn().mockRejectedValue(new Error('fetch failed'));
+    render(<App documentEngine={{ extract }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), [
+      new File(['%PDF-1.7'], 'TD1.pdf', { type: 'application/pdf' }),
+      new File(['%PDF-1.7'], 'TD2.pdf', { type: 'application/pdf' }),
+    ]);
+
+    expect(await screen.findByText('2 sources imported.', {}, { timeout: 5000 })).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const settledCalls = extract.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(extract.mock.calls.length).toBe(settledCalls);
+    expect(settledCalls).toBeLessThanOrEqual(4);
+  }, 15000);
+
   it('opens a cited document source and preserves its page target', async () => {
     const user = userEvent.setup();
     const extract = vi.fn().mockResolvedValue({
