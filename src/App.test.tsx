@@ -1705,4 +1705,35 @@ describe('StudentLLM workspace', () => {
     expect(screen.queryByRole('textbox', { name: 'Select course source' })).not.toBeInTheDocument();
   });
 
+  describe('mobile navigation drawer', () => {
+    const originalWidth = window.innerWidth;
+    afterEach(() => { Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth }); });
+
+    it('moves focus in, traps Tab, inerts the background and restores focus on Escape', async () => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 375 });
+      const user = userEvent.setup();
+      const { container } = render(<App />);
+
+      expect(screen.queryByRole('complementary', { name: 'Course navigation' })).not.toBeInTheDocument();
+      const menu = screen.getByRole('button', { name: 'Show or hide navigation' });
+      await user.click(menu);
+
+      const sidebar = screen.getByRole('complementary', { name: 'Course navigation' });
+      expect(sidebar).toContainElement(document.activeElement as HTMLElement);
+      expect(container.querySelector('main')).toHaveAttribute('inert');
+
+      const focusables = Array.from(sidebar.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])'));
+      const last = focusables[focusables.length - 1];
+      last.focus();
+      await user.tab();
+      expect(document.activeElement).toBe(focusables[0]);
+      await user.tab({ shift: true });
+      expect(document.activeElement).toBe(last);
+
+      await user.keyboard('{Escape}');
+      expect(screen.queryByRole('complementary', { name: 'Course navigation' })).not.toBeInTheDocument();
+      expect(container.querySelector('main')).not.toHaveAttribute('inert');
+      await waitFor(() => expect(menu).toHaveFocus());
+    });
+  });
 });

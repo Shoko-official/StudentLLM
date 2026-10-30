@@ -616,6 +616,38 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     };
   }, [isRecording, liveTranscriptionIntervalMs, localSpeechEngine]);
 
+  const [narrowViewport, setNarrowViewport] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 900);
+  useEffect(() => {
+    const onResize = () => setNarrowViewport(window.innerWidth <= 900);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const drawerOpen = showLeftSidebar && narrowViewport;
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const drawerFocusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+  useEffect(() => {
+    if (!drawerOpen) return undefined;
+    const drawer = drawerRef.current;
+    const first = drawer?.querySelector<HTMLElement>(drawerFocusableSelector);
+    first?.focus();
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !document.querySelector('[role="dialog"]')) {
+        window.setTimeout(() => menuButtonRef.current?.focus(), 0);
+      }
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [drawerOpen]);
+  const trapDrawerTab = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (!drawerOpen || event.key !== 'Tab') return;
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(drawerFocusableSelector));
+    if (!items.length) { event.preventDefault(); return; }
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  };
   const viewTabIds = ['course', 'sources', 'chat', 'study'] as const;
   const onViewTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     const current = viewTabIds.indexOf(view as typeof viewTabIds[number]);
@@ -2274,7 +2306,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       <input ref={folderInputRef} hidden tabIndex={-1} type="file" multiple aria-label="Select course folder" onChange={importFolder} />
       <header className="topbar">
         <div className="topbar-leading">
-          <button className="icon-button" aria-label="Show or hide navigation" aria-expanded={showLeftSidebar} onClick={() => setShowLeftSidebar((value) => !value)}><Menu size={20} /></button>
+          <button ref={menuButtonRef} className="icon-button" aria-label="Show or hide navigation" aria-expanded={showLeftSidebar} onClick={() => setShowLeftSidebar((value) => !value)}><Menu size={20} /></button>
           <span className="brand-name"><span className="brand-mark" aria-hidden="true"><BrandGlyph size={24} /></span>StudentLLM</span>
         </div>
         <button className="icon-button" aria-label="Settings" onClick={() => setShowSettingsPanel(true)}><Settings2 size={19} /></button>
@@ -2282,8 +2314,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
       <div className={`workspace-grid ${showLeftSidebar ? 'with-navigation' : ''}`}>
         {showLeftSidebar && <>
-          <button className="navigation-scrim" aria-label="Close navigation" onClick={() => setShowLeftSidebar(false)} />
-          <aside className="left-sidebar workspace-sidebar" aria-label="Course navigation">
+          <button className="navigation-scrim" tabIndex={-1} aria-label="Close navigation" onClick={() => setShowLeftSidebar(false)} />
+          <aside ref={drawerRef} className="left-sidebar workspace-sidebar" aria-label="Course navigation" onKeyDown={trapDrawerTab}>
             <div className="sidebar-start-actions">
               <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={startQuickCourse}><Shuffle size={16} /><span>Quick start</span></button>
               <button className="sidebar-row" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={() => setShowNewCourse(true)}><Plus size={16} /><span>New course</span></button>
@@ -2314,7 +2346,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           </aside>
         </>}
 
-        <main className="main-panel">
+        <main className="main-panel" inert={drawerOpen}>
           {importTotals && <div className="import-progress">
             <span className="import-progress-label" role="status">Importing {Math.min(importTotals.done + 1, importTotals.total)} of {importTotals.total}{importQueue[0] ? ` · ${importQueue[0].file.name}` : ''}</span>
             <span className="import-progress-track" aria-hidden="true"><span style={{ width: `${(importTotals.done / importTotals.total) * 100}%` }} /></span>
