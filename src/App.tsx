@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AlignLeft,
   Archive,
@@ -398,7 +398,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         const next = update(previous);
         const lesson = lessons.find((item) => item.id === lessonId);
         const hasDocumentNote = next.courseNote?.blocks?.some((block) => block.id === 'document-source-title');
-        return lesson && next.transcript !== previous.transcript && !localProvider && !hasDocumentNote
+        // Rebuild the deterministic note when it is not AI-written or the set of segments changed; status-only edits (review toggles) keep an AI note.
+        const segmentIds = (items: TranscriptSegment[]) => items.map((segment) => segment.id).join('\u0000');
+        const needsRebuild = next.courseNote?.detection.method !== 'LM Studio' || segmentIds(next.transcript) !== segmentIds(previous.transcript);
+        return lesson && next.transcript !== previous.transcript && needsRebuild && !hasDocumentNote
           ? { ...next, courseNote: buildCourseNote(lesson, next.transcript) }
           : next;
       })(),
@@ -448,7 +451,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         ...targetWorkspace,
         resources: Array.from(new Map([...targetWorkspace.resources, resource].map((item) => [item.id, item])).values()),
         transcript: targetTranscript,
+        // Keep only a real AI or document note from the snapshot; otherwise rebuild the deterministic note so imported text shows even when the provider failed.
         courseNote: !targetChangedWhilePending && formattedCourseNote
+          && (formattedCourseNote.detection.method === 'LM Studio' || formattedCourseNote.blocks.some((block) => block.id === 'document-source-title'))
           ? formattedCourseNote
           : buildCourseNote(placement.targetLesson, targetTranscript),
       };
@@ -620,6 +625,60 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setLiveSettledThrough(0);
     };
   }, [isRecording, liveTranscriptionIntervalMs, localSpeechEngine]);
+
+  const [narrowViewport, setNarrowViewport] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 900);
+  useEffect(() => {
+    const onResize = () => setNarrowViewport(window.innerWidth <= 900);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const drawerOpen = showLeftSidebar && narrowViewport;
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const drawerFocusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+  useEffect(() => {
+    if (!drawerOpen) return undefined;
+    const drawer = drawerRef.current;
+    const first = drawer?.querySelector<HTMLElement>(drawerFocusableSelector);
+    first?.focus();
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !document.querySelector('[role="dialog"]')) {
+        window.setTimeout(() => menuButtonRef.current?.focus(), 0);
+      }
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => {
+      window.removeEventListener('keydown', onEscape);
+      // Choosing a course unmounts the focused button; keep focus on a stable control.
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if (!active || active === document.body) menuButtonRef.current?.focus();
+      }, 0);
+    };
+  }, [drawerOpen]);
+  const trapDrawerTab = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (!drawerOpen || event.key !== 'Tab') return;
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(drawerFocusableSelector)).filter((item) => !item.hidden && !item.closest('[hidden]') && !(item as HTMLInputElement).disabled);
+    if (!items.length) { event.preventDefault(); return; }
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  };
+  const viewTabIds = ['course', 'sources', 'chat', 'study'] as const;
+  const onViewTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const current = viewTabIds.indexOf(view as typeof viewTabIds[number]);
+    const next = event.key === 'ArrowRight' ? (current + 1) % viewTabIds.length
+      : event.key === 'ArrowLeft' ? (current - 1 + viewTabIds.length) % viewTabIds.length
+      : event.key === 'Home' ? 0
+      : event.key === 'End' ? viewTabIds.length - 1 : -1;
+    if (next < 0) return;
+    event.preventDefault();
+    setCourseActionsOpen(false);
+    setView(viewTabIds[next]);
+    setActionError('');
+    document.getElementById(`view-tab-${viewTabIds[next]}`)?.focus();
+  };
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1740,7 +1799,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       const extractableResource = isExtractableDocument(resource);
       if (!localDocumentEngine && extractableResource) {
         setActionError(`${resource.name} is saved. Connect the document service in Settings to extract its text.`);
-        setShowSettingsPanel(true);
       }
       if (localDocumentEngine && extractableResource) {
         try {
@@ -1775,7 +1833,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             ? 'The document service is offline.'
             : 'The document service could not extract this file.';
           setActionError(`${resource.name} is saved. ${detail} Open Settings and refresh the local services.`);
-          setShowSettingsPanel(true);
         }
       }
     } catch (error) {
@@ -1944,6 +2001,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         resources: current.resources.filter((item) => item.id !== resource.id),
         transcript: current.transcript.filter((segment) => segment.sourceId !== resource.id && !segment.id.startsWith(`${resource.id}:`)),
       }));
+      // The note was rebuilt without the removed source; let a reachable provider rewrite it again.
+      formatExistingCourseNote(activeLessonId, transcript.filter((segment) => segment.sourceId !== resource.id && !segment.id.startsWith(`${resource.id}:`)));
       notify(`${resource.name} removed from this course.`);
     } catch {
       notify(`${resource.name} could not be removed.`);
@@ -2234,11 +2293,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   return (
     <div className="app-shell">
-      <input ref={sourceInputRef} className="visually-hidden" type="file" multiple aria-label="Select course source" accept={sourceAccept} onChange={importSource} />
-      <input ref={folderInputRef} className="visually-hidden" type="file" multiple aria-label="Select course folder" onChange={importFolder} />
+      <input ref={sourceInputRef} hidden tabIndex={-1} type="file" multiple aria-label="Select course source" accept={sourceAccept} onChange={importSource} />
+      <input ref={folderInputRef} hidden tabIndex={-1} type="file" multiple aria-label="Select course folder" onChange={importFolder} />
       <header className="topbar">
         <div className="topbar-leading">
-          <button className="icon-button" aria-label="Show or hide navigation" aria-expanded={showLeftSidebar} onClick={() => setShowLeftSidebar((value) => !value)}><Menu size={20} /></button>
+          <button ref={menuButtonRef} className="icon-button" aria-label="Show or hide navigation" aria-expanded={showLeftSidebar} onClick={() => setShowLeftSidebar((value) => !value)}><Menu size={20} /></button>
           <span className="brand-name"><span className="brand-mark" aria-hidden="true"><BrandGlyph size={24} /></span>StudentLLM</span>
         </div>
         <button className="icon-button" aria-label="Settings" onClick={() => setShowSettingsPanel(true)}><Settings2 size={19} /></button>
@@ -2246,8 +2305,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
       <div className={`workspace-grid ${showLeftSidebar ? 'with-navigation' : ''}`}>
         {showLeftSidebar && <>
-          <button className="navigation-scrim" aria-label="Close navigation" onClick={() => setShowLeftSidebar(false)} />
-          <aside className="left-sidebar workspace-sidebar" aria-label="Course navigation">
+          <button className="navigation-scrim" tabIndex={-1} aria-label="Close navigation" onClick={() => setShowLeftSidebar(false)} />
+          <aside ref={drawerRef} className="left-sidebar workspace-sidebar" aria-label="Course navigation" onKeyDown={trapDrawerTab}>
             <div className="sidebar-start-actions">
               <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={startQuickCourse}><Shuffle size={16} /><span>Quick start</span></button>
               <button className="sidebar-row" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={() => setShowNewCourse(true)}><Plus size={16} /><span>New course</span></button>
@@ -2278,7 +2337,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           </aside>
         </>}
 
-        <main className="main-panel">
+        <main className="main-panel" inert={drawerOpen}>
           {importTotals && <div className="import-progress">
             <span className="import-progress-label" role="status">Importing {Math.min(importTotals.done + 1, importTotals.total)} of {importTotals.total}{importQueue[0] ? ` · ${importQueue[0].file.name}` : ''}</span>
             <span className="import-progress-track" aria-hidden="true"><span style={{ width: `${(importTotals.done / importTotals.total) * 100}%` }} /></span>
@@ -2311,11 +2370,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               </details>
             </div>
             <div className="view-tabs" ref={viewTabsRef} role="tablist" aria-label="Course view">
-              {(['course', 'sources', 'chat', 'study'] as const).map((tab) => <button key={tab} role="tab" aria-selected={view === tab} className={view === tab ? 'active' : ''} onClick={() => { setCourseActionsOpen(false); setView(tab); setActionError(''); }}>{tab === 'course' ? 'Notes' : tab === 'sources' ? `Sources${resources.length ? ` (${resources.length})` : ''}` : tab === 'chat' ? 'Chat' : 'Study'}</button>)}
+              {viewTabIds.map((tab) => <button key={tab} id={`view-tab-${tab}`} role="tab" aria-selected={view === tab} aria-controls={`view-panel-${tab}`} tabIndex={view === tab ? 0 : -1} className={view === tab ? 'active' : ''} onKeyDown={onViewTabKeyDown} onClick={() => { setCourseActionsOpen(false); setView(tab); setActionError(''); }}>{tab === 'course' ? 'Notes' : tab === 'sources' ? `Sources${resources.length ? ` (${resources.length})` : ''}` : tab === 'chat' ? 'Chat' : 'Study'}</button>)}
             </div>
             {actionError && <div className="action-error" role="alert"><p>{actionError}</p><button className="text-action" onClick={() => setShowSettingsPanel(true)}>Open Settings</button></div>}
             {isRecording && view !== 'course' && <section className="recording-bar recording" aria-label="Course recording"><div className="recording-actions"><button className="primary-action stop" aria-label="Stop recording" onClick={toggleRecording}><Square size={16} /> Stop recording</button><span className="recording-time">{formatElapsed(recordingSeconds)}</span></div></section>}
-            {view === 'course' && <div className="course-view">
+            {view === 'course' && <div className="course-view" id="view-panel-course" role="tabpanel" aria-labelledby="view-tab-course">
               <section className={`recording-bar ${isRecording ? 'recording' : ''}`} aria-label="Course recording">
                 <div className="recording-actions">
                   <button className={`primary-action ${isRecording ? 'stop' : ''}`} onClick={toggleRecording} disabled={isFinalizingRecording || isStartingRecording} aria-label={isRecording ? 'Stop recording' : isFinalizingRecording ? 'Finishing recording' : isStartingRecording ? 'Starting recording' : 'Start recording'}>
@@ -2345,7 +2404,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 <button className="text-action" onClick={() => setShowTranscriptPanel(true)}>View all <ArrowUpRight size={13} /></button>
               </details>}
             </div>}
-            {view === 'sources' && <section className="sources-view" aria-label="Course sources">
+            {view === 'sources' && <section className="sources-view" id="view-panel-sources" role="tabpanel" aria-labelledby="view-tab-sources">
               <div className="section-toolbar"><h2>Sources</h2><button className="secondary-action" onClick={() => openSourcePicker(sourceAccept)}><Plus size={16} /> Import file</button></div>
               {!resources.length && <div className="empty-panel"><EmptyStateIcon name="folder" /><p className="empty-state">Add audio, a PDF, an image or text notes to this course.</p></div>}
               <div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}>
@@ -2355,14 +2414,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               </div>)}</div>
               {resources.length > 3 && <button className="text-action" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`}</button>}
             </section>}
-            {view === 'chat' && <section className="chat-view">
+            {view === 'chat' && <section className="chat-view" id="view-panel-chat" role="tabpanel" aria-labelledby="view-tab-chat">
               <div className="chat-intro">{!chat.length && <EmptyStateIcon name="magnifier" />}<h2>Ask about this course</h2><p>{localProvider ? 'Answers use your notes and sources. LM Studio must be running with a loaded model.' : 'Connect LM Studio in Settings to generate answers. You can still search and open your sources.'}</p></div>
               {!resources.length && !transcript.length && <p className="empty-state">Import material or record a lecture before asking a question.</p>}
                <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list" aria-label="Response sources">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button type="button" className="citation-chip" title="Open original source" key={citation} onClick={() => openCitation(message.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className={citation.startsWith('LM Studio') ? 'citation-model' : 'citation-context'} key={citation}>{citation}</span>)}</div>}</article>)}</div>
               {isSending && <div className="chat-typing" aria-hidden="true"><span /><span /><span /></div>}
               <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
             </section>}
-            {view === 'study' && <section className="study-view">
+            {view === 'study' && <section className="study-view" id="view-panel-study" role="tabpanel" aria-labelledby="view-tab-study">
               <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>
               {!hasStudyMaterial && <p className="study-empty-hint"><AnimatedIcon name="star" size={22} target=".study-empty-hint" intro="in-reveal" className="hint-icon" fallback={<Star size={20} />} />Import notes or finish a transcription to enable study material generation.</p>}
               <div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className={`artifact-button${generatingArtifact === artifact.kind ? ' is-generating' : ''}`} disabled={generatingArtifact !== null || !hasStudyMaterial} onClick={() => void createArtifact(artifact.kind)}><span className={`icon-tile tone-${artifact.tone}`} aria-hidden="true"><artifact.icon size={18} /></span><strong>{generatingArtifact === artifact.kind ? 'Generating...' : artifact.label}</strong><small>{artifact.description}</small></button>)}</div>

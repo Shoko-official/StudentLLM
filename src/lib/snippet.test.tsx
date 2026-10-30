@@ -87,7 +87,8 @@ describe('robustness', () => {
     toPlainText('[a'.repeat(30_000));
     toPlainText('$$'.repeat(20_000));
     toPlainText('\\('.repeat(20_000));
-    expect(performance.now() - started).toBeLessThan(1000);
+    // Generous on purpose: shared CI runners took ~1 s here. This only guards against runaway backtracking.
+    expect(performance.now() - started).toBeLessThan(5000);
   });
 
   it('bounds very long text but still finds a late match', () => {
