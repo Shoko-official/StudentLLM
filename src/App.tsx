@@ -19,6 +19,7 @@ import {
   Menu,
   Mic,
   Network,
+  Pencil,
   Plus,
   Search,
   Send,
@@ -26,6 +27,7 @@ import {
   Shuffle,
   Sparkles,
   Square,
+  Star,
   Trash2,
   Upload,
   X,
@@ -686,11 +688,16 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     list.style.setProperty('--tab-w', `${active.offsetWidth}px`);
     if (!list.dataset.ready) requestAnimationFrame(() => { list.dataset.ready = 'true'; });
   };
-  useLayoutEffect(placeTabIndicator);
-  useEffect(() => {
-    window.addEventListener('resize', placeTabIndicator);
-    return () => window.removeEventListener('resize', placeTabIndicator);
-  }, []);
+  useLayoutEffect(() => {
+    const list = viewTabsRef.current;
+    if (!list) return;
+    placeTabIndicator();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(placeTabIndicator);
+    observer.observe(list);
+    list.querySelectorAll('[role="tab"]').forEach((tab) => observer.observe(tab));
+    return () => observer.disconnect();
+  }, [view, hasCourse]);
 
   useEffect(() => {
     if (showSettingsPanel) void checkSidecars();
@@ -2184,7 +2191,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               {!courseTree.length && <p className="empty-state">{lessons.length ? 'No matching courses.' : 'Your courses will appear here.'}</p>}
             </nav>
             <div className="sidebar-footer">
-              {lessons.length > 0 && <button className="ghost-row sidebar-row" onClick={() => setShowGlobalSearch(true)}><AnimatedIcon name="magnifier" size={18} target="button" /><span>Global search</span></button>}
+              {lessons.length > 0 && <button className="ghost-row sidebar-row" onClick={() => setShowGlobalSearch(true)}><AnimatedIcon name="magnifier" size={18} target="button" fallback={<Search size={16} />} /><span>Global search</span></button>}
               <label className="ghost-row sidebar-row file-label"><Upload size={16} /><span>Import course</span><input className="visually-hidden" type="file" accept="application/json,.json" aria-label="Import course export" onChange={(event) => void importCourse(event)} /></label>
             </div>
           </aside>
@@ -2206,7 +2213,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <details className="course-actions" open={courseActionsOpen} onToggle={(event) => setCourseActionsOpen(event.currentTarget.open)}>
                 <summary aria-label="Course actions">More <ChevronDown size={15} /></summary>
                 <div className="course-actions-menu" onClick={() => setCourseActionsOpen(false)}>
-                  <button onClick={openEditCourse}><AnimatedIcon name="pencil" size={17} target="button" /> Edit course</button>
+                  <button onClick={openEditCourse}><AnimatedIcon name="pencil" size={17} target="button" fallback={<Pencil size={15} />} /> Edit course</button>
                   <button onClick={openAiOrganizer}><Sparkles size={15} /> Organize material with AI</button>
                   <button onClick={exportCourseNote}><Download size={15} /> Save note</button>
                   <button onClick={() => void exportCourse()}><Download size={15} /> Export course</button>
@@ -2225,7 +2232,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <section className={`recording-bar ${isRecording ? 'recording' : ''}`} aria-label="Course recording">
                 <div className="recording-actions">
                   <button className={`primary-action ${isRecording ? 'stop' : ''}`} onClick={toggleRecording} disabled={isFinalizingRecording || isStartingRecording} aria-label={isRecording ? 'Stop recording' : isFinalizingRecording ? 'Finishing recording' : isStartingRecording ? 'Starting recording' : 'Start recording'}>
-                    {isRecording ? <Square size={16} /> : <AnimatedIcon name="microphone" size={19} target="button" />}{isRecording ? 'Stop recording' : isFinalizingRecording ? 'Saving recording' : isStartingRecording ? 'Starting...' : 'Record'}
+                    {isRecording ? <Square size={16} /> : <AnimatedIcon name="microphone" size={19} target="button" fallback={<Mic size={17} />} />}{isRecording ? 'Stop recording' : isFinalizingRecording ? 'Saving recording' : isStartingRecording ? 'Starting...' : 'Record'}
                   </button>
                   {!isRecording && <button className="secondary-action" onClick={() => openSourcePicker(sourceAccept)}><Upload size={16} /> Import file</button>}
                   {isRecording && <><span className="recording-time">{formatElapsed(recordingSeconds)}</span><button className="text-action" onClick={addBookmark} aria-label="Bookmark this passage"><Plus size={16} /> Mark passage</button></>}
@@ -2270,7 +2277,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             </section>}
             {view === 'study' && <section className="study-view">
               <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>
-              {!hasStudyMaterial && <p className="study-empty-hint"><AnimatedIcon name="star" size={22} trigger="loop(3600)" intro="in-reveal" className="hint-icon" />Import notes or finish a transcription to enable study material generation.</p>}
+              {!hasStudyMaterial && <p className="study-empty-hint"><AnimatedIcon name="star" size={22} target=".study-empty-hint" intro="in-reveal" className="hint-icon" fallback={<Star size={20} />} />Import notes or finish a transcription to enable study material generation.</p>}
               <div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className={`artifact-button${generatingArtifact === artifact.kind ? ' is-generating' : ''}`} disabled={generatingArtifact !== null || !hasStudyMaterial} onClick={() => void createArtifact(artifact.kind)}><span className={`icon-tile tone-${artifact.tone}`} aria-hidden="true"><artifact.icon size={18} /></span><strong>{generatingArtifact === artifact.kind ? 'Generating...' : artifact.label}</strong><small>{artifact.description}</small></button>)}</div>
               {artifacts.length > 0 && <section className="recent-section"><h3>Saved materials</h3>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}>{artifact.label}</button>)}
               {(() => { const selected = artifacts.find((artifact) => artifact.id === selectedArtifactId); return selected && <article className="artifact-preview"><h3>{selected.label}</h3><RichText content={selected.content ?? ''} className="study-markdown" />{selected.visuals?.map((visual, index) => <VisualBlockView key={`${selected.id}-visual-${index}`} visual={visual} />)}{selected.citations && <div className="citation-list" aria-label="Study material sources">{selected.citations.map((citation, index) => selected.citationTargets?.[index] ? <button type="button" className="citation-chip" key={citation} title="Open original source" onClick={() => openCitation(selected.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className="citation-context" key={citation}>{citation}</span>)}</div>}</article>; })()}</section>}
