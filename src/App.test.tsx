@@ -1152,7 +1152,7 @@ describe('StudentLLM workspace', () => {
     expect(extract).toHaveBeenCalledWith(expect.any(Blob));
   });
 
-  it('keeps a PDF saved and opens document service recovery when extraction fails', async () => {
+  it('keeps a PDF saved and offers document service recovery without opening Settings on its own', async () => {
     const user = userEvent.setup();
     const extract = vi.fn().mockRejectedValue(new Error('Local document extraction timed out.'));
 
@@ -1164,12 +1164,93 @@ describe('StudentLLM workspace', () => {
       { type: 'application/pdf' },
     ));
 
-    expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent('Formulaire_Maths_BAC2.pdf is saved.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Formulaire_Maths_BAC2.pdf is saved.');
     expect(screen.getByRole('alert')).toHaveTextContent('document service is offline');
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Open Settings' }));
+    expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
     expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'Formulaire_Maths_BAC2.pdf', kind: 'document' }),
     ]));
+  });
+
+  it('does not open Settings when a PDF is imported without a document service', async () => {
+    const user = userEvent.setup();
+    render(<App provider={null} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(['%PDF-1.7'], 'thermo.pdf', { type: 'application/pdf' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('thermo.pdf is saved.');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+  });
+
+  it('shows imported text in course notes immediately when the language model is configured but offline', async () => {
+    const user = userEvent.setup();
+    const generate = vi.fn().mockRejectedValue(new Error('fetch failed'));
+    render(<App provider={{ generate }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['Probability measures how likely an event is.'],
+      'probability.md',
+      { type: 'text/markdown' },
+    ));
+
+    const courseNote = screen.getByRole('region', { name: 'Course notes document' });
+    expect(await within(courseNote).findByText(/Probability measures how likely an event is\./)).toBeInTheDocument();
+    await waitFor(() => expect(generate).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(within(courseNote).getByText(/Probability measures how likely an event is\./)).toBeInTheDocument();
+    expect(JSON.stringify(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.blocks)).toContain('Probability measures');
+  });
+
+  it('keeps an AI note when a transcript segment is toggled between review and verified', async () => {
+    const user = userEvent.setup();
+    const snapshot = createFixtureWorkspace();
+    const workspace = snapshot.lessonWorkspaces![FIXTURE_LESSON_ID];
+    const lesson = snapshot.lessons.find((item) => item.id === FIXTURE_LESSON_ID)!;
+    const base = buildCourseNote(lesson, workspace.transcript);
+    snapshot.lessonWorkspaces![FIXTURE_LESSON_ID] = {
+      ...workspace,
+      courseNote: { ...base, detection: { ...base.detection, method: 'LM Studio' as const, basis: 'AI fixture note' } },
+    };
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(snapshot));
+    const generate = vi.fn().mockRejectedValue(new Error('fetch failed'));
+
+    render(<App provider={{ generate }} />);
+    await openTranscript(user);
+    await user.click(screen.getByRole('button', { name: 'Mark segment 01:15:02 verified' }));
+
+    await waitFor(() => expect(screen.getByText('Transcript segment verified.')).toBeInTheDocument());
+    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.detection).toMatchObject({ method: 'LM Studio', basis: 'AI fixture note' });
+  });
+
+  it('rebuilds the note without a removed source and asks the provider to rewrite it', async () => {
+    const user = userEvent.setup();
+    const snapshot = createFixtureWorkspace();
+    const workspace = snapshot.lessonWorkspaces![FIXTURE_LESSON_ID];
+    const lesson = snapshot.lessons.find((item) => item.id === FIXTURE_LESSON_ID)!;
+    const resource = { id: 'gone-md', name: 'gone.md', meta: 'Notes', kind: 'transcript' as const, mimeType: 'text/markdown', sizeBytes: 20 };
+    const segment = { id: 'gone-md:text', sourceId: 'gone-md', timestamp: 'Notes', speaker: 'gone.md', text: 'Unique removable sentence.', status: 'review' as const };
+    const transcript = [...workspace.transcript, segment];
+    const base = buildCourseNote(lesson, transcript);
+    snapshot.lessonWorkspaces![FIXTURE_LESSON_ID] = {
+      ...workspace,
+      resources: [resource, ...workspace.resources],
+      transcript,
+      courseNote: { ...base, detection: { ...base.detection, method: 'LM Studio' as const, basis: 'AI fixture note' } },
+    };
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(snapshot));
+    const generate = vi.fn().mockRejectedValue(new Error('fetch failed'));
+
+    render(<App provider={{ generate }} />);
+    await openSources(user);
+    await user.click(screen.getByRole('button', { name: 'Remove source gone.md' }));
+
+    await waitFor(() => expect(generate).toHaveBeenCalled());
+    const note = savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote;
+    expect(note.detection.basis).not.toBe('AI fixture note');
+    expect(JSON.stringify(note.blocks)).not.toContain('Unique removable sentence');
   });
 
   it('removes an imported source from the active course', async () => {
