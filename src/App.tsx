@@ -1,18 +1,23 @@
-import { ChangeEvent, FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlignLeft,
   Archive,
   ArrowUpRight,
+  BookA,
   BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
+  CircleHelp,
   Download,
   FileAudio,
   FileImage,
   FileText,
+  Layers,
   ListChecks,
   Menu,
   Mic,
+  Network,
   Pencil,
   Plus,
   Search,
@@ -21,10 +26,14 @@ import {
   Shuffle,
   Sparkles,
   Square,
+  Star,
   Trash2,
   Upload,
   X,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { AnimatedIcon, EmptyStateIcon } from './lib/animated-icon';
+import { BrandGlyph } from './lib/brand-mark';
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
 import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspaceAsync } from './lib/workspace-storage';
 import type { WorkspaceStorageError } from './lib/workspace-storage';
@@ -63,13 +72,15 @@ const PdfPreview = lazy(() => import('./lib/pdf-preview').then(({ PdfPreview: Pr
 const initialLessons: Lesson[] = [];
 const emptyLesson: Lesson = { id: '', subject: 'General', chapter: 'General notes', title: '', teacher: '', duration: '00:00:00', date: '', progress: 0 };
 
-const artifactCatalog: { kind: ArtifactKind; label: string; description: string }[] = [
-  { kind: 'summary', label: 'Quick summary', description: 'The essential ideas on one page.' },
-  { kind: 'guide', label: 'Study guide', description: 'A structured, source-linked synthesis.' },
-  { kind: 'quiz', label: 'Targeted quiz', description: 'Test the concepts that remain uncertain.' },
-  { kind: 'flashcards', label: 'Flashcards', description: 'Prepare a review-ready card deck.' },
-  { kind: 'mindmap', label: 'Concept map', description: 'Connect concepts and their dependencies.' },
-  { kind: 'glossary', label: 'Glossary', description: 'Definitions for the course vocabulary.' },
+type Tone = 'blue' | 'amber' | 'rose' | 'green' | 'violet' | 'cyan';
+
+const artifactCatalog: { kind: ArtifactKind; label: string; description: string; icon: LucideIcon; tone: Tone }[] = [
+  { kind: 'summary', label: 'Quick summary', description: 'The essential ideas on one page.', icon: AlignLeft, tone: 'blue' },
+  { kind: 'guide', label: 'Study guide', description: 'A structured, source-linked synthesis.', icon: BookOpen, tone: 'violet' },
+  { kind: 'quiz', label: 'Targeted quiz', description: 'Test the concepts that remain uncertain.', icon: CircleHelp, tone: 'rose' },
+  { kind: 'flashcards', label: 'Flashcards', description: 'Prepare a review-ready card deck.', icon: Layers, tone: 'amber' },
+  { kind: 'mindmap', label: 'Concept map', description: 'Connect concepts and their dependencies.', icon: Network, tone: 'green' },
+  { kind: 'glossary', label: 'Glossary', description: 'Definitions for the course vocabulary.', icon: BookA, tone: 'cyan' },
 ];
 
 type CourseTreeSubject = {
@@ -203,10 +214,11 @@ function randomQuickCourseTitle() {
 }
 
 function resourceIcon(kind: Resource['kind']) {
-  if (kind === 'audio') return <FileAudio size={15} />;
-  if (kind === 'image') return <FileImage size={15} />;
-  if (kind === 'document') return <FileText size={15} />;
-  return <Archive size={15} />;
+  if (kind === 'audio') return <span className="icon-tile tone-violet" aria-hidden="true"><FileAudio size={18} /></span>;
+  if (kind === 'image') return <span className="icon-tile tone-green" aria-hidden="true"><FileImage size={18} /></span>;
+  if (kind === 'document') return <span className="icon-tile tone-rose" aria-hidden="true"><FileText size={18} /></span>;
+  if (kind === 'transcript') return <span className="icon-tile tone-blue" aria-hidden="true"><FileText size={18} /></span>;
+  return <span className="icon-tile" aria-hidden="true"><Archive size={18} /></span>;
 }
 
 function isTextResource(resource: Resource) {
@@ -665,6 +677,27 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   useEffect(() => {
     document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
   }, [darkMode]);
+
+  // Slide the active-tab pill to the selected course view.
+  const viewTabsRef = useRef<HTMLDivElement>(null);
+  const placeTabIndicator = () => {
+    const list = viewTabsRef.current;
+    const active = list?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!list || !active) return;
+    list.style.setProperty('--tab-x', `${active.offsetLeft}px`);
+    list.style.setProperty('--tab-w', `${active.offsetWidth}px`);
+    if (!list.dataset.ready) requestAnimationFrame(() => { list.dataset.ready = 'true'; });
+  };
+  useLayoutEffect(() => {
+    const list = viewTabsRef.current;
+    if (!list) return;
+    placeTabIndicator();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(placeTabIndicator);
+    observer.observe(list);
+    list.querySelectorAll('[role="tab"]').forEach((tab) => observer.observe(tab));
+    return () => observer.disconnect();
+  }, [view, hasCourse]);
 
   useEffect(() => {
     if (showSettingsPanel) void checkSidecars();
@@ -2123,7 +2156,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       <header className="topbar">
         <div className="topbar-leading">
           <button className="icon-button" aria-label="Show or hide navigation" aria-expanded={showLeftSidebar} onClick={() => setShowLeftSidebar((value) => !value)}><Menu size={20} /></button>
-          <span className="brand-name">StudentLLM</span>
+          <span className="brand-name"><span className="brand-mark" aria-hidden="true"><BrandGlyph size={24} /></span>StudentLLM</span>
         </div>
         <button className="icon-button" aria-label="Settings" onClick={() => setShowSettingsPanel(true)}><Settings2 size={19} /></button>
       </header>
@@ -2132,9 +2165,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         {showLeftSidebar && <>
           <button className="navigation-scrim" aria-label="Close navigation" onClick={() => setShowLeftSidebar(false)} />
           <aside className="left-sidebar workspace-sidebar" aria-label="Course navigation">
-            <div className="sidebar-header">
-              <div className="sidebar-brand"><div><strong>StudentLLM</strong><ChevronDown size={13} aria-hidden="true" /></div><span>Workspace</span></div>
-            </div>
             <div className="sidebar-start-actions">
               <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={startQuickCourse}><Shuffle size={16} /><span>Quick start</span></button>
               <button className="sidebar-row" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={() => setShowNewCourse(true)}><Plus size={16} /><span>New course</span></button>
@@ -2158,7 +2188,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               {!courseTree.length && <p className="empty-state">{lessons.length ? 'No matching courses.' : 'Your courses will appear here.'}</p>}
             </nav>
             <div className="sidebar-footer">
-              {lessons.length > 0 && <button className="ghost-row sidebar-row" onClick={() => setShowGlobalSearch(true)}><Search size={16} /><span>Global search</span></button>}
+              {lessons.length > 0 && <button className="ghost-row sidebar-row" onClick={() => setShowGlobalSearch(true)}><AnimatedIcon name="magnifier" size={18} target="button" fallback={<Search size={16} />} /><span>Global search</span></button>}
               <label className="ghost-row sidebar-row file-label"><Upload size={16} /><span>Import course</span><input className="visually-hidden" type="file" accept="application/json,.json" aria-label="Import course export" onChange={(event) => void importCourse(event)} /></label>
             </div>
           </aside>
@@ -2167,7 +2197,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         <main className="main-panel">
           {!nativeStorageReady ? <p role="status">Opening your library...</p> : !hasCourse ? (
             <section className="welcome">
-              <BookOpen size={32} strokeWidth={1.3} aria-hidden="true" />
+              <EmptyStateIcon name="file-text" />
               <h1>A place for your courses.</h1>
               <p>Create a course, then record a lecture or import your notes.<br />Your material stays together here.</p>
               <button className="primary-action" onClick={startQuickCourse}><Shuffle size={17} /> Quick start</button>
@@ -2176,11 +2206,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             </section>
           ) : <>
             <div className="main-header">
-              <div className="main-heading"><p>{activeLesson.subject}{activeLesson.chapter !== 'General notes' ? ` / ${activeLesson.chapter}` : ''}</p><h1>{activeLesson.title}</h1></div>
+              <div className="main-heading" key={activeLesson.id}><p>{activeLesson.subject}{activeLesson.chapter !== 'General notes' ? ` / ${activeLesson.chapter}` : ''}</p><h1>{activeLesson.title}</h1></div>
               <details className="course-actions" open={courseActionsOpen} onToggle={(event) => setCourseActionsOpen(event.currentTarget.open)}>
                 <summary aria-label="Course actions">More <ChevronDown size={15} /></summary>
                 <div className="course-actions-menu" onClick={() => setCourseActionsOpen(false)}>
-                  <button onClick={openEditCourse}><Pencil size={15} /> Edit course</button>
+                  <button onClick={openEditCourse}><AnimatedIcon name="pencil" size={17} target="button" fallback={<Pencil size={15} />} /> Edit course</button>
                   <button onClick={openAiOrganizer}><Sparkles size={15} /> Organize material with AI</button>
                   <button onClick={exportCourseNote}><Download size={15} /> Save note</button>
                   <button onClick={() => void exportCourse()}><Download size={15} /> Export course</button>
@@ -2190,7 +2220,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 </div>
               </details>
             </div>
-            <div className="view-tabs" role="tablist" aria-label="Course view">
+            <div className="view-tabs" ref={viewTabsRef} role="tablist" aria-label="Course view">
               {(['course', 'sources', 'chat', 'study'] as const).map((tab) => <button key={tab} role="tab" aria-selected={view === tab} className={view === tab ? 'active' : ''} onClick={() => { setCourseActionsOpen(false); setView(tab); setActionError(''); }}>{tab === 'course' ? 'Notes' : tab === 'sources' ? `Sources${resources.length ? ` (${resources.length})` : ''}` : tab === 'chat' ? 'Chat' : 'Study'}</button>)}
             </div>
             {actionError && <div className="action-error" role="alert"><p>{actionError}</p><button className="text-action" onClick={() => setShowSettingsPanel(true)}>Open Settings</button></div>}
@@ -2199,7 +2229,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <section className={`recording-bar ${isRecording ? 'recording' : ''}`} aria-label="Course recording">
                 <div className="recording-actions">
                   <button className={`primary-action ${isRecording ? 'stop' : ''}`} onClick={toggleRecording} disabled={isFinalizingRecording || isStartingRecording} aria-label={isRecording ? 'Stop recording' : isFinalizingRecording ? 'Finishing recording' : isStartingRecording ? 'Starting recording' : 'Start recording'}>
-                    {isRecording ? <Square size={16} /> : <Mic size={17} />}{isRecording ? 'Stop recording' : isFinalizingRecording ? 'Saving recording' : isStartingRecording ? 'Starting...' : 'Record'}
+                    {isRecording ? <Square size={16} /> : <AnimatedIcon name="microphone" size={19} target="button" fallback={<Mic size={17} />} />}{isRecording ? 'Stop recording' : isFinalizingRecording ? 'Saving recording' : isStartingRecording ? 'Starting...' : 'Record'}
                   </button>
                   {!isRecording && <button className="secondary-action" onClick={() => openSourcePicker(sourceAccept)}><Upload size={16} /> Import file</button>}
                   {isRecording && <><span className="recording-time">{formatElapsed(recordingSeconds)}</span><button className="text-action" onClick={addBookmark} aria-label="Bookmark this passage"><Plus size={16} /> Mark passage</button></>}
@@ -2212,7 +2242,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 <div className="course-note-toolbar"><span>Course notes</span><div className="course-note-toolbar-actions">{isRecording && <span className="course-note-status" role="status" aria-label="Live transcription status">{localSpeechEngine ? visibleLiveTranscript.length ? 'Live transcription' : 'Waiting for transcription' : 'Audio recording'}</span>}{(transcript.length > 0 || visibleLiveTranscript.length > 0) && <button className="text-action" onClick={exportCourseNote}><Download size={15} /> Save note</button>}</div></div>
                 <div className="course-note-content" aria-live={isRecording ? 'polite' : 'off'}>
                   {isRecording && <p className="course-note-meta" role="status">{localProvider ? !recorderRef.current?.readPreviewWindow ? 'This browser cannot draft live notes. The transcript is shown below; notes are written after recording stops.' : liveDraft.status || 'Waiting for a complete passage to write notes. The verbatim transcript appears below.' : 'Verbatim transcript. Connect a language model in Settings for structured notes.'}</p>}
-                  {transcript.length || visibleLiveTranscript.length ? activeCourseNote.blocks.map(renderCourseNoteBlock) : <div className="note-empty"><h2>Your notes start here.</h2><p>Record your lecture or import a file above.</p><p>Text notes appear directly. Audio transcription and PDF extraction need a connected service.</p><button className="text-action" onClick={() => setShowSettingsPanel(true)}>Set up transcription</button></div>}
+                  {transcript.length || visibleLiveTranscript.length ? activeCourseNote.blocks.map(renderCourseNoteBlock) : <div className="note-empty"><EmptyStateIcon name="microphone" state="morph-waveform" /><h2>Your notes start here.</h2><p>Record your lecture or import a file above.</p><p>Text notes appear directly. Audio transcription and PDF extraction need a connected service.</p><button className="text-action" onClick={() => setShowSettingsPanel(true)}>Set up transcription</button></div>}
                 </div>
               </section>
               {isRecording && localSpeechEngine && <section className="live-transcript-panel" aria-label="Live course transcription">
@@ -2227,7 +2257,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             </div>}
             {view === 'sources' && <section className="sources-view" aria-label="Course sources">
               <div className="section-toolbar"><h2>Sources</h2><button className="secondary-action" onClick={() => openSourcePicker(sourceAccept)}><Plus size={16} /> Import file</button></div>
-              {!resources.length && <p className="empty-state">Add audio, a PDF, an image or text notes to this course.</p>}
+              {!resources.length && <div className="empty-panel"><EmptyStateIcon name="folder" /><p className="empty-state">Add audio, a PDF, an image or text notes to this course.</p></div>}
               <div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}>
                 <button className="resource-open" onClick={() => void openResource(resource)}>{resourceIcon(resource.kind)}<span><strong>{resource.name}</strong><small>{transcribingResourceIds.has(resource.id) ? 'Transcribing...' : resource.meta}</small></span><ChevronRight size={16} /></button>
                 {resource.kind === 'audio' && <button className="text-action" aria-label={`Transcribe ${resource.name}`} disabled={transcribingResourceIds.has(resource.id)} onClick={() => void transcribeSource(resource)}>{transcribingResourceIds.has(resource.id) ? 'Transcribing...' : 'Transcribe'}</button>}
@@ -2236,15 +2266,16 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               {resources.length > 3 && <button className="text-action" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`}</button>}
             </section>}
             {view === 'chat' && <section className="chat-view">
-              <div className="chat-intro"><h2>Ask about this course</h2><p>{localProvider ? 'Answers use your notes and sources. LM Studio must be running with a loaded model.' : 'Connect LM Studio in Settings to generate answers. You can still search and open your sources.'}</p></div>
+              <div className="chat-intro">{!chat.length && <EmptyStateIcon name="magnifier" />}<h2>Ask about this course</h2><p>{localProvider ? 'Answers use your notes and sources. LM Studio must be running with a loaded model.' : 'Connect LM Studio in Settings to generate answers. You can still search and open your sources.'}</p></div>
               {!resources.length && !transcript.length && <p className="empty-state">Import material or record a lecture before asking a question.</p>}
                <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list" aria-label="Response sources">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button type="button" className="citation-chip" title="Open original source" key={citation} onClick={() => openCitation(message.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className={citation.startsWith('LM Studio') ? 'citation-model' : 'citation-context'} key={citation}>{citation}</span>)}</div>}</article>)}</div>
+              {isSending && <div className="chat-typing" aria-hidden="true"><span /><span /><span /></div>}
               <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
             </section>}
             {view === 'study' && <section className="study-view">
               <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>
-              {!hasStudyMaterial && <p className="study-empty-hint">Import notes or finish a transcription to enable study material generation.</p>}
-              <div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" disabled={generatingArtifact !== null || !hasStudyMaterial} onClick={() => void createArtifact(artifact.kind)}><strong>{generatingArtifact === artifact.kind ? 'Generating...' : artifact.label}</strong><small>{artifact.description}</small></button>)}</div>
+              {!hasStudyMaterial && <p className="study-empty-hint"><AnimatedIcon name="star" size={22} target=".study-empty-hint" intro="in-reveal" className="hint-icon" fallback={<Star size={20} />} />Import notes or finish a transcription to enable study material generation.</p>}
+              <div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className={`artifact-button${generatingArtifact === artifact.kind ? ' is-generating' : ''}`} disabled={generatingArtifact !== null || !hasStudyMaterial} onClick={() => void createArtifact(artifact.kind)}><span className={`icon-tile tone-${artifact.tone}`} aria-hidden="true"><artifact.icon size={18} /></span><strong>{generatingArtifact === artifact.kind ? 'Generating...' : artifact.label}</strong><small>{artifact.description}</small></button>)}</div>
               {artifacts.length > 0 && <section className="recent-section"><h3>Saved materials</h3>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}>{artifact.label}</button>)}
               {(() => { const selected = artifacts.find((artifact) => artifact.id === selectedArtifactId); return selected && <article className="artifact-preview"><h3>{selected.label}</h3><RichText content={selected.content ?? ''} className="study-markdown" />{selected.visuals?.map((visual, index) => <VisualBlockView key={`${selected.id}-visual-${index}`} visual={visual} />)}{selected.citations && <div className="citation-list" aria-label="Study material sources">{selected.citations.map((citation, index) => selected.citationTargets?.[index] ? <button type="button" className="citation-chip" key={citation} title="Open original source" onClick={() => openCitation(selected.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className="citation-context" key={citation}>{citation}</span>)}</div>}</article>; })()}</section>}
             </section>}
@@ -2269,7 +2300,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           <label>Document service address<input value={serviceDraft.documentsUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, documentsUrl: event.target.value }))} placeholder="http://127.0.0.1:8766" /></label>
           <button className="primary-submit" disabled={isRecording || isFinalizingRecording || isStartingRecording || isCheckingSidecars} type="submit">Save connections</button>
           <p className="empty-state" role="status">LM Studio / Bionic: {isCheckingSidecars ? 'Checking...' : llmHealth}</p>{availableModels.length > 0 && <p className="detected-models">Detected local models: {availableModels.join(', ')}</p>}
-        </form><div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>Audio and document sidecars are checked without interrupting any running local model.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>ASR sidecar</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document sidecar</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
+        </form><div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>Audio and document sidecars are checked without interrupting any running local model.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>ASR sidecar</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document sidecar</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Animated icons by <a href="https://lordicon.com/" target="_blank" rel="noreferrer">Lordicon</a>.</p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
       {isNativeRuntime() && <div className="managed-sidecar-tray" aria-label="Managed local services"><span>Managed services</span><span aria-live="polite">{managedSidecars.filter((sidecar) => sidecar.running).length}/2 running</span><button type="button" onClick={() => void startConfiguredSidecars()}>Start</button><button type="button" onClick={() => void stopConfiguredSidecars()}>Stop</button></div>}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
