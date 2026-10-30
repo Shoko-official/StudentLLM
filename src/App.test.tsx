@@ -221,7 +221,7 @@ describe('StudentLLM workspace', () => {
   it('only contacts NVIDIA NIM after it is chosen and saved, and explains a missing key', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
-      if (String(input).startsWith('/nvidia-nim/v1')) return new Response(JSON.stringify({ error: { message: 'NVIDIA_API_KEY is not set.' } }), { status: 503 });
+      if (String(input).startsWith('/nvidia-nim/v1')) return new Response(JSON.stringify({ error: { code: 'missing_key', message: 'NVIDIA_API_KEY is not set.' } }), { status: 503, headers: { 'x-studentllm-proxy-error': 'missing_key' } });
       return new Response(JSON.stringify({ data: [] }), { status: 200 });
     });
     render(<App />);
@@ -238,6 +238,33 @@ describe('StudentLLM workspace', () => {
     await waitFor(() => expect(within(settingsDialog).getByRole('status')).toHaveTextContent('NVIDIA NIM: Unavailable. NVIDIA_API_KEY is not set'));
     expect(fetchMock.mock.calls.some(([input]) => String(input) === '/nvidia-nim/v1/models')).toBe(true);
     expect(JSON.parse(localStorage.getItem('studentllm.services.v1') ?? '{}')).toMatchObject({ llmProvider: 'nvidia-nim', nimModel: 'openai/gpt-oss-20b' });
+  });
+
+  it('does not treat an NVIDIA outage as a missing key', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem('studentllm.services.v1', JSON.stringify({ llmProvider: 'nvidia-nim' }));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => String(input).startsWith('/nvidia-nim/v1')
+      ? new Response('{}', { status: 503 })
+      : new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Settings/ }));
+    const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
+    await waitFor(() => expect(within(settingsDialog).getByRole('status')).toHaveTextContent('NVIDIA NIM answered with HTTP 503'));
+    expect(within(settingsDialog).getByRole('status')).not.toHaveTextContent('NVIDIA_API_KEY');
+  });
+
+  it('keeps settings saved before NVIDIA NIM existed on LM Studio', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem('studentllm.services.v1', JSON.stringify({ llmUrl: '/lm-studio/v1', model: 'openai/gpt-oss-20b', asrUrl: 'http://127.0.0.1:8765', documentsUrl: 'http://127.0.0.1:8766' }));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Settings/ }));
+    const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
+    expect(within(settingsDialog).getByLabelText('AI provider')).toHaveValue('lm-studio');
+    await waitFor(() => expect(within(settingsDialog).getByRole('status')).toHaveTextContent('LM Studio / Bionic: Connected'));
+    expect(fetchMock.mock.calls.some(([input]) => String(input).startsWith('/nvidia-nim'))).toBe(false);
   });
 
   it('keeps the chosen NVIDIA model instead of switching to the first catalog entry', async () => {
