@@ -68,8 +68,8 @@ svg { flex-shrink: 0; }
 html { scroll-padding-top: 72px; }
 .topbar { position: sticky; z-index: 8; top: 0; height: 60px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid var(--line); background: var(--page); }
 .topbar-leading { display: flex; align-items: center; gap: 14px; }
-.brand-name { display: inline-flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
-.brand-mark { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: var(--on-accent); background: var(--accent); }
+.brand-name { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.brand-mark { display: inline-grid; place-items: center; color: var(--text); }
 .icon-button { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; height: 40px; border-radius: var(--radius); color: var(--muted); }
 .icon-button:hover { background: var(--surface-3); color: var(--text); }
 .workspace-grid { display: grid; grid-template-columns: minmax(0, 1fr); min-height: calc(100dvh - 60px); }
