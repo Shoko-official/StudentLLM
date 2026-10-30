@@ -45,8 +45,21 @@ function extractCode(text: string) {
   return null;
 }
 
+// A concept relation links whole terms. A match that sits beside "+" or "=" or
+// starts glued to a digit ("6H2O") is a fragment of an equation such as
+// "6CO2 + 6H2O -> C6H12O6 + 6O2", and showing it would misstate the content.
+// Only horizontal whitespace is skipped so neighbouring lines stay independent,
+// and a term merely cut by the length cap is still accepted.
+function isPartOfLargerExpression(text: string, match: RegExpMatchArray) {
+  const start = match.index ?? 0;
+  const before = text.slice(0, start);
+  const after = text.slice(start + match[0].length);
+  return /[+=][ \t]*$/.test(before) || /\d$/.test(before) || /^[ \t]*[+=]/.test(after);
+}
+
 function extractSchema(text: string) {
   const edges = [...text.matchAll(/([A-Za-z][\w ]{1,32})\s*(?:->|leads to|causes|depends on)\s*([A-Za-z][\w ]{1,32})/gi)]
+    .filter((match) => !isPartOfLargerExpression(text, match))
     .map((match) => ({ from: match[1].trim(), to: match[2].trim() }));
   if (!edges.length) return null;
   return { nodes: [...new Set(edges.flatMap((edge) => [edge.from, edge.to]))], edges };
@@ -457,7 +470,7 @@ export function buildCourseNote(lesson: Lesson, transcript: TranscriptSegment[],
     blocks: [
       { id: 'note-title', type: 'heading', level: 1, text: lesson.title },
       ...(sublesson ? [{ id: 'note-sublesson', type: 'heading' as const, level: 2 as const, text: sublesson }] : []),
-      { id: 'note-context', type: 'paragraph', text: `${subject} / ${lesson.chapter} · ${lesson.teacher}` },
+      { id: 'note-context', type: 'paragraph', text: [`${subject} / ${lesson.chapter}`, lesson.teacher?.trim()].filter(Boolean).join(' · ') },
       ...groupTranscript(transcript).flatMap(blocksForSegment),
     ],
   };
