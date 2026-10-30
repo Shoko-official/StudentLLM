@@ -36,6 +36,7 @@ import type { LucideIcon } from 'lucide-react';
 import { AnimatedIcon, EmptyStateIcon } from './lib/animated-icon';
 import { folderNameOf, planBatchImport } from './lib/batch-import';
 import { BrandGlyph } from './lib/brand-mark';
+import { textMatchesQuery } from './lib/snippet';
 import { Snippet } from './lib/snippet-view';
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
 import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspaceAsync } from './lib/workspace-storage';
@@ -512,7 +513,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         results.push({ id: lesson.id, lessonId: lesson.id, title: lesson.title, detail: `${lesson.subject} · ${lesson.chapter}` });
       }
       lessonWorkspace.transcript.forEach((segment) => {
-        if (`${segment.speaker} ${segment.text} ${segment.timestamp}`.toLocaleLowerCase().includes(query)) {
+        if (`${segment.speaker} ${segment.timestamp}`.toLocaleLowerCase().includes(query) || textMatchesQuery(segment.text, query)) {
           results.push({ id: segment.id, lessonId: lesson.id, title: segment.text, detail: `${lesson.title} · ${segment.timestamp}` });
         }
       });
