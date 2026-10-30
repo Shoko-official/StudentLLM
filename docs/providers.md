@@ -38,6 +38,27 @@ Defaults:
 
 The NVIDIA catalog may contain models that are unavailable for generation. The smoke script checks the exposed catalog and a real completion independently.
 
+### NVIDIA NIM in the development app
+
+NVIDIA NIM is an opt-in cloud provider for the development web app (`npm run dev`). Local LM Studio stays the default, and the app makes no request to NVIDIA until **NVIDIA NIM (cloud)** is chosen under **Settings > AI provider** and saved. Once it is selected, course text and questions are sent to NVIDIA for generation.
+
+The browser calls the same-origin route `/nvidia-nim/v1`. The Vite dev server reads `NVIDIA_API_KEY` from its own process environment on each request, adds the `Authorization` header, and forwards the call to the fixed endpoint `https://integrate.api.nvidia.com/v1`. The route:
+
+- never returns the credential to the page and never logs it;
+- ignores `.env` files for the key, because the variable must come from the Windows User environment;
+- exposes only `GET /models` and non-streaming `POST /chat/completions`;
+- answers only loopback clients on a loopback host and rejects cross-site requests, so another website or device cannot spend the key;
+- does not follow `NVIDIA_BASE_URL`, so the key cannot be redirected to another host.
+
+Set the key, open a new terminal so it inherits the variable, then start the dev server:
+
+```powershell
+[Environment]::SetEnvironmentVariable('NVIDIA_API_KEY', '<your-key>', 'User')
+npm run dev
+```
+
+If the key is missing, Settings reports it and the route answers HTTP 503. The model defaults to `openai/gpt-oss-20b`; the app keeps the chosen model instead of switching to the first catalog entry, because some catalog models cannot generate. Packaged desktop builds do not offer NVIDIA NIM yet.
+
 ## LM Studio
 
 LM Studio is consumed through its local OpenAI-compatible server:
@@ -71,7 +92,7 @@ $env:VITE_LM_STUDIO_MODEL = 'openai/gpt-oss-20b'
 npm run dev
 ```
 
-The frontend sends only course context and the user question to the configured local endpoint. NVIDIA credentials are never accepted by this browser path.
+The frontend sends only course context and the user question to the configured endpoint. The browser never receives or sends an NVIDIA credential; see [NVIDIA NIM in the development app](#nvidia-nim-in-the-development-app).
 
 The Vite development server proxies `/lm-studio/*` to the origin configured by `LM_STUDIO_BASE_URL`, keeping browser requests same-origin when the local LM Studio server does not emit CORS headers. If the variable is unset or malformed, the proxy falls back to `http://127.0.0.1:1234`. An absolute `VITE_LM_STUDIO_BASE_URL` remains supported, but then the target must allow the development server origin through CORS. The automatic development default is limited to Vite development mode; production and test environments still require an explicit endpoint.
 
