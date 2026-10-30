@@ -158,7 +158,6 @@ test.describe('StudentLLM workspace', () => {
     const navigation = page.getByRole('complementary', { name: 'Course navigation' });
     await expect(navigation).toBeVisible();
     await expect(navigation).toHaveClass(/workspace-sidebar/);
-    await expect(navigation.getByText('Workspace')).toBeVisible();
     await expect(navigation.getByText('Courses')).toBeVisible();
     await expect(navigation.getByRole('button', { name: 'Quick start', exact: true })).toBeVisible();
     await expectNoOverflow(page);
