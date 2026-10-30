@@ -24,6 +24,7 @@ async function openCourseActions(user: User) {
 
 const openSources = (user: User) => user.click(screen.getByRole('tab', { name: /^Sources/ }));
 const savedWorkspace = () => JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY)!);
+const RECORDING_NOTICE_STORAGE_KEY = 'studentllm.recording-notice.v1';
 
 function bookmarkRecorder() {
   return {
@@ -40,6 +41,7 @@ describe('StudentLLM workspace', () => {
     vi.stubEnv('VITE_LM_STUDIO_AUTO_CONNECT', 'false');
     localStorage.clear();
     localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(createFixtureWorkspace()));
+    localStorage.setItem(RECORDING_NOTICE_STORAGE_KEY, JSON.stringify({ version: 1, acknowledgedAt: new Date().toISOString() }));
   });
   afterEach(() => {
     delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
@@ -360,6 +362,30 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('Gradient descent updates parameters using the learning rate.')).toBeInTheDocument();
   }, 15000);
 
+  it('opens a cited document source and preserves its page target', async () => {
+    const user = userEvent.setup();
+    const extract = vi.fn().mockResolvedValue({
+      model: 'pymupdf',
+      pages: [{ pageNumber: 4, text: 'The divergence identity is stated on this page.', blocks: [] }],
+    });
+    render(<App documentEngine={{ extract }} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(
+      ['%PDF-1.7'],
+      'vector-calculus.pdf',
+      { type: 'application/pdf' },
+    ));
+    await user.click(screen.getByRole('tab', { name: /Chat/ }));
+    await user.type(screen.getByLabelText('Ask the course chat'), 'What identity is stated on the document page?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    const citation = await screen.findByRole('button', { name: 'Source · vector-calculus.pdf · Page 4' });
+    await user.click(citation);
+
+    const dialog = await screen.findByRole('dialog', { name: 'vector-calculus.pdf' });
+    expect(dialog).toHaveTextContent('Original source');
+  }, 15000);
+
   it('sends retrieved source context to an injected live provider', async () => {
     const user = userEvent.setup();
     const generate = vi.fn().mockResolvedValue({ content: 'The source explains gradient descent.', model: 'mock-local-model' });
@@ -416,6 +442,23 @@ describe('StudentLLM workspace', () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
+  it('answers a general visualization request without requiring course evidence', async () => {
+    const user = userEvent.setup();
+    const generate = vi.fn().mockResolvedValue({
+      content: 'Here is the unit circle with $\\cos(\\theta)$ and $\\sin(\\theta)$.',
+      model: 'mock-local-model',
+    });
+    render(<App provider={{ generate }} />);
+
+    await user.click(screen.getByRole('tab', { name: /Chat/ }));
+    await user.type(screen.getByLabelText('Ask the course chat'), 'génère une visualisation du cercle trigo');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText(/Here is the unit circle/)).toBeInTheDocument();
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: /Source ·/ })).not.toBeInTheDocument();
+  });
+
   it('records a bookmark and exposes a review segment', async () => {
     const user = userEvent.setup();
     const session = bookmarkRecorder();
@@ -429,6 +472,27 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText(/Bookmark added at/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Stop recording' }));
     expect(session.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('requires one recording responsibility acknowledgement before microphone access', async () => {
+    const user = userEvent.setup();
+    const session = bookmarkRecorder();
+    localStorage.removeItem(RECORDING_NOTICE_STORAGE_KEY);
+    render(<App recorderSessionFactory={async () => session} />);
+
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+
+    expect(screen.getByText('Before you record')).toBeInTheDocument();
+    expect(screen.getByText(/Do not record private or confidential speech without consent/)).toBeInTheDocument();
+    expect(session.readChunks).not.toHaveBeenCalled();
+    expect(session.stop).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('checkbox', { name: /I will only record lawfully/ }));
+    await user.click(screen.getByRole('button', { name: 'I understand and agree' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Before you record' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Stop recording' })).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(RECORDING_NOTICE_STORAGE_KEY)!)).toMatchObject({ version: 1 });
   });
 
   it('toggles a transcript segment between review and verified', async () => {
@@ -665,7 +729,7 @@ describe('StudentLLM workspace', () => {
     expect(courseNote).toHaveTextContent('E = mc^2');
     expect(liveRegion.querySelector('.katex')).not.toBeNull();
     expect(courseNote.querySelector('.katex')).not.toBeNull();
-    expect(transcribe).toHaveBeenCalledWith(expect.any(Blob));
+    expect(transcribe).toHaveBeenCalledWith(expect.any(Blob), expect.objectContaining({ signal: expect.any(AbortSignal) }));
 
     await user.click(screen.getByRole('button', { name: 'View all' }));
     const transcriptDialog = screen.getByRole('dialog', { name: 'Full transcript 3' });
@@ -676,6 +740,38 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Stop recording' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled());
     expect(screen.queryByText('Live preview')).not.toBeInTheDocument();
+  });
+
+  it('uses bounded previews and cancels them before final transcription without leaking late errors', async () => {
+    const user = userEvent.setup();
+    let rejectPreview!: (reason: Error) => void;
+    let previewSignal: AbortSignal | undefined;
+    const session = {
+      recordingId: 'bounded-preview', stream: {} as MediaStream, durability: 'durable' as const,
+      readPreviewWindow: vi.fn(() => ({ audio: new Blob(['pcm'], { type: 'audio/wav' }), start: 0, end: 12 })),
+      readChunks: vi.fn(async () => [{ recordingId: 'bounded-preview', sequence: 0, recordedAt: 0, blob: new Blob(['complete archive']) }]),
+      stop: vi.fn(async () => ({ recordingId: 'bounded-preview', chunksPersisted: 1, persistenceError: false })),
+    };
+    const speech = { transcribe: vi.fn(async (_audio: Blob, options?: { mode?: 'preview'; signal?: AbortSignal }) => {
+      if (options?.mode === 'preview') {
+        previewSignal = options.signal;
+        return new Promise<{ model: string; segments: typeof finalSegments }>((_resolve, reject) => { rejectPreview = reject; });
+      }
+      return { model: 'test', segments: finalSegments };
+    }) };
+    const finalSegments = [{ id: 'final', speaker: '', timestamp: '00:00:00', text: 'The complete final transcript.', status: 'review' as const }];
+    render(<App recorderSessionFactory={async () => session} speechEngine={speech} provider={null} />);
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    await waitFor(() => expect(previewSignal).toBeDefined());
+    expect(session.readChunks).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Stop recording' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled());
+    expect(previewSignal?.aborted).toBe(true);
+    rejectPreview(new Error('Late network error'));
+    await openTranscript(user);
+    expect(transcriptPreview().getByText('The complete final transcript.')).toBeInTheDocument();
+    expect(screen.queryByText(/Live transcription is unavailable/)).not.toBeInTheDocument();
+    expect(speech.transcribe).toHaveBeenCalledTimes(2);
   });
 
   it('waits for native workspace hydration before processing recording recovery', async () => {
@@ -824,7 +920,7 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('Imported material routed to Matrices and Linear Maps.')).toBeInTheDocument();
     const note = savedWorkspace().lessonWorkspaces['fixture-linear-algebra'].courseNote;
     expect(note.detection.method).toBe('LM Studio');
-    expect(note.detection.basis).toContain('formatted source-linked');
+    expect(note.detection.basis).toContain('Source-linked lecture notes');
     expect(note.blocks).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'formula', sourceId: expect.stringContaining(':text'), latex: 'f(x) = 2x' }),
       expect.objectContaining({ type: 'schema', sourceId: expect.stringContaining(':text') }),
@@ -1490,9 +1586,9 @@ describe('StudentLLM workspace', () => {
 
     resolveGeneration({ content: 'The completed summary.', model: 'fixture-model' });
     expect(await screen.findByText('The completed summary.')).toBeInTheDocument();
-    expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].artifacts).toEqual([
+    await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].artifacts).toEqual([
       expect.objectContaining({ content: 'The completed summary.' }),
-    ]);
+    ]));
   });
 
   it('reports microphone unavailability without recording or adding fake content', async () => {

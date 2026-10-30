@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ArrowUpRight,
@@ -18,6 +18,7 @@ import {
   Search,
   Send,
   Settings2,
+  Shuffle,
   Sparkles,
   Square,
   Trash2,
@@ -29,8 +30,11 @@ import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, runPackagedIpcSmoke
 import type { WorkspaceStorageError } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import type { LLMProvider } from './lib/llm-provider';
+import { classifyChatQuestion } from './lib/chat-intent';
 import { createLocalSpeechEngine } from './lib/speech-engine';
 import type { SpeechEngine } from './lib/speech-engine';
+import { groupTranscript, mergeLiveWindow, speakerLabel } from './lib/live-transcript';
+import { useLiveNotes } from './lib/use-live-notes';
 import { createLocalDocumentEngine } from './lib/document-engine';
 import type { DocumentPage } from './lib/document-engine';
 import type { DocumentEngine } from './lib/document-engine';
@@ -53,6 +57,8 @@ import { analyzeQuickStart } from './lib/quick-start';
 import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-routing';
 import type { QuickStartProposal } from './lib/quick-start';
 import { Artifact, ArtifactKind, ChatMessage, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from './types';
+
+const PdfPreview = lazy(() => import('./lib/pdf-preview').then(({ PdfPreview: Preview }) => ({ default: Preview })));
 
 const initialLessons: Lesson[] = [];
 const emptyLesson: Lesson = { id: '', subject: 'General', chapter: 'General notes', title: '', teacher: '', duration: '00:00:00', date: '', progress: 0 };
@@ -120,6 +126,8 @@ const emptyLessonWorkspace: LessonWorkspace = {
 
 const sourceAccept = 'audio/*,image/*,.pdf,.txt,.md,.html,.htm,.rtf,.docx,.pptx';
 const PREFERENCES_STORAGE_KEY = 'studentllm.preferences.v1';
+const RECORDING_NOTICE_STORAGE_KEY = 'studentllm.recording-notice.v1';
+const RECORDING_NOTICE_VERSION = 1;
 const SERVICES_STORAGE_KEY = 'studentllm.services.v1';
 type ServiceSettings = { llmUrl: string; model: string; asrUrl: string; documentsUrl: string };
 function loadServiceSettings(): ServiceSettings {
@@ -147,6 +155,28 @@ function loadPreference(name: 'compactTranscript' | 'showVerifiedTranscript' | '
     return typeof preferences[name] === 'boolean' ? preferences[name] : fallback;
   } catch {
     return fallback;
+  }
+}
+
+function hasAcknowledgedRecordingNotice() {
+  try {
+    const raw = window.localStorage.getItem(RECORDING_NOTICE_STORAGE_KEY);
+    if (!raw) return false;
+    const value = JSON.parse(raw) as { version?: unknown };
+    return value.version === RECORDING_NOTICE_VERSION;
+  } catch {
+    return false;
+  }
+}
+
+function saveRecordingNoticeAcknowledgement() {
+  try {
+    window.localStorage.setItem(RECORDING_NOTICE_STORAGE_KEY, JSON.stringify({
+      version: RECORDING_NOTICE_VERSION,
+      acknowledgedAt: new Date().toISOString(),
+    }));
+  } catch {
+    // The acknowledgement remains valid for the current session if storage is unavailable.
   }
 }
 
@@ -183,6 +213,10 @@ function isTextResource(resource: Resource) {
   return resource.kind === 'transcript' || resource.mimeType?.startsWith('text/') === true;
 }
 
+function isPdfResource(resource: Resource) {
+  return resource.kind === 'document' && (resource.mimeType === 'application/pdf' || /\.pdf$/i.test(resource.name));
+}
+
 function isExtractableDocument(resource: Resource) {
   if (resource.kind === 'image') return true;
   if (resource.kind !== 'document') return false;
@@ -213,7 +247,9 @@ export interface AppProps {
 interface ResourcePreview {
   resource: Resource;
   state: 'loading' | 'ready' | 'missing' | 'error';
+  blob?: Blob;
   blobUrl?: string;
+  page?: number;
   text?: string;
   truncated?: boolean;
   detail?: string;
@@ -248,6 +284,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [generatingArtifact, setGeneratingArtifact] = useState<ArtifactKind | null>(null);
   const [actionError, setActionError] = useState('');
   const [liveTranscriptionError, setLiveTranscriptionError] = useState('');
+  const [liveSettledThrough, setLiveSettledThrough] = useState(0);
   const startingRecorderRef = useRef(false);
   const [isStartingRecording, setIsStartingRecording] = useState(false);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(workspace.lessonWorkspaces?.[workspace.activeLessonId]?.artifacts[0]?.id ?? workspace.artifacts[0]?.id ?? null);
@@ -259,6 +296,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [showReviewPanel, setShowReviewPanel] = useState(false);
   const [showTranscriptPanel, setShowTranscriptPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  const [showRecordingNotice, setShowRecordingNotice] = useState(false);
+  const [recordingNoticeChecked, setRecordingNoticeChecked] = useState(false);
+  const [recordingNoticeAcknowledged, setRecordingNoticeAcknowledged] = useState(hasAcknowledgedRecordingNotice);
   const [showQuickStart, setShowQuickStart] = useState(false);
   const [showEditCourse, setShowEditCourse] = useState(false);
   const [courseEditDraft, setCourseEditDraft] = useState({ title: '', subject: '', chapter: '', sublesson: '' });
@@ -293,7 +333,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [newCourseSubject, setNewCourseSubject] = useState('General');
   const [newCourseChapter, setNewCourseChapter] = useState('General notes');
   const recorderRef = useRef<RecorderSession | null>(null);
-  const liveTranscriptionInFlight = useRef(false);
   const liveTranscriptFeedRef = useRef<HTMLDivElement | null>(null);
   const storageIssueRef = useRef<WorkspaceStorageError['operation'] | null>(null);
   const resourcePreviewRequest = useRef(0);
@@ -409,8 +448,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       if (formatted.detection.method !== 'LM Studio') return;
       setLessonWorkspaces((current) => {
         const workspace = current[lessonId] ?? emptyLessonWorkspace;
-        const currentIds = workspace.transcript.map((segment) => segment.id).join('|');
-        const candidateIds = candidateTranscript.map((segment) => segment.id).join('|');
+        const currentIds = JSON.stringify(workspace.transcript);
+        const candidateIds = JSON.stringify(candidateTranscript);
         if (currentIds !== candidateIds) return current;
         return { ...current, [lessonId]: { ...workspace, courseNote: formatted } };
       });
@@ -489,35 +528,67 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const session = recorderRef.current;
     if (!session?.stream || session.durability !== 'durable') return undefined;
     let cancelled = false;
+    let inFlight = false;
+    let fromSeconds = 0;
+    let lastAudioEnd = -1;
+    let lastChunkCount = -1;
+    let previewSegments: TranscriptSegment[] = [];
+    const controller = new AbortController();
     const transcribeLatestAudio = async () => {
-      if (cancelled || liveTranscriptionInFlight.current) return;
-      liveTranscriptionInFlight.current = true;
+      if (cancelled || inFlight) return;
+      inFlight = true;
       try {
-        const chunks = await session.readChunks();
-        if (cancelled || !chunks.length) return;
-        const audio = new Blob(chunks.map((chunk) => chunk.blob), { type: chunks[0].blob.type || 'audio/webm' });
-        const transcription = await localSpeechEngine.transcribe(audio);
+        const window = session.readPreviewWindow?.(fromSeconds);
+        let audio: Blob;
+        if (session.readPreviewWindow) {
+          if (!window || window.end <= lastAudioEnd) return;
+          audio = window.audio;
+        } else {
+          // Compatibility for browsers without AudioWorklet. Never grow live uploads indefinitely.
+          const chunks = await session.readChunks();
+          if (cancelled || !chunks.length || chunks.length === lastChunkCount) return;
+          if (chunks.length > 60) {
+            setLiveTranscriptionError('This browser cannot stream bounded audio previews. Audio is saved; full transcription runs after stopping. Use a browser with AudioWorklet support for live notes.');
+            return;
+          }
+          lastChunkCount = chunks.length;
+          audio = new Blob(chunks.map((chunk) => chunk.blob), { type: chunks[0].blob.type || 'audio/webm' });
+        }
+        const transcription = await localSpeechEngine.transcribe(audio, { ...(window ? { mode: 'preview' as const } : {}), signal: controller.signal });
         if (cancelled) return;
-        setLiveTranscript(transcription.segments.map((segment, index) => ({
-          ...segment,
-          id: `${session.recordingId}:live:${segment.id || index}`,
-          sourceId: session.recordingId,
-          provisional: true,
-          status: 'review' as const,
-        })));
-        setLiveTranscriptionError('');
+        if (window) {
+          const merged = mergeLiveWindow(previewSegments, transcription.segments, window, session.recordingId);
+          previewSegments = merged.segments;
+          setLiveTranscript(previewSegments);
+          setLiveTranscriptionError(window.start > fromSeconds + 1 ? 'Live transcription fell behind. The complete audio is saved for final transcription.' : '');
+          fromSeconds = merged.nextStart;
+          setLiveSettledThrough(merged.nextStart);
+          lastAudioEnd = window.end;
+        } else {
+          setLiveTranscript(transcription.segments.map((segment, index) => ({
+            ...segment,
+            id: `${session.recordingId}:live:${segment.id || index}`,
+            sourceId: session.recordingId,
+            provisional: true,
+            status: 'review' as const,
+          })));
+          setLiveTranscriptionError('');
+        }
       } catch {
-        setLiveTranscriptionError('Live transcription is unavailable. Audio is still recording. Check the speech service in Settings.');
+        lastChunkCount = -1;
+        if (!cancelled) setLiveTranscriptionError('Live transcription is unavailable. Audio is still recording. Check the speech service in Settings.');
       } finally {
-        liveTranscriptionInFlight.current = false;
+        inFlight = false;
       }
     };
     void transcribeLatestAudio();
     const interval = window.setInterval(() => void transcribeLatestAudio(), Math.max(liveTranscriptionIntervalMs, 250));
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearInterval(interval);
       setLiveTranscript([]);
+      setLiveSettledThrough(0);
     };
   }, [isRecording, liveTranscriptionIntervalMs, localSpeechEngine]);
 
@@ -890,13 +961,17 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     : [];
   const courseTranscript = [...visibleTranscript, ...visibleLiveTranscript];
   const noteTranscript = [...visibleTranscript, ...visibleLiveTranscript];
+  const liveDraft = useLiveNotes(isRecording ? recorderRef.current?.recordingId : undefined, lessons.find(lesson => lesson.id === liveRecordingLessonId) ?? activeLesson, liveTranscript, localProvider, liveSettledThrough);
   const activeCourseNote = useMemo(() => {
     const note = activeWorkspace.courseNote ?? buildCourseNote(activeLesson, transcript);
-    if (isRecording || visibleTranscript.length !== transcript.length || visibleLiveTranscript.length) {
+    if (isRecording && liveRecordingLessonId === activeLessonId && localProvider) {
+      return { ...note, blocks: [...note.blocks, ...liveDraft.blocks] };
+    }
+    if ((isRecording && liveRecordingLessonId === activeLessonId) || visibleTranscript.length !== transcript.length || visibleLiveTranscript.length) {
       return buildCourseNote(activeLesson, noteTranscript);
     }
     return note;
-  }, [activeLesson, activeWorkspace.courseNote, isRecording, noteTranscript, transcript, visibleLiveTranscript.length, visibleTranscript.length]);
+  }, [activeLesson, activeWorkspace.courseNote, isRecording, noteTranscript, transcript, visibleLiveTranscript, visibleTranscript.length, liveDraft, liveRecordingLessonId, activeLessonId, localProvider]);
 
   useEffect(() => {
     setLessonWorkspaces((current) => {
@@ -995,7 +1070,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
   };
 
-  const openResource = async (resource: Resource) => {
+  const openResource = async (resource: Resource, page?: number) => {
     const requestId = ++resourcePreviewRequest.current;
     setResourcePreview({ resource, state: 'loading' });
 
@@ -1016,6 +1091,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         if (requestId !== resourcePreviewRequest.current) return;
         const maxCharacters = 12_000;
         setResourcePreview({ resource, state: 'ready', text: text.slice(0, maxCharacters), truncated: text.length > maxCharacters });
+        return;
+      }
+
+      if (isPdfResource(resource)) {
+        setResourcePreview({ resource, state: 'ready', blob, page });
         return;
       }
 
@@ -1076,13 +1156,49 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   const openCitation = (target: string) => {
     const transcriptSegment = transcript.find((segment) => segment.id === target);
-    const resourceId = transcriptSegment?.sourceId ?? target.split(':', 1)[0];
-    const resource = resources.find((item) => item.id === resourceId);
+    const resourceId = transcriptSegment?.sourceId;
+    const resource = resources.find((item) => item.id === resourceId)
+      ?? resources.find((item) => target === item.id || target.startsWith(`${item.id}:`));
     if (resource) {
-      void openResource(resource);
+      const page = Number(target.match(/(?:^|:)page-(\d+)$/)?.[1] ?? transcriptSegment?.timestamp.match(/^Page (\d+)$/)?.[1]);
+      void openResource(resource, Number.isFinite(page) && page > 0 ? page : undefined);
       return;
     }
     notify('This citation source is no longer available.');
+  };
+
+  const startRecording = async () => {
+    startingRecorderRef.current = true;
+    setIsStartingRecording(true);
+    try {
+      const session = await recorderSessionFactory();
+      if (!session.stream) throw new Error('Microphone recording is unavailable in this browser.');
+      if (session.stream && session.durability === 'durable') {
+        const recoverySaved = savePendingRecording({
+          recordingId: session.recordingId,
+          lessonId: activeLesson.id,
+          lessonTitle: activeLesson.title,
+          startedAt: Date.now(),
+        });
+        if (!recoverySaved) {
+          await session.stop().catch(() => undefined);
+          const message = 'Recording was not started because interrupted-session recovery is unavailable.';
+          setRecordingError(message);
+          notify(message);
+          return;
+        }
+      }
+      recorderRef.current = session;
+      setLiveRecordingLessonId(activeLesson.id);
+      setIsRecording(true);
+      setRecordingSeconds(0);
+      notify('Recording started.');
+    } catch (error) {
+      setRecordingError(error instanceof Error ? `Cannot start recording: ${error.message}` : 'The microphone is unavailable. Check permission and try again.');
+    } finally {
+      startingRecorderRef.current = false;
+      setIsStartingRecording(false);
+    }
   };
 
   const toggleRecording = async () => {
@@ -1211,37 +1327,20 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       return;
     }
 
-    startingRecorderRef.current = true;
-    setIsStartingRecording(true);
-    try {
-      const session = await recorderSessionFactory();
-      if (!session.stream) throw new Error('Microphone recording is unavailable in this browser.');
-      if (session.stream && session.durability === 'durable') {
-        const recoverySaved = savePendingRecording({
-          recordingId: session.recordingId,
-          lessonId: activeLesson.id,
-          lessonTitle: activeLesson.title,
-          startedAt: Date.now(),
-        });
-        if (!recoverySaved) {
-          await session.stop().catch(() => undefined);
-          const message = 'Recording was not started because interrupted-session recovery is unavailable.';
-          setRecordingError(message);
-          notify(message);
-          return;
-        }
-      }
-      recorderRef.current = session;
-      setLiveRecordingLessonId(activeLesson.id);
-      setIsRecording(true);
-      setRecordingSeconds(0);
-      notify('Recording started.');
-    } catch (error) {
-      setRecordingError(error instanceof Error ? `Cannot start recording: ${error.message}` : 'The microphone is unavailable. Check permission and try again.');
-    } finally {
-      startingRecorderRef.current = false;
-      setIsStartingRecording(false);
+    if (!recordingNoticeAcknowledged) {
+      setRecordingNoticeChecked(false);
+      setShowRecordingNotice(true);
+      return;
     }
+    await startRecording();
+  };
+
+  const acceptRecordingNotice = () => {
+    if (!recordingNoticeChecked) return;
+    saveRecordingNoticeAcknowledgement();
+    setRecordingNoticeAcknowledged(true);
+    setShowRecordingNotice(false);
+    void startRecording();
   };
 
   const addBookmark = () => {
@@ -1289,8 +1388,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         localProvider?.embed ? { embed: (inputs) => localProvider.embed!(inputs) } : undefined,
         4,
       );
+      const { generalEducationalRequest: generalCreationRequest, courseSpecificQuestion } = classifyChatQuestion(message, retrievalHits.length > 0);
       const retrievedCitations = retrievalHits.slice(0, 2).map((hit) => formatRetrievalCitation(hit.document));
-      if (!retrievalHits.length) {
+      if (!retrievalHits.length && (!localProvider || courseSpecificQuestion || !generalCreationRequest)) {
         updateActiveWorkspace((current) => ({
           ...current,
           chat: [...current.chat, {
@@ -1321,16 +1421,20 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             ? `[Source: ${resourceName}${part ? `, part ${part}` : ''}] ${hit.document.text}`
             : `[${hit.document.metadata.timestamp}] ${hit.document.metadata.speaker}: ${hit.document.text}`;
         }).join('\n')
-        : 'No course excerpt matched the question.';
+        : 'No relevant course excerpt matched the question.';
       const result = await localProvider.generate([
         {
           role: 'system',
           content: [
-            'Answer the user question using only the course evidence below.',
-            'The evidence between BEGIN COURSE EVIDENCE and END COURSE EVIDENCE is present and authoritative.',
+            courseSpecificQuestion
+              ? 'Answer the user question using the course evidence below. Keep course-specific claims grounded in that evidence.'
+              : 'Answer this as a general educational request. Use your general knowledge when the user asks for a standard explanation, example, diagram, or mathematical visualization.',
+            'The evidence between BEGIN COURSE EVIDENCE and END COURSE EVIDENCE may be relevant, absent, or unrelated.',
+            courseSpecificQuestion
+              ? 'If the evidence does not answer a course-specific question, say: Not enough evidence in this course.'
+              : 'Do not refuse a general educational request merely because the course evidence is absent or unrelated. Do not invent course-specific attribution.',
             'Never claim that course evidence is unavailable when text is present.',
-            'If the evidence does not answer the question, say: Not enough evidence in this course.',
-            'Do not add facts from outside the evidence. Preserve technical terms, notation, and formulas exactly when they appear.',
+            'Preserve technical terms, notation, and formulas exactly when they appear in the evidence. Clearly distinguish general explanation from course-specific claims when both are present.',
             'Answer in clean GitHub-Flavored Markdown. Use headings, short paragraphs, lists, and fenced code blocks when useful. Use $...$ for inline math and $$...$$ on separate lines for display math. Never emit HTML or image Markdown.',
             `Course: ${activeLesson.title}`,
             'BEGIN COURSE EVIDENCE',
@@ -1347,10 +1451,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           role: 'assistant',
           content: result.content,
           citations: [
-            ...retrievedCitations,
+            ...(courseSpecificQuestion ? retrievedCitations : []),
             `LM Studio · ${result.model}`,
           ],
-          citationTargets: retrievalHits.slice(0, 2).map((hit) => hit.document.id),
+          citationTargets: courseSpecificQuestion ? retrievalHits.slice(0, 2).map((hit) => hit.document.id) : [],
         }],
       }));
     } catch (error) {
@@ -1979,7 +2083,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const renderTranscriptSegment = (segment: TranscriptSegment) => (
     <article className={`transcript-item ${segment.status === 'review' ? 'needs-review' : ''}`} key={segment.id}>
       <div className="transcript-time">{segment.timestamp}</div>
-      <div className="transcript-body"><div className="speaker-line"><strong>{segment.speaker}</strong>{segment.provisional ? <span className="review-badge">Live preview</span> : segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><div className="transcript-text"><RichText content={segment.text} /></div></div>
+      <div className="transcript-body"><div className="speaker-line">{speakerLabel(segment.speaker) && <strong>{speakerLabel(segment.speaker)}</strong>}{segment.provisional ? <span className="review-badge">Live preview</span> : segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><div className="transcript-text"><RichText content={segment.text} /></div></div>
       {!segment.provisional && <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => toggleTranscriptReview(segment.id)}>...</button>}
     </article>
   );
@@ -1994,7 +2098,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       return <section className="course-note-markdown" key={block.id}><RichText content={block.markdown} /></section>;
     }
     if (block.type === 'paragraph') {
-      return <div className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp} · {block.speaker ?? 'Lecture'}</span>}<RichText content={block.text} highlightExtractedMath /></div>;
+      return <div className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp}{speakerLabel(block.speaker) ? ` · ${speakerLabel(block.speaker)}` : ''}</span>}<RichText content={block.text} highlightExtractedMath /></div>;
     }
     if (block.type === 'formula') {
       return <div className="course-note-formula" key={block.id}><RichText content={block.latex} />{block.caption && <small>{block.caption}</small>}</div>;
@@ -2032,7 +2136,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <div className="sidebar-brand"><div><strong>StudentLLM</strong><ChevronDown size={13} aria-hidden="true" /></div><span>Workspace</span></div>
             </div>
             <div className="sidebar-start-actions">
-              <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={startQuickCourse}><Sparkles size={16} /><span>Quick start</span></button>
+              <button className="sidebar-row sidebar-row-primary" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={startQuickCourse}><Shuffle size={16} /><span>Quick start</span></button>
               <button className="sidebar-row" disabled={isRecording || isFinalizingRecording || isStartingRecording} onClick={() => setShowNewCourse(true)}><Plus size={16} /><span>New course</span></button>
             </div>
             {lessons.length > 0 && <label className="search-field"><Search size={16} /><input aria-label="Search courses" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Find a course" /></label>}
@@ -2066,7 +2170,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <BookOpen size={32} strokeWidth={1.3} aria-hidden="true" />
               <h1>A place for your courses.</h1>
               <p>Create a course, then record a lecture or import your notes.<br />Your material stays together here.</p>
-              <button className="primary-action" onClick={startQuickCourse}><Sparkles size={17} /> Quick start</button>
+              <button className="primary-action" onClick={startQuickCourse}><Shuffle size={17} /> Quick start</button>
               <button className="text-action" onClick={openAiOrganizer}><Sparkles size={16} /> Organize notes with AI</button>
               <button className="text-action" onClick={() => setShowNewCourse(true)}><Plus size={16} /> Create your first course</button>
             </section>
@@ -2107,12 +2211,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <section className="course-note-document" aria-label="Course notes document">
                 <div className="course-note-toolbar"><span>Course notes</span><div className="course-note-toolbar-actions">{isRecording && <span className="course-note-status" role="status" aria-label="Live transcription status">{localSpeechEngine ? visibleLiveTranscript.length ? 'Live transcription' : 'Waiting for transcription' : 'Audio recording'}</span>}{(transcript.length > 0 || visibleLiveTranscript.length > 0) && <button className="text-action" onClick={exportCourseNote}><Download size={15} /> Save note</button>}</div></div>
                 <div className="course-note-content" aria-live={isRecording ? 'polite' : 'off'}>
+                  {isRecording && <p className="course-note-meta" role="status">{localProvider ? !recorderRef.current?.readPreviewWindow ? 'This browser cannot draft live notes. The transcript is shown below; notes are written after recording stops.' : liveDraft.status || 'Waiting for a complete passage to write notes. The verbatim transcript appears below.' : 'Verbatim transcript. Connect a language model in Settings for structured notes.'}</p>}
                   {transcript.length || visibleLiveTranscript.length ? activeCourseNote.blocks.map(renderCourseNoteBlock) : <div className="note-empty"><h2>Your notes start here.</h2><p>Record your lecture or import a file above.</p><p>Text notes appear directly. Audio transcription and PDF extraction need a connected service.</p><button className="text-action" onClick={() => setShowSettingsPanel(true)}>Set up transcription</button></div>}
                 </div>
               </section>
               {isRecording && localSpeechEngine && <section className="live-transcript-panel" aria-label="Live course transcription">
-                <div className="live-transcript-header"><strong>Live transcript</strong><span>Updates as audio is processed. Segments remain marked for review until recording is finalized.</span></div>
-                <div ref={liveTranscriptFeedRef} aria-live="polite">{visibleLiveTranscript.length ? visibleLiveTranscript.map(renderTranscriptSegment) : <p className="empty-state">Waiting for the first transcribed passage.</p>}</div>
+                <div className="live-transcript-header"><strong>Live transcript</strong><span>Original speech, separate from the notes. The latest words may change. Speaker identification is not enabled by the local speech service.</span></div>
+                <div ref={liveTranscriptFeedRef} aria-live="polite">{visibleLiveTranscript.length ? groupTranscript(visibleLiveTranscript).map(renderTranscriptSegment) : <p className="empty-state">Waiting for the first transcribed passage.</p>}</div>
               </section>}
               {(transcript.length > 0 || isRecording) && <details className="transcript-disclosure">
                 <summary>Transcript {isRecording ? '(recording)' : `(${transcript.length})`}</summary>
@@ -2133,7 +2238,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             {view === 'chat' && <section className="chat-view">
               <div className="chat-intro"><h2>Ask about this course</h2><p>{localProvider ? 'Answers use your notes and sources. LM Studio must be running with a loaded model.' : 'Connect LM Studio in Settings to generate answers. You can still search and open your sources.'}</p></div>
               {!resources.length && !transcript.length && <p className="empty-state">Import material or record a lecture before asking a question.</p>}
-              <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button key={citation} onClick={() => openCitation(message.citationTargets![index])}>{citation}</button> : <span key={citation}>{citation}</span>)}</div>}</article>)}</div>
+               <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list" aria-label="Response sources">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button type="button" className="citation-chip" title="Open original source" key={citation} onClick={() => openCitation(message.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className={citation.startsWith('LM Studio') ? 'citation-model' : 'citation-context'} key={citation}>{citation}</span>)}</div>}</article>)}</div>
               <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
             </section>}
             {view === 'study' && <section className="study-view">
@@ -2141,13 +2246,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               {!hasStudyMaterial && <p className="study-empty-hint">Import notes or finish a transcription to enable study material generation.</p>}
               <div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className="artifact-button" disabled={generatingArtifact !== null || !hasStudyMaterial} onClick={() => void createArtifact(artifact.kind)}><strong>{generatingArtifact === artifact.kind ? 'Generating...' : artifact.label}</strong><small>{artifact.description}</small></button>)}</div>
               {artifacts.length > 0 && <section className="recent-section"><h3>Saved materials</h3>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}>{artifact.label}</button>)}
-              {(() => { const selected = artifacts.find((artifact) => artifact.id === selectedArtifactId); return selected && <article className="artifact-preview"><h3>{selected.label}</h3><RichText content={selected.content ?? ''} className="study-markdown" />{selected.visuals?.map((visual, index) => <VisualBlockView key={`${selected.id}-visual-${index}`} visual={visual} />)}{selected.citations && <div className="citation-list">{selected.citations.map((citation, index) => selected.citationTargets?.[index] ? <button key={citation} onClick={() => openCitation(selected.citationTargets![index])}>{citation}</button> : <span key={citation}>{citation}</span>)}</div>}</article>; })()}</section>}
+              {(() => { const selected = artifacts.find((artifact) => artifact.id === selectedArtifactId); return selected && <article className="artifact-preview"><h3>{selected.label}</h3><RichText content={selected.content ?? ''} className="study-markdown" />{selected.visuals?.map((visual, index) => <VisualBlockView key={`${selected.id}-visual-${index}`} visual={visual} />)}{selected.citations && <div className="citation-list" aria-label="Study material sources">{selected.citations.map((citation, index) => selected.citationTargets?.[index] ? <button type="button" className="citation-chip" key={citation} title="Open original source" onClick={() => openCitation(selected.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className="citation-context" key={citation}>{citation}</span>)}</div>}</article>; })()}</section>}
             </section>}
           </>}
         </main>
       </div>
 
-      {resourcePreview && <div className="modal-backdrop" role="presentation" onMouseDown={() => setResourcePreview(null)}><section className="modal resource-preview-modal" role="dialog" aria-modal="true" aria-labelledby="resource-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Original source</span><h2 id="resource-preview-title">{resourcePreview.resource.name}</h2></div><button className="icon-button" aria-label="Close source preview" onClick={() => setResourcePreview(null)}><X size={17} /></button></div><p className="modal-description">{resourcePreview.resource.meta}{resourcePreview.resource.sha256 ? ` · SHA-256 ${resourcePreview.resource.sha256.slice(0, 12)}…` : ''}</p>{resourcePreview.state === 'loading' && <p className="empty-state">Opening the locally stored source…</p>}{resourcePreview.state === 'missing' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'error' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'ready' && resourcePreview.text !== undefined && <div className="source-text-preview"><pre>{resourcePreview.text}</pre>{resourcePreview.truncated && <small>Preview truncated to 12,000 characters. The original source remains unchanged.</small>}</div>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'image' && <img className="source-image-preview" src={resourcePreview.blobUrl} alt={`Preview of ${resourcePreview.resource.name}`} />}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'audio' && <audio className="source-audio-preview" controls src={resourcePreview.blobUrl}>Your browser cannot play this audio source.</audio>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'document' && <iframe className="source-document-preview" title={`Preview of ${resourcePreview.resource.name}`} src={resourcePreview.blobUrl} />}</section></div>}
+      {resourcePreview && <div className="modal-backdrop" role="presentation" onMouseDown={() => setResourcePreview(null)}><section className="modal resource-preview-modal" role="dialog" aria-modal="true" aria-labelledby="resource-preview-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Original source</span><h2 id="resource-preview-title">{resourcePreview.resource.name}</h2></div><button className="icon-button" aria-label="Close source preview" onClick={() => setResourcePreview(null)}><X size={17} /></button></div><p className="modal-description">{resourcePreview.resource.meta}{resourcePreview.resource.sha256 ? ` · SHA-256 ${resourcePreview.resource.sha256.slice(0, 12)}…` : ''}</p>{resourcePreview.state === 'loading' && <p className="empty-state">Opening the locally stored source…</p>}{resourcePreview.state === 'missing' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'error' && <p className="empty-state">{resourcePreview.detail}</p>}{resourcePreview.state === 'ready' && resourcePreview.text !== undefined && <div className="source-text-preview"><pre>{resourcePreview.text}</pre>{resourcePreview.truncated && <small>Preview truncated to 12,000 characters. The original source remains unchanged.</small>}</div>}{resourcePreview.state === 'ready' && resourcePreview.blob && isPdfResource(resourcePreview.resource) && <Suspense fallback={<p className="source-preview-loading">Loading PDF renderer…</p>}><PdfPreview blob={resourcePreview.blob} initialPage={resourcePreview.page} /></Suspense>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'image' && <img className="source-image-preview" src={resourcePreview.blobUrl} alt={`Preview of ${resourcePreview.resource.name}`} />}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'audio' && <audio className="source-audio-preview" controls src={resourcePreview.blobUrl}>Your browser cannot play this audio source.</audio>}{resourcePreview.state === 'ready' && resourcePreview.blobUrl && resourcePreview.resource.kind === 'document' && !isPdfResource(resourcePreview.resource) && <iframe className="source-document-preview" title={`Preview of ${resourcePreview.resource.name}`} src={resourcePreview.blobUrl} />}</section></div>}
+      {showRecordingNotice && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowRecordingNotice(false)}><section className="modal recording-notice-modal" role="dialog" aria-modal="true" aria-labelledby="recording-notice-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Recording notice</span><h2 id="recording-notice-title">Before you record</h2></div><button className="icon-button" aria-label="Close recording notice" onClick={() => setShowRecordingNotice(false)}><X size={17} /></button></div><p className="modal-description">Only record people who have been clearly informed and have given any consent required by applicable law.</p><div className="recording-notice-copy"><p><strong>Do not record private or confidential speech without consent.</strong></p><p>You are responsible for using this feature lawfully, including informing participants, obtaining consent, respecting their rights, and deleting recordings when required. StudentLLM does not verify consent, and this acknowledgement does not make unlawful recording lawful.</p><p>Audio and transcripts remain in this workspace unless you configure another local or compatible processing service. Review your service settings before recording sensitive material.</p><p className="recording-notice-links"><a href="https://www.legifrance.gouv.fr/loda/article_lc/LEGIARTI000049312755/2024-06-26" target="_blank" rel="noreferrer">French Penal Code, Article 226-1</a><a href="https://www.cnil.fr/fr/les-bases-legales/consentement" target="_blank" rel="noreferrer">CNIL consent guidance</a></p></div><label className="consent-checkbox"><input type="checkbox" checked={recordingNoticeChecked} onChange={(event) => setRecordingNoticeChecked(event.target.checked)} /><span>I will only record lawfully and will inform participants before recording.</span></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowRecordingNotice(false)}>Cancel</button><button type="button" className="primary-submit" disabled={!recordingNoticeChecked} onClick={acceptRecordingNotice}>I understand and agree</button></div></section></div>}
       {showQuickStart && <div className="modal-backdrop" role="presentation" onMouseDown={() => { setShowQuickStart(false); resetQuickStart(); }}><section className="modal quick-start-modal" role="dialog" aria-modal="true" aria-labelledby="quick-start-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">AI course organizer</span><h2 id="quick-start-title">Organize material with AI</h2></div><button className="icon-button" aria-label="Close AI organizer" onClick={() => { setShowQuickStart(false); resetQuickStart(); }}><X size={17} /></button></div><p className="modal-description">Paste a lecture excerpt or course description. AI proposes the hierarchy and destination; review it before saving.</p>{!quickStartProposal ? <form onSubmit={analyzeQuickStartInput}><label>Lecture excerpt or course description<textarea autoFocus rows={8} value={quickStartInput} onChange={(event) => setQuickStartInput(event.target.value)} placeholder="Paste what you are studying, or a few paragraphs from the lecture..." /></label><label>Source name <span className="muted">optional</span><input value={quickStartSourceName} onChange={(event) => setQuickStartSourceName(event.target.value)} placeholder="e.g. week-04-notes" /></label>{!localProvider && <p className="quick-start-note">Connect LM Studio in Settings to analyze and organize this material.</p>}{quickStartError && <p className="action-error" role="alert">{quickStartError}</p>}<div className="modal-footer"><button type="button" className="secondary-action" onClick={() => { setShowQuickStart(false); resetQuickStart(); }}>Cancel</button><button className="primary-submit" type="submit" disabled={!quickStartInput.trim() || isAnalyzingQuickStart}><Sparkles size={15} /> {isAnalyzingQuickStart ? 'Analyzing...' : 'Analyze structure'}</button></div></form> : <div className="quick-start-review"><div className="quick-start-fields"><label>Course group<input value={quickStartProposal.course} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, course: event.target.value } : current)} /></label><label>Subject<input value={quickStartProposal.subject} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, subject: event.target.value } : current)} /></label><label>Lesson<input value={quickStartProposal.lesson} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, lesson: event.target.value } : current)} /></label><label>Title<input value={quickStartProposal.title} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, title: event.target.value } : current)} /></label><label>Sublesson <span className="muted">optional</span><input value={quickStartProposal.sublesson} onChange={(event) => setQuickStartProposal((current) => current ? { ...current, sublesson: event.target.value } : current)} placeholder="No sublesson detected" /></label></div><label>Place this material in<select aria-label="Place this material in" value={quickStartPlacement} onChange={(event) => setQuickStartPlacement(event.target.value)}><option value="new">Create a new course</option>{lessons.map((lesson) => <option key={lesson.id} value={lesson.id}>{lesson.subject} / {lesson.chapter} / {lesson.title}</option>)}</select></label><div className="quick-start-summary"><strong>{Math.round(quickStartProposal.confidence * 100)}% confidence</strong><span>{quickStartProposal.rationale}</span><small>{quickStartPlacement === 'new' ? `Creates ${quickStartProposal.course} / ${quickStartProposal.lesson} / ${quickStartProposal.title}` : 'Adds the source to the selected existing course.'}</small></div>{quickStartError && <p className="action-error" role="alert">{quickStartError}</p>}<div className="modal-footer"><button type="button" className="text-action" onClick={() => { setQuickStartProposal(null); setQuickStartError(''); }}>Edit material</button><button type="button" className="primary-submit" onClick={() => void applyQuickStart()}><Check size={15} /> Apply structure</button></div></div>}</section></div>}
       {showNewCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowNewCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="new-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">New session</span><h2 id="new-course-title">Start a course</h2></div><button className="icon-button" aria-label="Close" onClick={() => setShowNewCourse(false)}><X size={17} /></button></div><p className="modal-description">Give your course a name. You can add recordings and files next.</p><form onSubmit={createCourse}><label>Course title<input autoFocus value={newCourseTitle} onChange={(event) => setNewCourseTitle(event.target.value)} placeholder="e.g. Introduction to probability" /></label><label>Subject<input list="course-subject-suggestions" value={newCourseSubject} onChange={(event) => setNewCourseSubject(event.target.value)} placeholder="e.g. Machine Learning" /></label><datalist id="course-subject-suggestions">{subjectOptions.map((subjectOption) => <option key={subjectOption} value={subjectOption} />)}</datalist><label>Chapter<input value={newCourseChapter} onChange={(event) => setNewCourseChapter(event.target.value)} placeholder="e.g. Transformers" /></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowNewCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!newCourseTitle.trim()}><Mic size={15} /> Create course</button></div></form></section></div>}
       {showEditCourse && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowEditCourse(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-course-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Course structure</span><h2 id="edit-course-title">Edit course</h2></div><button className="icon-button" aria-label="Close edit course" onClick={() => setShowEditCourse(false)}><X size={17} /></button></div><p className="modal-description">Update the names used in the course tree and saved note location.</p><div className="edit-course-tools"><button type="button" className="secondary-action" onClick={() => void suggestCourseDetails()} disabled={isSuggestingCourseDetails || !localProvider || !transcript.length && !resources.length}><Sparkles size={15} /> {isSuggestingCourseDetails ? 'Suggesting...' : 'Suggest with AI'}</button><small>{transcript.length || resources.length ? 'Use the saved material to propose a title and hierarchy.' : 'Record or import material first.'}</small></div>{actionError && <p className="action-error" role="alert">{actionError}</p>}<form onSubmit={updateCourse}><label>Course title<input autoFocus value={courseEditDraft.title} onChange={(event) => setCourseEditDraft((current) => ({ ...current, title: event.target.value }))} /></label><label>Subject<input list="course-subject-suggestions" value={courseEditDraft.subject} onChange={(event) => setCourseEditDraft((current) => ({ ...current, subject: event.target.value }))} /></label><label>Chapter<input value={courseEditDraft.chapter} onChange={(event) => setCourseEditDraft((current) => ({ ...current, chapter: event.target.value }))} /></label><label>Sublesson <span className="muted">optional</span><input value={courseEditDraft.sublesson} onChange={(event) => setCourseEditDraft((current) => ({ ...current, sublesson: event.target.value }))} placeholder="No sublesson" /></label><div className="modal-footer"><button type="button" className="secondary-action" onClick={() => setShowEditCourse(false)}>Cancel</button><button className="primary-submit" type="submit" disabled={!courseEditDraft.title.trim()}><Check size={15} /> Save course changes</button></div></form></section></div>}

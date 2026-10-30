@@ -18,6 +18,7 @@ export interface ProviderResponseFormat {
 }
 
 export interface ProviderGenerateOptions {
+  signal?: AbortSignal;
   responseFormat?: ProviderResponseFormat;
   maxTokens?: number;
 }
@@ -63,6 +64,9 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
   async generate(messages: ProviderMessage[], options?: ProviderGenerateOptions): Promise<ProviderResponse> {
     const controller = new AbortController();
+    const cancel = () => controller.abort();
+    options?.signal?.addEventListener('abort', cancel, { once: true });
+    if (options?.signal?.aborted) controller.abort();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     const requestBody = JSON.stringify({
       model: this.model,
@@ -109,10 +113,11 @@ export class OpenAICompatibleProvider implements LLMProvider {
         return { content: content.trim(), model: typeof responseBody.model === 'string' ? responseBody.model : this.model };
       }
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') throw new Error('Provider request timed out.');
+      if (error instanceof DOMException && error.name === 'AbortError' && !options?.signal?.aborted) throw new Error('Provider request timed out.');
       throw error;
     } finally {
       clearTimeout(timer);
+      options?.signal?.removeEventListener('abort', cancel);
     }
   }
 

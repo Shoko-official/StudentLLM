@@ -17,6 +17,26 @@ async function openCourseActions(page: Page) {
 const openSources = (page: Page) => page.getByRole('tab', { name: /^Sources/ }).click();
 const savedWorkspace = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getItem('studentllm.workspace.v1')!));
 
+function minimalPdf() {
+  const objects = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 180] /Resources <<>> /Contents 4 0 R >>\nendobj\n',
+    '4 0 obj\n<< /Length 34 >>\nstream\n0.2 0.5 0.8 rg 20 20 200 140 re f\nendstream\nendobj\n',
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  for (const object of objects) {
+    offsets.push(pdf.length);
+    pdf += object;
+  }
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  pdf += offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('');
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(pdf);
+}
+
 async function expectNoOverflow(page: Page) {
   const dimensions = await page.evaluate(() => {
     const elements = [document.documentElement, document.body, ...document.querySelectorAll<HTMLElement>('main, aside, .course-note-document, .study-view')];
@@ -53,6 +73,8 @@ async function connectFixtureProvider(page: Page, content: string, status = 200)
 
 async function installRecorderFixture(page: Page) {
   await page.addInitScript(() => {
+    // This UI-only recorder has no MediaStream; do not initialize host audio hardware.
+    Object.defineProperty(window, 'AudioContext', { configurable: true, value: undefined });
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: { getUserMedia: async () => ({ getTracks: () => [{ stop: () => undefined }] }) },
@@ -75,8 +97,30 @@ test.describe('StudentLLM workspace', () => {
       if (localStorage.getItem('studentllm.workspace.v1') === null) {
         localStorage.setItem('studentllm.workspace.v1', JSON.stringify(workspace));
       }
+      if (localStorage.getItem('studentllm.recording-notice.v1') === null) {
+        localStorage.setItem('studentllm.recording-notice.v1', JSON.stringify({ version: 1, acknowledgedAt: new Date().toISOString() }));
+      }
     }, createFixtureWorkspace());
   });
+
+  test('requires a recording responsibility acknowledgement before microphone access', async ({ page }) => {
+    await installRecorderFixture(page);
+    await page.addInitScript(() => localStorage.removeItem('studentllm.recording-notice.v1'));
+    await page.goto('/');
+
+    await page.getByRole('button', { name: 'Start recording' }).click();
+    const notice = page.getByRole('dialog', { name: 'Before you record' });
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText('Do not record private or confidential speech without consent.');
+    await expect(notice.getByRole('button', { name: 'I understand and agree' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Stop recording' })).toHaveCount(0);
+
+    await notice.getByRole('checkbox', { name: /I will only record lawfully/ }).check();
+    await notice.getByRole('button', { name: 'I understand and agree' }).click();
+    await expect(page.getByRole('button', { name: 'Stop recording' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('studentllm.recording-notice.v1')!).version)).toBe(1);
+  });
+
   test('serves the application icon without a browser error', async ({ page }) => {
     const response = await page.request.get('/favicon.svg');
 
@@ -162,8 +206,9 @@ test.describe('StudentLLM workspace', () => {
 
     const courseNote = page.getByRole('region', { name: 'Course notes document' });
     await expect(courseNote).toContainText('Cross-attention lets decoder queries read encoder keys and values.');
-    expect(await courseNote.locator('.course-note-formula .katex').count()).toBeGreaterThan(0);
-    expect(await courseNote.locator('.course-note-formula math').count()).toBeGreaterThan(0);
+    // Inline source math stays in its sentence instead of being removed into a separate block.
+    expect(await courseNote.locator('.course-note-paragraph .katex').count()).toBeGreaterThan(0);
+    await expect(courseNote.locator('math annotation')).toContainText([String.raw`\frac{QK^T}{\sqrt{d_k}}`]);
     const workspace = await savedWorkspace(page);
     expect(workspace.lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ meta: 'Quick Start notes · text source', kind: 'transcript' }),
@@ -840,7 +885,7 @@ test.describe('StudentLLM workspace', () => {
     await page.setInputFiles('input[aria-label="Select course source"]', {
       name: 'slides.pdf',
       mimeType: 'application/pdf',
-      buffer: Buffer.from('%PDF-1.7'),
+      buffer: minimalPdf(),
     });
 
     await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
@@ -849,7 +894,12 @@ test.describe('StudentLLM workspace', () => {
     await openSources(page);
     const source = page.getByRole('button', { name: /^slides\.pdf/ });
     await expect(source).toBeVisible();
-    await expect(page.getByText(/slides\.pdf added to course sources and saved locally\./)).toBeVisible();
+    await expect(page.getByText(/slides\.pdf (?:added to course sources and saved locally\.|indexed 1 page locally\.|contains no extractable text\.)/)).toBeVisible();
+    await source.click();
+    const preview = page.getByRole('dialog', { name: 'slides.pdf' });
+    await expect(preview.locator('.pdf-preview')).toBeVisible({ timeout: 20_000 });
+    await expect(preview.locator('canvas[aria-label="PDF page 1"]')).toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: 'Close source preview' }).click();
 
     await page.reload();
     await openSources(page);
