@@ -393,7 +393,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         const next = update(previous);
         const lesson = lessons.find((item) => item.id === lessonId);
         const hasDocumentNote = next.courseNote?.blocks?.some((block) => block.id === 'document-source-title');
-        return lesson && next.transcript !== previous.transcript && !hasDocumentNote
+        // Rebuild the deterministic note when it is not AI-written or the set of segments changed; status-only edits (review toggles) keep an AI note.
+        const segmentIds = (items: TranscriptSegment[]) => items.map((segment) => segment.id).join(' ');
+        const needsRebuild = next.courseNote?.detection.method !== 'LM Studio' || segmentIds(next.transcript) !== segmentIds(previous.transcript);
+        return lesson && next.transcript !== previous.transcript && needsRebuild && !hasDocumentNote
           ? { ...next, courseNote: buildCourseNote(lesson, next.transcript) }
           : next;
       })(),
@@ -1965,6 +1968,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         resources: current.resources.filter((item) => item.id !== resource.id),
         transcript: current.transcript.filter((segment) => segment.sourceId !== resource.id && !segment.id.startsWith(`${resource.id}:`)),
       }));
+      // The note was rebuilt without the removed source; let a reachable provider rewrite it again.
+      formatExistingCourseNote(activeLessonId, transcript.filter((segment) => segment.sourceId !== resource.id && !segment.id.startsWith(`${resource.id}:`)));
       notify(`${resource.name} removed from this course.`);
     } catch {
       notify(`${resource.name} could not be removed.`);
