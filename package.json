@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
-    "katex": "^0.18.7",
+    "katex": "^0.18.9",
     "lucide-react": "1.34.0",
     "pdfjs-dist": "^6.3.289",
     "react": "19.2.8",
