@@ -45,14 +45,16 @@ function extractCode(text: string) {
   return null;
 }
 
-// A concept relation links whole terms. When the match starts or ends inside a
-// word or next to a "+" it is a fragment of a reaction or equation such as
+// A concept relation links whole terms. A match that sits beside "+" or "=" or
+// starts glued to a digit ("6H2O") is a fragment of an equation such as
 // "6CO2 + 6H2O -> C6H12O6 + 6O2", and showing it would misstate the content.
+// Only horizontal whitespace is skipped so neighbouring lines stay independent,
+// and a term merely cut by the length cap is still accepted.
 function isPartOfLargerExpression(text: string, match: RegExpMatchArray) {
   const start = match.index ?? 0;
-  const before = text.slice(0, start).trimEnd();
-  const after = text.slice(start + match[0].length).trimStart();
-  return /[\w+]$/.test(before) || /^[\w+]/.test(after);
+  const before = text.slice(0, start);
+  const after = text.slice(start + match[0].length);
+  return /[+=][ \t]*$/.test(before) || /\d$/.test(before) || /^[ \t]*[+=]/.test(after);
 }
 
 function extractSchema(text: string) {
