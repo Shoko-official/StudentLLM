@@ -865,9 +865,8 @@ test.describe('StudentLLM workspace', () => {
       buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
     });
 
-    await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
     await expect(page.getByRole('alert')).toContainText('image-preview.png is saved.');
-    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(page.getByRole('dialog', { name: 'Settings' })).toHaveCount(0);
     await openSources(page);
     const source = page.getByRole('button', { name: /^image-preview\.png/ });
     await expect(source).toBeVisible();
