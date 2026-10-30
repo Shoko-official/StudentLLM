@@ -21,6 +21,25 @@ describe('RichText', () => {
     expect(container.querySelectorAll('math')).toHaveLength(2);
   });
 
+  it('renders multi-line display environments such as cases with spacing and tags', () => {
+    const { container } = render(<RichText content={String.raw`La suite :
+
+$$
+\begin{cases}
+y_0(t) = \alpha \\[6pt]
+y_k(t) = \alpha + \int_a^t f(z, y_{k-1}(z))\, dz
+\end{cases}
+\tag{3}
+$$
+
+\[
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\]`} />);
+
+    expect(container.querySelectorAll('.katex-display')).toHaveLength(2);
+    expect(container.textContent).not.toContain('$\\begin');
+  });
+
   it('keeps malformed LaTeX legible instead of displaying a KaTeX error', () => {
     const { container } = render(<RichText content={'\\(\\notARealCommand{x}\\)'} />);
 
