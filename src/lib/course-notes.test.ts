@@ -16,6 +16,13 @@ const lesson: Lesson = {
 const segment = (text: string): TranscriptSegment => ({ id: 'segment-1', timestamp: '00:01:00', speaker: 'Professor', text, status: 'review' });
 
 describe('course notes', () => {
+  it('does not turn a chemical equation into a garbled concept schema', () => {
+    const note = buildCourseNote(lesson, [segment('Key equation: 6CO2 + 6H2O -> C6H12O6 + 6O2.')]);
+    expect(note.blocks.filter(block => block.type === 'schema')).toHaveLength(0);
+    const relation = buildCourseNote(lesson, [segment('The force leads to acceleration.')]);
+    expect(relation.blocks.filter(block => block.type === 'schema')).toHaveLength(1);
+  });
+
   it('omits the separator in the context line when no teacher is set', () => {
     const note = buildCourseNote({ ...lesson, teacher: '' }, [segment('Hello.')]);
     expect(note.blocks.find(block => block.id === 'note-context')).toMatchObject({ text: 'Machine Learning / Transformers' });

@@ -45,8 +45,19 @@ function extractCode(text: string) {
   return null;
 }
 
+// A concept relation links whole terms. When the match starts or ends inside a
+// word or next to a "+" it is a fragment of a reaction or equation such as
+// "6CO2 + 6H2O -> C6H12O6 + 6O2", and showing it would misstate the content.
+function isPartOfLargerExpression(text: string, match: RegExpMatchArray) {
+  const start = match.index ?? 0;
+  const before = text.slice(0, start).trimEnd();
+  const after = text.slice(start + match[0].length).trimStart();
+  return /[\w+]$/.test(before) || /^[\w+]/.test(after);
+}
+
 function extractSchema(text: string) {
   const edges = [...text.matchAll(/([A-Za-z][\w ]{1,32})\s*(?:->|leads to|causes|depends on)\s*([A-Za-z][\w ]{1,32})/gi)]
+    .filter((match) => !isPartOfLargerExpression(text, match))
     .map((match) => ({ from: match[1].trim(), to: match[2].trim() }));
   if (!edges.length) return null;
   return { nodes: [...new Set(edges.flatMap((edge) => [edge.from, edge.to]))], edges };
