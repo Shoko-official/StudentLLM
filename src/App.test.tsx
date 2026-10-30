@@ -1667,4 +1667,16 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('tab', { name: 'Notes' }));
     expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled();
   });
+
+  it('keeps the hidden file pickers out of the tab order and accessibility tree', () => {
+    render(<App />);
+
+    for (const label of ['Select course source', 'Select course folder']) {
+      const input = screen.getByLabelText(label, { selector: 'input' });
+      expect(input).toHaveAttribute('tabindex', '-1');
+      expect(input).toHaveAttribute('hidden');
+    }
+    expect(screen.queryByRole('textbox', { name: 'Select course source' })).not.toBeInTheDocument();
+  });
+
 });

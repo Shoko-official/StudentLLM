@@ -2255,8 +2255,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   return (
     <div className="app-shell">
-      <input ref={sourceInputRef} className="visually-hidden" type="file" multiple aria-label="Select course source" accept={sourceAccept} onChange={importSource} />
-      <input ref={folderInputRef} className="visually-hidden" type="file" multiple aria-label="Select course folder" onChange={importFolder} />
+      <input ref={sourceInputRef} hidden tabIndex={-1} type="file" multiple aria-label="Select course source" accept={sourceAccept} onChange={importSource} />
+      <input ref={folderInputRef} hidden tabIndex={-1} type="file" multiple aria-label="Select course folder" onChange={importFolder} />
       <header className="topbar">
         <div className="topbar-leading">
           <button className="icon-button" aria-label="Show or hide navigation" aria-expanded={showLeftSidebar} onClick={() => setShowLeftSidebar((value) => !value)}><Menu size={20} /></button>
