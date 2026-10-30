@@ -33,7 +33,7 @@ import {
   X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useDismissibleMenu } from './lib/focus-management';
+import { useDialogFocus, useDismissibleMenu } from './lib/focus-management';
 import { AnimatedIcon, EmptyStateIcon } from './lib/animated-icon';
 import { folderNameOf, planBatchImport } from './lib/batch-import';
 import { BrandGlyph } from './lib/brand-mark';
@@ -357,7 +357,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [importQueue, setImportQueue] = useState<Array<{ file: File; lessonId: string }>>([]);
   const [importTotals, setImportTotals] = useState<{ done: number; total: number } | null>(null);
   const importRunningRef = useRef(false);
-  const lastFocusedElementRef = useRef<HTMLElement | null>(null);
   const courseActionsRef = useRef<HTMLDetailsElement | null>(null);
   const courseActionsSummaryRef = useRef<HTMLElement | null>(null);
   const rebuiltDocumentSourceIds = useRef(new Set<string>());
@@ -642,40 +641,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
+  useDialogFocus(hasOpenDialog);
   useDismissibleMenu(courseActionsOpen, courseActionsRef, () => setCourseActionsOpen(false), courseActionsSummaryRef, hasOpenDialog);
-
-  useEffect(() => {
-    if (!hasOpenDialog) return undefined;
-
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
-    if (!dialog) return undefined;
-    lastFocusedElementRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
-    const focusableElements = () => Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector));
-    const autofocusElement = dialog.querySelector<HTMLElement>('[autofocus]');
-    (autofocusElement ?? focusableElements()[0])?.focus();
-    const onDialogKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Tab') return;
-      const elements = focusableElements();
-      if (!elements.length) return;
-      const first = elements[0];
-      const last = elements[elements.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    dialog.addEventListener('keydown', onDialogKeyDown);
-
-    return () => {
-      dialog.removeEventListener('keydown', onDialogKeyDown);
-      if (lastFocusedElementRef.current?.isConnected) lastFocusedElementRef.current.focus();
-      lastFocusedElementRef.current = null;
-    };
-  }, [hasOpenDialog]);
 
   useEffect(() => {
     if (!toast) return undefined;

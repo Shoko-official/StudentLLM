@@ -1,6 +1,88 @@
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 
+const FOCUSABLE_SELECTOR = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+
+function isFocusable(element: HTMLElement) {
+  if (!element.isConnected) return false;
+  // Elements inside a closed <details> are not rendered, so they cannot take focus.
+  const details = element.closest('details');
+  if (details && !details.open && !element.closest('summary')) return false;
+  return true;
+}
+
+/** Where focus should return: the opener itself, or the summary of the closed menu that hosted it. */
+export function resolveFocusReturnTarget(opener: HTMLElement | null): HTMLElement | null {
+  if (!opener) return null;
+  if (isFocusable(opener)) return opener;
+  const summary = opener.closest('details')?.querySelector<HTMLElement>('summary');
+  return summary && summary.isConnected ? summary : null;
+}
+
+/** Tracks the last focused element outside any dialog, because autofocus moves focus before effects run. */
+function useLastFocusedOutsideDialog() {
+  const lastRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || target === document.body) return;
+      if (target.closest('[role="dialog"]')) return;
+      lastRef.current = target;
+    };
+    document.addEventListener('focusin', onFocusIn);
+    return () => document.removeEventListener('focusin', onFocusIn);
+  }, []);
+  return lastRef;
+}
+
+/**
+ * Modal dialog focus management: moves focus into the open dialog (autofocus control, else the first
+ * control outside the header, else the dialog itself), traps Tab, and restores focus to the opener on close.
+ */
+export function useDialogFocus(isOpen: boolean) {
+  const lastOutsideRef = useLastFocusedOutsideDialog();
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    if (!dialog) return undefined;
+    const active = document.activeElement;
+    const opener = active instanceof HTMLElement && active !== document.body && !dialog.contains(active) ? active : lastOutsideRef.current;
+    const focusableElements = () => Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+    if (!dialog.contains(document.activeElement)) {
+      const explicit = dialog.querySelector<HTMLElement>('[autofocus], [data-autofocus]');
+      const firstContent = focusableElements().find((element) => !element.closest('.modal-header'));
+      const target = explicit ?? firstContent;
+      if (target) target.focus();
+      else {
+        if (!dialog.hasAttribute('tabindex')) dialog.tabIndex = -1;
+        dialog.focus();
+      }
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const elements = focusableElements();
+      if (!elements.length) {
+        event.preventDefault();
+        return;
+      }
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    dialog.addEventListener('keydown', onKeyDown);
+    return () => {
+      dialog.removeEventListener('keydown', onKeyDown);
+      resolveFocusReturnTarget(opener)?.focus();
+    };
+  }, [isOpen, lastOutsideRef]);
+}
+
 /**
  * Closes a popup menu on outside pointerdown and on Escape (returning focus to `returnFocusRef`),
  * and whenever `closeSignal` becomes true (for example when a modal opens).
