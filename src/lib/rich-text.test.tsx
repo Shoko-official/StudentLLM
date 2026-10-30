@@ -36,4 +36,52 @@ describe('RichText', () => {
     expect(source).toHaveClass('extracted-math-line');
     expect(source).toHaveAttribute('aria-label', 'Extracted mathematical source');
   });
+  it('repairs legacy LaTeX controls and renders bare formulas in Markdown tables', () => {
+    const { container } = render(<RichText content={'| Formula |\n| --- |\n| \u000crac{x}{2} |'} />);
+
+    expect(container.querySelector('td .katex')).not.toBeNull();
+    expect(container.textContent).not.toContain('\u000c');
+  });
+
+  it('renders bare LaTeX formulas inside Markdown list items', () => {
+    const { container } = render(<RichText content={"- \\\\operatorname{th}'x=1-\\\\operatorname{th}^2x=\\\\frac{1}{\\\\operatorname{ch}^2x}"} />);
+
+    expect(container.querySelector('li .katex')).not.toBeNull();
+  });
+
+  it('renders extracted bare derivative lines instead of exposing raw commands', () => {
+    const { container } = render(<RichText content={'Gradient\n\\partialx + \\partialFy\n\\partialz'} />);
+
+    expect(container.querySelectorAll('.katex')).toHaveLength(2);
+    expect(container.textContent).not.toContain('\\partialx');
+    expect(container.textContent).not.toContain('\\partialFy');
+  });
+
+  it('keeps dollar signs inside code fences untouched', () => {
+    const { container } = render(<RichText content={'```python\nprice = "$5"\n```'} />);
+
+    expect(container.querySelector('code')).toHaveTextContent('price = "$5"');
+    expect(container.querySelector('.katex')).toBeNull();
+  });
+
+  it('renders LaTeX fragments embedded in prose list items', () => {
+    const { container } = render(<RichText content={'- Connect operators: (\\operatorname{div}(\\nabla f)=\\Delta f).'} />);
+
+    expect(container.querySelector('li .katex')).not.toBeNull();
+    expect(container.querySelector('li')?.firstChild?.textContent).toBe('Connect operators: (');
+  });
+
+  it('repairs an unclosed inline LaTeX delimiter in a Markdown table cell', () => {
+    const { container } = render(<RichText content={'| Function | Primitive |\n| --- | --- |\n| 1/x | $\\text{ln} |'} />);
+
+    expect(container.querySelector('table .katex')).not.toBeNull();
+    expect(container.textContent).not.toContain('$\\text{ln}');
+  });
+
+  it('repairs a truncated Markdown table cell without a trailing row pipe', () => {
+    const { container } = render(<RichText content={'| Function | Primitive |\n| --- | --- |\n| 1/x | $\\text{ln}'} />);
+
+    expect(container.querySelector('table .katex')).not.toBeNull();
+    expect(container.textContent).not.toContain('$\\text{ln}');
+  });
 });
