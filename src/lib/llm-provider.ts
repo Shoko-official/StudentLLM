@@ -44,6 +44,8 @@ function embeddingsUrl(baseUrl: string) {
   return `${baseUrl.replace(/\/$/, '')}/embeddings`;
 }
 
+const SLOW_GENERATION_MS_PER_TOKEN = 150;
+
 function isRetryableProviderFailure(status: number, detail: string) {
   return status === 408 || status === 429 || status >= 500 || /engine protocol predict stream returned an error/i.test(detail);
 }
@@ -67,19 +69,28 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const cancel = () => controller.abort();
     options?.signal?.addEventListener('abort', cancel, { once: true });
     if (options?.signal?.aborted) controller.abort();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    const requestBody = JSON.stringify({
+    const maxTokens = Math.max(256, Math.min(options?.maxTokens ?? 1024, 16_384));
+    // A local model on a laptop CPU can generate only a few tokens per second, so long answers
+    // get proportionally more time instead of being abandoned while the server keeps generating.
+    const timer = setTimeout(() => controller.abort(), Math.max(this.timeoutMs, maxTokens * SLOW_GENERATION_MS_PER_TOKEN));
+    // Qwen3-family models (qwen3-4b, qwen3.8-9b, ...) reason by default and can spend the whole
+    // token budget before answering; ask for a direct answer and drop the switch if a server rejects it.
+    const directAnswer = /qwen3/i.test(this.model);
+    const buildBody = (withReasoningSwitch: boolean) => JSON.stringify({
       model: this.model,
-      messages: /qwen3-/i.test(this.model)
+      messages: directAnswer
         ? [{ role: 'system', content: 'Return the final answer directly. /no_think' }, ...messages]
         : messages,
       temperature: 0,
-      max_tokens: Math.max(256, Math.min(options?.maxTokens ?? 1024, 16_384)),
+      max_tokens: maxTokens,
       stream: false,
+      ...(withReasoningSwitch ? { reasoning_effort: 'none' } : {}),
       ...(options?.responseFormat ? { response_format: options.responseFormat } : {}),
     });
+    let requestBody = buildBody(directAnswer);
     if (requestBody.length > MAX_JSON_REQUEST_BYTES) throw new Error('The provider request is too large.');
     let attempt = 0;
+    let reasoningSwitchSent = directAnswer;
     try {
       while (true) {
         const response = await this.fetchImpl(providerUrl(this.baseUrl), {
@@ -96,6 +107,11 @@ export class OpenAICompatibleProvider implements LLMProvider {
             : errorValue && typeof errorValue === 'object' && typeof (errorValue as { message?: unknown }).message === 'string'
               ? (errorValue as { message: string }).message
               : undefined;
+          if (reasoningSwitchSent && response.status === 400 && /reasoning/i.test(detail ?? '')) {
+            reasoningSwitchSent = false;
+            requestBody = buildBody(false);
+            continue;
+          }
           if (attempt === 0 && isRetryableProviderFailure(response.status, detail ?? '')) {
             attempt += 1;
             continue;

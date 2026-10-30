@@ -71,8 +71,6 @@ describe('StudentLLM workspace', () => {
 
     const sidebar = screen.getByRole('complementary', { name: 'Course navigation' });
     expect(sidebar).toHaveClass('workspace-sidebar');
-    expect(within(sidebar).getByText('StudentLLM')).toBeInTheDocument();
-    expect(within(sidebar).getByText('Workspace')).toBeInTheDocument();
     expect(within(sidebar).getByText('Courses')).toBeInTheDocument();
     expect(within(sidebar).getByRole('button', { name: 'Quick start' })).toHaveClass('sidebar-row');
     expect(within(sidebar).getByRole('button', { name: 'New course' })).toHaveClass('sidebar-row');

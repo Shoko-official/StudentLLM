@@ -8,7 +8,7 @@ import 'katex/dist/katex.min.css';
 import { isExtractedMathSourceLine } from './extracted-math';
 import { decodeMojibakeUtf8, repairBareLatexCommandPrefixes, repairCorruptedLatexCommands } from './document-text';
 
-const mathPattern = /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$(?!\$)(?:\\.|[^$\\\n])+\$)/g;
+const mathPattern = /(\$\$[\s\S]*?\$\$|(?<!\\)\\\[[\s\S]*?\\\]|(?<!\\)\\\([\s\S]*?\\\)|\$(?!\$)(?:\\.|[^$\\\n])+\$)/g;
 const renderedMathCache = new Map<string, string>();
 
 function unwrapMath(token: string) {
@@ -77,8 +77,9 @@ function renderExtractedText(content: string): ReactNode[] {
 
 function normalizeMathDelimiters(content: string) {
   return content
-    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, source: string) => `$$${source.trim()}$$`)
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, source: string) => `$${source.trim()}$`)
+    // (?<!\\) keeps a LaTeX line break with spacing, such as \\[6pt], from opening a block.
+    .replace(/(?<!\\)\\\[([\s\S]*?)\\\]/g, (_match, source: string) => `$$${source.trim()}$$`)
+    .replace(/(?<!\\)\\\(([\s\S]*?)\\\)/g, (_match, source: string) => `$${source.trim()}$`)
     .replace(/([^\n])\$\$/g, (_match, before: string) => `${before}\n\n$$`)
     .replace(/\$\$(?!\n)/g, () => '$$\n\n');
 }
@@ -113,6 +114,7 @@ function wrapBareLatexParagraph(line: string) {
 
 function normalizeMarkdownLatex(content: string) {
   let inCodeFence = false;
+  let inDisplayMath = false;
 
   return content.split('\n').map((line) => {
     if (line.trimStart().startsWith(String.fromCharCode(96, 96, 96))) {
@@ -120,6 +122,16 @@ function normalizeMarkdownLatex(content: string) {
       return line;
     }
     if (inCodeFence) return line;
+    // Lines inside a multi-line $$ or \[ block are already math: wrapping \begin{cases}
+    // or \end{cases} in $ there would split the block and leave it unrendered.
+    const trimmed = line.trim();
+    const opensBracketDisplay = !inDisplayMath && trimmed.startsWith('\\[') && !trimmed.includes('\\]');
+    const closesBracketDisplay = inDisplayMath && trimmed.includes('\\]');
+    if ((line.match(/\$\$/g)?.length ?? 0) % 2 === 1 || opensBracketDisplay || closesBracketDisplay) {
+      inDisplayMath = !inDisplayMath;
+      return line;
+    }
+    if (inDisplayMath) return line;
     const repaired = decodeMojibakeUtf8(repairBareLatexCommandPrefixes(repairCorruptedLatexCommands(line)));
     if (repaired.includes('|')) return repaired.split('|').map(wrapBareLatexCell).join('|');
     if (/^\s*(?:[-*+]|\d+[.)])\s+/u.test(repaired)) return wrapBareLatexListItem(repaired);
@@ -128,7 +140,16 @@ function normalizeMarkdownLatex(content: string) {
 }
 
 function repairUnclosedInlineLatex(content: string) {
+  let inDisplayMath = false;
   return content.split('\n').map((line) => {
+    // Display math ($$ ... $$, possibly over several lines) is never an unclosed inline formula.
+    const displayDelimiters = line.match(/\$\$/g)?.length ?? 0;
+    if (inDisplayMath || displayDelimiters % 2 === 1) {
+      if (displayDelimiters % 2 === 1) inDisplayMath = !inDisplayMath;
+      return line;
+    }
+    // Only a table row's pipes separate cells; elsewhere |x| is an absolute value.
+    const isTableRow = line.trimStart().startsWith('|');
     let repaired = '';
     let cursor = 0;
     while (cursor < line.length) {
@@ -137,10 +158,17 @@ function repairUnclosedInlineLatex(content: string) {
         repaired += line.slice(cursor);
         break;
       }
+      if (line[delimiterIndex + 1] === '$') {
+        const closing = line.indexOf('$$', delimiterIndex + 2);
+        const end = closing === -1 ? line.length : closing + 2;
+        repaired += line.slice(cursor, end);
+        cursor = end;
+        continue;
+      }
       repaired += line.slice(cursor, delimiterIndex + 1);
       const candidate = line.slice(delimiterIndex + 1).trimStart();
       const nextDelimiter = line.indexOf('$', delimiterIndex + 1);
-      const nextPipe = line.indexOf('|', delimiterIndex + 1);
+      const nextPipe = isTableRow ? line.indexOf('|', delimiterIndex + 1) : -1;
       const boundary = nextPipe === -1 ? line.length : nextPipe;
       if (/^\\[A-Za-z]+/u.test(candidate) && (nextDelimiter === -1 || nextDelimiter > boundary)) {
         repaired += line.slice(delimiterIndex + 1, boundary) + '$';

@@ -38,3 +38,9 @@ Keep visual changes, product behavior, and documentation separate when they can 
 ## Data handling
 
 Do not commit API keys, `.env` files, course audio, student documents, database dumps, or benchmark outputs containing private data.
+
+## Collaboration
+
+- Work on a dedicated branch with a descriptive name and a clear objective.
+- Report bugs through [GitHub Issues](https://github.com/Shoko-official/StudentLLM/issues). Include steps to reproduce the problem, the expected and actual behavior, and relevant environment details.
+- Add relevant logs when helpful, but remove secrets and private student data before sharing them.
