@@ -300,10 +300,12 @@ function joinDocumentParagraphLines(lines: string[]) {
 
 function extractDocumentSourceTitle(pages: DocumentPage[], sourceName: string) {
   const normalizedSource = normalizeDocumentLine(sourceName).replace(/\.[^.]+$/, '');
+  // Order by page first: the title is near the top of the first page, not the topmost line of any page.
   const lines = pages
-    .flatMap((page) => (page.blocks.length ? page.blocks : [{ x: 0, y: 0, width: 0, height: 0, text: page.text }]))
-    .flatMap((block) => documentBlockText(block.text).map((line) => ({ line, orderY: block.y })))
-    .sort((left, right) => left.orderY - right.orderY);
+    .flatMap((page) => (page.blocks.length ? page.blocks : [{ x: 0, y: 0, width: 0, height: 0, text: page.text }])
+      .map((block) => ({ block, pageNumber: page.pageNumber })))
+    .flatMap(({ block, pageNumber }) => documentBlockText(block.text).map((line) => ({ line, pageNumber, orderY: block.y })))
+    .sort((left, right) => left.pageNumber - right.pageNumber || left.orderY - right.orderY);
 
   const titleLine = lines.find(({ line }) => {
     if (!line || line.length < 3 || line.length > 90) return false;

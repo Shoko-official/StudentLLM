@@ -53,11 +53,11 @@ export function repairBareLatexCommandPrefixes(value: string) {
 export function repairCorruptedLatexCommands(value: string) {
   return value
     .replace(/\u0007(?=(?:lpha|rccos|rctan|rcsin)\b)/g, '\\a')
-    .replace(/\u0008(?=(?:egin|oldsymbol|mathbf|mathrm)\b)/g, '\\b')
-    .replace(/\u0009(?=(?:ext|imes|heta|au)\b)/g, '\\t')
-    .replace(/\u000b(?=(?:ec|ertical)\b)/g, '\\v')
+    .replace(/\u0008(?=(?:egin|oldsymbol|mathbf|mathrm|eta|ar|inom|igl|igr)\b)/g, '\\b')
+    .replace(/\u0009(?=(?:ext|extbf|imes|heta|au|ag|ilde|riangle|frac|o)\b)/g, '\\t')
+    .replace(/\u000b(?=(?:ec|ertical|arepsilon|arphi)\b)/g, '\\v')
     .replace(/\u000c(?=(?:rac|orall)\b)/g, '\\f')
-    .replace(/\u000d(?=(?:ight|ot|elta)\b)/g, '\\r');
+    .replace(/\u000d(?=(?:ight|ot|elta|ho|ightarrow)\b)/g, '\\r');
 }
 
 /**
