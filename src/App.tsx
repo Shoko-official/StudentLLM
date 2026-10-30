@@ -396,7 +396,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         const next = update(previous);
         const lesson = lessons.find((item) => item.id === lessonId);
         const hasDocumentNote = next.courseNote?.blocks?.some((block) => block.id === 'document-source-title');
-        return lesson && next.transcript !== previous.transcript && !localProvider && !hasDocumentNote
+        // Rebuild the deterministic note when it is not AI-written or the set of segments changed; status-only edits (review toggles) keep an AI note.
+        const segmentIds = (items: TranscriptSegment[]) => items.map((segment) => segment.id).join('\u0000');
+        const needsRebuild = next.courseNote?.detection.method !== 'LM Studio' || segmentIds(next.transcript) !== segmentIds(previous.transcript);
+        return lesson && next.transcript !== previous.transcript && needsRebuild && !hasDocumentNote
           ? { ...next, courseNote: buildCourseNote(lesson, next.transcript) }
           : next;
       })(),
@@ -446,7 +449,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         ...targetWorkspace,
         resources: Array.from(new Map([...targetWorkspace.resources, resource].map((item) => [item.id, item])).values()),
         transcript: targetTranscript,
+        // Keep only a real AI or document note from the snapshot; otherwise rebuild the deterministic note so imported text shows even when the provider failed.
         courseNote: !targetChangedWhilePending && formattedCourseNote
+          && (formattedCourseNote.detection.method === 'LM Studio' || formattedCourseNote.blocks.some((block) => block.id === 'document-source-title'))
           ? formattedCourseNote
           : buildCourseNote(placement.targetLesson, targetTranscript),
       };
@@ -1822,7 +1827,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       const extractableResource = isExtractableDocument(resource);
       if (!localDocumentEngine && extractableResource) {
         setActionError(`${resource.name} is saved. Connect the document service in Settings to extract its text.`);
-        setShowSettingsPanel(true);
       }
       if (localDocumentEngine && extractableResource) {
         try {
@@ -1857,7 +1861,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             ? 'The document service is offline.'
             : 'The document service could not extract this file.';
           setActionError(`${resource.name} is saved. ${detail} Open Settings and refresh the local services.`);
-          setShowSettingsPanel(true);
         }
       }
     } catch (error) {
@@ -2026,6 +2029,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         resources: current.resources.filter((item) => item.id !== resource.id),
         transcript: current.transcript.filter((segment) => segment.sourceId !== resource.id && !segment.id.startsWith(`${resource.id}:`)),
       }));
+      // The note was rebuilt without the removed source; let a reachable provider rewrite it again.
+      formatExistingCourseNote(activeLessonId, transcript.filter((segment) => segment.sourceId !== resource.id && !segment.id.startsWith(`${resource.id}:`)));
       notify(`${resource.name} removed from this course.`);
     } catch {
       notify(`${resource.name} could not be removed.`);
