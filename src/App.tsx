@@ -300,6 +300,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [isSending, setIsSending] = useState(false);
   const [generatingArtifact, setGeneratingArtifact] = useState<ArtifactKind | null>(null);
   const [actionError, setActionError] = useState('');
+  const [chatFailure, setChatFailure] = useState<{ lessonId: string; question: string; message: string } | null>(null);
   const [liveTranscriptionError, setLiveTranscriptionError] = useState('');
   const [liveSettledThrough, setLiveSettledThrough] = useState(0);
   const startingRecorderRef = useRef(false);
@@ -1479,18 +1480,19 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     notify(nextStatus === 'verified' ? 'Transcript segment verified.' : 'Transcript segment marked for review.');
   };
 
-  const submitComposer = async (event: FormEvent) => {
-    event.preventDefault();
-    const message = composerValue.trim();
+  const sendChatMessage = async (message: string, retry = false) => {
     if (!message || isSending || !hasCourse) return;
     setView('chat');
-    const userMessageId = `user-${Date.now()}`;
     const assistantMessageId = `assistant-${Date.now() + 1}`;
-    updateActiveWorkspace((current) => ({
-      ...current,
-      chat: [...current.chat, { id: userMessageId, role: 'user', content: message }],
-    }));
-    setComposerValue('');
+    if (!retry) {
+      const userMessageId = `user-${Date.now()}`;
+      updateActiveWorkspace((current) => ({
+        ...current,
+        chat: [...current.chat, { id: userMessageId, role: 'user', content: message }],
+      }));
+      setComposerValue('');
+    }
+    setChatFailure(null);
 
     setIsSending(true);
     try {
@@ -1571,17 +1573,15 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         }],
       }));
     } catch (error) {
-      updateActiveWorkspace((current) => ({
-        ...current,
-        chat: [...current.chat, {
-          id: assistantMessageId,
-          role: 'assistant',
-          content: error instanceof Error ? error.message : 'The local provider could not answer this question.',
-        }],
-      }));
+      setChatFailure({ lessonId: activeLessonId, question: message, message: error instanceof Error ? error.message : 'The local provider could not answer this question.' });
     } finally {
       setIsSending(false);
     }
+  };
+
+  const submitComposer = (event: FormEvent) => {
+    event.preventDefault();
+    void sendChatMessage(composerValue.trim());
   };
 
   const createArtifact = async (kind: ArtifactKind) => {
@@ -2442,7 +2442,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               {!resources.length && !transcript.length && <p className="empty-state">Import material or record a lecture before asking a question.</p>}
                <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list" aria-label="Response sources">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button type="button" className="citation-chip" title="Open original source" key={citation} onClick={() => openCitation(message.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className={citation.startsWith('LM Studio') ? 'citation-model' : 'citation-context'} key={citation}>{citation}</span>)}</div>}</article>)}</div>
               {isSending && <div className="chat-typing" aria-hidden="true"><span /><span /><span /></div>}
-              <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
+              {chatFailure?.lessonId === activeLessonId && <div className="action-error" role="alert"><span>{chatFailure.message}</span> <button type="button" className="text-action" disabled={isSending} onClick={() => void sendChatMessage(chatFailure.question, true)}>Retry</button></div>}
+              <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => { setComposerValue(event.target.value); setChatFailure(null); }} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
             </section>}
             {view === 'study' && <section className="study-view" id="view-panel-study" role="tabpanel" aria-labelledby="view-tab-study">
               <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>

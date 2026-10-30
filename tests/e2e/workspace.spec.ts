@@ -103,6 +103,29 @@ test.describe('StudentLLM workspace', () => {
     }, createFixtureWorkspace());
   });
 
+  test('keeps offline provider errors out of chat history and retries the question', async ({ page }) => {
+    await page.goto('/');
+    await connectFixtureProvider(page, '', 502);
+    await page.getByRole('tab', { name: 'Chat' }).click();
+    await page.getByRole('textbox', { name: 'Ask the course chat' }).fill('Explain normalization.');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.getByRole('alert')).toContainText("The local model server isn't reachable");
+    await expect.poll(async () => (await savedWorkspace(page)).lessonWorkspaces[FIXTURE_LESSON_ID].chat).toEqual([
+      expect.objectContaining({ role: 'user', content: 'Explain normalization.' }),
+    ]);
+    await page.unroute('**/fixture-provider/v1/chat/completions');
+    await page.route('**/fixture-provider/v1/chat/completions', (route) => route.fulfill({
+      json: { model: 'fixture-model', choices: [{ message: { content: 'Recovered answer.' } }] },
+    }));
+    await page.getByRole('button', { name: 'Retry' }).click();
+    await expect(page.getByText('Recovered answer.')).toBeVisible();
+    await page.reload();
+    await page.getByRole('tab', { name: 'Chat' }).click();
+    await expect(page.getByText('Recovered answer.')).toBeVisible();
+    await expect(page.getByText("The local model server isn't reachable", { exact: false })).toHaveCount(0);
+    await expect(page.getByText('Explain normalization.', { exact: true })).toHaveCount(1);
+  });
+
   test('requires a recording responsibility acknowledgement before microphone access', async ({ page }) => {
     await installRecorderFixture(page);
     await page.addInitScript(() => localStorage.removeItem('studentllm.recording-notice.v1'));

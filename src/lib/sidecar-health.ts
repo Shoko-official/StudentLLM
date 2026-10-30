@@ -35,6 +35,7 @@ export async function probeSidecar(baseUrl: string | undefined, options: Sidecar
     };
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return { available: false, detail: 'Health check timed out.' };
+    if (error instanceof TypeError) return { available: false, detail: 'Unavailable. Start the service or check its address in Settings.' };
     return { available: false, detail: error instanceof Error ? error.message : 'Health check failed.' };
   } finally {
     clearTimeout(timer);

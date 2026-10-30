@@ -50,6 +50,8 @@ function isRetryableProviderFailure(status: number, detail: string) {
   return status === 408 || status === 429 || status >= 500 || /engine protocol predict stream returned an error/i.test(detail);
 }
 
+const unavailableMessage = "The local model server isn't reachable. Start it and load a model, or check Settings.";
+
 export class OpenAICompatibleProvider implements LLMProvider {
   readonly supportsStructuredOutputs = true;
   private readonly baseUrl: string;
@@ -93,12 +95,18 @@ export class OpenAICompatibleProvider implements LLMProvider {
     let reasoningSwitchSent = directAnswer;
     try {
       while (true) {
-        const response = await this.fetchImpl(providerUrl(this.baseUrl), {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: requestBody,
-          signal: controller.signal,
-        });
+        let response: Response;
+        try {
+          response = await this.fetchImpl(providerUrl(this.baseUrl), {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: requestBody,
+            signal: controller.signal,
+          });
+        } catch (error) {
+          if (error instanceof TypeError) throw new Error(unavailableMessage);
+          throw error;
+        }
         const responseBody = await readJsonResponse(response, 'provider');
         if (!response.ok) {
           const errorValue = responseBody.error;
@@ -116,6 +124,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
             attempt += 1;
             continue;
           }
+          if (response.status === 502 || (response.status === 503 && !detail)) throw new Error(unavailableMessage);
           throw new Error(`Provider request failed (${response.status})${detail ? `: ${detail}` : ''}`);
         }
 

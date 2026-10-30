@@ -466,7 +466,7 @@ describe('StudentLLM workspace', () => {
 
   it('renders an injected provider failure in the chat', async () => {
     const user = userEvent.setup();
-    const generate = vi.fn().mockRejectedValue(new Error('Provider request timed out.'));
+    const generate = vi.fn().mockRejectedValueOnce(new Error('Provider request timed out.')).mockResolvedValueOnce({ content: 'A recovered answer.', model: 'mock-local-model' });
     render(<App provider={{ generate }} />);
 
     await user.click(screen.getByRole('tab', { name: /Chat/ }));
@@ -475,6 +475,26 @@ describe('StudentLLM workspace', () => {
 
     expect(await screen.findByText('Provider request timed out.')).toBeInTheDocument();
     expect(generate).toHaveBeenCalledTimes(1);
+    expect(savedWorkspace().lessonWorkspaces[savedWorkspace().activeLessonId].chat).toEqual([
+      expect.objectContaining({ role: 'user', content: 'Explain why normalization matters.' }),
+    ]);
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('A recovered answer.')).toBeInTheDocument();
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(savedWorkspace().lessonWorkspaces[savedWorkspace().activeLessonId].chat.filter((message: { role: string }) => message.role === 'user')).toHaveLength(1);
+  });
+
+  it('clears a failed chat alert when the composer is edited', async () => {
+    const user = userEvent.setup();
+    render(<App provider={{ generate: vi.fn().mockRejectedValue(new Error('Provider unavailable.')) }} />);
+    await user.click(screen.getByRole('tab', { name: /Chat/ }));
+    const composer = screen.getByLabelText('Ask the course chat');
+    await user.type(composer, 'Explain why normalization matters.');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText('Provider unavailable.')).toBeInTheDocument();
+    await user.type(composer, 'A revised question');
+    expect(screen.queryByText('Provider unavailable.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 
   it('refuses an unanswerable question without calling the provider', async () => {

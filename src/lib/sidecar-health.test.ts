@@ -25,4 +25,12 @@ describe('sidecar health probes', () => {
     }));
     await expect(probeSidecar('http://127.0.0.1:8765', { fetchImpl: timeoutFetch, timeoutMs: 1 })).resolves.toEqual({ available: false, detail: 'Health check timed out.' });
   });
+
+  it('explains when a configured sidecar cannot be reached', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    await expect(probeSidecar('http://127.0.0.1:8765', { fetchImpl })).resolves.toEqual({
+      available: false,
+      detail: 'Unavailable. Start the service or check its address in Settings.',
+    });
+  });
 });

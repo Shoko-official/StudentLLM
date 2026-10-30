@@ -115,6 +115,18 @@ describe('OpenAI-compatible LLM provider', () => {
     await expect(provider.generate([{ role: 'user', content: 'Hello' }])).rejects.toThrow('Provider request failed (503): model unavailable');
   });
 
+  it('explains an unreachable local model for network and proxy failures', async () => {
+    const message = "The local model server isn't reachable. Start it and load a model, or check Settings.";
+    for (const fetchImpl of [
+      vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
+      vi.fn().mockResolvedValue(response({}, false, 502)),
+      vi.fn().mockResolvedValue(response({}, false, 503)),
+    ]) {
+      const provider = new OpenAICompatibleProvider({ baseUrl: '/lm-studio/v1', model: 'test', fetchImpl });
+      await expect(provider.generate([{ role: 'user', content: 'Hello' }])).rejects.toThrow(message);
+    }
+  });
+
   it('retries a transient LM Studio engine protocol failure once', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(response({ error: { message: 'Engine protocol predict stream returned an error' } }, false, 400))
@@ -183,7 +195,7 @@ describe('OpenAI-compatible LLM provider', () => {
       expect(aborted).toBe(false);
       await vi.advanceTimersByTimeAsync(4_096 * 150);
       expect(aborted).toBe(true);
-      await expect(pending).rejects.toThrow('timed out');
+      await expect(pending).rejects.toThrow('Provider request timed out.');
     } finally {
       vi.useRealTimers();
     }
