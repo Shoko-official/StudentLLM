@@ -1,6 +1,10 @@
+import sys
+import types
 import unittest
+from unittest import mock
 
-from scripts.local_document_server import extract_document, formula_aware_pdf_blocks, group_formula_blocks, is_block_covered_by_formula_crop, is_formula_block, is_formula_group
+from scripts import local_document_server
+from scripts.local_document_server import extract_document, has_unmapped_glyphs, formula_aware_pdf_blocks, group_formula_blocks, is_block_covered_by_formula_crop, is_formula_block, is_formula_group
 
 
 class LocalDocumentServerTests(unittest.TestCase):
@@ -109,6 +113,43 @@ class LocalDocumentServerTests(unittest.TestCase):
         self.assertEqual(model, 'rtf-text')
         self.assertIn('Course', pages[0]['text'])
         self.assertNotIn('\\rtf', pages[0]['text'])
+
+    def test_flags_text_layers_whose_letters_are_unmapped_glyphs(self):
+        self.assertTrue(has_unmapped_glyphs("Montrr qu un"))
+        self.assertFalse(has_unmapped_glyphs("Montrer que chacun des problèmes admet une solution."))
+        self.assertFalse(has_unmapped_glyphs("A long clean page " * 20 + ""))
+
+    def test_ocrs_pdf_pages_with_an_unmapped_text_layer(self):
+        class Pixmap:
+            def tobytes(self, _format):
+                return b"png"
+
+        class Page:
+            def __init__(self, text):
+                self.text = text
+
+            def get_text(self, kind="text"):
+                return {"blocks": []} if kind == "dict" else self.text
+
+            def get_pixmap(self, **_options):
+                return Pixmap()
+
+        class Document(list):
+            page_count = 2
+
+            def close(self):
+                pass
+
+        pages = Document([Page("Montrr qu un"), Page("Clean printed text.")])
+        fake_fitz = types.SimpleNamespace(open=lambda **_kwargs: pages, Matrix=lambda *_args: None)
+        ocr_blocks = [{"type": "paragraph", "text": "Montrer que chacun"}]
+        with mock.patch.dict(sys.modules, {"fitz": fake_fitz}),                 mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=True),                 mock.patch.object(local_document_server, "ocr_image", return_value=("rapidocr", ocr_blocks)) as ocr:
+            model, extracted = local_document_server.extract_pdf(b"%PDF")
+
+        self.assertEqual(model, "pymupdf+rapidocr")
+        self.assertEqual(extracted[0]["text"], "Montrer que chacun")
+        self.assertEqual(extracted[1]["text"], "Clean printed text.")
+        ocr.assert_called_once()
 
 
 if __name__ == "__main__":
