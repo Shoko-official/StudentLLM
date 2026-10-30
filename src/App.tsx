@@ -394,7 +394,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         const lesson = lessons.find((item) => item.id === lessonId);
         const hasDocumentNote = next.courseNote?.blocks?.some((block) => block.id === 'document-source-title');
         // Rebuild the deterministic note when it is not AI-written or the set of segments changed; status-only edits (review toggles) keep an AI note.
-        const segmentIds = (items: TranscriptSegment[]) => items.map((segment) => segment.id).join(' ');
+        const segmentIds = (items: TranscriptSegment[]) => items.map((segment) => segment.id).join('\u0000');
         const needsRebuild = next.courseNote?.detection.method !== 'LM Studio' || segmentIds(next.transcript) !== segmentIds(previous.transcript);
         return lesson && next.transcript !== previous.transcript && needsRebuild && !hasDocumentNote
           ? { ...next, courseNote: buildCourseNote(lesson, next.transcript) }
