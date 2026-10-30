@@ -133,6 +133,7 @@ type ServiceSettings = { llmProvider: string; llmUrl: string; model: string; nim
 // NVIDIA NIM goes through the dev server's credential proxy, so it is only offered in development builds.
 const NIM_AVAILABLE = import.meta.env.DEV;
 const NIM_PROXY_BASE_URL = '/nvidia-nim/v1';
+const NIM_PROXY_ERROR_HEADER = 'x-studentllm-proxy-error';
 const DEFAULT_NIM_MODEL = 'openai/gpt-oss-20b';
 const usesNim = (settings: ServiceSettings) => NIM_AVAILABLE && settings.llmProvider === 'nvidia-nim';
 const llmConnection = (settings: ServiceSettings) => usesNim(settings)
@@ -354,7 +355,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     if (provider !== undefined) return provider;
     const connection = llmConnection(serviceSettings);
     if (!connection.baseUrl) return null;
-    return createLocalLLMProvider({ MODE: import.meta.env.MODE, VITE_LM_STUDIO_AUTO_CONNECT: connectionsEnabled ? 'true' : import.meta.env.VITE_LM_STUDIO_AUTO_CONNECT, VITE_LM_STUDIO_BASE_URL: connection.baseUrl, VITE_LM_STUDIO_MODEL: connection.model });
+    const created = createLocalLLMProvider({ MODE: import.meta.env.MODE, VITE_LM_STUDIO_AUTO_CONNECT: connectionsEnabled ? 'true' : import.meta.env.VITE_LM_STUDIO_AUTO_CONNECT, VITE_LM_STUDIO_BASE_URL: connection.baseUrl, VITE_LM_STUDIO_MODEL: connection.model });
+    // The NIM proxy exposes no embeddings route, so retrieval keeps its lexical ranking instead of a doomed request.
+    if (created && usesNim(serviceSettings)) return { generate: created.generate.bind(created), supportsStructuredOutputs: created.supportsStructuredOutputs };
+    return created;
   }, [provider, serviceSettings, connectionsEnabled]);
   const localSpeechEngine = useMemo(() => speechEngine === undefined ? createLocalSpeechEngine({ VITE_LOCAL_ASR_BASE_URL: serviceSettings.asrUrl, VITE_LOCAL_ASR_LANGUAGE: import.meta.env.VITE_LOCAL_ASR_LANGUAGE }) : speechEngine, [speechEngine, serviceSettings]);
   const localDocumentEngine = useMemo(() => documentEngine === undefined ? createLocalDocumentEngine({ VITE_LOCAL_DOCUMENT_BASE_URL: serviceSettings.documentsUrl }) : documentEngine, [documentEngine, serviceSettings]);
@@ -1035,10 +1039,15 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setAvailableModels(models);
       const detectedModel = models.find((model: string) => model === settings.model) ?? models[0];
       if (detectedModel && detectedModel !== settings.model) {
-        const detectedSettings = { ...settings, model: detectedModel };
-        setServiceSettings((current) => current.llmUrl === settings.llmUrl ? detectedSettings : current);
-        setServiceDraft((current) => current.llmUrl === settings.llmUrl ? detectedSettings : current);
-        try { localStorage.setItem(SERVICES_STORAGE_KEY, JSON.stringify(detectedSettings)); } catch { /* Keep the detected model for this session. */ }
+        // A late result must not overwrite a connection the user has switched since, in memory or on disk.
+        const sameConnection = (current: ServiceSettings) => current.llmUrl === settings.llmUrl && current.llmProvider === settings.llmProvider;
+        setServiceSettings((current) => {
+          if (!sameConnection(current)) return current;
+          const detectedSettings = { ...current, model: detectedModel };
+          try { localStorage.setItem(SERVICES_STORAGE_KEY, JSON.stringify(detectedSettings)); } catch { /* Keep the detected model for this session. */ }
+          return detectedSettings;
+        });
+        setServiceDraft((current) => sameConnection(current) ? { ...current, model: detectedModel } : current);
         setLlmHealth(`Connected. Detected and selected ${detectedModel}.`);
       } else if (detectedModel) {
         setLlmHealth('Connected. Selected model is available.');
@@ -1058,15 +1067,23 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const model = llmConnection(settings).model;
     try {
       const response = await fetch(`${NIM_PROXY_BASE_URL}/models`, { signal: AbortSignal.timeout(10_000) });
-      if (response.status === 503) {
+      const proxyError = response.headers?.get?.(NIM_PROXY_ERROR_HEADER);
+      if (proxyError === 'missing_key') {
         setLlmHealth('Unavailable. NVIDIA_API_KEY is not set on this computer. Set it, then restart the dev server.');
         return;
       }
-      if (response.status === 401 || response.status === 403) {
-        setLlmHealth('Unavailable. NVIDIA rejected the request. Check NVIDIA_API_KEY.');
+      if (proxyError === 'forbidden') {
+        setLlmHealth('Unavailable. The dev server only accepts NVIDIA NIM requests from a current browser at a localhost address.');
         return;
       }
-      if (!response.ok) throw new Error('NVIDIA NIM is not responding.');
+      if (!proxyError && (response.status === 401 || response.status === 403)) {
+        setLlmHealth('Unavailable. NVIDIA rejected NVIDIA_API_KEY. Check the key, then restart the dev server.');
+        return;
+      }
+      if (!response.ok) {
+        setLlmHealth(`Unavailable. NVIDIA NIM answered with HTTP ${response.status}. Try again later.`);
+        return;
+      }
       const body = await readJsonResponse(response, 'NVIDIA NIM');
       const models: string[] = Array.isArray(body.data)
         ? body.data.map((entry: { id?: unknown }) => typeof entry?.id === 'string' ? entry.id.trim() : '').filter(Boolean)
@@ -2313,7 +2330,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         <form className="connection-settings" onSubmit={saveServiceSettings}>
           {NIM_AVAILABLE && <label>AI provider<select value={serviceDraft.llmProvider} onChange={(event) => setServiceDraft((current) => ({ ...current, llmProvider: event.target.value }))}><option value="lm-studio">LM Studio (local)</option><option value="nvidia-nim">NVIDIA NIM (cloud)</option></select></label>}
           {usesNim(serviceDraft) ? <>
-            <p className="connection-notice" role="note">Course text and your questions are sent to NVIDIA for generation. The key is read from NVIDIA_API_KEY on this computer by the dev server and never reaches this page.</p>
+            <p className="connection-notice" role="note">While NVIDIA NIM is selected, lecture transcripts, imported document text, notes and your questions are sent to NVIDIA automatically to format notes, answer chat and build study material. The dev server reads the key from NVIDIA_API_KEY on this computer; it never reaches this page.</p>
             <label>NVIDIA model<input value={serviceDraft.nimModel} onChange={(event) => setServiceDraft((current) => ({ ...current, nimModel: event.target.value }))} placeholder={DEFAULT_NIM_MODEL} /></label>
           </> : <>
             <div className="connection-field"><label htmlFor="local-llm-url">LM Studio address</label><input id="local-llm-url" value={serviceDraft.llmUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, llmUrl: event.target.value }))} placeholder="/lm-studio/v1" /><small>Works with LM Studio, Bionic, and any OpenAI-compatible local server.</small></div>
