@@ -637,11 +637,18 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       }
     };
     window.addEventListener('keydown', onEscape);
-    return () => window.removeEventListener('keydown', onEscape);
+    return () => {
+      window.removeEventListener('keydown', onEscape);
+      // Choosing a course unmounts the focused button; keep focus on a stable control.
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if (!active || active === document.body) menuButtonRef.current?.focus();
+      }, 0);
+    };
   }, [drawerOpen]);
   const trapDrawerTab = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (!drawerOpen || event.key !== 'Tab') return;
-    const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(drawerFocusableSelector));
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(drawerFocusableSelector)).filter((item) => !item.hidden && !item.closest('[hidden]') && !(item as HTMLInputElement).disabled);
     if (!items.length) { event.preventDefault(); return; }
     const first = items[0];
     const last = items[items.length - 1];
