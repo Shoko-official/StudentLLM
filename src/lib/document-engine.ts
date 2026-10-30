@@ -44,6 +44,8 @@ function isFormulaImageData(value: unknown): value is string {
     && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
 }
 
+const OCR_MS_PER_MEGABYTE = 15_000;
+
 export class LocalDocumentEngine implements DocumentEngine {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
@@ -52,13 +54,15 @@ export class LocalDocumentEngine implements DocumentEngine {
   constructor(options: LocalDocumentEngineOptions) {
     this.baseUrl = normalizeServiceBaseUrl(options.baseUrl);
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
-    this.timeoutMs = options.timeoutMs ?? 60_000;
+    this.timeoutMs = options.timeoutMs ?? 300_000;
   }
 
   async extract(document: Blob): Promise<DocumentExtraction> {
     if (document.size > MAX_DOCUMENT_REQUEST_BYTES) throw new Error('The document is too large.');
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    // Scanned pages are OCR'd one by one, so large scans get more time than a one-page handout.
+    const sizeAllowanceMs = Math.ceil(document.size / (1024 * 1024)) * OCR_MS_PER_MEGABYTE;
+    const timer = setTimeout(() => controller.abort(), Math.max(this.timeoutMs, sizeAllowanceMs));
     try {
       const response = await this.fetchImpl(endpointUrl(this.baseUrl), {
         method: 'POST',
