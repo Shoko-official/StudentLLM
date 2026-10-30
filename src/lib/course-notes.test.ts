@@ -107,6 +107,15 @@ describe('course notes', () => {
     expect(note.detection).toEqual(fallback.detection);
   });
 
+  it('takes the document title from the first page, not the highest line of a later page', () => {
+    const note = buildDocumentCourseNote(lesson, [
+      { pageNumber: 2, text: 'Exercice 3', blocks: [{ x: 0, y: 2, width: 100, height: 10, text: 'Exercice 3' }] },
+      { pageNumber: 1, text: 'Travaux dirigés I', blocks: [{ x: 0, y: 40, width: 100, height: 10, text: 'Travaux dirigés I' }] },
+    ], 'TD1.pdf');
+
+    expect(note.blocks.find((block) => block.id === 'document-source-title')).toMatchObject({ text: 'Travaux dirigés I' });
+  });
+
   it('builds a readable layout-aware note from extracted PDF blocks', () => {
     const note = buildDocumentCourseNote(lesson, [{
       pageNumber: 1,
