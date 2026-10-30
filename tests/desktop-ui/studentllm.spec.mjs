@@ -49,7 +49,7 @@ describe('StudentLLM packaged desktop workflow', () => {
     await expect($$('.transcript-item')).toBeElementsArrayOfSize(0);
 
     await selectTab('Sources');
-    await expect(await visible('[aria-label="Course sources"] .empty-state')).toHaveText('Add audio, a PDF, an image or text notes to this course.');
+    await expect(await visible('#view-panel-sources .empty-state')).toHaveText('Add audio, a PDF, an image or text notes to this course.');
     await expect($$('.resource-item')).toBeElementsArrayOfSize(0);
 
     await selectTab('Chat');

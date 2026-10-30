@@ -1667,4 +1667,73 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('tab', { name: 'Notes' }));
     expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled();
   });
+
+  it('follows the WAI-ARIA tabs pattern for the course views', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent?.replace(/ \(\d+\)$/, ''))).toEqual(['Notes', 'Sources', 'Chat', 'Study']);
+    expect(tabs.map((tab) => tab.getAttribute('tabindex'))).toEqual(['0', '-1', '-1', '-1']);
+    const panel = screen.getByRole('tabpanel');
+    expect(tabs[0]).toHaveAttribute('aria-controls', panel.id);
+    expect(panel).toHaveAttribute('aria-labelledby', tabs[0].id);
+
+    tabs[0].focus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tab', { name: /Sources/ })).toHaveFocus();
+    expect(screen.getByRole('tab', { name: /Sources/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', screen.getByRole('tab', { name: /Sources/ }).id);
+    await user.keyboard('{End}');
+    expect(screen.getByRole('tab', { name: 'Study' })).toHaveFocus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveFocus();
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.getByRole('tab', { name: 'Study' })).toHaveFocus();
+    await user.keyboard('{Home}');
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveFocus();
+  });
+
+  it('keeps the hidden file pickers out of the tab order and accessibility tree', () => {
+    render(<App />);
+
+    for (const label of ['Select course source', 'Select course folder']) {
+      const input = screen.getByLabelText(label, { selector: 'input' });
+      expect(input).toHaveAttribute('tabindex', '-1');
+      expect(input).toHaveAttribute('hidden');
+    }
+    expect(screen.queryByRole('textbox', { name: 'Select course source' })).not.toBeInTheDocument();
+  });
+
+  describe('mobile navigation drawer', () => {
+    const originalWidth = window.innerWidth;
+    afterEach(() => { Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth }); });
+
+    it('moves focus in, traps Tab, inerts the background and restores focus on Escape', async () => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 375 });
+      const user = userEvent.setup();
+      const { container } = render(<App />);
+
+      expect(screen.queryByRole('complementary', { name: 'Course navigation' })).not.toBeInTheDocument();
+      const menu = screen.getByRole('button', { name: 'Show or hide navigation' });
+      await user.click(menu);
+
+      const sidebar = screen.getByRole('complementary', { name: 'Course navigation' });
+      expect(sidebar).toContainElement(document.activeElement as HTMLElement);
+      expect(container.querySelector('main')).toHaveAttribute('inert');
+
+      const focusables = Array.from(sidebar.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])'));
+      const last = focusables[focusables.length - 1];
+      last.focus();
+      await user.tab();
+      expect(document.activeElement).toBe(focusables[0]);
+      await user.tab({ shift: true });
+      expect(document.activeElement).toBe(last);
+
+      await user.keyboard('{Escape}');
+      expect(screen.queryByRole('complementary', { name: 'Course navigation' })).not.toBeInTheDocument();
+      expect(container.querySelector('main')).not.toHaveAttribute('inert');
+      await waitFor(() => expect(menu).toHaveFocus());
+    });
+  });
 });
