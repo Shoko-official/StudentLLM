@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import type { SpeechEngine } from './lib/speech-engine';
+import '@fontsource-variable/fraunces/soft.css';
 import './styles.css';
 
 const injectedSpeechEngine = import.meta.env.DEV

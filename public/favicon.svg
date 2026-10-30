@@ -1,16 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="studentllm-favicon-title">
   <title id="studentllm-favicon-title">StudentLLM</title>
-  <style>
-    .glyph { stroke: #0d0d0d; }
-    .spark { fill: #0d0d0d; }
-    @media (prefers-color-scheme: dark) {
-      .glyph { stroke: #ececec; }
-      .spark { fill: #ececec; }
-    }
-  </style>
-  <g transform="translate(-6 -7.1) scale(3.17)" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path class="glyph" stroke-width="2" d="M12 7.4C9.4 5.8 6.6 5.6 4 6.5v11.6c2.6-.9 5.4-.7 8 .9 2.6-1.6 5.4-1.8 8-.9V6.5c-2.6-.9-5.4-.7-8 .9V19"/>
-    <path class="glyph" stroke-width="2" d="M6.6 10.2l2.8.8M6.6 13.2l2.8.8"/>
-    <path class="glyph spark" stroke-width="1" d="M16.2 9.6c.3 1.5.7 1.9 2.2 2.2-1.5.3-1.9.7-2.2 2.2-.3-1.5-.7-1.9-2.2-2.2 1.5-.3 1.9-.7 2.2-2.2z" transform="matrix(1.15 0 0 1.15 -2.43 -1.77)"/>
+  <!-- A fixed tile, like the desktop icon: a colour-scheme switch makes the glyph vanish on tab strips that do not follow the OS theme. -->
+  <rect x="1" y="1" width="62" height="62" rx="14" fill="#fff" stroke="#d9d9d9" stroke-width="2"/>
+  <g transform="translate(2.4 1.6) scale(2.47)" fill="none" stroke="#0d0d0d" stroke-linecap="round" stroke-linejoin="round">
+    <path stroke-width="2.1" d="M12 7.4C9.4 5.8 6.6 5.6 4 6.5v11.6c2.6-.9 5.4-.7 8 .9 2.6-1.6 5.4-1.8 8-.9V6.5c-2.6-.9-5.4-.7-8 .9V19"/>
+    <path stroke-width="2.1" d="M6.6 10.2l2.8.8M6.6 13.2l2.8.8"/>
+    <path fill="#0d0d0d" stroke-width="1" d="M16.2 9.6c.3 1.5.7 1.9 2.2 2.2-1.5.3-1.9.7-2.2 2.2-.3-1.5-.7-1.9-2.2-2.2 1.5-.3 1.9-.7 2.2-2.2z" transform="matrix(1.15 0 0 1.15 -2.43 -1.77)"/>
   </g>
 </svg>
