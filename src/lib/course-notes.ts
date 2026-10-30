@@ -457,7 +457,7 @@ export function buildCourseNote(lesson: Lesson, transcript: TranscriptSegment[],
     blocks: [
       { id: 'note-title', type: 'heading', level: 1, text: lesson.title },
       ...(sublesson ? [{ id: 'note-sublesson', type: 'heading' as const, level: 2 as const, text: sublesson }] : []),
-      { id: 'note-context', type: 'paragraph', text: `${subject} / ${lesson.chapter} · ${lesson.teacher}` },
+      { id: 'note-context', type: 'paragraph', text: [`${subject} / ${lesson.chapter}`, lesson.teacher?.trim()].filter(Boolean).join(' · ') },
       ...groupTranscript(transcript).flatMap(blocksForSegment),
     ],
   };

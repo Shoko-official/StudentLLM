@@ -16,6 +16,14 @@ const lesson: Lesson = {
 const segment = (text: string): TranscriptSegment => ({ id: 'segment-1', timestamp: '00:01:00', speaker: 'Professor', text, status: 'review' });
 
 describe('course notes', () => {
+  it('omits the separator in the context line when no teacher is set', () => {
+    const note = buildCourseNote({ ...lesson, teacher: '' }, [segment('Hello.')]);
+    expect(note.blocks.find(block => block.id === 'note-context')).toMatchObject({ text: 'Machine Learning / Transformers' });
+    expect(courseNoteMarkdown(note)).not.toMatch(/·\s*$/m);
+    const withTeacher = buildCourseNote({ ...lesson, teacher: ' Dr Who ' }, [segment('Hello.')]);
+    expect(withTeacher.blocks.find(block => block.id === 'note-context')).toMatchObject({ text: 'Machine Learning / Transformers · Dr Who' });
+  });
+
   it('keeps every inline formula when adjacent transcript fragments are grouped', () => {
     const note = buildCourseNote(lesson, [segment('On pose $x=1$.'), { ...segment('Puis $y=2$.'), id: 'segment-2' }]);
     const exported = courseNoteMarkdown(note);
