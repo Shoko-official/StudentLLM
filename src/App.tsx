@@ -1765,7 +1765,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       const extractableResource = isExtractableDocument(resource);
       if (!localDocumentEngine && extractableResource) {
         setActionError(`${resource.name} is saved. Connect the document service in Settings to extract its text.`);
-        setShowSettingsPanel(true);
       }
       if (localDocumentEngine && extractableResource) {
         try {
@@ -1800,7 +1799,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             ? 'The document service is offline.'
             : 'The document service could not extract this file.';
           setActionError(`${resource.name} is saved. ${detail} Open Settings and refresh the local services.`);
-          setShowSettingsPanel(true);
         }
       }
     } catch (error) {
