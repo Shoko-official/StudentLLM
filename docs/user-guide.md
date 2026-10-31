@@ -141,7 +141,7 @@ Your data is stored **on this computer only**:
 
 **Uninstall and wipe.** Deleting a course (**More → Delete course**) erases it and its files. Uninstalling the desktop app removes the program but may leave the data folders above on disk; delete them yourself if you want everything gone. Export first if you want a copy.
 
-**Do not open StudentLLM in two tabs or windows at once.** If another tab changes your workspace, the first tab stops saving and shows a message asking you to reload, so it cannot overwrite the newer work. The desktop app does not yet prevent a second window from being started.
+**Do not open StudentLLM in two tabs or windows at once.** If another tab changes your workspace, the first tab stops saving and shows a message asking you to reload, so it cannot overwrite the newer work. The desktop app runs only one window per user: starting StudentLLM again (from the shortcut, for example) brings the existing window to the front instead of opening a second one, so two copies cannot overwrite each other's work. If you start it again and nothing seems to happen, look for the existing window in the taskbar or dock.
 
 ## 9. Troubleshooting
 

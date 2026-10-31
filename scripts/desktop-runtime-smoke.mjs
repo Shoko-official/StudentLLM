@@ -8,13 +8,14 @@ const requestedBinaryPath = process.argv[2];
 const recoveryRequested = process.argv[3] === '--crash-recovery';
 const sidecarSupervisionRequested = process.argv.includes('--sidecar-supervision');
 const frontendIpcRequested = process.argv.includes('--frontend-ipc');
+const singleInstanceRequested = process.argv.includes('--single-instance');
 const recoveryCyclesArgument = process.argv.find((argument) => argument.startsWith('--recovery-cycles='));
 const recoveryCycles = recoveryCyclesArgument ? Number(recoveryCyclesArgument.slice('--recovery-cycles='.length)) : 1;
 const smokeDurationMs = 15_000;
 const shutdownGraceMs = 5_000;
 
 if (!requestedBinaryPath) {
-  console.error('Usage: node scripts/desktop-runtime-smoke.mjs <binary-path> [--crash-recovery] [--recovery-cycles=N] [--sidecar-supervision] [--frontend-ipc]');
+  console.error('Usage: node scripts/desktop-runtime-smoke.mjs <binary-path> [--crash-recovery] [--recovery-cycles=N] [--sidecar-supervision] [--frontend-ipc] [--single-instance]');
   process.exit(2);
 }
 
@@ -356,6 +357,124 @@ async function runFrontendIpcSmoke() {
   }
 }
 
+function waitForChildExit(child, timeoutMs) {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve({ code: child.exitCode, signal: child.signalCode, timedOut: false });
+      return;
+    }
+    const timer = setTimeout(() => resolve({ code: null, signal: null, timedOut: true }), timeoutMs);
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal, timedOut: false });
+    });
+  });
+}
+
+function isRunning(child) {
+  return child.exitCode === null && child.signalCode === null;
+}
+
+const secondLaunchNotice = 'A second launch was redirected to the running StudentLLM window.';
+
+// The single-instance lock is held by the operating system (a named mutex on Windows, a D-Bus name on Linux, a Unix socket on macOS),
+// so a force-stopped process releases it, and a second launch of the app is handed over to the first instance.
+async function runSingleInstance() {
+  const dataRoot = await mkdtemp(join(tmpdir(), 'studentllm-desktop-single-'));
+  const otherDataRoot = await mkdtemp(join(tmpdir(), 'studentllm-desktop-single-other-'));
+  const markerFile = join(dataRoot, 'frontend-ipc-smoke.ok');
+  const environment = {
+    ...createRuntimeEnvironment(dataRoot),
+    STUDENTLLM_FRONTEND_IPC_SMOKE_MARKER: markerFile,
+    // A safety net: the instances below are stopped explicitly, this only bounds an orphan if this script is interrupted.
+    STUDENTLLM_SMOKE_EXIT_AFTER_MS: '120000',
+  };
+  const otherEnvironment = { ...createRuntimeEnvironment(otherDataRoot), STUDENTLLM_SMOKE_EXIT_AFTER_MS: '120000' };
+  const redirectTimeoutMs = 15_000;
+  const children = [];
+
+  const start = (runtimeEnvironment) => {
+    const runtime = spawnRuntime(runtimeEnvironment);
+    children.push(runtime.child);
+    return runtime;
+  };
+
+  const waitUntilFrontendIsUp = async (runtime, description) => {
+    const exitedEarly = new Promise((_, reject) => {
+      runtime.child.once('exit', (code, signal) => {
+        const { stdout, stderr } = runtime.getOutput();
+        reject(new Error([
+          `${description} exited before its window loaded (code=${code}, signal=${signal}).`,
+          stdout.trim(),
+          stderr.trim(),
+        ].filter(Boolean).join('\n')));
+      });
+    });
+    exitedEarly.catch(() => undefined);
+    await Promise.race([waitForSmokeMarker(markerFile), exitedEarly]);
+  };
+
+  const expectHandedOver = async (description, runtimeEnvironment) => {
+    const startedAt = Date.now();
+    const second = start(runtimeEnvironment);
+    const result = await waitForChildExit(second.child, redirectTimeoutMs);
+    const elapsedMs = Date.now() - startedAt;
+    const { stdout, stderr } = second.getOutput();
+    if (result.timedOut) {
+      second.child.kill('SIGKILL');
+      throw new Error(`${description} was still running after ${redirectTimeoutMs / 1000}s instead of handing over to the running instance.\n${stdout.trim()}\n${stderr.trim()}`);
+    }
+    if (result.code !== 0 || result.signal) {
+      throw new Error(`${description} did not exit cleanly (code=${result.code}, signal=${result.signal}).\n${stdout.trim()}\n${stderr.trim()}`);
+    }
+    console.log(`${description} handed over to the running instance and exited with code 0 after ${elapsedMs} ms.`);
+  };
+
+  try {
+    const primary = start(environment);
+    await waitUntilFrontendIsUp(primary, 'The first instance');
+
+    await expectHandedOver('A second launch with the same data directory', environment);
+    await expectHandedOver('A second launch with another data directory', otherEnvironment);
+    if (!isRunning(primary.child)) {
+      throw new Error(`The first instance stopped after the second launches.\n${primary.getOutput().stderr.trim()}`);
+    }
+    const noticeDeadline = Date.now() + 10_000;
+    while (!primary.getOutput().stderr.includes(secondLaunchNotice)) {
+      if (Date.now() > noticeDeadline) {
+        throw new Error(`The first instance did not report the second launch (expected "${secondLaunchNotice}" on stderr).\n${primary.getOutput().stderr.trim()}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    // The redirected launch never reaches the workspace: it must not have created a database in its own data directory.
+    const strayDatabases = await findFiles(otherDataRoot, 'studentllm.sqlite3');
+    if (strayDatabases.length > 0) {
+      throw new Error(`The redirected launch created a workspace database: ${strayDatabases.join(', ')}.`);
+    }
+    console.log('The first instance kept running and reported the second launch, and the redirected launches created no workspace database.');
+
+    // A force-stopped instance must not leave a lock behind.
+    primary.child.kill('SIGKILL');
+    await waitForChildExit(primary.child, 10_000);
+    // The operating system releases the lock when the process dies; the session bus may need a moment to notice on Linux.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await rm(markerFile, { force: true });
+    const relaunched = start(environment);
+    await waitUntilFrontendIsUp(relaunched, 'The instance started after a forced stop');
+    relaunched.child.kill('SIGTERM');
+    const stopped = await waitForChildExit(relaunched.child, shutdownGraceMs);
+    if (stopped.timedOut) relaunched.child.kill('SIGKILL');
+    console.log('An instance started normally after the previous one was force-stopped (no lingering lock).');
+  } finally {
+    for (const child of children) {
+      if (isRunning(child)) child.kill('SIGKILL');
+    }
+    await Promise.all(children.map((child) => waitForChildExit(child, 5_000)));
+    await rm(dataRoot, { recursive: true, force: true });
+    await rm(otherDataRoot, { recursive: true, force: true });
+  }
+}
+
 async function runCrashRecovery() {
   const dataRoot = await mkdtemp(join(tmpdir(), 'studentllm-desktop-recovery-'));
   const environment = createRuntimeEnvironment(dataRoot);
@@ -404,7 +523,8 @@ try {
   if (recoveryRequested) await runCrashRecovery();
   if (sidecarSupervisionRequested) await runSidecarSupervision();
   if (frontendIpcRequested) await runFrontendIpcSmoke();
-  if (!recoveryRequested && !sidecarSupervisionRequested && !frontendIpcRequested) {
+  if (singleInstanceRequested) await runSingleInstance();
+  if (!recoveryRequested && !sidecarSupervisionRequested && !frontendIpcRequested && !singleInstanceRequested) {
     await runSmoke(environment);
     console.log(`Desktop runtime stayed alive for ${smokeDurationMs / 1000}s and was stopped.`);
   }
