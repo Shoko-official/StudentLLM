@@ -91,6 +91,17 @@ describe('robustness', () => {
     expect(performance.now() - started).toBeLessThan(5000);
   });
 
+  it('strips a 20,000-space line quickly and keeps table separators working', () => {
+    const started = performance.now();
+    toPlainText(' '.repeat(20_000));
+    toPlainText(`${' '.repeat(20_000)}x`);
+    toPlainText(`${'\t '.repeat(10_000)}|`);
+    // Generous on purpose: this guards against quadratic backtracking (~200 ms before the fix), not CI speed.
+    expect(performance.now() - started).toBeLessThan(5000);
+    expect(toPlainText('a | b\n  | --- | :---: |  \nc | d')).toBe('a b c d');
+    expect(toPlainText('x\n \t---\t|\t---\ny')).toBe('x y');
+  });
+
   it('bounds very long text but still finds a late match', () => {
     const long = `${'word '.repeat(10_000)}needle ${'tail '.repeat(10_000)}`;
     expect(buildSnippet(long, 'needle').some((part) => part.match)).toBe(true);

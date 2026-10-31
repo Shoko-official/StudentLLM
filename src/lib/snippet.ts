@@ -64,7 +64,7 @@ export function toPlainText(source: string): string {
   // Protect backslash-escaped literals (\*, \#, \_, \$5, ...) from the Markdown rules below.
   text = text.replace(/\\([\\`*_{}[\]()#+\-.!$|~>])/g, (_match, character: string) => encodeEscape(character));
   text = text
-    .replace(/^[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*(\|[ \t]*:?-{2,}:?[ \t]*)*\|?[ \t]*$/gm, ' ')
+    .replace(/^[ \t]*(?:\|[ \t]*)?:?-{2,}:?[ \t]*(\|[ \t]*:?-{2,}:?[ \t]*)*\|?[ \t]*$/gm, ' ')
     .replace(/^[ \t]*([-*_])([ \t]*\1){2,}[ \t]*$/gm, ' ')
     .replace(/^[ \t]*(?:=+|-{2,})[ \t]*$/gm, ' ')
     .replace(/\|/g, ' ')
