@@ -46,6 +46,36 @@ export function loadContract(): Contract {
 const DATE_TIME = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
 const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
+// Keywords the validator implements, and annotations it may ignore. Anything else in a schema is refused, so a
+// contract change that uses a keyword the validator cannot check (allOf, patternProperties, ...) fails loudly
+// instead of silently validating nothing.
+const IMPLEMENTED = new Set([
+  "$ref", "oneOf", "const", "enum", "type", "properties", "required", "additionalProperties", "items",
+  "minItems", "maxItems", "uniqueItems", "minLength", "maxLength", "pattern", "minimum", "maximum", "format",
+]);
+const ANNOTATIONS = new Set(["description", "title", "default", "examples", "example", "readOnly", "writeOnly", "deprecated", "contentMediaType", "contentEncoding", "$comment"]);
+const KNOWN_FORMATS = new Set(["date-time", "uuid"]);
+
+function assertSupported(schema: Json): void {
+  for (const key of Object.keys(schema)) {
+    if (!IMPLEMENTED.has(key) && !ANNOTATIONS.has(key)) throw new Error(`contract validator: unsupported JSON Schema keyword "${key}"`);
+  }
+  if (schema.format !== undefined && !KNOWN_FORMATS.has(schema.format)) {
+    throw new Error(`contract validator: unsupported format "${schema.format}"`);
+  }
+}
+
+/** Walks a schema and every sub-schema and throws on anything the validator cannot check. */
+export function assertSchemaTreeSupported(schema: unknown): void {
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return;
+  const s = schema as Json;
+  assertSupported(s);
+  for (const sub of Object.values<unknown>(s.properties ?? {})) assertSchemaTreeSupported(sub);
+  for (const sub of (s.oneOf ?? []) as unknown[]) assertSchemaTreeSupported(sub);
+  assertSchemaTreeSupported(s.items);
+  if (typeof s.additionalProperties === "object") assertSchemaTreeSupported(s.additionalProperties);
+}
+
 function typeOf(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
@@ -68,6 +98,7 @@ function matchesType(type: string, value: unknown): boolean {
 export function validateSchema(schema: unknown, value: unknown, contract: Contract = loadContract(), path = "$"): string[] {
   if (schema === true || schema === undefined) return [];
   const s = schema as Json;
+  assertSupported(s);
   if (s.$ref) {
     const target = (s.$ref as string).split("/").reduce<any>((node, key) => (key === "#" ? contract.spec : node?.[key]), undefined);
     if (!target) return [`${path}: unresolved ${s.$ref}`];

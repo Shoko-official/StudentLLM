@@ -65,6 +65,31 @@ describe("errorResponse", () => {
     }
   });
 
+  it("checks details recursively and by secret-like name, in any case", () => {
+    const bad: Array<Record<string, unknown>> = [
+      { nested: { manage_token: "x" } },
+      { list: [{ deep: { Refresh_Token: "x" } }] },
+      { apiKey: "x" },
+      { client_secret: "x" },
+      { Authorization: "Bearer x" },
+      { code_verifier: "x" },
+      { webhook_signature: "x" },
+    ];
+    for (const details of bad) {
+      expect(() => buildEnvelope("invalid_request", "req_1", { details }), JSON.stringify(details)).toThrow(TypeError);
+    }
+    const fine = {
+      resets_at: "2026-12-01T00:00:00Z",
+      state: "in_progress",
+      request_id: "req_0",
+      credits_charged: 4,
+      terms_version: "v1",
+      consent_text_version: "t",
+      min_client_version: "0.2.0",
+    };
+    expect(() => buildEnvelope("invalid_request", "req_1", { details: fine })).not.toThrow();
+  });
+
   it("allows extra headers such as X-StudentLLM-Min-Client", () => {
     const res = errorResponse("client_outdated", "req_1", { headers: { "X-StudentLLM-Min-Client": "0.2.0" } });
     expect(res.status).toBe(426);

@@ -2,7 +2,11 @@ import type { ClientInfo, Step } from "./context";
 import { ApiError } from "./envelope";
 
 export const CLIENT_NAME = "studentllm-desktop";
-const CLIENT_HEADER = /^studentllm-desktop\/(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+// Strict semantic version (no leading zeros): the same pattern as the ClientHeader parameter in the OpenAPI file.
+const SEMVER =
+  "(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
+const CLIENT_HEADER = new RegExp("^" + CLIENT_NAME + "/" + SEMVER + "$");
+const VERSION = new RegExp("^" + SEMVER + "$");
 
 export interface ParsedVersion {
   major: number;
@@ -20,7 +24,7 @@ export function parseClientHeader(value: string | null): (ClientInfo & { parsed:
 }
 
 export function parseVersion(version: string): ParsedVersion | null {
-  const m = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(version);
+  const m = VERSION.exec(version);
   return m ? { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]), prerelease: m[4] ?? null } : null;
 }
 

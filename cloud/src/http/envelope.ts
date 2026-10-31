@@ -95,12 +95,21 @@ export function statusForCode(errorCode: ErrorCode): number {
   return ERROR_STATUS[errorCode];
 }
 
-function assertSafeDetails(details: ErrorDetails | undefined): void {
-  if (!details) return;
-  for (const key of Object.keys(details)) {
-    if ((FORBIDDEN_DETAIL_KEYS as readonly string[]).includes(key)) {
-      throw new TypeError(`error.details must not carry "${key}"`);
+// Names that suggest a secret. Matched case-insensitively against every key at any depth of `details`.
+const SECRET_LIKE_KEY = /(token|secret|password|passwd|credential|authorization|verifier|api[_-]?key|signature)/i;
+
+function assertSafeDetails(details: unknown, path = "details", depth = 0): void {
+  if (details === null || typeof details !== "object") return;
+  if (depth > 6) throw new TypeError("error.details is nested too deeply");
+  if (Array.isArray(details)) {
+    details.forEach((item, i) => assertSafeDetails(item, `${path}[${i}]`, depth + 1));
+    return;
+  }
+  for (const [key, value] of Object.entries(details)) {
+    if ((FORBIDDEN_DETAIL_KEYS as readonly string[]).includes(key.toLowerCase()) || SECRET_LIKE_KEY.test(key)) {
+      throw new TypeError(`error.${path} must not carry "${key}"`);
     }
+    assertSafeDetails(value, `${path}.${key}`, depth + 1);
   }
 }
 

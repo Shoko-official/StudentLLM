@@ -42,14 +42,20 @@ export interface CoreDeps {
   log: Logger;
 }
 
-/** Core services plus one deps object per module; each module owns the type in its own `index.ts`. */
-export interface Deps extends CoreDeps {
+/** One deps object per module; each module owns its type in its own `index.ts`. */
+export interface ModuleDeps {
   auth: AuthDeps;
   account: AccountDeps;
   inference: InferenceDeps;
   billing: BillingDeps;
   ops: OpsDeps;
 }
+
+/**
+ * Core services plus the module deps. `createDeps` is synchronous: a dep that needs `await` to build (an imported
+ * key, a fetched JWKS) is stored as a memoized getter, see `lazy()` in src/lazy.ts.
+ */
+export interface Deps extends CoreDeps, ModuleDeps {}
 
 export const systemClock: Clock = { now: () => Date.now() };
 
@@ -66,7 +72,7 @@ export const consoleLogger: Logger = {
   },
 };
 
-export function createDeps(core: CoreDeps, overrides: Partial<Pick<Deps, "auth" | "account" | "inference" | "billing" | "ops">> = {}): Deps {
+export function createDeps(core: CoreDeps, overrides: Partial<ModuleDeps> = {}): Deps {
   return {
     ...core,
     auth: overrides.auth ?? createAuthDeps(core),

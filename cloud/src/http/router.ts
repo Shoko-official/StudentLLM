@@ -1,10 +1,13 @@
 import type { Handler, HttpMethod, RouteMeta } from "./context";
+import { isStubHandler } from "./stub";
 
 export interface RouteInfo {
   readonly method: HttpMethod;
   /** OpenAPI-style pattern, for example `/v1/devices/{device_id}`. */
   readonly pattern: string;
   readonly meta: RouteMeta;
+  /** True while the handler is the `notImplemented` placeholder. */
+  readonly isStub: boolean;
 }
 
 interface Registered extends RouteInfo {
@@ -40,11 +43,11 @@ export class Router {
     if (this.table.some((r) => r.method === method && r.pattern === pattern)) {
       throw new Error(`route registered twice: ${method} ${pattern}`);
     }
-    this.table.push({ method, pattern, meta, handler, segments, paramCount: segments.filter((s) => PARAM.test(s)).length });
+    this.table.push({ method, pattern, meta, isStub: isStubHandler(handler), handler, segments, paramCount: segments.filter((s) => PARAM.test(s)).length });
   }
 
   routes(): readonly RouteInfo[] {
-    return this.table.map(({ method, pattern, meta }) => ({ method, pattern, meta }));
+    return this.table.map(({ method, pattern, meta, isStub }) => ({ method, pattern, meta, isStub }));
   }
 
   /** Static segments win over parameters. Returns undefined when nothing matches. */
@@ -76,7 +79,7 @@ export class Router {
       if (ok && (!best || route.paramCount < best.route.paramCount)) best = { route, params };
     }
     if (!best) return undefined;
-    const { method: m, pattern, meta, handler } = best.route;
-    return { route: { method: m, pattern, meta }, handler, params: best.params };
+    const { method: m, pattern, meta, handler, isStub } = best.route;
+    return { route: { method: m, pattern, meta, isStub }, handler, params: best.params };
   }
 }

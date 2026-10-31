@@ -3,10 +3,15 @@ import { routeMeta } from "./http/context";
 import { loadContract, makeTestApp, validateAgainst } from "./testing";
 
 const contract = loadContract();
+const CONTENT_HEADERS = {
+  "X-StudentLLM-Client": "studentllm-desktop/0.2.0",
+  "X-StudentLLM-Consent": "cns_01EXAMPLE",
+  "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a11",
+};
 const key = (method: string, path: string) => `${method} ${path}`;
 
 describe("route table", () => {
-  const { app } = makeTestApp();
+  const { app } = makeTestApp({ allowMissingHooks: true });
   const routes = app.router.routes();
 
   it("registers every OpenAPI path and method, and nothing else", () => {
@@ -21,6 +26,10 @@ describe("route table", () => {
       const route = routes.find((r) => r.method === op.method && r.pattern === op.path);
       expect(route?.meta.operationId, key(op.method, op.path)).toBe(op.operationId);
     }
+  });
+
+  it("flags exactly the stubs as stubs until a module replaces them", () => {
+    expect(routes.every((r) => r.isStub)).toBe(true);
   });
 
   it("mirrors the security scheme of each operation", () => {
@@ -84,7 +93,7 @@ describe("route table", () => {
 
 describe("stubs and routing", () => {
   it("answers a registered route with the 501 error envelope and X-Request-Id", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     const res = await t.request("/v1/status", { headers: { "X-StudentLLM-Client": "studentllm-desktop/0.2.0" } });
     expect(res.status).toBe(501);
     expect(res.headers.get("X-Request-Id")).toBe("req_test_000001");
@@ -94,12 +103,12 @@ describe("stubs and routing", () => {
   });
 
   it("serves every stub with a valid envelope", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     for (const route of t.app.router.routes()) {
       const path = route.pattern.replace("{device_id}", "dev_1").replace("{method}", "google");
       const res = await t.request(path, {
         method: route.method,
-        headers: { "X-StudentLLM-Client": "studentllm-desktop/0.2.0" },
+        headers: CONTENT_HEADERS,
       });
       expect(res.status, `${route.method} ${route.pattern}`).toBe(501);
       expect(validateAgainst("Error", await res.json())).toEqual([]);
@@ -107,7 +116,7 @@ describe("stubs and routing", () => {
   });
 
   it("answers unknown paths and wrong methods with not_found", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     const unknown = await t.request("/nope");
     expect(unknown.status).toBe(404);
     expect((await unknown.json()).error.code).toBe("not_found");
@@ -115,13 +124,13 @@ describe("stubs and routing", () => {
   });
 
   it("ignores a client-supplied X-Request-Id", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     const res = await t.request("/nope", { headers: { "X-Request-Id": "attacker-chosen" } });
     expect(res.headers.get("X-Request-Id")).toBe("req_test_000001");
   });
 
   it("logs only request id, account, route, status, credits and latency", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     await t.request("/v1/devices/dev_9", { method: "DELETE" });
     expect(t.logs).toHaveLength(1);
     expect(Object.keys(t.logs[0]!).sort()).toEqual(["accountId", "creditsCharged", "latencyMs", "method", "requestId", "route", "status"]);
@@ -129,7 +138,7 @@ describe("stubs and routing", () => {
   });
 
   it("turns an unexpected exception into internal_error without leaking its message", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     t.app.router.add("GET", "/boom", () => {
       throw new Error("secret detail");
     }, routeMeta({ operationId: "boom", auth: "none" }));

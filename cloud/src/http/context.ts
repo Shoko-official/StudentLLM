@@ -1,5 +1,6 @@
 import type { BodyLimitKey } from "../config";
 import type { Deps } from "../deps";
+import type { AccountRecord, PlanRecord } from "../storage";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -31,10 +32,16 @@ export interface RouteMeta {
   readonly content: boolean;
   /** `plan_required` applies (content routes need Plus). */
   readonly requiresPlus: boolean;
-  /** Requires `auth_time` within 5 minutes, otherwise `reauth_required`. */
+  /**
+   * Requires `auth_time` within 5 minutes, otherwise `reauth_required`. Enforced by the built-in
+   * `freshAuthStep` right after authentication, whatever the gating says.
+   */
   readonly freshAuth: boolean;
   readonly body: BodySpec;
-  /** Which rate limit applies: per account, per hashed connection identifier, or none. */
+  /**
+   * Which rate limit applies: per account (the inference module's `checkRateLimit`), per hashed connection
+   * identifier (the auth module's `checkAuthRateLimit`), or none.
+   */
   readonly rateLimit: "account" | "connection" | "none";
 }
 
@@ -74,17 +81,31 @@ export interface ClientInfo {
   version: string;
 }
 
+/**
+ * Per-request scratch space that modules extend by declaration merging, so a module shares typed values
+ * between its own hooks and handlers without editing a shared file:
+ *
+ *   declare module "../../http/context" {
+ *     interface RequestLocals { reservationId?: string }
+ *   }
+ */
+export interface RequestLocals {}
+
 export interface BodyReader {
   /** Raw bytes, read once with the size limit enforced while the body streams in. */
   bytes(): Promise<Uint8Array>;
   text(): Promise<string>;
-  /** Requires `application/json`; invalid UTF-8 or JSON is `invalid_request`. */
+  /** Requires `application/json` (UTF-8); invalid UTF-8 or JSON is `invalid_request`. */
   json(): Promise<unknown>;
   /** Requires `multipart/form-data`; the size limit applies to the whole body while it streams. */
   formData(): Promise<FormData>;
 }
 
 export interface RequestContext {
+  /**
+   * The request WITHOUT its body: method, URL and headers only. Read the body through `ctx.body`, which
+   * enforces the size limit and the Content-Type check while it streams in.
+   */
   readonly request: Request;
   readonly url: URL;
   /** Server-generated; the client's own X-Request-Id is ignored. */
@@ -94,12 +115,35 @@ export interface RequestContext {
   readonly params: Readonly<Record<string, string>>;
   readonly deps: Deps;
   readonly body: BodyReader;
+  /** True when the route's handler is the `notImplemented` placeholder. */
+  readonly isStub: boolean;
+  /** Typed scratch space; see `RequestLocals`. */
+  readonly locals: RequestLocals;
   client?: ClientInfo;
   principal?: Principal;
+  /** Loaded once after authentication (built-in step); do not reload them in handlers or hooks. */
+  account?: AccountRecord;
+  plan?: PlanRecord | null;
+  /** `X-StudentLLM-Consent` and `Idempotency-Key`, validated by the built-in content-header steps. */
+  consentId?: string;
+  idempotencyKey?: string;
+  /**
+   * Headers added to the final response unless the handler already set them: Plan-Version (set by the
+   * built-in step), credit headers, RateLimit-*. Hooks and handlers call `.set()`.
+   */
+  readonly responseHeaders: Headers;
   /** Set by inference handlers for the request log (credits charged). */
   creditsCharged?: number;
-  /** Registers cleanup (for example releasing a concurrency slot) that runs when the handler has returned. */
+  /** Registers cleanup that runs when the handler has returned (before a streamed body is read). */
   defer(fn: () => void | Promise<void>): void;
+  /**
+   * Registers cleanup that runs after the response body has been fully sent OR cancelled by the client
+   * (for example releasing a concurrency slot of a streamed completion). Without a body it runs at once.
+   * Runs at most once, and a failure in it is logged by name only.
+   */
+  deferUntilBodyDone(fn: () => void | Promise<void>): void;
+  /** Keeps the Worker alive for background work after the response (`ExecutionContext.waitUntil`). */
+  waitUntil(promise: Promise<unknown>): void;
 }
 
 export type Handler = (ctx: RequestContext) => Response | Promise<Response>;

@@ -1,11 +1,15 @@
 // Auth module: Google and email sign-in, tokens, refresh, logout, JWKS.
 // OWNER: auth. Replace the stubs below with real handlers; keep the route meta aligned with the OpenAPI file.
-// Also provide the `authenticate` pipeline hook (see ../../http/pipeline.ts) from `createAuthHooks`.
+// Also provide the `authenticate` and `checkAuthRateLimit` pipeline hooks (see ../../http/pipeline.ts) from
+// `createAuthHooks`. `authenticate` sets `ctx.principal` only; the account and plan are loaded afterwards by the
+// built-in `accountContextStep` (once per request), and the fresh sign-in check by the built-in `freshAuthStep`.
+// What this module needs from the environment is declared in ./config.ts.
 
 import type { CoreDeps, Deps } from "../../deps";
 import { routeMeta } from "../../http/context";
 import type { PipelineHooks } from "../../http/pipeline";
 import type { Router } from "../../http/router";
+import type { ScheduledTask } from "../../scheduled";
 import { notImplemented } from "../../http/stub";
 
 /** Services the auth module needs beyond the core deps (JWT signer, email sender, Google client...). */
@@ -17,6 +21,11 @@ export function createAuthDeps(_core: CoreDeps): AuthDeps {
 
 export function createAuthHooks(_deps: Deps): Partial<PipelineHooks> {
   return {};
+}
+
+/** Cron work of this module (see src/scheduled.ts). */
+export function createAuthScheduledTasks(_deps: Deps): ScheduledTask[] {
+  return [];
 }
 
 export function registerAuthRoutes(router: Router, _deps: Deps): void {

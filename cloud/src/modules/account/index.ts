@@ -5,6 +5,7 @@ import type { CoreDeps, Deps } from "../../deps";
 import { routeMeta } from "../../http/context";
 import type { PipelineHooks } from "../../http/pipeline";
 import type { Router } from "../../http/router";
+import type { ScheduledTask } from "../../scheduled";
 import { notImplemented } from "../../http/stub";
 
 export interface AccountDeps {}
@@ -15,6 +16,11 @@ export function createAccountDeps(_core: CoreDeps): AccountDeps {
 
 export function createAccountHooks(_deps: Deps): Partial<PipelineHooks> {
   return {};
+}
+
+/** Cron work of this module (see src/scheduled.ts). */
+export function createAccountScheduledTasks(_deps: Deps): ScheduledTask[] {
+  return [];
 }
 
 export function registerAccountRoutes(router: Router, _deps: Deps): void {

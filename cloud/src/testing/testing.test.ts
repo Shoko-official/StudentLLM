@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  assertSchemaTreeSupported,
   checkFixtureConformance,
   expectFixtureConformance,
   fixtureNames,
@@ -43,6 +44,21 @@ describe("contract validator", () => {
     expect(validateSchema(schema, { ...ok, extra: 1 })).toHaveLength(1);
     expect(validateSchema(schema, { ...ok, e: ["z1", "z1"] })).toHaveLength(1);
     expect(validateSchema(schema, { ...ok, e: ["a"] })).toHaveLength(1);
+  });
+
+  it("refuses schema keywords and formats it cannot check instead of silently passing", () => {
+    expect(() => validateSchema({ allOf: [{ type: "string" }] }, "x")).toThrow(/unsupported JSON Schema keyword "allOf"/);
+    expect(() => validateSchema({ type: "object", patternProperties: {} }, {})).toThrow(/patternProperties/);
+    expect(() => validateSchema({ type: "string", format: "email" }, "x")).toThrow(/unsupported format "email"/);
+    expect(() => validateSchema({ type: "integer", exclusiveMinimum: 0 }, 1)).toThrow(/exclusiveMinimum/);
+    expect(() => validateSchema({ type: "string", description: "fine", readOnly: true }, "x")).not.toThrow();
+  });
+
+  it("supports every keyword used anywhere in the contract", () => {
+    const contract = loadContract();
+    for (const schema of Object.values(contract.spec.components.schemas)) assertSchemaTreeSupported(schema);
+    for (const param of Object.values<{ schema?: unknown }>(contract.spec.components.parameters)) assertSchemaTreeSupported(param.schema);
+    for (const header of Object.values<{ schema?: unknown }>(contract.spec.components.headers)) assertSchemaTreeSupported(header.schema);
   });
 
   it("resolves $ref and oneOf against the real contract", () => {
@@ -146,7 +162,7 @@ describe("conformance helper", () => {
   });
 
   it("lets the app be checked against a fixture end to end", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     const fx = loadFixture("status.client_outdated");
     const res = await t.app.handle(fixtureRequest(fx));
     await expectFixtureConformance(res, fx, { strictHeaders: ["X-StudentLLM-Min-Client"] });

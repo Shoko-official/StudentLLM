@@ -2,12 +2,10 @@ import { describe, expect, it } from "vitest";
 import { makeTestApp, type TestApp } from "../testing";
 import { assertTokenScope, classifyBearer, parseBearer } from "./bearer";
 import { compareVersions, parseClientHeader, parseVersion } from "./client-version";
-import { routeMeta, type RouteMeta, type Step } from "./context";
+import { routeMeta, type RouteMeta } from "./context";
 import { ApiError } from "./envelope";
-import { buildPipeline, defaultHooks, mergeHooks, type PipelineHooks } from "./pipeline";
 import { Router } from "./router";
 
-const CLIENT = { "X-StudentLLM-Client": "studentllm-desktop/0.2.0" };
 
 /** Registers a route that reads the body the way a real handler will. */
 function addEcho(t: TestApp, kind: "json" | "multipart", limit: "small" | "chat" | "audio" = "small") {
@@ -45,7 +43,7 @@ async function code(res: Response): Promise<string> {
 
 describe("client version handshake", () => {
   it("returns 426 client_outdated with the minimum version in the header and details", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     const res = await t.request("/v1/status", { headers: { "X-StudentLLM-Client": "studentllm-desktop/0.1.0" } });
     expect(res.status).toBe(426);
     expect(res.headers.get("X-StudentLLM-Min-Client")).toBe("0.2.0");
@@ -55,7 +53,7 @@ describe("client version handshake", () => {
   });
 
   it("lets the minimum version and newer builds through, prereleases of the minimum excepted", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     for (const v of ["0.2.0", "0.2.1", "0.10.0", "1.0.0", "0.2.0+build5"]) {
       const res = await t.request("/v1/status", { headers: { "X-StudentLLM-Client": `studentllm-desktop/${v}` } });
       expect(res.status, v).toBe(501); // past the handshake, into the stub
@@ -65,7 +63,7 @@ describe("client version handshake", () => {
   });
 
   it("rejects a missing or malformed header with invalid_request", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     const cases: Array<Record<string, string>> = [{}, { "X-StudentLLM-Client": "curl/8" }, { "X-StudentLLM-Client": "studentllm-desktop/latest" }];
     for (const headers of cases) {
       const res = await t.request("/v1/status", { headers });
@@ -75,7 +73,7 @@ describe("client version handshake", () => {
   });
 
   it("applies to the content routes before anything else and only to the routes that need it", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     const outdated = await t.request("/v1/chat/completions", {
       method: "POST",
       headers: { "X-StudentLLM-Client": "studentllm-desktop/0.0.1", "Content-Type": "application/json" },
@@ -93,13 +91,16 @@ describe("client version handshake", () => {
     expect(compareVersions(v("1.2.3"), v("1.2.3"))).toBe(0);
     expect(parseClientHeader("studentllm-desktop/1.2.3")?.version).toBe("1.2.3");
     expect(parseClientHeader("other/1.2.3")).toBeNull();
+    const bad = ["01.2.3", "1.02.3", "1.2", "1.2.3.4", "1.2.3-", "1.2.3 x", "v1.2.3", "1.2.3+"];
+    for (const v of bad) expect(parseClientHeader(`studentllm-desktop/${v}`), v).toBeNull();
+    expect(parseClientHeader("studentllm-desktop/1.2.3-rc.1+build.5")?.parsed.prerelease).toBe("rc.1");
     expect(parseVersion("1.2")).toBeNull();
   });
 });
 
 describe("Content-Type checks", () => {
   it("accepts application/json with parameters and any case", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     const path = addEcho(t, "json");
     for (const ct of ["application/json", "application/json; charset=utf-8", "Application/JSON"]) {
       const res = await t.request(path, { method: "POST", headers: { "Content-Type": ct }, body: '{"a":1}' });
@@ -107,8 +108,21 @@ describe("Content-Type checks", () => {
     }
   });
 
+  it("accepts a UTF-8 charset in any spelling and rejects every other charset", async () => {
+    const t = makeTestApp({ allowMissingHooks: true });
+    const path = addEcho(t, "json");
+    for (const ct of ["application/json; charset=UTF-8", "application/json;charset=utf8", 'application/json; charset="utf-8"']) {
+      expect((await t.request(path, { method: "POST", headers: { "Content-Type": ct }, body: "{}" })).status, ct).toBe(200);
+    }
+    for (const ct of ["application/json; charset=iso-8859-1", "application/json; charset=utf-16", "application/json; charset=", "application/json; boundary=x; charset=latin1"]) {
+      const res = await t.request(path, { method: "POST", headers: { "Content-Type": ct }, body: "{}" });
+      expect(res.status, ct).toBe(415);
+      expect(await code(res)).toBe("unsupported_media_type");
+    }
+  });
+
   it("rejects other media types with 415 unsupported_media_type", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     const path = addEcho(t, "json");
     const cases: Array<Record<string, string>> = [{ "Content-Type": "text/plain" }, { "Content-Type": "application/x-www-form-urlencoded" }, {}];
     for (const headers of cases) {
@@ -119,7 +133,7 @@ describe("Content-Type checks", () => {
   });
 
   it("rejects invalid JSON and invalid UTF-8 with invalid_request", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     const path = addEcho(t, "json");
     const bad = await t.request(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{nope" });
     expect(bad.status).toBe(400);
@@ -134,7 +148,7 @@ describe("Content-Type checks", () => {
   });
 
   it("requires multipart/form-data with a boundary on multipart routes", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ allowMissingHooks: true });
     const path = addEcho(t, "multipart");
     const json = await t.request(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     expect(json.status).toBe(415);
@@ -154,7 +168,7 @@ describe("body size limits are enforced while streaming", () => {
 
   function app() {
     // A tiny limit makes the streaming behavior observable without allocating megabytes.
-    const t = makeTestApp({ env: {} });
+    const t = makeTestApp({ allowMissingHooks: true });
     (t.deps.config as { limits: typeof limits }).limits = limits;
     return t;
   }
@@ -220,125 +234,6 @@ describe("body size limits are enforced while streaming", () => {
       body: "{}",
     });
     expect([400, 413]).toContain(res.status);
-  });
-});
-
-describe("pipeline order and hooks", () => {
-  function recordingHooks(trace: string[], overrides: Partial<PipelineHooks> = {}): Partial<PipelineHooks> {
-    const make = (name: keyof PipelineHooks): Step => () => void trace.push(name);
-    return {
-      authenticate: make("authenticate"),
-      checkTermsAndStatus: make("checkTermsAndStatus"),
-      checkPlan: make("checkPlan"),
-      checkConsent: make("checkConsent"),
-      checkRateLimit: make("checkRateLimit"),
-      lookupIdempotency: make("lookupIdempotency"),
-      acquireConcurrencySlot: make("acquireConcurrencySlot"),
-      ...overrides,
-    };
-  }
-
-  it("runs the content-route checks in the contract's order", async () => {
-    const trace: string[] = [];
-    const t = makeTestApp({ hooks: recordingHooks(trace) });
-    await t.request("/v1/chat/completions", { method: "POST", headers: { ...CLIENT, "Content-Type": "application/json" }, body: "{}" });
-    expect(trace).toEqual([
-      "authenticate",
-      "checkTermsAndStatus",
-      "checkPlan",
-      "checkConsent",
-      "checkRateLimit",
-      "lookupIdempotency",
-      "acquireConcurrencySlot",
-    ]);
-  });
-
-  it("skips steps that do not apply to a route", async () => {
-    const trace: string[] = [];
-    const t = makeTestApp({ hooks: recordingHooks(trace) });
-    await t.request("/v1/account"); // exempt data-rights route: no terms/status gate, no plan, no consent
-    expect(trace).toEqual(["authenticate", "checkRateLimit"]);
-    trace.length = 0;
-    await t.request("/auth/start"); // unauthenticated
-    expect(trace).toEqual(["checkRateLimit"]);
-  });
-
-  it("stops at the first failing step and never reaches the handler or later steps", async () => {
-    const trace: string[] = [];
-    const t = makeTestApp({
-      hooks: recordingHooks(trace, {
-        checkPlan: () => {
-          throw new ApiError("plan_required");
-        },
-      }),
-    });
-    const res = await t.request("/v1/chat/completions", { method: "POST", headers: { ...CLIENT, "Content-Type": "application/json" }, body: "{}" });
-    expect(res.status).toBe(403);
-    expect(await code(res)).toBe("plan_required");
-    expect(trace).toEqual(["authenticate", "checkTermsAndStatus"]);
-  });
-
-  it("runs the client version check before authentication", async () => {
-    const trace: string[] = [];
-    const t = makeTestApp({ hooks: recordingHooks(trace) });
-    const res = await t.request("/v1/chat/completions", {
-      method: "POST",
-      headers: { "X-StudentLLM-Client": "studentllm-desktop/0.0.1", "Content-Type": "application/json" },
-      body: "{}",
-    });
-    expect(res.status).toBe(426);
-    expect(trace).toEqual([]);
-  });
-
-  it("does not read the body before the header-only checks pass", async () => {
-    const t = makeTestApp({
-      hooks: {
-        checkRateLimit: () => {
-          throw new ApiError("rate_limited", { retryAfterSeconds: 7 });
-        },
-      },
-    });
-    let pulls = 0;
-    const res = await t.request("/v1/chat/completions", {
-      method: "POST",
-      headers: { ...CLIENT, "Content-Type": "application/json" },
-      body: chunked([new Uint8Array(10)], () => pulls++),
-      duplex: "half",
-    } as RequestInit);
-    expect(res.status).toBe(429);
-    expect(res.headers.get("Retry-After")).toBe("7");
-    expect(pulls).toBeLessThanOrEqual(1); // only the stream's own prefetch, nothing from the pipeline
-  });
-
-  it("runs deferred cleanups (a concurrency slot) even when the handler fails", async () => {
-    let released = 0;
-    const t = makeTestApp({
-      hooks: {
-        acquireConcurrencySlot: (ctx) => ctx.defer(() => void released++),
-        lookupIdempotency: () => {
-          throw new ApiError("idempotency_conflict", { details: { state: "in_progress" } });
-        },
-      },
-    });
-    const res = await t.request("/v1/chat/completions", { method: "POST", headers: { ...CLIENT, "Content-Type": "application/json" }, body: "{}" });
-    expect(res.status).toBe(409);
-    expect(released).toBe(0); // the conflict happened before the slot was taken
-
-    const t2 = makeTestApp({ hooks: { acquireConcurrencySlot: (ctx) => ctx.defer(() => void released++) } });
-    await t2.request("/v1/chat/completions", { method: "POST", headers: { ...CLIENT, "Content-Type": "application/json" }, body: "{}" });
-    expect(released).toBe(1);
-  });
-
-  it("refuses two modules that claim the same hook", () => {
-    const step: Step = () => undefined;
-    expect(() => mergeHooks({ authenticate: step }, { authenticate: step })).toThrow(/two modules/);
-    expect(Object.keys(defaultHooks())).toHaveLength(7);
-  });
-
-  it("builds a pass-through pipeline by default", async () => {
-    const router = new Router();
-    expect(router.routes()).toHaveLength(0);
-    expect(typeof buildPipeline(defaultHooks())).toBe("function");
   });
 });
 

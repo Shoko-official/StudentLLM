@@ -64,9 +64,19 @@ export function mediaType(request: Request): string | null {
   return raw.split(";")[0]!.trim().toLowerCase();
 }
 
-/** `Content-Type` must be `application/json` (a charset parameter is fine). Otherwise `unsupported_media_type`. */
+/**
+ * `Content-Type` must be `application/json`. A `charset` parameter is accepted only when it is UTF-8
+ * (JSON on the wire is UTF-8); any other charset is `unsupported_media_type`.
+ */
 export function assertJsonContentType(request: Request): void {
   if (mediaType(request) !== "application/json") throw new ApiError("unsupported_media_type");
+  const params = (request.headers.get("Content-Type") ?? "").split(";").slice(1);
+  for (const param of params) {
+    const [name, ...rest] = param.split("=");
+    if (name!.trim().toLowerCase() !== "charset") continue;
+    const value = rest.join("=").trim().replace(/^"(.*)"$/, "$1").toLowerCase();
+    if (value !== "utf-8" && value !== "utf8") throw new ApiError("unsupported_media_type");
+  }
 }
 
 /** `Content-Type` must be `multipart/form-data` and carry a boundary. */
@@ -80,47 +90,49 @@ export function createBodyReader(request: Request, maxBytes: number): BodyReader
   let cached: Promise<Uint8Array> | undefined;
   let consumedAsForm = false;
 
-  const bytes = () => {
+  const bytes = (): Promise<Uint8Array> => {
     if (consumedAsForm) throw new Error("body already consumed as form data");
     cached ??= readBodyLimited(request, maxBytes);
     return cached;
   };
 
-  return {
-    bytes,
-    async text() {
-      try {
-        return utf8Decode(await bytes());
-      } catch (error) {
-        if (error instanceof ApiError) throw error;
-        throw new ApiError("invalid_request", { message: "The body is not valid UTF-8." });
-      }
-    },
-    async json() {
-      assertJsonContentType(request);
-      const text = await this.text();
-      try {
-        return JSON.parse(text) as unknown;
-      } catch {
-        throw new ApiError("invalid_request", { message: "The body is not valid JSON." });
-      }
-    },
-    async formData() {
-      assertMultipartContentType(request);
-      if (cached) throw new Error("body already consumed as bytes");
-      consumedAsForm = true;
-      checkDeclaredLength(request, maxBytes);
-      if (!request.body) throw new ApiError("invalid_request", { message: "The body is empty." });
-      try {
-        const limited = limitStream(request.body, maxBytes);
-        return await new Response(limited, { headers: { "Content-Type": request.headers.get("Content-Type")! } }).formData();
-      } catch (error) {
-        if (error instanceof ApiError) throw error;
-        if (isOversize(error)) throw new ApiError("payload_too_large");
-        throw new ApiError("invalid_request", { message: "The multipart body is invalid." });
-      }
-    },
+  // Plain closures, not methods: a handler may pass `ctx.body.json` around without its `this`.
+  const text = async (): Promise<string> => {
+    try {
+      return utf8Decode(await bytes());
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError("invalid_request", { message: "The body is not valid UTF-8." });
+    }
   };
+
+  const json = async (): Promise<unknown> => {
+    assertJsonContentType(request);
+    const raw = await text();
+    try {
+      return JSON.parse(raw) as unknown;
+    } catch {
+      throw new ApiError("invalid_request", { message: "The body is not valid JSON." });
+    }
+  };
+
+  const formData = async (): Promise<FormData> => {
+    assertMultipartContentType(request);
+    if (cached) throw new Error("body already consumed as bytes");
+    consumedAsForm = true;
+    checkDeclaredLength(request, maxBytes);
+    if (!request.body) throw new ApiError("invalid_request", { message: "The body is empty." });
+    try {
+      const limited = limitStream(request.body, maxBytes);
+      return await new Response(limited, { headers: { "Content-Type": request.headers.get("Content-Type")! } }).formData();
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      if (isOversize(error)) throw new ApiError("payload_too_large");
+      throw new ApiError("invalid_request", { message: "The multipart body is invalid." });
+    }
+  };
+
+  return { bytes, text, json, formData };
 }
 
 function isOversize(error: unknown): boolean {
