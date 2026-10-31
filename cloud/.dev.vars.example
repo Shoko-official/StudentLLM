@@ -25,3 +25,7 @@ PADDLE_API_KEY=
 PADDLE_WEBHOOK_SECRET=
 # Optional: the previous webhook secret, accepted only during a rotation.
 PADDLE_WEBHOOK_SECRET_PREVIOUS=
+# Not secrets, so they live in wrangler.toml [vars] per environment: the Paddle price ids (they differ between
+# sandbox and live) and, optionally, the credits of one budget window (placeholders, verify before launch):
+#   PADDLE_PRICE_PLUS_MONTHLY, PADDLE_PRICE_PLUS_SEMESTER, PLUS_MONTHLY_WINDOW_CREDITS, PLUS_SEMESTER_WINDOW_CREDITS
+# Outside development the billing module refuses to start with a missing or placeholder price id.

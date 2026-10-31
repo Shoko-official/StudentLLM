@@ -25,6 +25,8 @@ enabled = false
 
 [vars]
 PADDLE_ENVIRONMENT = "sandbox"
+PADDLE_PRICE_PLUS_MONTHLY = "PLACEHOLDER-paddle-price-id-monthly"
+PADDLE_PRICE_PLUS_SEMESTER = "PLACEHOLDER-paddle-price-id-semester"
 GATEWAY_ISSUER = "https://api.example.invalid"
 MIN_CLIENT_VERSION = "0.1.0"
 TERMS_VERSION = "PLACEHOLDER-terms-version"
@@ -37,6 +39,8 @@ name = "studentllm-gateway-staging"
 
 [env.staging.vars]
 PADDLE_ENVIRONMENT = "sandbox"
+PADDLE_PRICE_PLUS_MONTHLY = "PLACEHOLDER-paddle-price-id-monthly"
+PADDLE_PRICE_PLUS_SEMESTER = "PLACEHOLDER-paddle-price-id-semester"
 GATEWAY_ISSUER = "https://api.example.invalid"
 MIN_CLIENT_VERSION = "0.1.0"
 TERMS_VERSION = "PLACEHOLDER-terms-version"
@@ -48,6 +52,8 @@ name = "studentllm-gateway-production"
 
 [env.production.vars]
 PADDLE_ENVIRONMENT = "sandbox"
+PADDLE_PRICE_PLUS_MONTHLY = "PLACEHOLDER-paddle-price-id-monthly"
+PADDLE_PRICE_PLUS_SEMESTER = "PLACEHOLDER-paddle-price-id-semester"
 GATEWAY_ISSUER = "https://api.example.invalid"
 MIN_CLIENT_VERSION = "0.1.0"
 TERMS_VERSION = "PLACEHOLDER-terms-version"
