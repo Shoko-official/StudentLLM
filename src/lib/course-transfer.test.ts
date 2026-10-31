@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCourseExport, readCourseExport } from './course-transfer';
+import { buildCourseExport, describeCourseImportFailure, exportSizeWarning, MAX_COURSE_EXPORT_BYTES, readCourseExport } from './course-transfer';
 
 const lesson = {
   id: 'lesson-1',
@@ -53,5 +53,37 @@ describe('course transfer', () => {
   it('rejects malformed exports before any storage operation', async () => {
     await expect(readCourseExport(JSON.stringify({ format: 'other', version: 1 }))).rejects.toThrow('not supported');
     await expect(readCourseExport('{')).rejects.toThrow('not valid JSON');
+  });
+
+  it('points citations of the imported course at the new source ids', async () => {
+    const exportBlob = await buildCourseExport(lesson, {
+      ...workspace,
+      chat: [{ id: 'm1', role: 'assistant' as const, content: 'Answer.', citations: ['Source · notes.md · part 1', 'Transcript · 00:00:01'], citationTargets: ['source-1:0', 'segment-1'] }],
+      artifacts: [{ id: 'a1', kind: 'summary' as const, label: 'Quick summary', createdAt: 'today', content: 'Summary.', citations: ['Source · notes.md · part 1'], citationTargets: ['source-1:2', 'recording-1:page-3'] }],
+    }, { loadSourceBlob: async () => null, listAudioChunks: async () => [] });
+
+    let id = 0;
+    const imported = await readCourseExport(exportBlob, (prefix) => `${prefix}-new-${id++}`);
+    const [source, recording] = imported.workspace.resources.map((resource) => resource.id);
+    expect(imported.workspace.chat[0].citationTargets).toEqual([`${source}:0`, 'segment-1']);
+    expect(imported.workspace.artifacts[0].citationTargets).toEqual([`${source}:2`, `${recording}:page-3`]);
+  });
+
+  it('warns when an export is too large to be imported again', () => {
+    expect(exportSizeWarning(10 * 1024 * 1024)).toBeNull();
+    expect(exportSizeWarning(MAX_COURSE_EXPORT_BYTES)).toBeNull();
+    expect(exportSizeWarning(MAX_COURSE_EXPORT_BYTES + 5 * 1024 * 1024)).toMatch(/more than the 256 MB/);
+  });
+
+  it('explains why a truncated, tampered or foreign file cannot be imported', async () => {
+    const exportBlob = await buildCourseExport(lesson, workspace, { loadSourceBlob: async () => new Blob(['notes']), listAudioChunks: async () => [] });
+    const text = await exportBlob.text();
+    const reason = async (input: string) => describeCourseImportFailure(await readCourseExport(input).catch((error: unknown) => error));
+
+    expect(await reason(text.slice(0, Math.floor(text.length / 2)))).toMatch(/damaged or cut short/);
+    expect(await reason(JSON.stringify({ format: 'something-else', version: 1 }))).toMatch(/not a StudentLLM course export/);
+    expect(await reason(text.replace('"chunks":[{"data":"', '"chunks":[{"data":"!!!'))).toMatch(/modified/);
+    expect(describeCourseImportFailure(new Error('The course export is too large.'))).toMatch(/256 MB/);
+    expect(describeCourseImportFailure(new Error('disk full'))).toMatch(/could not be read or its contents could not be stored/);
   });
 });

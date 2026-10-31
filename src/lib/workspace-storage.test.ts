@@ -667,6 +667,44 @@ describe('workspace storage', () => {
     expect(invoke).toHaveBeenNthCalledWith(2, 'save_workspace', { snapshot: JSON.stringify({ version: 1, ...fallback }) });
   });
 
+  it('does not report the native bootstrap row as an unreadable workspace', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
+    const onUnreadable = vi.fn();
+    invoke.mockResolvedValueOnce(JSON.stringify({ version: 1, bootstrap: true })).mockResolvedValueOnce(undefined);
+
+    await loadWorkspaceAsync(fallback, undefined, { onUnreadable });
+    expect(onUnreadable).not.toHaveBeenCalled();
+    expect(localStorage.getItem('studentllm.workspace.v1.unreadable-backup')).toBeNull();
+  });
+
+  it('reports a damaged native workspace, keeps a copy, and still replaces it', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
+    const onUnreadable = vi.fn();
+    invoke.mockResolvedValueOnce('{"version":1,"lessons":[{"id"').mockResolvedValueOnce(undefined);
+
+    await loadWorkspaceAsync(fallback, undefined, { onUnreadable });
+    expect(onUnreadable).toHaveBeenCalledWith(expect.objectContaining({ kind: 'unreadable', backedUp: true, protect: false }));
+    expect(invoke).toHaveBeenNthCalledWith(2, 'save_workspace', expect.anything());
+  });
+
+  it('leaves a native workspace untouched when no copy of it can be kept', async () => {
+    (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
+    const onUnreadable = vi.fn();
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (key.startsWith('studentllm.workspace.v1.unreadable-backup')) throw new DOMException('full', 'QuotaExceededError');
+      return original.call(this, key, value);
+    };
+    try {
+      invoke.mockResolvedValueOnce('{"version":1,"lessons":[{"id"');
+      await loadWorkspaceAsync(fallback, undefined, { onUnreadable });
+    } finally {
+      Storage.prototype.setItem = original;
+    }
+    expect(onUnreadable).toHaveBeenCalledWith(expect.objectContaining({ backedUp: false, protect: true, raw: '{"version":1,"lessons":[{"id"' }));
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
   it('validates a native snapshot before restoring it', async () => {
     (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke };
     const snapshot = { ...fallback, activeLessonId: 'native-lesson', lessons: [{ ...fallback.lessons[0], id: 'native-lesson' }] };

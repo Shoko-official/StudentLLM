@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, memo, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AlignLeft,
   Archive,
@@ -37,10 +37,11 @@ import { useDialogFocus, useDismissibleMenu } from './lib/focus-management';
 import { AnimatedIcon, EmptyStateIcon } from './lib/animated-icon';
 import { folderNameOf, planBatchImport } from './lib/batch-import';
 import { BrandGlyph } from './lib/brand-mark';
-import { textMatchesQuery } from './lib/snippet';
+import { foldForSearch, textMatchesQuery } from './lib/snippet';
 import { Snippet } from './lib/snippet-view';
-import { requestRecorderSession, RecorderSession } from './lib/recorder';
-import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspaceAsync } from './lib/workspace-storage';
+import { describeMicrophoneError, requestRecorderSession, RecorderSession } from './lib/recorder';
+import { isNativeRuntime, loadWorkspaceAsync, loadWorkspaceWithStatus, readWorkspaceCopy, runPackagedIpcSmoke, saveWorkspaceAsync, WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
+import type { WorkspaceLoadIssue } from './lib/workspace-storage';
 import type { WorkspaceStorageError } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import type { LLMProvider } from './lib/llm-provider';
@@ -58,9 +59,11 @@ import { probeSidecar, SidecarHealth } from './lib/sidecar-health';
 import { getManagedSidecarStatus, ManagedSidecarStatus, startManagedSidecars, stopManagedSidecars } from './lib/sidecar-supervisor';
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore, type SourceBlobStore } from './lib/source-storage';
+import { describeAiFailure, describeDocumentFailure, describeSpeechFailure } from './lib/service-errors';
+import { mergeSegments } from './lib/transcript-merge';
 import { AudioChunkStore, createRecordingChunkStore } from './lib/recording-storage';
 import { listPendingRecordings, removePendingRecording, savePendingRecording } from './lib/recording-recovery';
-import { buildCourseExport, readCourseExport } from './lib/course-transfer';
+import { buildCourseExport, describeCourseImportFailure, exportSizeWarning, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocumentsHybrid } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
@@ -165,6 +168,7 @@ const RECORDING_NOTICE_VERSION = 1;
 const SERVICES_STORAGE_KEY = 'studentllm.services.v1';
 type ServiceSettings = { llmProvider: string; llmUrl: string; model: string; nimModel: string; asrUrl: string; documentsUrl: string };
 // NVIDIA NIM goes through the dev server's credential proxy, so it is only offered in development builds.
+const USER_GUIDE_URL = 'https://github.com/Shoko-official/StudentLLM/blob/main/docs/user-guide.md';
 const NIM_AVAILABLE = import.meta.env.DEV;
 const NIM_PROXY_BASE_URL = '/nvidia-nim/v1';
 const NIM_PROXY_ERROR_HEADER = 'x-studentllm-proxy-error';
@@ -248,6 +252,11 @@ function randomQuickCourseTitle() {
   return `${prefixes[Math.floor(Math.random() * prefixes.length)]} · ${suffix}`;
 }
 
+// A Markdown file imported as notes (or pasted in the organizer) keeps its headings, lists and tables instead of showing the raw syntax.
+function isMarkdownImport(block: { timestamp?: string; speaker?: string }) {
+  return (block.timestamp === 'Notes' || block.timestamp === 'Quick start') && /\.(?:md|markdown)$/i.test(block.speaker ?? '');
+}
+
 function resourceIcon(kind: Resource['kind']) {
   if (kind === 'audio') return <span className="icon-tile tone-violet" aria-hidden="true"><FileAudio size={18} /></span>;
   if (kind === 'image') return <span className="icon-tile tone-green" aria-hidden="true"><FileImage size={18} /></span>;
@@ -302,8 +311,92 @@ interface ResourcePreview {
   detail?: string;
 }
 
+type StorageNotice =
+  | { kind: 'load-issue'; issue: WorkspaceLoadIssue }
+  | { kind: 'save-failed' }
+  | { kind: 'changed-elsewhere' };
+
+function storageNoticeText(notice: StorageNotice) {
+  if (notice.kind === 'save-failed') return "Your changes are not being saved: this browser's storage is full or blocked. Use More \u2192 Export course to keep a copy of what is on screen, then free up space or clear old courses.";
+  if (notice.kind === 'changed-elsewhere') return 'StudentLLM was changed in another tab or window. Reload this page to see the latest version. Changes made here are not saved until you reload, so export anything you want to keep first.';
+  const { kind, backedUp, protect } = notice.issue;
+  const what = kind === 'partial'
+    ? 'Some entries in your saved workspace could not be read and were left out.'
+    : kind === 'newer-version'
+      ? 'Your saved workspace was written by a newer version of StudentLLM that this version cannot read, so it started empty.'
+      : 'Your saved workspace could not be read, so StudentLLM started empty.';
+  const copy = backedUp
+    ? 'A copy of the original data was kept in this browser.'
+    : 'A copy of the original data could not be kept because browser storage is full.';
+  if (kind === 'newer-version') return `${what} The saved data was left untouched and saving is paused in this window, so nothing done here is kept. Open it with the newer version of the app, or download it to keep a copy.`;
+  if (protect) return `${what} ${copy} To protect your data it was left untouched and saving is paused in this window, so nothing done here is kept. Download the saved data first.`;
+  return `${what} ${copy} Download it to keep it elsewhere; courses you export are never affected.`;
+}
+
+// Module-level and memoized: a keystroke in the search field or the chat composer re-renders App, and without this every
+// block of a long note (hundreds after an hour-long lecture) was rebuilt each time.
+const CourseNoteBlockView = memo(function CourseNoteBlockView({ block }: { block: CourseNoteBlock }) {
+  if (block.type === 'heading') {
+    if (block.id === 'note-title') return null;
+    const Heading = block.level === 1 ? 'h2' : 'h3';
+    return <Heading key={block.id}>{block.text}</Heading>;
+  }
+  if (block.type === 'markdown') {
+    return <section className="course-note-markdown" key={block.id}><RichText content={block.markdown} /></section>;
+  }
+  if (block.type === 'paragraph') {
+    return <div className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp}{speakerLabel(block.speaker) ? ` · ${speakerLabel(block.speaker)}` : ''}</span>}<RichText content={block.text} highlightExtractedMath={!isMarkdownImport(block)} /></div>;
+  }
+  if (block.type === 'formula') {
+    return <div className="course-note-formula" key={block.id}><RichText content={block.latex} />{block.caption && <small>{block.caption}</small>}</div>;
+  }
+  if (block.type === 'formula-image') {
+    return <figure className="course-note-formula-image" key={block.id}><img src={block.imageData} alt={`Formula from ${block.sourceName}: ${block.alt}`} /></figure>;
+  }
+  if (block.type === 'code') {
+    return <pre className="course-note-code" key={block.id}><code><span className="course-note-code-language">{block.language}</span>{block.code}</code></pre>;
+  }
+  if (block.type === 'schema') {
+    return <div className="course-note-schema" key={block.id} aria-label="Course concept schema">{block.edges.map((edge) => <span key={`${block.id}-${edge.from}-${edge.to}`}><b>{edge.from}</b><span aria-hidden="true"> → </span><b>{edge.to}</b></span>)}</div>;
+  }
+  if (block.type === 'visual') return <VisualBlockView key={block.id} visual={block.visual} />;
+  const maximum = Math.max(...block.values.map((item) => Math.abs(item.value)), 1);
+  return <figure className="course-note-chart" key={block.id}><figcaption>{block.label}</figcaption>{block.values.map((item, index) => <div className="course-note-chart-row" key={`${block.id}-${index}-${item.label}`}><span>{item.label}</span><i><em style={{ width: `${Math.max(4, Math.round(Math.abs(item.value) / maximum * 100))}%` }} /></i><strong>{item.value}</strong></div>)}</figure>;
+});
+
+const TranscriptItem = memo(function TranscriptItem({ segment, onToggleReview }: { segment: TranscriptSegment; onToggleReview: (segmentId: string) => void }) {
+  return (
+  <article className={`transcript-item ${segment.status === 'review' ? 'needs-review' : ''}`}>
+    <div className="transcript-time">{segment.timestamp}</div>
+    <div className="transcript-body"><div className="speaker-line">{speakerLabel(segment.speaker) && <strong>{speakerLabel(segment.speaker)}</strong>}{segment.provisional ? <span className="review-badge">Live preview</span> : segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><div className="transcript-text"><RichText content={segment.text} /></div></div>
+    {!segment.provisional && <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => onToggleReview(segment.id)}>...</button>}
+  </article>
+  );
+});
+
+// The transcript list is only built while the section is open: a long recording has hundreds of segments, each typeset
+// as Markdown, and most visits to a course never open it.
+function TranscriptDisclosure({ summary, children }: { summary: string; children: [() => ReactNode, ReactNode] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="transcript-disclosure" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>{summary}</summary>
+      {open ? children[0]() : null}
+      {children[1]}
+    </details>
+  );
+}
+
 function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine, recordingChunkStore: recordingChunkStoreOverride, sourceBlobStore: sourceBlobStoreOverride, liveTranscriptionIntervalMs = 3_000 }: AppProps) {
-  const [workspace] = useState(() => loadWorkspace(initialWorkspace));
+  const [{ snapshot: workspace, issue: workspaceLoadIssue }] = useState(() => loadWorkspaceWithStatus(initialWorkspace));
+  // A banner for the problems that must not go unnoticed: the workspace could not be read, saved, or changed in another window.
+  const [storageNotice, setStorageNotice] = useState<StorageNotice | null>(() => workspaceLoadIssue ? { kind: 'load-issue', issue: workspaceLoadIssue } : null);
+  // While paused nothing is written, so a stale tab or a protected original cannot be overwritten.
+  const savingPausedRef = useRef(Boolean(workspaceLoadIssue?.protect));
+  const saveFailedRef = useRef(false);
+  const [saveTick, setSaveTick] = useState(0);
+  // Imports whose file is already being stored but not yet listed in a course ("lessonId|resourceId").
+  const inFlightImportsRef = useRef(new Set<string>());
   const [nativeStorageReady, setNativeStorageReady] = useState(() => !isNativeRuntime());
   const [lessons, setLessons] = useState(workspace.lessons);
   const [activeLessonId, setActiveLessonId] = useState(workspace.activeLessonId);
@@ -330,6 +423,23 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [isSending, setIsSending] = useState(false);
   const [generatingArtifact, setGeneratingArtifact] = useState<ArtifactKind | null>(null);
   const [actionError, setActionError] = useState('');
+  const [chatError, setChatError] = useState<{ lessonId: string; message: string } | null>(null);
+  const activeLessonIdRef = useRef(activeLessonId);
+  activeLessonIdRef.current = activeLessonId;
+  // Long-running work (transcription, extraction) must read the workspace as it is when it finishes, not as it was when it started.
+  const lessonWorkspacesRef = useRef(lessonWorkspaces);
+  lessonWorkspacesRef.current = lessonWorkspaces;
+  const toggleRecordingRef = useRef<() => Promise<void>>(async () => undefined);
+  const lessonsRef = useRef(lessons);
+  lessonsRef.current = lessons;
+  // An import is no longer "in flight" once its source is listed in the course, or the course is gone.
+  useEffect(() => {
+    for (const key of [...inFlightImportsRef.current]) {
+      const [lessonId, resourceId] = key.split('|');
+      const listed = lessonWorkspaces[lessonId]?.resources.some((resource) => resource.id === resourceId);
+      if (listed || !lessons.some((lesson) => lesson.id === lessonId)) inFlightImportsRef.current.delete(key);
+    }
+  }, [lessonWorkspaces, lessons]);
   const [liveTranscriptionError, setLiveTranscriptionError] = useState('');
   const [liveSettledThrough, setLiveSettledThrough] = useState(0);
   const startingRecorderRef = useRef(false);
@@ -373,6 +483,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     try { return localStorage.getItem(SERVICES_STORAGE_KEY) !== null; } catch { return false; }
   });
   const [serviceDraft, setServiceDraft] = useState(serviceSettings);
+  const aiFailure = (error: unknown, fallback?: string) => describeAiFailure(error, fallback, { cloud: usesNim(serviceSettings) });
   const [llmHealth, setLlmHealth] = useState('Not checked.');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [sidecarHealth, setSidecarHealth] = useState<{ asr: SidecarHealth; documents: SidecarHealth } | null>(null);
@@ -432,21 +543,23 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const hasStudyMaterial = transcript.length > 0 || resources.some(isTextResource);
 
   const updateLessonWorkspace = (lessonId: string, update: (current: LessonWorkspace) => LessonWorkspace) => {
-    setLessonWorkspaces((current) => ({
-      ...current,
-      [lessonId]: (() => {
-        const previous = current[lessonId] ?? emptyLessonWorkspace;
-        const next = update(previous);
-        const lesson = lessons.find((item) => item.id === lessonId);
-        const hasDocumentNote = next.courseNote?.blocks?.some((block) => block.id === 'document-source-title');
-        // Rebuild the deterministic note when it is not AI-written or the set of segments changed; status-only edits (review toggles) keep an AI note.
-        const segmentIds = (items: TranscriptSegment[]) => items.map((segment) => segment.id).join('\u0000');
-        const needsRebuild = next.courseNote?.detection.method !== 'LM Studio' || segmentIds(next.transcript) !== segmentIds(previous.transcript);
-        return lesson && next.transcript !== previous.transcript && needsRebuild && !hasDocumentNote
+    setLessonWorkspaces((current) => {
+      const lesson = lessonsRef.current.find((item) => item.id === lessonId);
+      // A course deleted while an import or transcription was still running must not be brought back as an orphan workspace.
+      if (!current[lessonId] && !lesson) return current;
+      const previous = current[lessonId] ?? emptyLessonWorkspace;
+      const next = update(previous);
+      const hasDocumentNote = next.courseNote?.blocks?.some((block) => block.id === 'document-source-title');
+      // Rebuild the deterministic note when it is not AI-written or the set of segments changed; status-only edits (review toggles) keep an AI note.
+      const segmentIds = (items: TranscriptSegment[]) => items.map((segment) => segment.id).join('\u0000');
+      const needsRebuild = next.courseNote?.detection.method !== 'LM Studio' || segmentIds(next.transcript) !== segmentIds(previous.transcript);
+      return {
+        ...current,
+        [lessonId]: lesson && next.transcript !== previous.transcript && needsRebuild && !hasDocumentNote
           ? { ...next, courseNote: buildCourseNote(lesson, next.transcript) }
-          : next;
-      })(),
-    }));
+          : next,
+      };
+    });
   };
 
   const updateActiveWorkspace = (update: (current: LessonWorkspace) => LessonWorkspace) => updateLessonWorkspace(activeLessonId, update);
@@ -532,9 +645,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   };
 
   const visibleLessons = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+    const normalizedQuery = foldForSearch(searchQuery.trim());
     if (!normalizedQuery) return lessons;
-    return lessons.filter((lesson) => `${lesson.subject} ${lesson.chapter} ${lesson.title}`.toLocaleLowerCase().includes(normalizedQuery));
+    return lessons.filter((lesson) => foldForSearch(`${lesson.subject} ${lesson.chapter} ${lesson.title}`).includes(normalizedQuery));
   }, [lessons, searchQuery]);
 
   const courseTree = useMemo<CourseTreeSubject[]>(() => buildCourseTree(visibleLessons), [visibleLessons]);
@@ -553,21 +666,21 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       .map((segment) => ({ lesson, segment }))), [lessons, lessonWorkspaces]);
 
   const globalSearchResults = useMemo(() => {
-    const query = globalSearchValue.trim().toLocaleLowerCase();
+    const query = foldForSearch(globalSearchValue.trim());
     if (!query) return [];
     return lessons.flatMap((lesson) => {
       const lessonWorkspace = lessonWorkspaces[lesson.id] ?? emptyLessonWorkspace;
       const results: { id: string; lessonId: string; title: string; detail: string }[] = [];
-      if (`${lesson.title} ${lesson.subject} ${lesson.chapter}`.toLocaleLowerCase().includes(query)) {
+      if (foldForSearch(`${lesson.title} ${lesson.subject} ${lesson.chapter}`).includes(query)) {
         results.push({ id: lesson.id, lessonId: lesson.id, title: lesson.title, detail: `${lesson.subject} · ${lesson.chapter}` });
       }
       lessonWorkspace.transcript.forEach((segment) => {
-        if (`${segment.speaker} ${segment.timestamp}`.toLocaleLowerCase().includes(query) || textMatchesQuery(segment.text, query)) {
+        if (foldForSearch(`${segment.speaker} ${segment.timestamp}`).includes(query) || textMatchesQuery(segment.text, query)) {
           results.push({ id: segment.id, lessonId: lesson.id, title: segment.text, detail: `${lesson.title} · ${segment.timestamp}` });
         }
       });
       lessonWorkspace.resources.forEach((resource) => {
-        if (`${resource.name} ${resource.meta}`.toLocaleLowerCase().includes(query)) {
+        if (foldForSearch(`${resource.name} ${resource.meta}`).includes(query)) {
           results.push({ id: resource.id, lessonId: lesson.id, title: resource.name, detail: `${lesson.title} · ${resource.meta}` });
         }
       });
@@ -844,7 +957,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     if (!isNativeRuntime()) return undefined;
 
     let cancelled = false;
-    void loadWorkspaceAsync(initialWorkspace, undefined, { onError: reportStorageError }).then((loaded) => {
+    void loadWorkspaceAsync(initialWorkspace, undefined, {
+      onError: reportStorageError,
+      onUnreadable: (issue) => {
+        if (issue.protect) savingPausedRef.current = true;
+        setStorageNotice({ kind: 'load-issue', issue });
+      },
+    }).then((loaded) => {
       if (cancelled) return;
       const loadedWorkspaces = loaded.lessonWorkspaces ?? {
         [loaded.activeLessonId]: {
@@ -927,13 +1046,44 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   }, [lessonWorkspaces, lessons, localDocumentEngine, localProvider, sourceBlobStore, semanticReviewTick, importQueue.length]);
 
   useEffect(() => {
-    if (!nativeStorageReady) return;
+    if (!nativeStorageReady || savingPausedRef.current) return;
     void saveWorkspaceAsync(
       { activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces },
       undefined,
       { onError: reportStorageError },
-    );
-  }, [nativeStorageReady, activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces]);
+    ).then((saved) => {
+      // Never claim "saved" silently: a full or blocked browser store used to lose everything since the last good save.
+      saveFailedRef.current = !saved;
+      setStorageNotice((current) => saved
+        ? (current?.kind === 'save-failed' ? null : current)
+        : (current?.kind === 'changed-elsewhere' ? current : { kind: 'save-failed' }));
+    });
+  }, [nativeStorageReady, activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces, saveTick]);
+
+  // Another tab or window wrote the workspace (or the browser data was cleared). Saving from this stale copy would
+  // overwrite that work, so stop saving here and ask for a reload.
+  useEffect(() => {
+    if (isNativeRuntime()) return undefined;
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== WORKSPACE_STORAGE_KEY) return;
+      savingPausedRef.current = true;
+      setStorageNotice({ kind: 'changed-elsewhere' });
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  // Closing the tab during an import, a transcription or a recording is the one way to lose work in progress.
+  // The same goes for changes that are not being saved: a stale tab, a full store, or a protected original.
+  const changesAtRisk = storageNotice?.kind === 'save-failed' || storageNotice?.kind === 'changed-elsewhere'
+    || (storageNotice?.kind === 'load-issue' && storageNotice.issue.protect && lessons.length > 0);
+  const workInProgress = importQueue.length > 0 || transcribingResourceIds.size > 0 || isRecording || isFinalizingRecording || changesAtRisk;
+  useEffect(() => {
+    if (!workInProgress) return undefined;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [workInProgress]);
 
   useEffect(() => {
     if (!packagedIpcSmokeRequested || !nativeStorageReady) return;
@@ -953,7 +1103,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   }, [nativeStorageReady]);
 
   useEffect(() => {
-    if (!nativeStorageReady) return undefined;
+    // While saving is paused or failing, this tab's workspace is not the saved one: a manifest whose course "does not exist"
+    // here may belong to a workspace that could not be loaded, and a recovered source would not be written down.
+    if (!nativeStorageReady || savingPausedRef.current || saveFailedRef.current) return undefined;
 
     let cancelled = false;
     const pendingRecordings = listPendingRecordings();
@@ -1040,7 +1192,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setQuickStartProposal(proposal);
       setQuickStartPlacement(proposal.targetCourseId ?? 'new');
     } catch (error) {
-      setQuickStartError(error instanceof Error ? error.message : 'Quick Start could not analyze this material.');
+      setQuickStartError(aiFailure(error, 'Quick Start could not analyze this material.'));
     } finally {
       setIsAnalyzingQuickStart(false);
     }
@@ -1080,8 +1232,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     };
     try {
       await sourceBlobStore.save(resource.id, new Blob([segment.text], { type: 'text/markdown;charset=utf-8' }));
-      const previous = lessonWorkspaces[targetLesson.id] ?? emptyLessonWorkspace;
-      const nextTranscript = [...previous.transcript, segment];
+      const previous = lessonWorkspacesRef.current[targetLesson.id] ?? emptyLessonWorkspace;
+      const nextTranscript = mergeSegments(previous.transcript, [segment]);
       const baseNote = buildCourseNote(targetLesson, nextTranscript);
       const routedNote = {
         ...baseNote,
@@ -1096,10 +1248,22 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       };
       const aiNote = await formatCourseNoteWithProvider(targetLesson, nextTranscript, localProvider);
       const courseNote = aiNote.detection.method === 'LM Studio' ? aiNote : routedNote;
-      setLessonWorkspaces((current) => ({
-        ...current,
-        [targetLesson.id]: { ...previous, resources: [resource, ...previous.resources], transcript: nextTranscript, courseNote },
-      }));
+      // The model call above can take minutes: merge into the course as it is now, not as it was before the call.
+      setLessonWorkspaces((current) => {
+        if (targetExisting && !current[targetLesson.id]) return current;
+        const base = current[targetLesson.id] ?? emptyLessonWorkspace;
+        const transcriptNow = mergeSegments(base.transcript, [segment]);
+        const unchangedMeanwhile = base.transcript.length === previous.transcript.length && base.transcript.every((item, index) => item.id === previous.transcript[index]?.id);
+        return {
+          ...current,
+          [targetLesson.id]: {
+            ...base,
+            resources: base.resources.some((item) => item.id === resource.id) ? base.resources : [resource, ...base.resources],
+            transcript: transcriptNow,
+            courseNote: unchangedMeanwhile ? courseNote : buildCourseNote(targetLesson, transcriptNow),
+          },
+        };
+      });
       if (!targetExisting) {
         setExpandedSubjects((expanded) => ({ ...expanded, [targetLesson.subject]: true }));
         setLessons((current) => [targetLesson, ...current]);
@@ -1433,12 +1597,24 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         }
       }
       recorderRef.current = session;
+      session.onProblem?.((problem) => {
+        if (problem === 'storage') {
+          setRecordingError('This browser can no longer store the audio (storage is full). Stop and save now: what was already captured is kept. Free up space before recording again.');
+          return;
+        }
+        // The microphone went away (unplugged, or its permission was withdrawn). Finish the session so what was
+        // captured is saved and the interface does not keep counting time over silence.
+        if (recorderRef.current !== session) return;
+        void toggleRecordingRef.current();
+        setRecordingError('The microphone stopped working, so recording ended. What was captured before that has been saved.');
+      });
       setLiveRecordingLessonId(activeLesson.id);
       setIsRecording(true);
       setRecordingSeconds(0);
       notify('Recording started.');
     } catch (error) {
-      setRecordingError(error instanceof Error ? `Cannot start recording: ${error.message}` : 'The microphone is unavailable. Check permission and try again.');
+      setRecordingError(describeMicrophoneError(error)
+        ?? (error instanceof Error ? `Cannot start recording: ${error.message}` : 'The microphone is unavailable. Check permission and try again.'));
     } finally {
       startingRecorderRef.current = false;
       setIsStartingRecording(false);
@@ -1468,7 +1644,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       void session.stop().then(async ({ chunksPersisted, persistenceError }) => {
         // A clean stop is no longer recoverable work. Clear the manifest before
         // state updates can re-run the recovery effect against persisted chunks.
-        removePendingRecording(session.recordingId);
+        // Not while saving is paused or failing: the course would not list this recording, and without the manifest nothing
+        // would ever bring it back.
+        if (!savingPausedRef.current && !saveFailedRef.current) removePendingRecording(session.recordingId);
         const recordingResource: Resource = {
           id: session.recordingId,
           name: `${recordingLessonTitle} audio.webm`,
@@ -1477,16 +1655,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           mimeType: 'audio/webm',
         };
         const saveRecordingFallback = (segments: TranscriptSegment[] = []) => {
-          const previousWorkspace = lessonWorkspaces[recordingLessonId] ?? emptyLessonWorkspace;
-          const nextTranscript = segments.length
-            ? [...previousWorkspace.transcript, ...segments.filter((segment) => !previousWorkspace.transcript.some((existing) => existing.id === segment.id))]
-            : previousWorkspace.transcript;
+          const nextTranscript = mergeSegments((lessonWorkspacesRef.current[recordingLessonId] ?? emptyLessonWorkspace).transcript, segments);
           updateLessonWorkspace(recordingLessonId, (current) => ({
             ...current,
             resources: current.resources.some((resource) => resource.id === recordingResource.id)
               ? current.resources
               : [recordingResource, ...current.resources],
-            transcript: nextTranscript,
+            transcript: mergeSegments(current.transcript, segments),
           }));
           formatExistingCourseNote(recordingLessonId, nextTranscript);
         };
@@ -1503,7 +1678,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           if (session.stream && session.durability === 'durable' && chunksPersisted > 0) saveRecordingFallback();
           return;
         }
-        notify('Audio saved locally. Transcribing with local ASR...');
+        notify('Audio saved locally. Transcribing with the speech service...');
         try {
           const chunks = await session.readChunks();
           if (!chunks.length) throw new Error('No persisted audio chunks available.');
@@ -1511,7 +1686,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           const transcription = await localSpeechEngine.transcribe(audio);
           if (!transcription.segments.length) {
             saveRecordingFallback();
-            notify('Audio saved locally; local ASR returned no speech.');
+            notify('Audio saved locally; no speech was detected.');
             return;
           }
           const segments = transcription.segments.map((segment, index) => ({
@@ -1579,6 +1754,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     await startRecording();
   };
 
+  toggleRecordingRef.current = toggleRecording;
+
   const acceptRecordingNotice = () => {
     if (!recordingNoticeChecked) return;
     saveRecordingNoticeAcknowledgement();
@@ -1610,11 +1787,18 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     notify(nextStatus === 'verified' ? 'Transcript segment verified.' : 'Transcript segment marked for review.');
   };
 
+  // The segment list is memoized, so it needs a callback whose identity never changes.
+  const toggleTranscriptReviewRef = useRef(toggleTranscriptReview);
+  toggleTranscriptReviewRef.current = toggleTranscriptReview;
+  const onToggleReview = useCallback((segmentId: string) => toggleTranscriptReviewRef.current(segmentId), []);
+
   const submitComposer = async (event: FormEvent) => {
     event.preventDefault();
     const message = composerValue.trim();
     if (!message || isSending || !hasCourse) return;
     setView('chat');
+    setChatError(null);
+    const chatLessonId = activeLessonId;
     const userMessageId = `user-${Date.now()}`;
     const assistantMessageId = `assistant-${Date.now() + 1}`;
     updateActiveWorkspace((current) => ({
@@ -1702,14 +1886,18 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         }],
       }));
     } catch (error) {
-      updateActiveWorkspace((current) => ({
-        ...current,
-        chat: [...current.chat, {
-          id: assistantMessageId,
-          role: 'assistant',
-          content: error instanceof Error ? error.message : 'The local provider could not answer this question.',
-        }],
-      }));
+      // A failed request is not an answer: keep it out of the saved history, show it as an alert, and hand
+      // the question back to the composer so it can be sent again with one key press.
+      // The alert belongs to the course the question was asked in. If the student is still there, the question goes back to
+      // the composer; if not, it stays in that course's history and the alert is waiting there.
+      setChatError({ lessonId: chatLessonId, message: aiFailure(error, 'The local provider could not answer this question.') });
+      if (activeLessonIdRef.current === chatLessonId) {
+        updateLessonWorkspace(chatLessonId, (current) => ({
+          ...current,
+          chat: current.chat.filter((item) => item.id !== userMessageId),
+        }));
+        setComposerValue((current) => current || message);
+      }
     } finally {
       setIsSending(false);
     }
@@ -1781,7 +1969,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setSelectedArtifactId(artifact.id);
       notify(`${definition.label} saved.`);
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Generation failed. Check LM Studio in Settings and try again.');
+      setActionError(aiFailure(error, 'Generation failed. Check the AI connection in Settings and try again.'));
     } finally {
       setGeneratingArtifact(null);
     }
@@ -1849,10 +2037,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
   };
 
-  const importSource = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = '';
-    event.target.accept = sourceAccept;
+  const importFiles = (files: File[]) => {
     if (files.length > 1) {
       enqueueBatchImport(files);
       return;
@@ -1861,11 +2046,68 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     void importSourceFile(files[0], activeLesson);
   };
 
+  const importSource = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    event.target.accept = sourceAccept;
+    importFiles(files);
+  };
+
+  // Without this, a file dropped anywhere on the page makes the browser open it and leave the app, which would also
+  // cut a running recording or import. Dropped files are imported into the open course instead.
+  const importDroppedFilesRef = useRef<(files: File[]) => void>(() => undefined);
+  importDroppedFilesRef.current = (files) => {
+    if (!hasCourse) {
+      notify('Create a course first, then drop the files onto it.');
+      return;
+    }
+    if (hasOpenDialog) {
+      notify('Close the open window, then drop the files again.');
+      return;
+    }
+    importFiles(files);
+  };
+  useEffect(() => {
+    const hasFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes('Files');
+    const onDragOver = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    };
+    const onDrop = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      importDroppedFilesRef.current(Array.from(event.dataTransfer?.files ?? []));
+    };
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, []);
+
   const importSourceFile = async (file: File, targetLesson: Lesson, routeMaterial = true) => {
     setActionError('');
     const lessonId = targetLesson.id;
+    if (file.size === 0) {
+      setActionError(`${file.name} is empty, so nothing was imported.`);
+      return;
+    }
+    let inFlightKey: string | null = null;
     try {
       const resource = await createSourceResource(file);
+      const existing = (lessonWorkspacesRef.current[lessonId] ?? emptyLessonWorkspace).resources.find((candidate) => candidate.id === resource.id);
+      const importKey = `${lessonId}|${resource.id}`;
+      if (existing || inFlightImportsRef.current.has(importKey)) {
+        // The same bytes are already in this course: a second copy would only duplicate its notes and share one stored original.
+        setActionError(!existing
+          ? `${file.name} is already being imported into this course.`
+          : existing.name === file.name ? `${file.name} is already in this course.` : `${file.name} has the same content as ${existing.name}, which is already in this course.`);
+        return;
+      }
+      inFlightKey = importKey;
+      inFlightImportsRef.current.add(importKey);
       await sourceBlobStore.save(resource.id, file);
       const isExtractable = isExtractableDocument(resource);
       if (localDocumentEngine && isExtractable) rebuiltDocumentSourceIds.current.add(resource.id);
@@ -1878,16 +2120,15 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             id: `${resource.id}:text`, sourceId: resource.id, timestamp: 'Notes', speaker: resource.name, text, status: 'review',
           };
           if (routeMaterial && await routeImportedMaterial(targetLesson, resource, [segment])) return;
-          const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
-          const nextTranscript = [...previousWorkspace.transcript, segment];
-          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: nextTranscript }));
+          const nextTranscript = mergeSegments((lessonWorkspacesRef.current[lessonId] ?? emptyLessonWorkspace).transcript, [segment]);
+          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: mergeSegments(current.transcript, [segment]) }));
           formatExistingCourseNote(lessonId, nextTranscript);
         }
       }
       if (resource.kind === 'audio' && !localSpeechEngine) setActionError('Audio imported. Connect a speech service in Settings to transcribe it.');
       if (resource.kind === 'audio' && localSpeechEngine) {
         setTranscribingResourceIds((current) => new Set(current).add(resource.id));
-        notify(`${resource.name} saved locally. Transcribing with local ASR...`);
+        notify(`${resource.name} saved locally. Transcribing with the speech service...`);
         try {
           const transcription = await localSpeechEngine.transcribe(file);
           const segments = transcription.segments.map((segment, index) => ({
@@ -1933,15 +2174,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               // Keep imported audio in the selected course when classification is unavailable or uncertain.
             }
           }
-          const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
-          const nextTranscript = [...previousWorkspace.transcript, ...segments];
-          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: nextTranscript }));
+          const nextTranscript = mergeSegments((lessonWorkspacesRef.current[lessonId] ?? emptyLessonWorkspace).transcript, segments);
+          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: mergeSegments(current.transcript, segments) }));
           formatExistingCourseNote(lessonId, nextTranscript);
           notify(segments.length
             ? `Local transcription added ${segments.length} segments from ${resource.name}.`
             : `${resource.name} contains no detected speech.`);
-        } catch {
-          setActionError(`${resource.name} is saved. Transcription failed; check the speech service in Settings.`);
+        } catch (error) {
+          setActionError(`${resource.name} is saved. ${describeSpeechFailure(error)}`);
         } finally {
           setTranscribingResourceIds((current) => {
             const next = new Set(current);
@@ -1951,6 +2191,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         }
       }
       const extractableResource = isExtractableDocument(resource);
+      if (resource.kind === 'document' && !extractableResource) {
+        setActionError(`${resource.name} was saved as an original in Sources, but StudentLLM cannot read this type of file. Use PDF, Word, PowerPoint, text, Markdown, image or audio files to get notes from it.`);
+      }
       if (!localDocumentEngine && extractableResource) {
         setActionError(`${resource.name} is saved. Connect the document service in Settings to extract its text.`);
       }
@@ -1968,14 +2211,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               status: 'review' as const,
             }));
           if (routeMaterial && pageSegments.length && await routeImportedMaterial(targetLesson, resource, pageSegments, extraction.pages)) return;
-          const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
-          const nextTranscript = [...previousWorkspace.transcript, ...pageSegments];
           extractedDocumentPages.current.set(resource.id, extraction.pages);
           // Show the extracted note right away; the background review rewrites it with the model.
           const documentCourseNote = await formatDocumentCourseNoteWithProvider(targetLesson, extraction.pages, resource.name, null);
           updateLessonWorkspace(lessonId, (current) => ({
             ...current,
-            transcript: nextTranscript,
+            transcript: mergeSegments(current.transcript, pageSegments),
             courseNote: documentCourseNote,
           }));
           notify(pageSegments.length > 0
@@ -1983,13 +2224,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             : `${resource.name} contains no extractable text.`);
         } catch (error) {
           rebuiltDocumentSourceIds.current.delete(resource.id);
-          const detail = error instanceof Error && /fetch|timed out|offline/i.test(error.message)
-            ? 'The document service is offline.'
-            : 'The document service could not extract this file.';
-          setActionError(`${resource.name} is saved. ${detail} Open Settings and refresh the local services.`);
+          setActionError(`${resource.name} is saved. ${describeDocumentFailure(error)}`);
         }
       }
     } catch (error) {
+      if (inFlightKey) inFlightImportsRef.current.delete(inFlightKey);
       setActionError(error instanceof Error ? error.message : 'The file could not be stored. Please try importing it again.');
     }
   };
@@ -2128,13 +2367,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           // Keep the source in its current course when classification is unavailable or uncertain.
         }
       }
-      const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
-      const nextTranscript = [...previousWorkspace.transcript.filter((segment) => segment.sourceId !== resource.id), ...segments];
-      updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: nextTranscript }));
+      const nextTranscript = mergeSegments((lessonWorkspacesRef.current[lessonId] ?? emptyLessonWorkspace).transcript, segments, { replaceSourceId: resource.id });
+      updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: mergeSegments(current.transcript, segments, { replaceSourceId: resource.id }) }));
       formatExistingCourseNote(lessonId, nextTranscript);
       notify('Transcription added to your course notes.');
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Transcription failed. Check the speech service and try again.');
+      setActionError(describeSpeechFailure(error));
     } finally {
       setTranscribingResourceIds((current) => { const ids = new Set(current); ids.delete(resource.id); return ids; });
     }
@@ -2146,10 +2384,19 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     sourceInputRef.current.click();
   };
 
+  // Files are stored under a fingerprint of their content, so the same file imported into two courses shares one stored
+  // original. It may only be erased when no course refers to it any more.
+  const isSourceUsedElsewhere = (resourceId: string, exceptLessonId?: string) => Object.entries(lessonWorkspacesRef.current)
+    .some(([id, workspace]) => id !== exceptLessonId && workspace.resources.some((resource) => resource.id === resourceId))
+    // A course that is importing the same file right now stores the original before it lists the source.
+    || [...inFlightImportsRef.current].some((key) => key.endsWith(`|${resourceId}`) && key.split('|')[0] !== exceptLessonId);
+
   const commitSourceRemoval = async (pending: PendingSourceRemoval) => {
     try {
-      await sourceBlobStore.remove(pending.resource.id);
-      if (pending.resource.kind === 'audio') await recordingChunkStore.clear(pending.resource.id);
+      if (!isSourceUsedElsewhere(pending.resource.id)) {
+        await sourceBlobStore.remove(pending.resource.id);
+        if (pending.resource.kind === 'audio') await recordingChunkStore.clear(pending.resource.id);
+      }
       removePendingSourceErase(pending.resource.id);
     } catch {
       // The ledger entry stays, so the erase is retried the next time the app starts.
@@ -2282,6 +2529,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     try {
       const pendingRecordings = listPendingRecordings().filter((pending) => pending.lessonId === lessonId);
       for (const resource of resources) {
+        if (isSourceUsedElsewhere(resource.id, lessonId)) continue;
         await sourceBlobStore.remove(resource.id);
         await recordingChunkStore.clear(resource.id);
       }
@@ -2308,6 +2556,33 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
   };
 
+  // The raw saved workspace is not a course export (it cannot be imported); it is a copy to keep and to restore from.
+  const downloadSavedCopy = (issue: WorkspaceLoadIssue) => {
+    try {
+      const raw = readWorkspaceCopy(issue);
+      if (!raw) {
+        notify('The saved copy could not be read from this browser.');
+        return;
+      }
+      const url = URL.createObjectURL(new Blob([raw], { type: 'application/json' }));
+      const link = window.document.createElement('a');
+      link.href = url;
+      link.download = 'studentllm-workspace-saved-copy.json';
+      link.click();
+      URL.revokeObjectURL(url);
+      notify('Saved copy downloaded. Keep the file somewhere safe.');
+    } catch {
+      notify('The saved copy could not be downloaded.');
+    }
+  };
+
+  const startEmptyAnyway = () => {
+    if (!window.confirm('Start with an empty workspace? The saved data will be replaced by what you do from now on. Download it first if you want to keep it.')) return;
+    savingPausedRef.current = false;
+    setStorageNotice(null);
+    setSaveTick((tick) => tick + 1);
+  };
+
   const exportCourse = async () => {
     try {
       const exportBlob = await buildCourseExport(activeLesson, activeWorkspace, {
@@ -2321,6 +2596,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       link.download = `${activeLesson.title.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'course'}.studentllm.json`;
       link.click();
       URL.revokeObjectURL(url);
+      const sizeWarning = exportSizeWarning(exportBlob.size);
+      if (sizeWarning) setActionError(sizeWarning);
       notify(`${activeLesson.title} exported.`);
     } catch {
       notify('The course export could not be created.');
@@ -2382,8 +2659,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setActionError('');
       setShowAllResources(false);
       notify(`${imported.lesson.title} imported.`);
-    } catch {
-      notify('The course import could not be completed.');
+    } catch (error) {
+      setActionError(`${file.name} could not be imported. ${describeCourseImportFailure(error)} Nothing was changed.`);
     } finally {
       input.value = '';
     }
@@ -2481,7 +2758,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       }));
       notify('AI suggested a course title and structure. Review before saving.');
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'AI could not suggest course details.');
+      setActionError(aiFailure(error, 'AI could not suggest course details.'));
     } finally {
       setIsSuggestingCourseDetails(false);
     }
@@ -2516,42 +2793,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     notify('Course details saved.');
   };
 
-  const renderTranscriptSegment = (segment: TranscriptSegment) => (
-    <article className={`transcript-item ${segment.status === 'review' ? 'needs-review' : ''}`} key={segment.id}>
-      <div className="transcript-time">{segment.timestamp}</div>
-      <div className="transcript-body"><div className="speaker-line">{speakerLabel(segment.speaker) && <strong>{speakerLabel(segment.speaker)}</strong>}{segment.provisional ? <span className="review-badge">Live preview</span> : segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><div className="transcript-text"><RichText content={segment.text} /></div></div>
-      {!segment.provisional && <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => toggleTranscriptReview(segment.id)}>...</button>}
-    </article>
-  );
+  const renderTranscriptSegment = (segment: TranscriptSegment) => <TranscriptItem key={segment.id} segment={segment} onToggleReview={onToggleReview} />;
 
-  const renderCourseNoteBlock = (block: CourseNoteBlock) => {
-    if (block.type === 'heading') {
-      if (block.id === 'note-title') return null;
-      const Heading = block.level === 1 ? 'h2' : 'h3';
-      return <Heading key={block.id}>{block.text}</Heading>;
-    }
-    if (block.type === 'markdown') {
-      return <section className="course-note-markdown" key={block.id}><RichText content={block.markdown} /></section>;
-    }
-    if (block.type === 'paragraph') {
-      return <div className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp}{speakerLabel(block.speaker) ? ` · ${speakerLabel(block.speaker)}` : ''}</span>}<RichText content={block.text} highlightExtractedMath /></div>;
-    }
-    if (block.type === 'formula') {
-      return <div className="course-note-formula" key={block.id}><RichText content={block.latex} />{block.caption && <small>{block.caption}</small>}</div>;
-    }
-    if (block.type === 'formula-image') {
-      return <figure className="course-note-formula-image" key={block.id}><img src={block.imageData} alt={`Formula from ${block.sourceName}: ${block.alt}`} /></figure>;
-    }
-    if (block.type === 'code') {
-      return <pre className="course-note-code" key={block.id}><code><span className="course-note-code-language">{block.language}</span>{block.code}</code></pre>;
-    }
-    if (block.type === 'schema') {
-      return <div className="course-note-schema" key={block.id} aria-label="Course concept schema">{block.edges.map((edge) => <span key={`${block.id}-${edge.from}-${edge.to}`}><b>{edge.from}</b><span aria-hidden="true"> → </span><b>{edge.to}</b></span>)}</div>;
-    }
-    if (block.type === 'visual') return <VisualBlockView key={block.id} visual={block.visual} />;
-    const maximum = Math.max(...block.values.map((item) => Math.abs(item.value)), 1);
-    return <figure className="course-note-chart" key={block.id}><figcaption>{block.label}</figcaption>{block.values.map((item, index) => <div className="course-note-chart-row" key={`${block.id}-${index}-${item.label}`}><span>{item.label}</span><i><em style={{ width: `${Math.max(4, Math.round(Math.abs(item.value) / maximum * 100))}%` }} /></i><strong>{item.value}</strong></div>)}</figure>;
-  };
+  const renderCourseNoteBlock = (block: CourseNoteBlock) => <CourseNoteBlockView key={block.id} block={block} />;
 
   return (
     <div className="app-shell">
@@ -2565,6 +2809,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         <button className="icon-button" aria-label="Settings" onClick={() => setShowSettingsPanel(true)}><Settings2 size={19} /></button>
       </header>
 
+      {storageNotice && <div className="action-error storage-banner" role="alert"><p>{storageNoticeText(storageNotice)}</p><span className="storage-banner-actions">
+        {storageNotice.kind === 'changed-elsewhere' && <button className="text-action" onClick={() => window.location.reload()}>Reload</button>}
+        {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'save-failed') && hasCourse && <button className="text-action" onClick={() => void exportCourse()}>Export this course</button>}
+        {storageNotice.kind === 'load-issue' && <button className="text-action" onClick={() => downloadSavedCopy(storageNotice.issue)}>{storageNotice.issue.protect ? 'Download saved data' : 'Download saved copy'}</button>}
+        {storageNotice.kind === 'load-issue' && storageNotice.issue.protect && storageNotice.issue.kind !== 'newer-version' && <button className="text-action" onClick={startEmptyAnyway}>Start empty anyway</button>}
+        {storageNotice.kind === 'load-issue' && !storageNotice.issue.protect && <button className="text-action" onClick={() => setStorageNotice(null)}>Dismiss</button>}
+      </span></div>}
       <div className={`workspace-grid ${showLeftSidebar ? 'with-navigation' : ''}`}>
         {showLeftSidebar && <>
           <button className="navigation-scrim" tabIndex={-1} aria-label="Close navigation" onClick={() => setShowLeftSidebar(false)} />
@@ -2660,11 +2911,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 <div className="live-transcript-header"><strong>Live transcript</strong><span>Original speech, separate from the notes. The latest words may change. Speaker identification is not enabled by the local speech service.</span></div>
                 <div ref={liveTranscriptFeedRef} aria-live="polite">{visibleLiveTranscript.length ? groupTranscript(visibleLiveTranscript).map(renderTranscriptSegment) : <p className="empty-state">Waiting for the first transcribed passage.</p>}</div>
               </section>}
-              {(transcript.length > 0 || isRecording) && <details className="transcript-disclosure">
-                <summary>Transcript {isRecording ? '(recording)' : `(${transcript.length})`}</summary>
-                <div className={`transcript-list ${compactTranscript ? 'compact' : ''}`} role="region" aria-label="Transcript preview">{courseTranscript.map(renderTranscriptSegment)}</div>
+              {(transcript.length > 0 || isRecording) && <TranscriptDisclosure key={activeLesson.id} summary={`Transcript ${isRecording ? '(recording)' : `(${transcript.length})`}`}>
+                {() => <div className={`transcript-list ${compactTranscript ? 'compact' : ''}`} role="region" aria-label="Transcript preview">{courseTranscript.map(renderTranscriptSegment)}</div>}
                 <button className="text-action" onClick={() => setShowTranscriptPanel(true)}>View all <ArrowUpRight size={13} /></button>
-              </details>}
+              </TranscriptDisclosure>}
             </div>}
             {view === 'sources' && <section className="sources-view" id="view-panel-sources" role="tabpanel" aria-labelledby="view-tab-sources">
               <div className="section-toolbar"><h2>Sources</h2><button className="secondary-action" onClick={() => openSourcePicker(sourceAccept)}><Plus size={16} /> Import file</button></div>
@@ -2681,7 +2931,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               {!resources.length && !transcript.length && <p className="empty-state">Import material or record a lecture before asking a question.</p>}
                <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list" aria-label="Response sources">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button type="button" className="citation-chip" title="Open original source" key={citation} onClick={() => openCitation(message.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className={citation.startsWith('LM Studio') ? 'citation-model' : 'citation-context'} key={citation}>{citation}</span>)}</div>}</article>)}</div>
               {isSending && <div className="chat-typing" aria-hidden="true"><span /><span /><span /></div>}
-              <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
+              {chatError && chatError.lessonId === activeLessonId && <div className="action-error chat-error" role="alert"><p>{chatError.message}</p><button type="button" className="text-action" onClick={() => setShowSettingsPanel(true)}>Open Settings</button></div>}<form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => { setComposerValue(event.target.value); if (chatError) setChatError(null); }} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
             </section>}
             {view === 'study' && <section className="study-view" id="view-panel-study" role="tabpanel" aria-labelledby="view-tab-study">
               <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>
@@ -2703,7 +2953,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       {showGlobalSearch && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowGlobalSearch(false)}><section className="modal search-modal" role="dialog" aria-modal="true" aria-labelledby="global-search-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace index</span><h2 id="global-search-title">Search all course content</h2></div><button className="icon-button" aria-label="Close search" onClick={() => setShowGlobalSearch(false)}><X size={17} /></button></div><label className="modal-search"><Search size={15} /><input autoFocus aria-label="Search all course content" value={globalSearchValue} onChange={(event) => setGlobalSearchValue(event.target.value)} placeholder="Search courses, transcripts, and sources" /></label>{globalSearchValue.trim() && <div className="search-results" aria-live="polite">{globalSearchResults.length ? globalSearchResults.map((result) => <button className="search-result" key={`${result.lessonId}:${result.id}`} onClick={() => openSearchResult(result.lessonId)}><strong><Snippet text={result.title} query={globalSearchValue} /></strong><small>{result.detail}</small></button>) : <p className="empty-state">No matching course content.</p>}</div>}</section></div>}
       {showReviewPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowReviewPanel(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="review-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Review queue</span><h2 id="review-panel-title">Needs review <span className="modal-count">{reviewItems.length}</span></h2></div><button className="icon-button" aria-label="Close review queue" onClick={() => setShowReviewPanel(false)}><X size={17} /></button></div><p className="modal-description">Transcript segments and imported pages that still need a quick human check.</p><div className="review-results">{reviewItems.length ? reviewItems.map(({ lesson, segment }) => <button className="review-result" key={`${lesson.id}:${segment.id}`} onClick={() => { selectLesson(lesson.id); setShowReviewPanel(false); }}><strong><Snippet text={segment.text} /></strong><small>{lesson.title} · {segment.timestamp}</small></button>) : <p className="empty-state">Nothing needs review.</p>}</div></section></div>}
       {showTranscriptPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowTranscriptPanel(false)}><section className="modal transcript-modal" role="dialog" aria-modal="true" aria-labelledby="transcript-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Transcript archive</span><h2 id="transcript-panel-title">Full transcript <span className="modal-count">{transcript.length}</span></h2>{visibleLiveTranscript.length > 0 && <span className="review-badge">Live preview</span>}</div><button className="icon-button" aria-label="Close full transcript" onClick={() => setShowTranscriptPanel(false)}><X size={17} /></button></div><p className="modal-description">Review every indexed segment from {activeLesson.title}. Changes are saved to this course workspace.</p><div className={`transcript-list modal-transcript-list ${compactTranscript ? 'compact' : ''}`}>{transcript.length || visibleLiveTranscript.length ? [...transcript, ...visibleLiveTranscript].map(renderTranscriptSegment) : <p className="empty-state">This course has no transcript segments yet.</p>}</div></section></div>}
-      {showSettingsPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettingsPanel(false)}><section className="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace preferences</span><h2 id="settings-panel-title">Settings</h2></div><button className="icon-button" aria-label="Close settings" onClick={() => setShowSettingsPanel(false)}><X size={17} /></button></div><p className="modal-description">Connect your local services. Recording and text import work without an AI model.</p>
+      {showSettingsPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettingsPanel(false)}><section className="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace preferences</span><h2 id="settings-panel-title">Settings</h2></div><button className="icon-button" aria-label="Close settings" onClick={() => setShowSettingsPanel(false)}><X size={17} /></button></div><p className="modal-description">Connect your local services. Recording and text import work without an AI model. <a href={USER_GUIDE_URL} target="_blank" rel="noreferrer">Read the user guide</a> for setup help.</p>
         <form className="connection-settings" onSubmit={saveServiceSettings}>
           {NIM_AVAILABLE && <label>AI provider<select value={serviceDraft.llmProvider} onChange={(event) => setServiceDraft((current) => ({ ...current, llmProvider: event.target.value }))}><option value="lm-studio">LM Studio (local)</option><option value="nvidia-nim">NVIDIA NIM (cloud)</option></select></label>}
           {usesNim(serviceDraft) ? <>
@@ -2717,7 +2967,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           <div className="connection-field"><label htmlFor="local-documents-url">Document service address</label><input id="local-documents-url" value={serviceDraft.documentsUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, documentsUrl: event.target.value }))} placeholder="http://127.0.0.1:8766" />{isNativeRuntime() && <small>{LOOPBACK_HINT}</small>}</div>
           <button className="primary-submit" disabled={isRecording || isFinalizingRecording || isStartingRecording || isCheckingSidecars} type="submit">Save connections</button>
           <p className="empty-state" role="status">{usesNim(serviceSettings) ? 'NVIDIA NIM' : 'LM Studio / Bionic'}: {isCheckingSidecars ? 'Checking...' : llmHealth}</p>{availableModels.length > 0 && <p className="detected-models">Detected local models: {availableModels.join(', ')}</p>}
-        </form><div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>Audio and document sidecars are checked without interrupting any running local model.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>ASR sidecar</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document sidecar</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Animated icons by <a href="https://lordicon.com/" target="_blank" rel="noreferrer">Lordicon</a>.</p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
+        </form><div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>These optional helpers run on this computer. Recordings and imported files are always saved first; a helper that is not running only postpones transcription or text extraction.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>Speech service (transcription)</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document service (PDF, images, Office)</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Animated icons by <a href="https://lordicon.com/" target="_blank" rel="noreferrer">Lordicon</a>.</p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
       {isNativeRuntime() && <div className="managed-sidecar-tray" aria-label="Managed local services"><span>Managed services</span><span aria-live="polite">{managedSidecars.filter((sidecar) => sidecar.running).length}/2 running</span><button type="button" onClick={() => void startConfiguredSidecars()}>Start</button><button type="button" onClick={() => void stopConfiguredSidecars()}>Stop</button></div>}
       <div className="toast-stack">
         <div className="toast-slot" role="status" aria-atomic="true">{toast && <div className="toast">{toast}</div>}</div>

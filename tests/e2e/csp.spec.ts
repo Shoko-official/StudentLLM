@@ -170,7 +170,7 @@ test.describe('production Content Security Policy', () => {
     await expectNoViolations(read);
   });
 
-  test('answers from the sources when the local model is offline', async ({ page }) => {
+  test('explains that the local model is offline and keeps the question', async ({ page }) => {
     await page.addInitScript((workspace) => {
       localStorage.setItem('studentllm.workspace.v1', JSON.stringify(workspace));
     }, createFixtureWorkspace());
@@ -181,8 +181,10 @@ test.describe('production Content Security Policy', () => {
     await page.getByRole('tab', { name: 'Chat' }).click();
     await page.getByRole('textbox', { name: 'Ask the course chat' }).fill('Explain the role of normalization.');
     await page.getByRole('button', { name: 'Send' }).click();
-    await expect(page.getByText('Explain the role of normalization.')).toBeVisible();
-    await expect(page.getByRole('article', { name: 'Course assistant response' })).toBeVisible({ timeout: 15_000 });
+    // A refused connection is not an answer: it is explained, not saved, and the question goes back to the composer.
+    await expect(page.getByRole('alert')).toContainText('The AI model is not reachable', { timeout: 15_000 });
+    await expect(page.getByRole('textbox', { name: 'Ask the course chat' })).toHaveValue('Explain the role of normalization.');
+    await expect(page.getByRole('article', { name: 'Course assistant response' })).toHaveCount(0);
 
     await expectNoViolations(read);
   });
