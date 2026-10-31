@@ -23,12 +23,12 @@ import {
   EMAIL_REQUESTS_PER_ADDRESS_PER_HOUR,
   EMAIL_REQUESTS_PER_CONNECTION_PER_HOUR,
   EMAIL_RESEND_AFTER_SECONDS,
-  FAILED_VERIFY_PER_ADDRESS_PER_HOUR,
+  FAILED_VERIFY_PER_ADDRESS_AND_CONNECTION_PER_HOUR,
   FAILED_VERIFY_PER_CONNECTION_PER_HOUR,
   HOUR_MS,
   MANAGE_TOKEN_TTL_MS,
 } from "./constants";
-import { connectionKey, valueKey } from "./hooks";
+import { connectionAddress, connectionKey, valueKey } from "./hooks";
 import { completeSignIn } from "./signin";
 import { BASE64URL_43_128, PKCE_VERIFIER, invalid, parseShape } from "./validate";
 
@@ -72,6 +72,8 @@ export function emailRequestHandler(deps: Deps): Handler {
     if (email === null) throw invalid("The email address is not valid.");
     if (!isPkceChallenge(body.code_challenge)) throw invalid("Field \"code_challenge\" has an invalid format.");
     const now = deps.clock.now();
+    const accepted = () =>
+      jsonResponse({ expires_in: 600, resend_after: EMAIL_RESEND_AFTER_SECONDS, code_length: EMAIL_CODE_LENGTH }, ctx.requestId, { status: 202 });
 
     // A link flow: the ticket came from a signed-in session (POST /v1/account/link) and is spent at completion.
     let link: { ticketHash: string; accountId: string } | null = null;
@@ -83,8 +85,11 @@ export function emailRequestHandler(deps: Deps): Handler {
     }
 
     // Limits first, keyed by hashes only. They apply whether or not the address is known.
-    const addressWindow = await stores.rateLimits.hit(await valueKey(deps, "email-resend", email, now), 1, EMAIL_RESEND_AFTER_SECONDS * 1000, now);
-    if (!addressWindow.allowed) throw new ApiError("rate_limited", { retryAfterSeconds: addressWindow.retryAfterSeconds ?? EMAIL_RESEND_AFTER_SECONDS });
+    // A request inside the resend window of the address does NOTHING (the earlier code stays valid and nothing is
+    // sent) and is answered exactly like any other, so a stranger cannot cancel a user's code by asking again, and
+    // cannot tell from the answer whether a code was sent. (The user's app waits `resend_after` seconds.)
+    const resend = await stores.rateLimits.hit(await valueKey(deps, "email-resend", email, now), 1, EMAIL_RESEND_AFTER_SECONDS * 1000, now);
+    if (!resend.allowed) return accepted();
     const perAddress = await stores.rateLimits.hit(await valueKey(deps, "email-req", email, now), EMAIL_REQUESTS_PER_ADDRESS_PER_HOUR, HOUR_MS, now);
     if (!perAddress.allowed) throw new ApiError("rate_limited", { retryAfterSeconds: perAddress.retryAfterSeconds ?? 1 });
     const perConnection = await stores.rateLimits.hit(
@@ -122,7 +127,7 @@ export function emailRequestHandler(deps: Deps): Handler {
     });
     if (deliverable) sendInBackground(ctx, deps, { kind: "sign_in_code", to: email, code, purpose: link ? "link" : "sign_in" });
 
-    return jsonResponse({ expires_in: 600, resend_after: EMAIL_RESEND_AFTER_SECONDS, code_length: EMAIL_CODE_LENGTH }, ctx.requestId, { status: 202 });
+    return accepted();
   };
 }
 
@@ -133,10 +138,13 @@ export function emailVerifyHandler(deps: Deps): Handler {
     const email = normalizeEmail(body.email);
     if (email === null) throw invalid("The email address is not valid.");
     const now = deps.clock.now();
-    const failAddress = await valueKey(deps, "email-fail", email, now);
+    // The lockout is keyed by address AND connection: someone who only knows an address can lock out their own
+    // connection, never the address owner's. (A separate cap per connection stops one connection from scanning
+    // many addresses; the 5 attempts of one code and the 5 requests an hour per address bound the rest.)
+    const failAddress = await valueKey(deps, "email-fail-pair", `${email}|${connectionAddress(ctx.request)}`, now);
     const failConnection = await connectionKey(deps, ctx.request, "conn-email-fail", now);
     if (
-      (await stores.authChallenges.getCounter(failAddress, now)) >= FAILED_VERIFY_PER_ADDRESS_PER_HOUR ||
+      (await stores.authChallenges.getCounter(failAddress, now)) >= FAILED_VERIFY_PER_ADDRESS_AND_CONNECTION_PER_HOUR ||
       (await stores.authChallenges.getCounter(failConnection, now)) >= FAILED_VERIFY_PER_CONNECTION_PER_HOUR
     ) {
       throw new ApiError("rate_limited", { retryAfterSeconds: 3600 });

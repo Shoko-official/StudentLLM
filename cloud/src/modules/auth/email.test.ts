@@ -93,12 +93,6 @@ describe("POST /auth/email/request", () => {
     expect(Number(sixth.headers.get("Retry-After"))).toBeGreaterThan(0);
     expect((await sixth.json()).error.code).toBe("rate_limited");
 
-    // The minimum interval between two requests for one address.
-    const t2 = await makeAuthApp();
-    expect((await request(t2)).res.status).toBe(202);
-    const quick = (await request(t2)).res;
-    expect(quick.status).toBe(429);
-    expect(Number(quick.headers.get("Retry-After"))).toBeLessThanOrEqual(60);
 
     // The connection counter does not depend on the address: 20 different addresses from one connection, then no more.
     const t3 = await makeAuthApp();
@@ -116,6 +110,38 @@ describe("POST /auth/email/request", () => {
   it("does not fail the request when the email provider is down", async () => {
     const t = await makeAuthApp();
     t.email.failing = true;
+    expect((await request(t)).res.status).toBe(202);
+  });
+});
+
+describe("a request inside the resend window", () => {
+  it("is answered like any other but changes nothing: the earlier code stays valid and no mail is sent", async () => {
+    const t = await makeAuthApp();
+    const first = await request(t);
+    const firstCode = t.email.lastCode(ADDRESS)!;
+    const firstBody = await first.res.clone().json();
+    const stranger = await request(t, ADDRESS, {}); // the same address again, other challenge, 1 ms later
+    expect(stranger.res.status).toBe(202);
+    expect(await stranger.res.json()).toEqual(firstBody);
+    expect(t.email.ofKind("sign_in_code")).toHaveLength(1);
+    // The user's code still works with the user's verifier, and not with the stranger's.
+    expect(await code(await verify(t, { email: ADDRESS, code: firstCode, code_verifier: stranger.pkce.verifier }))).toBe("invalid_code");
+    const ok = await verify(t, { email: ADDRESS, code: firstCode, code_verifier: first.pkce.verifier });
+    expect(ok.status).toBe(200);
+  });
+
+  it("replaces the code again once the window is over", async () => {
+    const t = await makeAuthApp();
+    await request(t);
+    t.clock.advance(61_000);
+    await request(t);
+    expect(t.email.ofKind("sign_in_code")).toHaveLength(2);
+  });
+
+  it("does not use up the hourly allowance", async () => {
+    const t = await makeAuthApp();
+    for (let i = 0; i < 20; i++) expect((await request(t)).res.status).toBe(202);
+    t.clock.advance(61_000);
     expect((await request(t)).res.status).toBe(202);
   });
 });
@@ -273,7 +299,7 @@ describe("POST /auth/email/verify", () => {
     expect(await t.stores.sessions.listActiveByAccount(account!.accountId, t.clock.now())).toHaveLength(1);
   });
 
-  it("limits failed checks per address across codes", async () => {
+  it("limits failed checks per address and connection across codes", async () => {
     const t = await makeAuthApp();
     const pkce = await pkcePair();
     let limited = 0;
@@ -282,6 +308,28 @@ describe("POST /auth/email/verify", () => {
       if (res.status === 429) limited++;
     }
     expect(limited).toBeGreaterThan(0);
+  });
+
+  it("does not let someone who only knows the address lock its owner out: the lockout is per connection", async () => {
+    const t = await makeAuthApp();
+    const owner = await request(t);
+    const typed = t.email.lastCode(ADDRESS)!;
+    const attacker = { "CF-Connecting-IP": "203.0.113.200" };
+    let blocked = 0;
+    // The attacker burns their failures (the code itself locks after 5; a new request is not possible inside the window).
+    for (let i = 0; i < 40; i++) {
+      const res = await t.post("/auth/email/verify", { email: ADDRESS, code: "AAAAAAAA", code_verifier: owner.pkce.verifier }, attacker);
+      if (res.status === 429) blocked++;
+    }
+    expect(blocked).toBeGreaterThan(0); // the attacker's connection is limited ...
+    // ... and the owner's connection is not. (The code itself was locked by the 5 wrong tries, as it always could be:
+    // the owner asks again after the resend window and signs in.)
+    t.clock.advance(61_000);
+    const second = await request(t);
+    const code2 = t.email.lastCode(ADDRESS)!;
+    expect(code2).not.toBe(typed);
+    const ok = await verify(t, { email: ADDRESS, code: code2, code_verifier: second.pkce.verifier });
+    expect(ok.status).toBe(200);
   });
 
   it("honors a device id only if it belongs to the account, and signing in again replaces the device's session", async () => {

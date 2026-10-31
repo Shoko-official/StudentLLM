@@ -20,8 +20,8 @@ export const EMAIL_RESEND_AFTER_SECONDS = 60;
 export const EMAIL_REQUESTS_PER_ADDRESS_PER_HOUR = 5;
 /** The larger, independent cap per hashed connection address. */
 export const EMAIL_REQUESTS_PER_CONNECTION_PER_HOUR = 20;
-/** Failed code checks per address / per connection per hour, across codes (a new request resets a code's own cap). */
-export const FAILED_VERIFY_PER_ADDRESS_PER_HOUR = 25;
+/** Failed code checks per address-and-connection pair / per connection per hour, across codes (a new request resets a code's own cap). */
+export const FAILED_VERIFY_PER_ADDRESS_AND_CONNECTION_PER_HOUR = 25;
 export const FAILED_VERIFY_PER_CONNECTION_PER_HOUR = 50;
 
 /** The pending Google sign-in lives while the user is in the browser. */
