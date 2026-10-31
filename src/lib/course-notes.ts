@@ -57,9 +57,26 @@ function isPartOfLargerExpression(text: string, match: RegExpMatchArray) {
   return /[+=][ \t]*$/.test(before) || /\d$/.test(before) || /^[ \t]*[+=]/.test(after);
 }
 
-function extractSchema(text: string) {
-  const edges = [...text.matchAll(/([A-Za-z][\w ]{1,32})\s*(?:->|leads to|causes|depends on)\s*([A-Za-z][\w ]{1,32})/gi)]
+// Terms and relation verbs are Unicode-aware so "Énergie" keeps its first letter.
+// The French verbs are limited to forms that are not also common nouns or
+// prepositional phrases ("à cause de", "la cause", "un conduit"). Every quantifier
+// is bounded, so the match stays linear on long input.
+const SCHEMA_TERM = String.raw`(?:\p{L}['’])?\p{L}[\p{L}\p{N}_ ]{1,32}`;
+const SCHEMA_RELATION = String.raw`->|(?<![\p{L}\p{N}_])(?:leads to|causes|depends on|entra[îi]ne(?:nt)?|provoque(?:nt)?|engendre(?:nt)?|m[èe]ne(?:nt)? [àa]|d[ée]pend(?:ent)? (?:de|du|des|d['’]))(?:(?<=['’])|(?![\p{L}\p{N}_]))`;
+const SCHEMA_EDGE = new RegExp(String.raw`(${SCHEMA_TERM})\s*(?:${SCHEMA_RELATION})\s*(${SCHEMA_TERM})`, 'giu');
+
+// French sources that are only a pronoun ("Cela provoque ...") or a negated verb
+// phrase ("Cela ne provoque rien") carry no concept, so the edge is dropped.
+const PRONOUN_SOURCE = /^(?:il|elle|ils|elles|cela|ça|ce|on)$|\s+ne$/iu;
+function isPronounSource(term: string) {
+  return PRONOUN_SOURCE.test(term.trim());
+}
+
+function extractSchema(rawText: string) {
+  const text = rawText.normalize('NFC');
+  const edges = [...text.matchAll(SCHEMA_EDGE)]
     .filter((match) => !isPartOfLargerExpression(text, match))
+    .filter((match) => !isPronounSource(match[1]))
     .map((match) => ({ from: match[1].trim(), to: match[2].trim() }));
   if (!edges.length) return null;
   return { nodes: [...new Set(edges.flatMap((edge) => [edge.from, edge.to]))], edges };
