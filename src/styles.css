@@ -285,6 +285,7 @@ html { scroll-padding-top: 72px; }
 .setting-row input[type='checkbox'] { width: 20px; min-height: 20px; height: 20px; flex-shrink: 0; accent-color: var(--accent); }
 .connection-field { display: grid; gap: 7px; }
 .connection-field small, .detected-models, .edit-course-tools small { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.connection-notice { margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; color: var(--text); background: var(--surface-2); font-size: 13px; line-height: 1.5; }
 .edit-course-tools { display: grid; gap: 8px; padding: 14px; border-radius: 12px; background: var(--surface-2); }
 .setting-info { border-top: 1px solid var(--line); padding-top: 18px; }
 .sidecar-status-list { display: grid; gap: 14px; font-size: 13px; }
