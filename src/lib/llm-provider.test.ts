@@ -6,6 +6,15 @@ function response(body: unknown, ok = true, status = 200): Response {
 }
 
 describe('OpenAI-compatible LLM provider', () => {
+  it('includes a thinking preference only when explicitly configured', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => response({ choices: [{ message: { content: 'OK' } }] }));
+    const configured = new OpenAICompatibleProvider({ baseUrl: '/nvidia-nim/v1', model: 'fixture-model', fetchImpl, chatTemplateKwargs: { enable_thinking: false } });
+    await configured.generate([{ role: 'user', content: 'Hello' }]);
+    expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))).toHaveProperty('chat_template_kwargs.enable_thinking', false);
+    const local = new OpenAICompatibleProvider({ baseUrl: 'http://127.0.0.1:1234/v1', model: 'fixture-model', fetchImpl });
+    await local.generate([{ role: 'user', content: 'Hello' }]);
+    expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).not.toHaveProperty('chat_template_kwargs');
+  });
   it('sends a local chat request and extracts the assistant answer', async () => {
     const fetchImpl = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => response({
       model: 'qwen/qwen3-4b',

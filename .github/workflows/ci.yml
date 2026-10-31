@@ -55,6 +55,8 @@ jobs:
           python -m unittest tests.test_local_document_server tests.test_local_document_pdf tests.test_local_document_security tests.test_local_server_contract
       - name: Unit and integration tests
         run: npm run test:run
+      - name: Provider smoke regression tests (fake network)
+        run: node --test scripts/provider-smoke.test.mjs
       - name: Production build
         run: npm run build
       - name: Desktop debug build
