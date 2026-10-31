@@ -102,6 +102,25 @@ describe('robustness', () => {
     expect(toPlainText('x\n \t---\t|\t---\ny')).toBe('x y');
   });
 
+  it('never returns a stale result after a segment text is edited', () => {
+    const segment = { id: 's1', text: 'the **sample space** of outcomes' };
+    expect(textMatchesQuery(segment.text, 'sample space')).toBe(true);
+    expect(textMatchesQuery(segment.text, 'sample space')).toBe(true); // second call is served from the cache
+    segment.text = 'the **event** of outcomes';
+    expect(textMatchesQuery(segment.text, 'sample space')).toBe(false);
+    expect(textMatchesQuery(segment.text, 'event')).toBe(true);
+    segment.text = 'the **sample space** again';
+    expect(textMatchesQuery(segment.text, 'sample space')).toBe(true);
+  });
+
+  it('stays correct when more segments than the cache holds are searched', () => {
+    const segments = Array.from({ length: 25_000 }, (_, index) => `item **${index}** of $\\alpha_{${index}}$`);
+    for (const segment of segments) textMatchesQuery(segment, 'zzz');
+    expect(textMatchesQuery(segments[0], 'item 0 of')).toBe(true);
+    expect(textMatchesQuery(segments[24_999], 'item 24999 of')).toBe(true);
+    expect(textMatchesQuery(segments[24_999], 'item 0 of')).toBe(false);
+  });
+
   it('bounds very long text but still finds a late match', () => {
     const long = `${'word '.repeat(10_000)}needle ${'tail '.repeat(10_000)}`;
     expect(buildSnippet(long, 'needle').some((part) => part.match)).toBe(true);

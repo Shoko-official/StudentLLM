@@ -87,6 +87,16 @@ export function toPlainText(source: string): string {
 
 /** Candidate needles for a query: as typed, with Markdown/LaTeX stripped, and with LaTeX names mapped to symbols. */
 function queryVariants(query: string): string[] {
+  // The same query is reused for every segment of a search: remember the last result (pure function of the query).
+  if (lastVariants?.query === query) return lastVariants.variants;
+  const variants = computeQueryVariants(query);
+  lastVariants = { query, variants };
+  return variants;
+}
+
+let lastVariants: { query: string; variants: string[] } | undefined;
+
+function computeQueryVariants(query: string): string[] {
   const typed = query.trim().toLocaleLowerCase();
   if (!typed) return [];
   const stripped = toPlainText(query).toLocaleLowerCase();
@@ -108,6 +118,33 @@ function boundedSource(source: string, query: string) {
   return source.slice(start, start + MAX_SOURCE_CHARS);
 }
 
+const PLAIN_CACHE_MAX_ENTRIES = 20_000;
+const PLAIN_CACHE_MAX_CHARS = 8_000_000;
+// Keyed by the exact source text: an edited segment is a different key, so a stale entry can never be returned.
+const plainCache = new Map<string, string>();
+let plainCacheChars = 0;
+
+/** Lowercased plain text of a source, cached (bounded, least recently used) so each keystroke does not re-strip every segment. */
+function lowerPlainText(source: string, query: string): string {
+  // Longer sources are windowed around the query, so their plain text depends on the query: do not cache.
+  if (source.length > MAX_SOURCE_CHARS) return toPlainText(boundedSource(source, query)).toLocaleLowerCase();
+  const cached = plainCache.get(source);
+  if (cached !== undefined) {
+    plainCache.delete(source);
+    plainCache.set(source, cached);
+    return cached;
+  }
+  const plain = toPlainText(source).toLocaleLowerCase();
+  plainCache.set(source, plain);
+  plainCacheChars += source.length + plain.length;
+  for (const key of plainCache.keys()) {
+    if (plainCache.size <= PLAIN_CACHE_MAX_ENTRIES && plainCacheChars <= PLAIN_CACHE_MAX_CHARS) break;
+    plainCacheChars -= key.length + (plainCache.get(key)?.length ?? 0);
+    plainCache.delete(key);
+  }
+  return plain;
+}
+
 /**
  * True when the query matches the source text itself or its readable plain-text form,
  * so search results agree with the highlighted snippet.
@@ -116,7 +153,7 @@ export function textMatchesQuery(source: string, query: string): boolean {
   const needle = query.trim().toLocaleLowerCase();
   if (!needle) return false;
   if (source.toLocaleLowerCase().includes(needle)) return true;
-  const plain = toPlainText(boundedSource(source, query)).toLocaleLowerCase();
+  const plain = lowerPlainText(source, query);
   return queryVariants(query).some((variant) => plain.includes(variant));
 }
 
