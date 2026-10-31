@@ -944,6 +944,30 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByRole('button', { name: 'Source · transfer.md · part 1', exact: true })).toBeVisible();
   });
 
+  test('clears a previous course error banner when a course is imported', async ({ page }) => {
+    await page.goto('/');
+    await page.setInputFiles('input[aria-label="Select course source"]', {
+      name: 'thermo.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.7'),
+    });
+    await expect(page.getByRole('alert')).toContainText('thermo.pdf is saved.');
+
+    const downloadPromise = page.waitForEvent('download');
+    await openCourseActions(page);
+    await page.getByRole('button', { name: 'Export course' }).click();
+    const download = await downloadPromise;
+    const exported = await readFile(await download.path() as string, 'utf8');
+
+    await page.setInputFiles('input[aria-label="Import course export"]', {
+      name: download.suggestedFilename(),
+      mimeType: 'application/json',
+      buffer: Buffer.from(exported),
+    });
+    await expect(page.getByText(/imported\.$/)).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: 'thermo.pdf is saved.' })).toHaveCount(0);
+  });
+
   test('removes an imported source and its local blob', async ({ page }) => {
     await page.goto('/');
     await page.setInputFiles('input[aria-label="Select course source"]', {
