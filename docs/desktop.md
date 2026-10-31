@@ -42,8 +42,8 @@ The packaged desktop UI test is available locally with `npm run test:desktop-ui`
 
 ## Releases
 
-Pushing a tag that matches the app version, for example `v0.1.0` for `src-tauri/tauri.conf.json` version `0.1.0`, runs the `Release` workflow. It builds unsigned installers on Ubuntu (`.deb`), Windows (NSIS `-setup.exe`), and macOS (`.dmg`), then attaches them and a `SHA256SUMS-<OS>.txt` file for each platform to a draft GitHub release. The release stays a draft until a maintainer reviews and publishes it.
+Pushing a tag that matches the app version, for example `v0.1.0` for `src-tauri/tauri.conf.json` version `0.1.0`, runs the `Release` workflow. It builds unsigned installers on Ubuntu (`.deb`), Windows (NSIS `-setup.exe`), and macOS on Apple Silicon (`.dmg`; no Intel build), then attaches them and a `SHA256SUMS-<OS>.txt` file for each platform to a draft GitHub release. The release stays a draft until a maintainer reviews and publishes it.
 
-Before tagging, bump the version in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`, move the `Unreleased` changelog entries under the new version, and wait for a green CI run on `main`.
+Before tagging, bump the version in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` (the workflow refuses a tag that disagrees with any of them, so pre-release suffixes must appear in all three), move the `Unreleased` changelog entries under the new version, and wait for a green CI run on `main`.
 
 Known limits of these builds: they are not code signed, so Windows SmartScreen and macOS Gatekeeper warn on first launch, and they do not bundle the optional Python ASR and document services. Recording and text import work without them; see [local-asr.md](./local-asr.md) and [local-documents.md](./local-documents.md) for the services.
