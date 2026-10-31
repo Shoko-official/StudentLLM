@@ -62,7 +62,7 @@ import { describeAiFailure } from './lib/service-errors';
 import { mergeSegments } from './lib/transcript-merge';
 import { AudioChunkStore, createRecordingChunkStore } from './lib/recording-storage';
 import { listPendingRecordings, removePendingRecording, savePendingRecording } from './lib/recording-recovery';
-import { buildCourseExport, readCourseExport } from './lib/course-transfer';
+import { buildCourseExport, exportSizeWarning, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocumentsHybrid } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
@@ -248,6 +248,11 @@ function randomQuickCourseTitle() {
   const prefixes = ['Untitled lecture', 'Study course', 'Quick course'];
   const suffix = crypto.randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase();
   return `${prefixes[Math.floor(Math.random() * prefixes.length)]} · ${suffix}`;
+}
+
+// A Markdown file imported as notes (or pasted in the organizer) keeps its headings, lists and tables instead of showing the raw syntax.
+function isMarkdownImport(block: { timestamp?: string; speaker?: string }) {
+  return (block.timestamp === 'Notes' || block.timestamp === 'Quick start') && /\.(?:md|markdown)$/i.test(block.speaker ?? '');
 }
 
 function resourceIcon(kind: Resource['kind']) {
@@ -1575,7 +1580,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           if (session.stream && session.durability === 'durable' && chunksPersisted > 0) saveRecordingFallback();
           return;
         }
-        notify('Audio saved locally. Transcribing with local ASR...');
+        notify('Audio saved locally. Transcribing with the speech service...');
         try {
           const chunks = await session.readChunks();
           if (!chunks.length) throw new Error('No persisted audio chunks available.');
@@ -1583,7 +1588,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           const transcription = await localSpeechEngine.transcribe(audio);
           if (!transcription.segments.length) {
             saveRecordingFallback();
-            notify('Audio saved locally; local ASR returned no speech.');
+            notify('Audio saved locally; no speech was detected.');
             return;
           }
           const segments = transcription.segments.map((segment, index) => ({
@@ -1975,7 +1980,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       if (resource.kind === 'audio' && !localSpeechEngine) setActionError('Audio imported. Connect a speech service in Settings to transcribe it.');
       if (resource.kind === 'audio' && localSpeechEngine) {
         setTranscribingResourceIds((current) => new Set(current).add(resource.id));
-        notify(`${resource.name} saved locally. Transcribing with local ASR...`);
+        notify(`${resource.name} saved locally. Transcribing with the speech service...`);
         try {
           const transcription = await localSpeechEngine.transcribe(file);
           const segments = transcription.segments.map((segment, index) => ({
@@ -2413,6 +2418,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       link.download = `${activeLesson.title.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'course'}.studentllm.json`;
       link.click();
       URL.revokeObjectURL(url);
+      const sizeWarning = exportSizeWarning(exportBlob.size);
+      if (sizeWarning) setActionError(sizeWarning);
       notify(`${activeLesson.title} exported.`);
     } catch {
       notify('The course export could not be created.');
@@ -2626,7 +2633,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       return <section className="course-note-markdown" key={block.id}><RichText content={block.markdown} /></section>;
     }
     if (block.type === 'paragraph') {
-      return <div className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp}{speakerLabel(block.speaker) ? ` · ${speakerLabel(block.speaker)}` : ''}</span>}<RichText content={block.text} highlightExtractedMath /></div>;
+      return <div className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp}{speakerLabel(block.speaker) ? ` · ${speakerLabel(block.speaker)}` : ''}</span>}<RichText content={block.text} highlightExtractedMath={!isMarkdownImport(block)} /></div>;
     }
     if (block.type === 'formula') {
       return <div className="course-note-formula" key={block.id}><RichText content={block.latex} />{block.caption && <small>{block.caption}</small>}</div>;

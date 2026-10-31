@@ -116,7 +116,7 @@ describe('user journeys', () => {
       render(<App provider={null} speechEngine={{ transcribe: () => transcription.promise }} sourceBlobStore={memoryBlobStore()} />);
 
       await user.upload(screen.getByLabelText('Select course source'), new File(['audio-bytes'], 'lecture.webm', { type: 'audio/webm' }));
-      await screen.findByText(/Transcribing with local ASR/);
+      await screen.findByText(/Transcribing with the speech service/);
       await user.upload(screen.getByLabelText('Select course source'), new File(['Notes imported during the wait.'], 'during.md', { type: 'text/markdown' }));
       await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].transcript.some((segment: { text: string }) => segment.text === 'Notes imported during the wait.')).toBe(true));
 
@@ -323,6 +323,34 @@ describe('user journeys', () => {
       await user.click(screen.getByRole('button', { name: 'Start recording' }));
       await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('No microphone was found.'));
       expect(screen.queryByText(/Permission denied|Requested device/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('notes', () => {
+    it('renders an imported Markdown file as formatted notes, not raw syntax', async () => {
+      const user = userEvent.setup();
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+
+      await user.upload(screen.getByLabelText('Select course source'), new File(
+        [['## Dérivées', '', 'La dérivée de $x^2$ est $2x$.', '', '| a | b |', '|---|---|', '| 1 | 2 |', ''].join(String.fromCharCode(10))],
+        'cours.md',
+        { type: 'text/markdown' },
+      ));
+
+      const notes = await screen.findByRole('region', { name: 'Course notes document' });
+      await waitFor(() => expect(within(notes).getByRole('heading', { name: 'Dérivées' })).toBeInTheDocument());
+      expect(within(notes).getByRole('table')).toBeInTheDocument();
+      expect(notes).not.toHaveTextContent('## Dérivées');
+      expect(notes).not.toHaveTextContent('|---|');
+    });
+
+    it('keeps a plain text file as written', async () => {
+      const user = userEvent.setup();
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+
+      await user.upload(screen.getByLabelText('Select course source'), new File([['# not a heading', 'second line'].join(String.fromCharCode(10))], 'plain.txt', { type: 'text/plain' }));
+      const notes = await screen.findByRole('region', { name: 'Course notes document' });
+      await waitFor(() => expect(notes).toHaveTextContent('# not a heading'));
     });
   });
 });

@@ -44,6 +44,13 @@ export interface ImportedCourse {
 
 export type CourseIdFactory = (prefix: string) => string;
 
+/** A warning when an export is too large for this app to import again, or null when it round-trips. */
+export function exportSizeWarning(bytes: number): string | null {
+  if (bytes <= MAX_COURSE_EXPORT_BYTES) return null;
+  const limit = Math.round(MAX_COURSE_EXPORT_BYTES / (1024 * 1024));
+  return `This export is ${Math.round(bytes / (1024 * 1024))} MB, more than the ${limit} MB StudentLLM can import again. Keep the file, but remove large audio or documents from the course before relying on it as your only backup.`;
+}
+
 function createId(prefix: string) {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}-${crypto.randomUUID()}`;
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -253,10 +260,23 @@ export async function readCourseExport(input: Blob | string, idFactory: CourseId
     };
   });
 
+  // Citations point at a source (and a part of it) by id; the imported sources have new ids.
+  const remapTarget = (target: string) => {
+    for (const [oldId, newId] of resourceIds) {
+      if (target === oldId || target.startsWith(`${oldId}:`)) return `${newId}${target.slice(oldId.length)}`;
+    }
+    return target;
+  };
+  const remapTargets = <T extends { citationTargets?: string[] }>(item: T): T => (
+    item.citationTargets ? { ...item, citationTargets: item.citationTargets.map(remapTarget) } : item
+  );
+
   return {
     lesson,
     workspace: {
       ...parsed.workspace,
+      chat: parsed.workspace.chat.map(remapTargets),
+      artifacts: parsed.workspace.artifacts.map(remapTargets),
       resources,
       transcript: parsed.workspace.transcript.map((segment) => ({
         ...segment,
