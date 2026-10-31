@@ -264,6 +264,8 @@ Orthogonal items: trademark ownership and a trademark policy (so forks cannot pr
 
 ### 5.1 The PyMuPDF licensing blocker
 
+> **Update.** Resolved by the licence audit: the document sidecar no longer depends on PyMuPDF (it uses pdfminer.six, MIT, and pypdfium2, Apache-2.0 or BSD-3-Clause), Lordicon was replaced by Lucide, and `npm run licenses:check:all` enforces the policy in CI. The analysis below is kept as the record of the problem and the options considered. See [licensing.md](licensing.md) for the current state, the remaining decisions and the unverified items (including the PyAV/FFmpeg GPL codecs in the speech sidecar's wheel, which this section did not cover).
+
 **Fact in the repository.** `scripts/local_document_server.py` does `import fitz` (PyMuPDF) to read PDFs, and `requirements-local-documents.txt` declares `PyMuPDF>=1.26,<2`. The repository's own code is MIT. The sidecar is optional and the user installs it; the packaged app does not bundle it (`docs/desktop.md`).
 
 **What the library's maintainers say** (fetched from the official pages on 2026-10-31; the wording may change, so re-check before relying on it):

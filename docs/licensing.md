@@ -174,7 +174,7 @@ If a release ever ships Python and the sidecars (see `docs/enterprise-readiness.
 
 ## Owner decisions still open
 
-1. **Commercial licensing route.** Staying MIT, open core, dual licence or source-available is a business decision (section 5 of `docs/enterprise-readiness.md`, on the `docs/enterprise-readiness` branch). None of the fixes here constrains it; relicensing later needs the consent of every contributor (no CLA or DCO exists yet).
+1. **Commercial licensing route.** Staying MIT, open core, dual licence or source-available is a business decision ([enterprise-readiness.md, section 5](enterprise-readiness.md#5-licensing-options-given-mit)). None of the fixes here constrains it; relicensing later needs the consent of every contributor (no CLA or DCO exists yet).
 2. **PDF quality versus licence.** Accept pdfminer.six (free, slower, glyph-box geometry), or buy a PyMuPDF commercial licence from Artifex for MuPDF speed and layout.
 3. **Speech sidecar packaging.** Choose between an LGPL FFmpeg build, an external decoder, or leaving the sidecar user-installed (the status quo).
 4. **Lordicon.** Keep Lucide (done), or buy a PRO licence if the animated icon style is wanted back (price and terms at lordicon.com).
