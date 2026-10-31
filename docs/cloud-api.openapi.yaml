@@ -8,6 +8,18 @@ info:
     `docs/cloud-plan.md` holds the decisions behind it. Draft for review: endpoint and field names are
     proposals until phase 1 closes. Conformance fixtures live in `docs/cloud-api-fixtures/`.
 
+    Gating exceptions: `terms_required` and `account_suspended` never block, and are never returned by,
+    `GET /v1/account`, `GET /v1/account/export`, `DELETE /v1/account`, `POST /auth/refresh`,
+    `POST /auth/logout`, `GET /v1/devices`, `DELETE /v1/devices/{device_id}` and `POST /v1/account/terms`,
+    so data-rights routes always work for a suspended account or one that has not accepted the latest terms.
+
+    Fresh sign-in routes: account export, linking a login method, unlinking a login method and deleting the
+    account all require `auth_time` within 5 minutes and otherwise return `reauth_required`.
+
+    Scope: a `manage_token` (opaque, returned only by the device-limit response) works only for
+    `GET /v1/devices` and `DELETE /v1/devices/{device_id}`. Every other route rejects it with
+    `insufficient_scope` (403). A manage token must never be logged.
+
     Versioning: the `/v1` prefix is stable. Additive changes (new optional fields, new endpoints, new
     error codes, new enum values clients must tolerate) are allowed within `/v1`. A breaking change
     (removing or renaming a field, changing a type or a meaning, making an optional field required)
@@ -92,6 +104,11 @@ paths:
       tags: [auth]
       operationId: authToken
       summary: Exchange the Google authorization code (PKCE)
+      description: |
+        Sign-in succeeds only for the Google method currently in the account's `login_methods`; otherwise the
+        callback redirected with `error=identity_conflict`. For a link flow (the code was obtained with a
+        link ticket) the response is `LinkResult`, not a new session: the client passes its current
+        `device_id` and keeps the same device and tokens.
       security: []
       requestBody:
         required: true
@@ -100,10 +117,13 @@ paths:
             schema: { $ref: "#/components/schemas/TokenRequest" }
       responses:
         "200":
-          description: Tokens.
+          description: Tokens (sign-in) or a link result (link flow).
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/TokenResponse" }
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/TokenResponse" }
+                  - { $ref: "#/components/schemas/LinkResult" }
         "400": { $ref: "#/components/responses/InvalidCode" }
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -138,10 +158,19 @@ paths:
       summary: Verify the one-time code and obtain tokens
       description: |
         Returns tokens directly; PKCE binds the code to the requesting device. Wrong, expired, used or
-        over-attempted codes all return the same `invalid_code`. `identity_conflict` is returned when the
-        email belongs to an account that cannot be used for this sign-in. `device_limit_reached` leaves
-        the code unconsumed and returns a short-lived `manage_token` in `error.details` that is valid only
-        for the device list and device revocation routes.
+        over-attempted codes all return the same `invalid_code`. Sign-in succeeds only if the email method is
+        currently in the account's `login_methods`; otherwise the response is the generic `invalid_code`
+        (it must not reveal that the address exists). For a link flow (the code was requested with a link
+        ticket) a failure of the one-email rule returns `identity_conflict` (409) and success returns
+        `LinkResult` instead of a new session; the client passes its current `device_id` and keeps the same
+        device.
+
+        At the device limit (3), the code check succeeds but the sign-in does not complete: the response is
+        409 `DeviceLimitResponse` with an opaque `manage_token` (5 minutes, hashed at rest, devices routes
+        only). A successful code check at the limit does not count as an attempt, the code stays unconsumed,
+        and at most 3 manage tokens are minted per code. The limit check and the device insert are one atomic
+        step inside the account's Durable Object. The Google path never issues a manage token: the user revokes
+        a device from another signed-in device, or uses the email path, then retries.
       security: []
       requestBody:
         required: true
@@ -150,13 +179,23 @@ paths:
             schema: { $ref: "#/components/schemas/EmailVerify" }
       responses:
         "200":
-          description: Tokens.
+          description: Tokens (sign-in) or a link result (link flow).
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/TokenResponse" }
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/TokenResponse" }
+                  - { $ref: "#/components/schemas/LinkResult" }
         "400": { $ref: "#/components/responses/InvalidCode" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "409":
+          description: device_limit_reached (DeviceLimitResponse) or identity_conflict (Error).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/DeviceLimitResponse" }
+                  - { $ref: "#/components/schemas/Error" }
         "429": { $ref: "#/components/responses/RateLimited" }
   /auth/refresh:
     post:
@@ -183,6 +222,7 @@ paths:
               schema: { $ref: "#/components/schemas/TokenResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "400": { $ref: "#/components/responses/InvalidRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /auth/logout:
     post:
       tags: [auth]
@@ -196,6 +236,7 @@ paths:
             schema: { $ref: "#/components/schemas/LogoutRequest" }
       responses:
         "204": { description: Revoked (idempotent). }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /.well-known/jwks.json:
     get:
       tags: [auth]
@@ -215,7 +256,10 @@ paths:
       tags: [account]
       operationId: listDevices
       summary: List devices (at most 3)
-      description: Also accepts a `manage_token` (scope devices) obtained from a `device_limit_reached` error.
+      description: Also accepts the opaque `manage_token` from a `device_limit_reached` response.
+      security:
+        - bearerAuth: []
+        - manageToken: []
       responses:
         "200":
           description: Devices.
@@ -228,7 +272,13 @@ paths:
       tags: [account]
       operationId: revokeDevice
       summary: Revoke a device
-      description: Revokes the session family and writes the revocation to the account's Durable Object, so it takes effect immediately on the inference path.
+      description: |
+        Revokes the session family and writes the revocation to the account's Durable Object, so it takes
+        effect immediately on the inference path. Also accepts the opaque `manage_token`. Revoking a device
+        with a manage token sends a notification email to the account address.
+      security:
+        - bearerAuth: []
+        - manageToken: []
       parameters:
         - { name: device_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -249,6 +299,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Account" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
     delete:
       tags: [account]
       operationId: deleteAccount
@@ -271,7 +322,7 @@ paths:
       tags: [account]
       operationId: exportAccount
       summary: Export everything the service holds about the account
-      description: Never contains course content because none is stored. Rate limited to a few per day.
+      description: Requires `auth_time` within 5 minutes, otherwise `reauth_required`. Never contains course content because none is stored. Rate limited to a few per day.
       responses:
         "200":
           description: JSON attachment.
@@ -307,11 +358,14 @@ paths:
       operationId: linkLoginMethod
       summary: Get a single-use ticket to link a second login method
       description: |
-        Requires `auth_time` within 5 minutes (a fresh sign-in; otherwise `reauth_required`). The second
-        method must then complete its own sign-in carrying the ticket. The second method's verified
-        email must equal the account's email (one verified email per account); a different email, or an
-        email that belongs to another account, gives `identity_conflict`. Sends a notification email to
-        the account address on completion.
+        Requires `auth_time` within 5 minutes (a fresh sign-in; otherwise `reauth_required`).
+        Failures at ticket issuance: `reauth_required`, and `identity_conflict` (409) if the method is
+        already linked. The second method must then complete its own sign-in carrying the ticket.
+        Failures at completion: Google redirects to the app with `error=identity_conflict`; the email path
+        returns 409 `identity_conflict` from `/auth/email/verify`. This happens when the second method's
+        verified email differs from the account's email (one verified email per account) or belongs to
+        another account. Completion returns `LinkResult`, not a new session, and sends a notification email
+        to the account address.
       requestBody:
         required: true
         content:
@@ -330,13 +384,13 @@ paths:
       tags: [account]
       operationId: unlinkLoginMethod
       summary: Unlink a login method
-      description: Never leaves the account with zero methods. Sends a notification email to the account address. Requires a fresh sign-in.
+      description: Requires `auth_time` within 5 minutes (`reauth_required`). Removing the last method returns 400 `invalid_request`. After unlinking, sign-in with that method fails (`identity_conflict` for Google, the generic `invalid_code` for email). Sends a notification email to the account address.
       parameters:
         - { name: method, in: path, required: true, schema: { type: string, enum: [google, email] } }
       responses:
         "204": { description: Unlinked. }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "409": { $ref: "#/components/responses/Conflict" }
   /v1/provider-sets:
     get:
       tags: [account]
@@ -362,7 +416,10 @@ paths:
         Appends a record. There is one active record per provider set. Posting an identical grant while it
         is active returns the existing record (idempotent by construction, no Idempotency-Key). Withdrawing
         makes the previous record inactive; requests then get `consent_outdated`. Every text feature
-        (chat, note formatting, study material) is the `chat` feature.
+        (chat, note formatting, study material) is the `chat` feature. A `text_version` that does not equal
+        the server's current `consent_text_version` for the set returns 409 `consent_outdated` with
+        `details.consent_text_version`. Bumping the consent text strands builds that bundle the old text:
+        they cannot collect consent, fall back to local and show an "update required" message. That is accepted.
       requestBody:
         required: true
         content:
@@ -384,9 +441,11 @@ paths:
       summary: Create a Paddle checkout server-side
       description: |
         The gateway creates the Paddle transaction with the account id in `custom_data` (used only to bind
-        the first event). The client never supplies a price id. `already_subscribed` (409) is returned
-        when an active subscription exists, including one set to cancel at period end; the user manages it
-        in the customer portal.
+        the first event). The client never supplies a price id. `already_subscribed` (409, meaning an active
+        plan exists) is returned when any plan is active, including a subscription set to cancel at period end,
+        and for a subscription bought while a pass is active. A pass bought while a pass is active is
+        allowed and queues its windows after the current ones; a pass bought while a subscription is active
+        is refused. The user manages an existing plan in the customer portal.
       requestBody:
         required: true
         content:
@@ -437,7 +496,7 @@ paths:
           description: Accepted, duplicate or quarantined.
           content:
             application/json:
-              schema: { type: object, additionalProperties: false }
+              schema: { $ref: "#/components/schemas/Empty" }
         "401": { description: Bad signature (no detail). }
         "503": { description: Temporary failure; Paddle retries. }
   /v1/models:
@@ -460,7 +519,9 @@ paths:
       tags: [inference]
       operationId: getUsage
       summary: Credits in the current window
-      description: Fetched once when the cloud panel opens (signed in); otherwise the app reads the credit headers.
+      description: |
+        Fetched once when the signed-in cloud panel opens; otherwise the app reads the credit headers. A free
+        account gets a valid response with `window: null`, zero credits, `resets_at: null` and zero counters.
       responses:
         "200":
           description: Usage.
@@ -478,7 +539,11 @@ paths:
       operationId: chatCompletions
       summary: Chat completion (streaming or not), covers every text feature
       description: |
-        Check order: client version, token and session, terms, plan, consent, rate limit, then budget.
+        Check order. Header-only checks run before the body is read: client version, token and session,
+        terms and account status (`terms_required`, `account_suspended`), plan, consent, rate-limit window.
+        Then the idempotency lookup (a conflict returns immediately and never consumes a concurrency slot),
+        then the concurrency slot; then the body is read and validated while it streams in; then the budget
+        reservation (`budget_exhausted`).
         The request is validated against an allowlist (unknown fields, `tools`, `n` above 1, `logit_bias`,
         `user`, `stream_options` are rejected; images only as data URLs; `max_tokens` clamped; `model`
         rewritten from the routing table). With `stream: true` the response is `text/event-stream`:
@@ -523,7 +588,7 @@ paths:
       operationId: transcribeAudio
       summary: Transcribe audio (one chunk)
       description: |
-        Same check order and headers as chat. Reservation is `max(declared duration, bytes-based bound)`
+        Same check order, headers and error behavior as chat. Reservation is `max(declared duration, bytes-based bound)`
         and settlement uses the provider-reported duration (full reservation if none). The duration cap
         applies per request: the client splits long recordings into chunks, each with its own
         Idempotency-Key, and applies timestamp offsets when merging segments.
@@ -541,7 +606,10 @@ paths:
           description: Transcript.
           headers:
             X-StudentLLM-Credits-Remaining: { $ref: "#/components/headers/CreditsRemaining" }
+            X-StudentLLM-Credits-Limit: { $ref: "#/components/headers/CreditsLimit" }
+            X-StudentLLM-Credits-Reset: { $ref: "#/components/headers/CreditsReset" }
             X-StudentLLM-Credits-Charged: { $ref: "#/components/headers/CreditsCharged" }
+            X-StudentLLM-Plan-Version: { $ref: "#/components/headers/PlanVersion" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TranscriptionResponse" }
@@ -550,7 +618,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
-        "415": { $ref: "#/components/responses/InvalidRequest" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "426": { $ref: "#/components/responses/ClientOutdated" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/Unavailable" }
   /v1/ocr:
@@ -572,7 +641,10 @@ paths:
           description: Text.
           headers:
             X-StudentLLM-Credits-Remaining: { $ref: "#/components/headers/CreditsRemaining" }
+            X-StudentLLM-Credits-Limit: { $ref: "#/components/headers/CreditsLimit" }
+            X-StudentLLM-Credits-Reset: { $ref: "#/components/headers/CreditsReset" }
             X-StudentLLM-Credits-Charged: { $ref: "#/components/headers/CreditsCharged" }
+            X-StudentLLM-Plan-Version: { $ref: "#/components/headers/PlanVersion" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OcrResponse" }
@@ -581,6 +653,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "409": { $ref: "#/components/responses/Conflict" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "426": { $ref: "#/components/responses/ClientOutdated" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/Unavailable" }
   /v1/status:
@@ -605,6 +679,12 @@ paths:
         "426": { $ref: "#/components/responses/ClientOutdated" }
 components:
   securitySchemes:
+    manageToken:
+      type: http
+      scheme: bearer
+      description: |
+        Opaque random token (not a JWT), valid 5 minutes, stored hashed, single-purpose: only the device list
+        and device revoke routes accept it. Never logged.
     bearerAuth:
       type: http
       scheme: bearer
@@ -617,10 +697,16 @@ components:
       required: true
       description: |
         Client UUID, valid 24 hours, scoped per account and route. Only on the POST content routes. States:
-        in_flight, failed_before_forward, settled. A retry while in_flight returns idempotency_conflict with
-        details.state=in_progress. Only failed_before_forward may reuse the reservation. A forwarded
-        attempt is always settled at actual usage or the full reservation. There is no body-fingerprint
-        check; use a fresh key for each logical request.
+        `in_flight`, `failed_before_forward`, `failed_no_usage`, `settled`.
+        A retry while `in_flight` returns idempotency_conflict with details.state=in_progress.
+        A same-key retry is allowed from `failed_before_forward` (reuses the reservation) and from
+        `failed_no_usage` (a forwarded call that returned a provider error with no completion; the
+        reservation is released and zero credits are charged).
+        A forwarded attempt that produced output is settled at actual usage; the full reservation applies only
+        to unknown outcomes (a crash, a missing usage chunk, a client abort after the first token). A mid-stream
+        provider_unavailable settles on the tokens actually emitted, with the full reservation only as a fallback.
+        A retry after `settled` returns idempotency_conflict with details.state=settled.
+        There is no body-fingerprint check; use a fresh key for each logical request.
       schema: { type: string, format: uuid }
     ConsentHeader:
       name: X-StudentLLM-Consent
@@ -633,7 +719,7 @@ components:
       in: header
       required: true
       description: Client name and version, for example `studentllm-desktop/0.2.0`.
-      schema: { type: string, pattern: "^[a-z0-9-]+/[0-9]+\\.[0-9]+\\.[0-9]+.*$" }
+      schema: { type: string, pattern: "^studentllm-desktop/[0-9]+\\.[0-9]+\\.[0-9]+.*$" }
   headers:
     CreditsRemaining:
       description: Credits left in the current window after this request's reservation.
@@ -658,7 +744,7 @@ components:
       schema: { type: string }
   responses:
     InvalidRequest:
-      description: Invalid request, unknown field, or unsupported media type.
+      description: Invalid request or unknown field.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -673,7 +759,7 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Forbidden:
-      description: plan_required, account_suspended or terms_required.
+      description: plan_required, account_suspended, terms_required or insufficient_scope.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -688,7 +774,12 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Conflict:
-      description: consent_outdated, idempotency_conflict, identity_conflict, device_limit_reached or already_subscribed.
+      description: consent_outdated, idempotency_conflict, identity_conflict, device_limit_reached (see DeviceLimitResponse) or already_subscribed (an active plan exists).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UnsupportedMediaType:
+      description: unsupported_media_type.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -737,6 +828,7 @@ components:
         - account_suspended
         - already_subscribed
         - terms_required
+        - insufficient_scope
         - invalid_request
         - invalid_token
         - invalid_code
@@ -748,7 +840,7 @@ components:
         - internal_error
     Error:
       type: object
-      description: The one error envelope, also the payload of the SSE `error` event. Never contains content, secrets or provider text.
+      description: The one error envelope, also the payload of the SSE `error` event. Never contains content, secrets, tokens or provider text.
       required: [error]
       additionalProperties: false
       properties:
@@ -763,7 +855,7 @@ components:
             retry_after_seconds: { type: integer, minimum: 0 }
             details:
               type: object
-              description: Small structured hints. Known keys include resets_at, state (in_progress or settled), request_id, credits_charged, terms_version, consent_text_version, manage_token, min_client_version.
+              description: Small structured hints. Known keys include resets_at, state (in_progress or settled), request_id, credits_charged, terms_version, consent_text_version, min_client_version. Secrets such as a manage_token are never placed in the envelope; they use a dedicated response schema.
               additionalProperties: true
     UsageEvent:
       type: object
@@ -789,7 +881,6 @@ components:
         iat: { type: integer }
         exp: { type: integer }
         jti: { type: string }
-        scope: { type: string, enum: [devices], description: Present only on a manage_token }
     Jwks:
       type: object
       required: [keys]
@@ -806,6 +897,39 @@ components:
               x: { type: string }
               alg: { type: string, const: EdDSA }
               use: { type: string, const: sig }
+    Empty:
+      type: object
+      additionalProperties: false
+    LinkResult:
+      type: object
+      description: Result of completing a link flow. No new session is issued; the client keeps its device and tokens.
+      required: [linked, method, login_methods]
+      additionalProperties: false
+      properties:
+        linked: { type: boolean, const: true }
+        method: { type: string, enum: [google, email] }
+        login_methods:
+          type: array
+          minItems: 2
+          items: { type: string, enum: [google, email] }
+    DeviceLimitResponse:
+      type: object
+      description: |
+        The 409 response of `/auth/email/verify` at the device limit. It carries a secret, so it has its own
+        schema and is never merged into the Error envelope; the manage_token must never be logged.
+      required: [error, manage_token, manage_token_expires_in]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          additionalProperties: false
+          properties:
+            code: { type: string, const: device_limit_reached }
+            message: { type: string }
+            request_id: { type: string }
+        manage_token: { type: string, description: Opaque random token, 5 minutes, devices routes only }
+        manage_token_expires_in: { type: integer, const: 300 }
     TokenRequest:
       type: object
       required: [grant_type, code, code_verifier, redirect_uri, client_id]
@@ -816,7 +940,7 @@ components:
         code_verifier: { type: string, minLength: 43, maxLength: 128 }
         redirect_uri: { type: string }
         client_id: { type: string, const: studentllm-desktop }
-        device_id: { type: string, description: Honored only if it belongs to the authenticated account; otherwise a new device id is created }
+        device_id: { type: string, description: Honored only if it belongs to the authenticated account; otherwise a new device id is created. In a link flow the client passes its current device id }
         device_label: { type: string, maxLength: 64 }
     EmailRequest:
       type: object
@@ -903,7 +1027,7 @@ components:
       additionalProperties: false
       properties:
         id: { type: string, enum: [free, plus_monthly, plus_semester] }
-        status: { type: string, enum: [none, active, past_due, canceled, revoked] }
+        status: { type: string, enum: [none, active, past_due, canceled, revoked], description: "past_due: the current window continues until its end and no new window starts until the payment succeeds. revoked: refund or chargeback; current and future windows are withdrawn." }
         period_start: { type: [string, "null"], format: date-time }
         period_end: { type: [string, "null"], format: date-time }
         cancel_at_period_end: { type: boolean }
@@ -1064,7 +1188,7 @@ components:
         data: { type: object, additionalProperties: true }
     Model:
       type: object
-      required: [id, object, features, context_window, max_output_tokens, provider_set, requires_plan, available]
+      required: [id, object, features, context_window, max_output_tokens, provider_set, provider_set_version, requires_plan, available]
       additionalProperties: false
       properties:
         id: { type: string }
@@ -1095,7 +1219,8 @@ components:
       additionalProperties: false
       properties:
         window:
-          type: object
+          type: [object, "null"]
+          description: The current budget window, or null for a free account.
           required: [start, end]
           additionalProperties: false
           properties:

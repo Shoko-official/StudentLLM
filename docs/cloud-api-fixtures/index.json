@@ -1,5 +1,5 @@
 {
-  "description": "Shared conformance fixtures for the gateway and the client. Each file has an operation, a request, a response and the schema (in docs/cloud-api.openapi.yaml) that the response body must match. All values are examples, not real tokens or addresses.",
+  "description": "Shared conformance fixtures for the gateway and the client. Each file has an operation (an operationId of docs/cloud-api.openapi.yaml), a request, a response and the schema that the response body must match (null when there is no body). All values are examples, not real tokens, addresses or signatures. Validate with scripts/validate-cloud-contract.py.",
   "fixtures": [
     "auth-email-request.success.json",
     "auth-email-verify.success.json",
@@ -18,6 +18,24 @@
     "provider-sets.list.success.json",
     "consent.record.success.json",
     "billing-checkout.already_subscribed.json",
-    "status.get.success.json"
+    "status.get.success.json",
+    "auth-refresh.success.json",
+    "auth-refresh.grace_retry.json",
+    "auth-refresh.refresh_reuse.json",
+    "chat-completions.provider_unavailable.failed_no_usage.json",
+    "chat-completions.terms_required.json",
+    "account.get.insufficient_scope.json",
+    "devices.list.with_manage_token.json",
+    "devices.revoke.with_manage_token.json",
+    "account-link.ticket.success.json",
+    "account-link.reauth_required.json",
+    "auth-email-verify.link_completed.json",
+    "auth-email-verify.identity_conflict.json",
+    "account-login-methods.unlink.success.json",
+    "audio-transcriptions.success.json",
+    "status.client_outdated.json",
+    "usage.get.free_account.json",
+    "consent.record.text_version_mismatch.json",
+    "webhook-paddle.success.json"
   ]
 }

@@ -1,0 +1,29 @@
+{
+  "name": "webhook-paddle.success",
+  "operation": "paddleWebhook",
+  "description": "Accepted. Only allowlisted fields are persisted or logged. Field names and the signature format must be verified against Paddle's current documentation.",
+  "request": {
+    "method": "POST",
+    "path": "/webhooks/paddle",
+    "headers": {
+      "Paddle-Signature": "ts=1790000000;h1=EXAMPLE_NOT_A_REAL_SIGNATURE",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "event_id": "evt_01EXAMPLE",
+      "event_type": "subscription.updated",
+      "occurred_at": "2026-11-01T09:30:00Z",
+      "data": {
+        "id": "sub_01EXAMPLE",
+        "status": "active",
+        "customer_id": "ctm_01EXAMPLE"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {},
+    "body": {}
+  },
+  "response_schema": "Empty"
+}

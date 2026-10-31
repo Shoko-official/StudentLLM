@@ -1,7 +1,7 @@
 {
   "name": "auth-email-verify.device_limit_reached",
   "operation": "authEmailVerify",
-  "description": "Fourth device. The code is not consumed; manage_token is valid only for the device routes.",
+  "description": "Fourth device. The code check succeeded but is not counted as an attempt and the code stays unconsumed. The manage_token is opaque, lives 5 minutes, works only on the devices routes, is in a dedicated schema (not error.details), and must never be logged.",
   "request": {
     "method": "POST",
     "path": "/auth/email/verify",
@@ -24,13 +24,11 @@
       "error": {
         "code": "device_limit_reached",
         "message": "This account already has 3 devices. Revoke one to continue.",
-        "request_id": "req_01EXAMPLE0000000000000001",
-        "details": {
-          "max_devices": 3,
-          "manage_token": "mt_EXAMPLE_NOT_A_REAL_TOKEN"
-        }
-      }
+        "request_id": "req_01EXAMPLE0000000000000001"
+      },
+      "manage_token": "mt_EXAMPLE_NOT_A_REAL_TOKEN",
+      "manage_token_expires_in": 300
     }
   },
-  "response_schema": "Error"
+  "response_schema": "DeviceLimitResponse"
 }

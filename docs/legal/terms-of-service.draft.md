@@ -37,7 +37,7 @@ Publication director: [PLACEHOLDER: name]. Contact: [PLACEHOLDER: contact email 
 
 ## 4. Plans, prices and payment
 
-4.1 **Plus.** [PLACEHOLDER: confirm at publication] 6 EUR per month, VAT included, or a semester pass of [PLACEHOLDER: about 25 EUR] for a fixed period of 5 months. A student discount may be offered under conditions published at [PLACEHOLDER: URL]. The price shown at checkout, including taxes, is the price you pay. You cannot buy a second subscription while one is active; if you buy a semester pass while one is active, the new period starts when the current one ends. We may change prices for future periods with at least [PLACEHOLDER: notice period] notice; a change does not apply to a period you have already paid for. There are no advertisements and no overage charges: if your monthly budget is used up you are never billed more.
+4.1 **Plus.** [PLACEHOLDER: confirm at publication] 6 EUR per month, VAT included, or a semester pass of [PLACEHOLDER: about 25 EUR] for a fixed period of 5 months. A student discount may be offered under conditions published at [PLACEHOLDER: URL]. The price shown at checkout, including taxes, is the price you pay. You cannot buy a subscription while any plan is active, or a semester pass while a subscription is active; if you buy a semester pass while a semester pass is active, the new period starts when the current one ends. We may change prices for future periods with at least [PLACEHOLDER: notice period] notice; a change does not apply to a period you have already paid for. There are no advertisements and no overage charges: if your monthly budget is used up you are never billed more.
 
 4.2 **Seller of record.** Paddle ([PLACEHOLDER: Paddle legal entity]) is the seller of record of your purchase. It collects the payment, applies VAT, issues the invoice, and handles the billing of the subscription and chargebacks. Where you are entitled to a refund, we will arrange it through Paddle. Your purchase is therefore also subject to Paddle's buyer terms and privacy notice, available at checkout. We provide the Service itself and these terms govern its use. [LAWYER: confirm how the sale and the provision of the Service are characterized between us, Paddle and the consumer, which entity owes which consumer-law information, and whether Paddle's terms or ours prevail for each point.] We do not receive or store your card number.
 
@@ -65,7 +65,7 @@ Publication director: [PLACEHOLDER: name]. Contact: [PLACEHOLDER: contact email 
 
 6.3 We do not store this content, your prompts or the answers. The Service keeps only your account identifier, your sign-in identifiers, your plan, usage counters and timestamps. Our logs do not contain your content. The details, including the list of providers that process data on our behalf, are in the [privacy policy](./privacy-policy.draft.md).
 
-6.4 Consent is given per feature and per set of providers, and the application sends its consent version with each request. If the providers that serve a feature change, or you have not agreed to them, the application does not send your content and asks you again or uses your local model. We do not route your content to a provider outside the set you agreed to.
+6.4 Consent is given per feature (text features, transcription, text recognition) and per set of providers, and the application sends the identifier of your active consent record with each content request. If the providers that serve a feature change, or you have not agreed to them, the application does not send your content and asks you again or uses your local model. We do not route your content to a provider outside the set you agreed to.
 
 6.5 Encrypted backup and sync is not offered at launch. If it is introduced it will be a separate option with its own consent, and these terms and the privacy policy will be updated first.
 
@@ -73,7 +73,7 @@ Publication director: [PLACEHOLDER: name]. Contact: [PLACEHOLDER: contact email 
 
 ## 7. Usage budget, limits and fair use
 
-7.1 Plus includes a usage budget, expressed in credits, which is shown in the application at all times. There is one budget window per paid period: a monthly subscription gets a new window for each billing period, and a semester pass gets five consecutive monthly windows from its start. Unused credits do not roll over, and a new window starts only with a new paid period. If a payment is refunded or charged back, the current and future windows are withdrawn. Cancelling and resubscribing does not reset a window. The size of the budget and the weights of features and models are published at [PLACEHOLDER: URL] and may be adjusted for future periods with notice.
+7.1 Plus includes a usage budget, expressed in credits, which is shown in the application at all times. There is one budget window per paid period: a monthly subscription gets a new window for each billing period, and a semester pass gets five consecutive monthly windows from its start. Unused credits do not roll over, and a new window starts only with a new paid period. If a payment is refunded or charged back, the current and future windows are withdrawn. Cancelling and resubscribing does not reset a window. If a payment is past due, the current window continues until its end and no new window starts until the payment succeeds. The size of the budget and the weights of features and models are published at [PLACEHOLDER: URL] and may be adjusted for future periods with notice.
 
 7.2 We apply rate limits, concurrency limits and per-request size limits to protect the Service. They are visible in the application when reached.
 
@@ -109,15 +109,15 @@ AI-generated answers, notes and study material can be wrong, incomplete or out o
 
 11.1 We aim to keep the Service available but do not promise uninterrupted operation. [PLACEHOLDER: any uptime commitment, if any.] The local application is not affected by an outage.
 
-11.2 We may update, suspend or discontinue features or providers. If we discontinue the Plus plan, we will give at least [PLACEHOLDER: notice period] notice and refund the unused part of any prepaid period, and your local application and data remain usable. [LAWYER: confirm.]
+11.2 We may update, suspend or discontinue features or providers. If we discontinue the Plus plan, we will give at least [PLACEHOLDER: notice period] notice and we will arrange a refund through Paddle of the unused part of any prepaid period, and your local application and data remain usable. [LAWYER: confirm.]
 
-11.3 We may change these terms. We will inform you by [PLACEHOLDER: means] at least [PLACEHOLDER: notice period] before the change takes effect. If you do not accept the change you may close your account; refund of the unused prepaid part [PLACEHOLDER: policy]. Changes that add a new category of data sent to the cloud or a new provider need your consent again before they apply to you.
+11.3 We may change these terms. We will inform you by [PLACEHOLDER: means] at least [PLACEHOLDER: notice period] before the change takes effect. If you do not accept the change you may close your account; we will arrange, through Paddle, a refund of the unused prepaid part [PLACEHOLDER: policy]. Changes that add a new category of data sent to the cloud or a new provider need your consent again before they apply to you.
 
 ## 12. Suspension, termination and deletion
 
 12.1 You can stop using the Service and close your account at any time. When you close your account we cancel your subscription with Paddle and delete your account data as described in the privacy policy, except what we must keep by law. Deleted data may persist in our platform's snapshots for a limited time, as stated in the privacy policy.
 
-12.2 We may suspend (the account is then unable to use cloud features) or terminate your account, with notice where possible, if you materially breach these terms, abuse the Service, create a security risk, or if required by law or a provider. In urgent cases we may suspend first and explain after. If we terminate without fault on your side, we refund the unused prepaid part of the period.
+12.2 We may suspend (the account is then unable to use cloud features) or terminate your account, with notice where possible, if you materially breach these terms, abuse the Service, create a security risk, or if required by law or a provider. In urgent cases we may suspend first and explain after. If we terminate without fault on your side, we will arrange a refund through Paddle of the unused prepaid part of the period [LAWYER: confirm who owes and who issues the refund].
 
 12.3 Your local application and your local data are never affected by termination.
 

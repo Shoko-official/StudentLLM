@@ -129,6 +129,7 @@ src/
   *.test.tsx                 UI and storage tests
 scripts/
   provider-smoke.mjs         NVIDIA and LM Studio smoke check
+  validate-cloud-contract.py validates the planned cloud API contract and fixtures
   local_asr_server.py        local faster-whisper transcription sidecar
   local_document_server.py   local PDF/OCR/Office/XML document sidecar
   requirements-local-documents.txt  Python sidecar dependencies

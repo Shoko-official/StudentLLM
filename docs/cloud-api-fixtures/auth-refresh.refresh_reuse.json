@@ -1,0 +1,31 @@
+{
+  "name": "auth-refresh.refresh_reuse",
+  "operation": "authRefresh",
+  "description": "The previous token was presented outside the grace window, or after the successor was used. The whole session family is revoked.",
+  "request": {
+    "method": "POST",
+    "path": "/auth/refresh",
+    "headers": {
+      "Content-Type": "application/json",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    },
+    "body": {
+      "refresh_token": "rt_EXAMPLE_NOT_A_REAL_TOKEN",
+      "device_id": "dev_01EXAMPLE"
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "refresh_reuse",
+        "message": "This session was revoked because a refresh token was reused.",
+        "request_id": "req_01EXAMPLE0000000000000001"
+      }
+    }
+  },
+  "response_schema": "Error"
+}
