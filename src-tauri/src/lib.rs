@@ -8,6 +8,22 @@ use std::time::Duration;
 
 use tauri::Manager;
 
+/// Creates the windows declared in `tauri.conf.json` (and in the `--config` overrides merged into
+/// it). Each has `"create": false`, so Tauri does not build them itself: only a window builder can
+/// register `on_new_window`, and the hook is what stops `window.open` and `target="_blank"` links
+/// from opening a window of the webview. The builder is made from the same configuration, so the
+/// size, the webview data directory and the extra browser arguments of the WebDriver build are
+/// unchanged. This runs in `setup`; creating a window from a synchronous command or event handler
+/// can deadlock on Windows.
+fn create_windows(app: &tauri::AppHandle) -> tauri::Result<()> {
+    for config in &app.config().app.windows {
+        tauri::WebviewWindowBuilder::from_config(app, config)?
+            .on_new_window(|url, _features| navigation::new_window_response(&url))
+            .build()?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -19,6 +35,10 @@ pub fn run() {
     let builder = builder
         .plugin(navigation::plugin::<tauri::Wry>())
         .manage(sidecars::SidecarSupervisor::default())
+        .setup(|app| {
+            create_windows(app.handle())?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             workspace::load_workspace,
             workspace::save_workspace,

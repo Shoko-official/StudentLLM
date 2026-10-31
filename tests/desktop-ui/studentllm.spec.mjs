@@ -167,6 +167,41 @@ describe('StudentLLM packaged desktop workflow', () => {
     else expect(frameState.loaded).toBe(true);
   });
 
+  it('opens no window for window.open or a target="_blank" link', async () => {
+    const appOrigin = /^(?:tauri:\/\/localhost|https?:\/\/tauri\.localhost)(?:[/?#]|$)/;
+    await expect(await visible('.topbar')).toBeDisplayed();
+    expect(await browser.getWindowHandles()).toHaveLength(1);
+    const handleBefore = await browser.getWindowHandle();
+
+    // The window is built in code with an on_new_window hook that refuses every request; a window created from the configuration file would have no hook.
+    await browser.execute(() => {
+      window.open('https://example.com/');
+      window.open('https://example.com/', '_blank', 'popup,width=320,height=240');
+      window.open('about:blank', 'named-popup');
+    });
+    await browser.pause(3_000);
+    expect(await browser.getWindowHandles()).toHaveLength(1);
+    expect(await browser.getUrl()).toMatch(appOrigin);
+
+    // A real click on a link that asks for a new window, the way the recording notice's links behaved before the desktop app stopped rendering them as links.
+    await browser.execute(() => {
+      const link = document.createElement('a');
+      link.id = 'new-window-guard-link';
+      link.href = 'https://example.com/';
+      link.target = '_blank';
+      link.textContent = 'Open example.com';
+      link.style.cssText = 'position:fixed;top:8px;left:8px;z-index:2147483647;padding:8px;background:#fff;color:#000;';
+      document.body.append(link);
+    });
+    await (await visible('#new-window-guard-link')).click();
+    await browser.pause(3_000);
+    expect(await browser.getWindowHandles()).toHaveLength(1);
+    expect(await browser.getWindowHandle()).toBe(handleBefore);
+    expect(await browser.getUrl()).toMatch(appOrigin);
+    await browser.execute(() => { document.getElementById('new-window-guard-link')?.remove(); });
+    await expect(await visible('.topbar')).toBeDisplayed();
+  });
+
   it('hands a second launch of the app over to the running window instead of opening another', async () => {
     await expect(await visible('.topbar')).toBeDisplayed();
     expect(await browser.getWindowHandles()).toHaveLength(1);

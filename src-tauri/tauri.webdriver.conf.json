@@ -3,6 +3,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "StudentLLM",
         "width": 1440,
         "height": 920,
