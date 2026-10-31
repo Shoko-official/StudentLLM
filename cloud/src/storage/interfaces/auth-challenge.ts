@@ -99,6 +99,8 @@ export interface AuthChallengeStore {
   consume(id: string, now: number): Promise<PendingSignIn | null>;
 
   putLinkTicket(ticket: LinkTicket): Promise<void>;
+  /** Non-consuming read of a live ticket (validate it at the start of a link flow; consume it at completion). */
+  getLinkTicket(ticketHash: string, now: number): Promise<LinkTicket | null>;
   /** Atomic single use: returns the ticket once, and null afterwards or when expired. */
   consumeLinkTicket(ticketHash: string, now: number): Promise<LinkTicket | null>;
 

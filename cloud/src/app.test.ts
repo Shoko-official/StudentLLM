@@ -28,8 +28,14 @@ describe("route table", () => {
     }
   });
 
-  it("flags exactly the stubs as stubs until a module replaces them", () => {
-    expect(routes.every((r) => r.isStub)).toBe(true);
+  it("serves every route from a module handler or, until its module replaces it, from the 501 stub", () => {
+    const stubbed = makeTestApp({ allowMissingHooks: true, stubRoutes: true }).app.router.routes();
+    expect(stubbed.length).toBe(routes.length);
+    expect(stubbed.every((r) => r.isStub)).toBe(true);
+    // The auth and account modules are built; their routes are real.
+    for (const r of routes.filter((x) => x.pattern.startsWith("/auth/") || x.pattern.startsWith("/v1/account") || x.pattern.startsWith("/v1/devices"))) {
+      expect(r.isStub, `${r.method} ${r.pattern}`).toBe(false);
+    }
   });
 
   it("mirrors the security scheme of each operation", () => {
@@ -103,7 +109,7 @@ describe("stubs and routing", () => {
   });
 
   it("serves every stub with a valid envelope", async () => {
-    const t = makeTestApp({ allowMissingHooks: true });
+    const t = makeTestApp({ allowMissingHooks: true, stubRoutes: true, withoutModuleHooks: true });
     for (const route of t.app.router.routes()) {
       const path = route.pattern.replace("{device_id}", "dev_1").replace("{method}", "google");
       const res = await t.request(path, {

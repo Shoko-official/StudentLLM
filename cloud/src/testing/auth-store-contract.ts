@@ -62,6 +62,16 @@ export function runAuthStoreContract(label: string, factory: StoreFactory): void
       expect(await accounts.listDueDeletions(T0 + 1e9, 10)).toEqual([]);
     });
 
+    it("reads a link ticket without consuming it", async () => {
+      const { authChallenges } = factory();
+      const ticket = { ticketHash: "th", accountId: "a", method: "email" as const, createdAt: T0, expiresAt: T0 + 300_000, used: false };
+      await authChallenges.putLinkTicket(ticket);
+      expect(await authChallenges.getLinkTicket("th", T0 + 1)).toEqual(ticket);
+      expect(await authChallenges.getLinkTicket("th", T0 + 300_000)).toBeNull();
+      expect(await authChallenges.consumeLinkTicket("th", T0 + 2)).not.toBeNull();
+      expect(await authChallenges.getLinkTicket("th", T0 + 3)).toBeNull();
+    });
+
     it("carries the redirect URI, the app state and the device label through a pending sign-in", async () => {
       const { authChallenges } = factory();
       const pending: PendingSignIn = {

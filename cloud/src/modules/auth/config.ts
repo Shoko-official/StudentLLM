@@ -18,6 +18,11 @@ export const secrets = [
 export const vars = [
   { name: "GATEWAY_ISSUER", required: true, deployChecked: true },
   { name: "GOOGLE_CLIENT_ID", required: false, deployChecked: true },
+  /**
+   * Optional, public: base64url Ed25519 public keys (`x`) of the PREVIOUS signing keys, comma separated. They stay in the
+   * JWKS and keep verifying older access tokens during a key rotation (see tokens.ts).
+   */
+  { name: "TOKEN_PREVIOUS_PUBLIC_KEYS", required: false },
 ] as const satisfies readonly VarSpec[];
 
 export const limits = {

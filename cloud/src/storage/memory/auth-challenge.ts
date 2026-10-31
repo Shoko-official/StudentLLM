@@ -78,6 +78,11 @@ export class InMemoryAuthChallengeStore implements AuthChallengeStore {
     this.tickets.set(ticket.ticketHash, copy(ticket));
   }
 
+  async getLinkTicket(ticketHash: string, now: number) {
+    const t = this.tickets.get(ticketHash);
+    return t && !t.used && t.expiresAt > now ? copy(t) : null;
+  }
+
   async consumeLinkTicket(ticketHash: string, now: number) {
     const t = this.tickets.get(ticketHash);
     if (!t || t.used || t.expiresAt <= now) return null;
