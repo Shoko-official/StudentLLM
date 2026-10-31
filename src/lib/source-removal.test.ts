@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { restoreAtPositions, sameIdSet, takeWithPositions } from './source-removal';
+import { chooseNoteOnUndo, restoreAtPositions, sameIdSet, takeWithPositions } from './source-removal';
 
 const items = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id }));
 
@@ -37,5 +37,26 @@ describe('sameIdSet', () => {
     expect(sameIdSet(['a', 'b'], ['a'])).toBe(false);
     expect(sameIdSet(['a', 'b'], ['a', 'c'])).toBe(false);
     expect(sameIdSet(['a', 'a'], ['a', 'b'])).toBe(false);
+  });
+});
+
+describe('chooseNoteOnUndo', () => {
+  const note = { id: 'after-removal' };
+
+  it('restores the snapshot when the same segments are back and the note is untouched', () => {
+    expect(chooseNoteOnUndo({ hasSnapshot: true, sameSegments: true, currentNote: note, noteAfterRemoval: note })).toBe('snapshot');
+  });
+
+  it('keeps the current note when it changed during the undo window', () => {
+    expect(chooseNoteOnUndo({ hasSnapshot: true, sameSegments: true, currentNote: { id: 'edited' }, noteAfterRemoval: note })).toBe('keep');
+  });
+
+  it('rebuilds when the segments differ or there is no snapshot', () => {
+    expect(chooseNoteOnUndo({ hasSnapshot: true, sameSegments: false, currentNote: note, noteAfterRemoval: note })).toBe('rebuild');
+    expect(chooseNoteOnUndo({ hasSnapshot: false, sameSegments: true, currentNote: note, noteAfterRemoval: note })).toBe('rebuild');
+  });
+
+  it('treats an unknown post-removal note as untouched', () => {
+    expect(chooseNoteOnUndo({ hasSnapshot: true, sameSegments: true, currentNote: note, noteAfterRemoval: undefined })).toBe('snapshot');
   });
 });

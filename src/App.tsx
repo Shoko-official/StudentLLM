@@ -71,8 +71,8 @@ import { analyzeQuickStart } from './lib/quick-start';
 import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-routing';
 import type { QuickStartProposal } from './lib/quick-start';
 import { Artifact, ArtifactKind, ChatMessage, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from './types';
-import { restoreAtPositions, sameIdSet, SOURCE_REMOVAL_UNDO_MS, takeWithPositions, type RemovedEntry } from './lib/source-removal';
-import { addPendingSourceErase, listPendingSourceErases, removePendingSourceErase } from './lib/pending-source-erase';
+import { chooseNoteOnUndo, restoreAtPositions, sameIdSet, SOURCE_REMOVAL_MAX_MS, SOURCE_REMOVAL_UNDO_MS, takeWithPositions, type RemovedEntry } from './lib/source-removal';
+import { addPendingSourceErase, isStalePendingSourceErase, listPendingSourceErases, removePendingSourceErase } from './lib/pending-source-erase';
 
 const PdfPreview = lazy(() => import('./lib/pdf-preview').then(({ PdfPreview: Preview }) => ({ default: Preview })));
 
@@ -151,8 +151,10 @@ type PendingSourceRemoval = {
   resourceEntry: RemovedEntry<Resource>;
   segmentEntries: RemovedEntry<TranscriptSegment>[];
   courseNote: LessonWorkspace['courseNote'];
+  noteAfterRemoval: LessonWorkspace['courseNote'] | undefined;
   preRemovalIds: string[];
   timer: number;
+  hardTimer: number;
   deadline: number;
   remaining: number;
   hover: boolean;
@@ -734,7 +736,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   // Erase originals of sources removed in an earlier session whose undo window never closed (reload, crash, closed tab).
   useEffect(() => {
     if (!nativeStorageReady) return;
-    const stale = listPendingSourceErases().filter((entry) => entry.id !== pendingSourceRemovalRef.current?.resource.id);
+    // Entries younger than the undo window plus margin may belong to another tab that can still undo; a later start sweeps them.
+    const stale = listPendingSourceErases().filter((entry) => isStalePendingSourceErase(entry) && entry.id !== pendingSourceRemovalRef.current?.resource.id);
     if (!stale.length) return;
     const referenced = new Set(Object.values(lessonWorkspaces).flatMap((item) => item.resources.map((resource) => resource.id)));
     void (async () => {
@@ -764,6 +767,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       flushSourceRemovalRef.current();
     };
   }, []);
+
+  // Remember the note as it stands right after the removal, so Undo can tell whether it was changed during the window.
+  useEffect(() => {
+    const pending = pendingSourceRemovalRef.current;
+    if (pending && pending.noteAfterRemoval === undefined) pending.noteAfterRemoval = lessonWorkspaces[pending.lessonId]?.courseNote;
+  }, [lessonWorkspaces, pendingSourceRemoval]);
 
   // After Undo, hand keyboard focus back to the restored source (or the Sources tab when it is not on screen).
   useEffect(() => {
@@ -2071,6 +2080,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     if (!pending) return;
     pendingSourceRemovalRef.current = null;
     window.clearTimeout(pending.timer);
+    window.clearTimeout(pending.hardTimer);
     setPendingSourceRemoval(null);
     void commitSourceRemoval(pending);
   };
@@ -2102,32 +2112,35 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     if (!pending) return;
     pendingSourceRemovalRef.current = null;
     window.clearTimeout(pending.timer);
+    window.clearTimeout(pending.hardTimer);
     setPendingSourceRemoval(null);
+    // Small window: the ledger entry is cleared before the restored workspace is saved. If the page dies in between,
+    // the source is absent from the saved workspace while its blob stays on disk: a possible leak, never a loss.
     removePendingSourceErase(pending.resource.id);
     const before = lessonWorkspaces[pending.lessonId] ?? emptyLessonWorkspace;
     const restoredTranscript = restoreAtPositions(before.transcript, pending.segmentEntries);
-    // The same segments are back, so the note written before the removal (possibly by the AI provider) is still right.
-    const keepNote = Boolean(pending.courseNote) && sameIdSet(restoredTranscript.map((segment) => segment.id), pending.preRemovalIds);
-    if (keepNote) {
-      setLessonWorkspaces((current) => {
-        const workspace = current[pending.lessonId] ?? emptyLessonWorkspace;
-        return {
-          ...current,
-          [pending.lessonId]: {
-            ...workspace,
-            resources: restoreAtPositions(workspace.resources, [pending.resourceEntry]),
-            transcript: restoreAtPositions(workspace.transcript, pending.segmentEntries),
-            courseNote: pending.courseNote,
-          },
-        };
-      });
-    } else {
-      updateLessonWorkspace(pending.lessonId, (current) => ({
-        ...current,
-        resources: restoreAtPositions(current.resources, [pending.resourceEntry]),
-        transcript: restoreAtPositions(current.transcript, pending.segmentEntries),
-      }));
+    const noteChoice = chooseNoteOnUndo({
+      hasSnapshot: Boolean(pending.courseNote),
+      sameSegments: sameIdSet(restoredTranscript.map((segment) => segment.id), pending.preRemovalIds),
+      currentNote: before.courseNote,
+      noteAfterRemoval: pending.noteAfterRemoval,
+    });
+    const restoreInto = (workspace: LessonWorkspace): LessonWorkspace => ({
+      ...workspace,
+      resources: restoreAtPositions(workspace.resources, [pending.resourceEntry]),
+      transcript: restoreAtPositions(workspace.transcript, pending.segmentEntries),
+    });
+    if (noteChoice === 'rebuild') {
+      updateLessonWorkspace(pending.lessonId, restoreInto);
       formatExistingCourseNote(pending.lessonId, restoredTranscript);
+    } else {
+      // 'snapshot': the same segments are back, so the pre-removal note (possibly AI-written) is still right.
+      // 'keep': the note changed during the window; do not overwrite it, but ask the provider to refresh it.
+      setLessonWorkspaces((current) => {
+        const workspace = restoreInto(current[pending.lessonId] ?? emptyLessonWorkspace);
+        return { ...current, [pending.lessonId]: noteChoice === 'snapshot' ? { ...workspace, courseNote: pending.courseNote } : workspace };
+      });
+      if (noteChoice === 'keep') formatExistingCourseNote(pending.lessonId, restoredTranscript);
     }
     setFocusRestoredSourceId(pending.resource.id);
     notify(`${pending.resource.name} restored.`);
@@ -2144,8 +2157,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       resourceEntry: { index: 0, item: resource },
       segmentEntries: [],
       courseNote: undefined,
+      noteAfterRemoval: undefined,
       preRemovalIds: [],
       timer: 0,
+      hardTimer: 0,
       deadline: 0,
       remaining: SOURCE_REMOVAL_UNDO_MS,
       hover: false,
@@ -2165,6 +2180,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     // The note was rebuilt without the removed source; let a reachable provider rewrite it again.
     formatExistingCourseNote(lessonId, transcript.filter((segment) => !belongsToSource(segment)));
     armUndoTimer(pending, SOURCE_REMOVAL_UNDO_MS);
+    // Hovering or focusing the toast pauses the countdown, but never past this hard cap.
+    pending.hardTimer = window.setTimeout(() => flushSourceRemovalRef.current(), SOURCE_REMOVAL_MAX_MS);
     pendingSourceRemovalRef.current = pending;
     setPendingSourceRemoval(pending);
   };
@@ -2615,7 +2632,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       {isNativeRuntime() && <div className="managed-sidecar-tray" aria-label="Managed local services"><span>Managed services</span><span aria-live="polite">{managedSidecars.filter((sidecar) => sidecar.running).length}/2 running</span><button type="button" onClick={() => void startConfiguredSidecars()}>Start</button><button type="button" onClick={() => void stopConfiguredSidecars()}>Stop</button></div>}
       <div className="toast-stack">
         <div className="toast-slot" role="status" aria-atomic="true">{toast && <div className="toast">{toast}</div>}</div>
-        <div className="toast-slot" role="status" aria-atomic="true">{pendingSourceRemoval && <div className="toast toast-undo" onMouseEnter={() => setUndoToastEngaged('hover', true)} onMouseLeave={() => setUndoToastEngaged('hover', false)} onFocus={() => setUndoToastEngaged('focus', true)} onBlur={() => setUndoToastEngaged('focus', false)}><span>{pendingSourceRemoval.resource.name} removed from this course.</span><button type="button" className="text-action" onClick={undoSourceRemoval}>Undo</button></div>}</div>
+        <div className="toast-slot" role="status" aria-atomic="true">{pendingSourceRemoval && <div className="toast toast-undo" onPointerEnter={(event) => { if (event.pointerType === 'mouse') setUndoToastEngaged('hover', true); }} onPointerLeave={(event) => { if (event.pointerType === 'mouse') setUndoToastEngaged('hover', false); }} onFocus={() => setUndoToastEngaged('focus', true)} onBlur={() => setUndoToastEngaged('focus', false)}><span>{pendingSourceRemoval.resource.name} removed from this course.</span><button type="button" className="text-action" onClick={undoSourceRemoval}>Undo</button></div>}</div>
       </div>
     </div>
   );

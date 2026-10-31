@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, vi } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 import { buildCourseNote } from './lib/course-notes';
 import { listPendingRecordings, RECORDING_RECOVERY_STORAGE_KEY, savePendingRecording } from './lib/recording-recovery';
 import { PENDING_SOURCE_ERASE_STORAGE_KEY } from './lib/pending-source-erase';
-import { SOURCE_REMOVAL_UNDO_MS } from './lib/source-removal';
+import { SOURCE_REMOVAL_MAX_MS, SOURCE_REMOVAL_UNDO_MS } from './lib/source-removal';
 import type { SourceBlobStore } from './lib/source-storage';
 import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from './test/workspace-fixture';
@@ -1586,6 +1586,81 @@ describe('StudentLLM workspace', () => {
     expect(sourceBlobStore.remove).not.toHaveBeenCalled();
   });
 
+  it('does not let a touch tap hold the undo window open', async () => {
+    const user = userEvent.setup();
+    seedGoneSource(false);
+    render(<App sourceBlobStore={memoryBlobStore()} />);
+    await openSources(user);
+
+    const cleared = vi.spyOn(window, 'clearTimeout');
+    await user.click(screen.getByRole('button', { name: 'Remove source gone.md' }));
+    const toast = screen.getByRole('button', { name: 'Undo' }).closest('.toast-undo')!;
+    const clearedBefore = cleared.mock.calls.length;
+
+    fireEvent.pointerEnter(toast, { pointerType: 'touch' });
+    expect(cleared.mock.calls.length).toBe(clearedBefore);
+    fireEvent.pointerEnter(toast, { pointerType: 'mouse' });
+    expect(cleared.mock.calls.length).toBeGreaterThan(clearedBefore);
+  });
+
+  it('finalizes a removal at the hard cap even while the toast is hovered', async () => {
+    const user = userEvent.setup();
+    seedGoneSource(false);
+    const sourceBlobStore = memoryBlobStore();
+    render(<App sourceBlobStore={sourceBlobStore} />);
+    await openSources(user);
+
+    const timers = vi.spyOn(window, 'setTimeout');
+    await user.click(screen.getByRole('button', { name: 'Remove source gone.md' }));
+    await user.hover(screen.getByRole('button', { name: 'Undo' }));
+    expect(sourceBlobStore.remove).not.toHaveBeenCalled();
+
+    const cap = timers.mock.calls.find((args) => args[1] === SOURCE_REMOVAL_MAX_MS);
+    expect(cap).toBeDefined();
+    act(() => { (cap![0] as () => void)(); });
+
+    await waitFor(() => expect(sourceBlobStore.remove).toHaveBeenCalledWith('gone-md'));
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+  });
+
+  it('keeps a note changed during the undo window instead of overwriting it with the snapshot', async () => {
+    const user = userEvent.setup();
+    seedGoneSource(true);
+    const generate = vi.fn().mockRejectedValue(new Error('fetch failed'));
+    render(<App provider={{ generate }} sourceBlobStore={memoryBlobStore()} />);
+    await openSources(user);
+
+    await user.click(screen.getByRole('button', { name: 'Remove source gone.md' }));
+    await openCourseActions(user);
+    await user.click(screen.getByRole('button', { name: 'Edit course' }));
+    const dialog = screen.getByRole('dialog', { name: 'Edit course' });
+    await user.clear(within(dialog).getByLabelText('Course title'));
+    await user.type(within(dialog).getByLabelText('Course title'), 'Renamed during undo');
+    await user.click(within(dialog).getByRole('button', { name: 'Save course changes' }));
+    const editedNote = JSON.stringify(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote);
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove source gone.md' })).toBeInTheDocument());
+    const note = savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote;
+    expect(note.detection.basis).not.toBe('AI fixture note');
+    expect(JSON.stringify(note)).toBe(editedNote);
+  });
+
+  it('leaves a recent ledger entry alone at startup because another tab may still undo it', async () => {
+    seedGoneSource(false);
+    localStorage.setItem(PENDING_SOURCE_ERASE_STORAGE_KEY, JSON.stringify([
+      { id: 'fresh-other-tab', kind: 'transcript', at: Date.now() - 5_000 },
+      { id: 'old-session', kind: 'transcript', at: Date.now() - 10 * 60_000 },
+    ]));
+    const sourceBlobStore = memoryBlobStore();
+    render(<App sourceBlobStore={sourceBlobStore} />);
+
+    await waitFor(() => expect(sourceBlobStore.remove).toHaveBeenCalledWith('old-session'));
+    expect(sourceBlobStore.remove).not.toHaveBeenCalledWith('fresh-other-tab');
+    expect(JSON.parse(localStorage.getItem(PENDING_SOURCE_ERASE_STORAGE_KEY)!).map((entry: { id: string }) => entry.id)).toEqual(['fresh-other-tab']);
+  });
+
   it('records the pending erase and finalizes it when the app unmounts during the undo window', async () => {
     const user = userEvent.setup();
     seedGoneSource(false);
@@ -1594,7 +1669,7 @@ describe('StudentLLM workspace', () => {
     await openSources(user);
 
     await user.click(screen.getByRole('button', { name: 'Remove source gone.md' }));
-    expect(JSON.parse(localStorage.getItem(PENDING_SOURCE_ERASE_STORAGE_KEY)!)).toEqual([{ id: 'gone-md', kind: 'transcript' }]);
+    expect(JSON.parse(localStorage.getItem(PENDING_SOURCE_ERASE_STORAGE_KEY)!)).toEqual([{ id: 'gone-md', kind: 'transcript', at: expect.any(Number) }]);
     expect(sourceBlobStore.remove).not.toHaveBeenCalled();
 
     view.unmount();
