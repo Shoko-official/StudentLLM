@@ -1,0 +1,3370 @@
+openapi: 3.1.0
+info:
+  title: StudentLLM Cloud Admin API
+  version: 1.1.0-draft
+  summary: Planned HTTP contract of the admin surface of the optional StudentLLM cloud service (not implemented).
+  description: |
+    Machine-readable contract of the admin surface. `docs/cloud-admin.md` explains it and holds the design
+    decisions; `docs/cloud-plan.md` holds the product plan. Draft for review. Conformance fixtures live in
+    `docs/cloud-admin-fixtures/`.
+
+    **Separate surface.** This API is served only on the admin hostname, under the `/admin/v1` prefix, behind a
+    zero-trust gate (Cloudflare Access or an equivalent). The desktop app never calls it. The public contract
+    (`docs/cloud-api.openapi.yaml`) does not list it, and the public API never accepts an admin credential.
+
+    **Phases.** The first cut has the owner role only. Operations marked `x-phase: later` (invitations, admin
+    management, the blocklist) and the `admin` and `support` roles are designed here so that the contract is stable,
+    but they do not ship in the first cut. `x-required-role` states the minimum role of the target design; in the
+    first cut the only existing role is `owner`.
+
+    **Authentication.** Every request carries the Access JWT in `Cf-Access-Jwt-Assertion`. The admin service
+    verifies it itself (signature, issuer, audience, expiry, pinned algorithm), maps the verified email to an admin
+    record and fails closed. It never trusts `Cf-Access-Authenticated-User-Email`. There are no passwords, no API
+    keys and no long-lived admin tokens. Every route except `createAdminSession` (and the later-phase
+    `acceptInvitation`) carries the session-bound token in `X-StudentLLM-Admin-CSRF`.
+
+    **Step-up.** Operations marked `x-requires-stepup` need an in-service WebAuthn assertion (user verification
+    required) bound to that one action (method, full path, body hash), single use, valid 5 minutes, sent in
+    `X-StudentLLM-Admin-StepUp`. Freshness is per action, never per session.
+
+    **Writes.** Every state-changing operation (any non-GET route, except the read-only POST routes marked
+    `x-read-only` and the single-use invitation accept) needs the CSRF header, an `Idempotency-Key` and a mandatory
+    `reason`. Writes are blocked by the global freeze (`admin_writes_frozen`) unless `x-allowed-when-frozen` is
+    true. Operations marked `x-destructive` or `x-notifies-owner` email the owners.
+
+    **Audit.** Operations with an `x-audit-action` write a write-ahead intent row, then the action, then a
+    completion row; if the audit writer is unavailable they answer 503 and change nothing. Freeze and unfreeze
+    (`x-audit-independent`) do not depend on the audit writer.
+
+    **Privacy.** The admin surface returns only what the service stores. No response, audit row or error carries
+    course content, a prompt, a model answer, an IP address, a token or a one-time code.
+
+    **Errors.** One envelope (`Error`), the same style as the public API, with its own code list (`ErrorCode`).
+    Messages are English, short, and never contain content, secrets or provider text.
+
+    **Pagination.** Cursor pagination: request `limit` and `cursor`, response `data` and `next_cursor` (`null` on
+    the last page). A cursor is an HMAC-bound opaque value tied to the filter and the role; reusing it with another
+    filter or role gives `invalid_request`. No offset pagination.
+
+    **Versioning.** The `/admin/v1` prefix is stable. Additive changes (optional fields, endpoints, error codes,
+    enum values clients must tolerate) are allowed inside it. Hard ceilings written as schema `maximum` values can
+    only be lowered by configuration and raised by a new contract version.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: https://admin.example.invalid
+    description: "[PLACEHOLDER: admin hostname, distinct from the public API hostname]"
+security:
+  - cloudflareAccess: []
+tags:
+  - name: session
+  - name: system
+  - name: accounts
+  - name: grants
+  - name: billing
+  - name: moderation
+  - name: admins
+  - name: audit
+paths:
+  /admin/v1/session:
+    post:
+      tags: [session]
+      operationId: createAdminSession
+      summary: "Create an admin session"
+      description: |
+        Maps the verified Access identity to an admin record and creates a server-side session keyed by a
+        random nonce, bound to the Access identity (`sub` and the login `iat`). Returns the session token (the CSRF
+        token) once. The UI keeps it in memory only and calls this route again after a page load. At most 3 sessions
+        per admin; the oldest is ended. A verified identity with no admin record gets `admin_not_registered`; the UI
+        then offers the invitation screen (later phase). Freshness is never part of a session: sensitive actions need
+        an action-bound step-up.
+      x-required-role: support
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-allowed-when-frozen: true
+      x-csrf-exempt: true
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: admin.session_start
+      responses:
+        "201":
+          description: "The session."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminSessionCreated" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    get:
+      tags: [session]
+      operationId: getAdminSession
+      summary: "Read the current session"
+      description: |
+        Role, expiry, freeze state and credential count. No token. The UI uses it to show the expiry warning.
+      x-required-role: support
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      responses:
+        "200":
+          description: "The session."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminSession" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/session/end:
+    post:
+      tags: [session]
+      operationId: endAdminSession
+      summary: "End the session"
+      description: |
+        Ends the server-side session. Idempotent.
+      x-required-role: support
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: admin.session_end
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      responses:
+        "204":
+          description: "Ended."
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/stepup/challenge:
+    post:
+      tags: [session]
+      operationId: createStepUpChallenge
+      summary: "Get a WebAuthn challenge for one action"
+      description: |
+        Step-up is in-service WebAuthn with user verification required. The challenge is bound to the method,
+        the full path and the SHA-256 of the canonical body of exactly one action, is single use and valid for 5
+        minutes. The browser signs it (no navigation, no popup, the dialog state is kept) and the action request carries
+        the assertion in `X-StudentLLM-Admin-StepUp`. The server verifies the binding, the credential, the user
+        verification flag and the signature counter, and consumes the challenge in the same transaction as the idempotency
+        record of the action. One step-up covers one action.
+      x-required-role: support
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StepUpChallengeRequest" }
+      responses:
+        "200":
+          description: "Challenge options."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StepUpChallenge" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/credentials:
+    get:
+      tags: [session]
+      operationId: listCredentials
+      summary: "List registered WebAuthn credentials"
+      description: |
+        Labels and dates only. Audited as `credential.list`.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: credential.list
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      responses:
+        "200":
+          description: "Credentials."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CredentialList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/credentials/registration/options:
+    post:
+      tags: [session]
+      operationId: beginCredentialRegistration
+      summary: "Start registering a WebAuthn credential"
+      description: |
+        Returns creation options. The first credential is enrolled with the single-use `enrollment_ticket`
+        printed by the bootstrap script (no credential exists yet to step up with); every later credential needs an
+        action-bound step-up on the completion call. Refused while writes are frozen. At least two credentials (a
+        primary key and an offline backup key) should be registered; the session reports the count.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CredentialRegistrationStart" }
+      responses:
+        "200":
+          description: "Creation options."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CredentialRegistrationOptions" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/credentials/registration/complete:
+    post:
+      tags: [session]
+      operationId: completeCredentialRegistration
+      summary: "Finish registering a WebAuthn credential"
+      description: |
+        Verifies the attestation and stores the public key. Needs a step-up, or the enrollment ticket for the first credential.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: true
+      x-audit-action: admin.credential_register
+      x-stepup-alternative: enrollment_ticket
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/StepUpHeaderOptional" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CredentialRegistrationComplete" }
+      responses:
+        "201":
+          description: "Registered."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Credential" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/credentials/{credential_id}/remove:
+    post:
+      tags: [session]
+      operationId: removeCredential
+      summary: "Remove a WebAuthn credential"
+      description: |
+        Containment write (owner plus step-up, allowed while frozen) so that a stolen key can be removed during an incident. Refused for the last credential (`state_conflict`).
+      x-required-role: owner
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: admin.credential_remove
+      x-audit-independent: true
+      parameters:
+        - { $ref: "#/components/parameters/CredentialId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: "Removed (idempotent)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Credential" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/system:
+    get:
+      tags: [system]
+      operationId: getSystemState
+      summary: "Freeze state, limits and the audit chain head"
+      x-required-role: support
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      responses:
+        "200":
+          description: "System state."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemState" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/system/freeze:
+    post:
+      tags: [system]
+      operationId: freezeAdminWrites
+      summary: "Freeze admin writes (kill switch)"
+      description: |
+        Every write route then returns `admin_writes_frozen`, and the system pauses every execution step of an
+        admin-originated operation (deletion execution and Paddle retries; lifting expiries is allowed). Containment
+        writes, reads, the audit log and unfreeze keep working. Any admin may freeze; only an owner can unfreeze. Repeating
+        while frozen is a no-op that returns the current state. This route does not depend on the audit writer: it
+        records a durable local journal entry first and back-fills the audit row. A platform variable override is the last
+        resort. Notifies the owners.
+      x-required-role: admin
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: false
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: system.freeze
+      x-audit-independent: true
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: "Frozen."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/system/unfreeze:
+    post:
+      tags: [system]
+      operationId: unfreezeAdminWrites
+      summary: "Lift the freeze"
+      description: |
+        Owner only, action-bound step-up. Like freeze, it does not depend on the audit writer.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: system.unfreeze
+      x-audit-independent: true
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: "Unfrozen."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/accounts/search:
+    post:
+      tags: [accounts]
+      operationId: searchAccounts
+      summary: "Search accounts"
+      description: |
+        A POST with a JSON body so that an email address never appears in a URL, a log line or browser history.
+        Read only: no reason, no idempotency key. Results are masked (`jo***@gmail.com`); the full email is revealed only
+        by the audited account read. A key lookup (`account_id`, exact `email`, or an `email_prefix` of at least 6
+        characters) stands alone. A `status` or `plan_id` filter is valid only together with a creation window of at most
+        7 days. Pages hold at most 25 results, the route has a tight rate limit, and the distinct accounts surfaced per
+        admin per day are capped (`limit_exceeded`). The audit row holds the kind of query, the number of results and a
+        keyed HMAC of the query value, never the value.
+      x-required-role: support
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: account.search
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountSearchRequest" }
+      responses:
+        "200":
+          description: "A page of masked account summaries."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountSearchResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}:
+    get:
+      tags: [accounts]
+      operationId: getAdminAccount
+      summary: "Read one account record"
+      description: |
+        Account metadata only: id, full verified email, login methods, status, plan and budget windows (with
+        their source), usage totals, device count, consent summary, pending operations. `billing` (Paddle ids) is `null`
+        below the admin role. Never contains content. The required `purpose` is recorded in the audit row. Every call
+        writes an `account.read` row before the response is sent; if the audit write fails the read fails.
+      x-required-role: support
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: account.read
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/Purpose" }
+      responses:
+        "200":
+          description: "The account."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminAccount" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/devices:
+    get:
+      tags: [accounts]
+      operationId: listAccountDevices
+      summary: "List the devices and their session metadata"
+      description: |
+        Label, platform name, dates and expiry only. No IP address, no token. Audited as `account.devices_read`.
+      x-required-role: support
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: account.devices_read
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      responses:
+        "200":
+          description: "Devices (at most 3)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminDeviceList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/devices/{device_id}/revoke:
+    post:
+      tags: [accounts]
+      operationId: revokeAccountDevice
+      summary: "Revoke one device"
+      description: |
+        Containment write. The `device_id` must belong to the `account_id` of the path, otherwise `not_found`
+        (an ownership check, not only an existence check). Same domain function as `DELETE /v1/devices/{device_id}`.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: device.revoke
+      x-audit-independent: true
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/DeviceId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RevokeRequest" }
+      responses:
+        "200":
+          description: "Revoked (idempotent)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevokeResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/accounts/{account_id}/sessions/revoke-all:
+    post:
+      tags: [accounts]
+      operationId: revokeAllAccountSessions
+      summary: "Revoke every session and manage token of an account"
+      description: |
+        Containment write. Revokes all session families, devices and unexpired manage tokens through the shared functions (`revokeManageTokens` is a new domain function).
+      x-required-role: owner
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: sessions.revoke_all
+      x-audit-independent: true
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RevokeRequest" }
+      responses:
+        "200":
+          description: "Revoked (idempotent)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevokeResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/accounts/{account_id}/grants:
+    get:
+      tags: [grants]
+      operationId: listAccountGrants
+      summary: "List the grants of an account"
+      description: |
+        Audited as `grant.list`. Paginated.
+      x-required-role: support
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: grant.list
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: "A page of grants."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrantList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    post:
+      tags: [grants]
+      operationId: createGrant
+      summary: "Grant a complimentary period (free trial)"
+      description: |
+        Creates a grant and its budget windows with source `admin_grant`, with no payment. `days` is explicit
+        (1 to the configured maximum, never above the contract ceiling of 90). The budget is `budget_percent` of the
+        standard Plus window (default 100); overriding the default is owner only. A grant is cut into windows of at most
+        30 days (the last prorated, rounded down). Window rules, caps and accounting are in docs/cloud-admin.md. All windows of
+        a grant are inserted in one all-or-nothing step inside the account object, which rejects any overlap with existing
+        windows (`window_overlap`); paid periods are never rejected by a grant (they live in the plan record, take
+        precedence and cut grant windows). The cap checks reserve in one atomic counter object, insert, then confirm;
+        caps give `limit_exceeded`. The account must be `active`. The user is always
+        notified (a fixed text) unless `notify_user` is false.
+      x-required-role: admin
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: false
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: grant.create
+      x-owner-only-fields: [budget_percent]
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GrantCreateRequest" }
+      responses:
+        "201":
+          description: "Grant created."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/grants/{grant_id}:
+    get:
+      tags: [grants]
+      operationId: getGrant
+      summary: "Read one grant"
+      description: |
+        Audited as `grant.read`.
+      x-required-role: support
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: grant.read
+      parameters:
+        - { $ref: "#/components/parameters/GrantId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      responses:
+        "200":
+          description: "The grant."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/grants/{grant_id}/shorten:
+    post:
+      tags: [grants]
+      operationId: shortenGrant
+      summary: "Shorten a grant"
+      description: |
+        Moves the end earlier, never later (a longer period is a new grant so the caps apply again). Accounting:
+        each affected window keeps `max(used, committed share of the retained days)` committed and the rest is released.
+      x-required-role: admin
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: false
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: grant.shorten
+      parameters:
+        - { $ref: "#/components/parameters/GrantId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GrantShortenRequest" }
+      responses:
+        "200":
+          description: "Shortened."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/grants/{grant_id}/revoke:
+    post:
+      tags: [grants]
+      operationId: revokeGrant
+      summary: "Revoke a grant"
+      description: |
+        Containment write. Ends every window of the grant now; the remaining credits become unusable on the
+        next request and an open stream aborts at its next heartbeat. Used credits stay used; the commitment of each
+        window falls to `max(used, committed share)`. Only the grant's own windows are touched.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: grant.revoke
+      x-audit-independent: true
+      parameters:
+        - { $ref: "#/components/parameters/GrantId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RevokeRequest" }
+      responses:
+        "200":
+          description: "Revoked (idempotent)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/stats/grants:
+    get:
+      tags: [grants]
+      operationId: getGrantStats
+      summary: "Grant totals for cost monitoring"
+      description: |
+        Aggregates only, no account ids. Audited as `grant.stats_read`.
+      x-required-role: admin
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: grant.stats_read
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: "Totals."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrantStats" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/subscription/cancel-at-period-end:
+    post:
+      tags: [billing]
+      operationId: cancelAtPeriodEnd
+      summary: "Cancel (resilier) a subscription at the end of the paid period"
+      description: |
+        Calls Paddle's cancel-subscription API with the next-billing-period effect (verify). The answer is 202
+        with an operation that stays `pending` until Paddle confirms; a failure keeps it visible with a retry time. The
+        user is always notified and the owners are emailed on every cancel. A semester pass has no subscription: `state_conflict`.
+      x-required-role: admin
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: false
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: subscription.cancel_at_period_end
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CancelRequest" }
+      responses:
+        "202":
+          description: "Accepted; pending until Paddle confirms."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/subscription/cancel-immediately:
+    post:
+      tags: [billing]
+      operationId: cancelImmediately
+      summary: "Cancel a subscription immediately"
+      description: |
+        Cancels now and ends the current paid window when Paddle confirms. No refund is issued here; the owner
+        decides on a refund in the Paddle dashboard. Action-bound step-up, owners notified, the user always notified.
+      x-required-role: admin
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: subscription.cancel_immediately
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CancelRequest" }
+      responses:
+        "202":
+          description: "Accepted; pending until Paddle confirms."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/subscription/resume:
+    post:
+      tags: [billing]
+      operationId: resumeSubscription
+      summary: "Remove a scheduled cancellation"
+      description: |
+        Removes a cancellation scheduled for the end of the period, before it takes effect. Refused when nothing
+        is scheduled (`state_conflict`). The Paddle call is marked verify in the design document.
+      x-required-role: admin
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: false
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: subscription.resume
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "202":
+          description: "Accepted; pending until Paddle confirms."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/operations:
+    get:
+      tags: [billing]
+      operationId: listOperations
+      summary: "List operations"
+      description: |
+        Cancellations, resumptions, deletions, grant changes, suspensions and revocations, filterable by state. Audited as `operation.list`.
+      x-required-role: support
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: operation.list
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/OperationStateFilter" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: "A page of operations."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/operations/{operation_id}:
+    get:
+      tags: [billing]
+      operationId: getOperation
+      summary: "Read one operation"
+      description: |
+        Audited as `operation.read`.
+      x-required-role: support
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: operation.read
+      parameters:
+        - { $ref: "#/components/parameters/OperationId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      responses:
+        "200":
+          description: "The operation."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/operations/{operation_id}/retry:
+    post:
+      tags: [billing]
+      operationId: retryOperation
+      summary: "Retry a pending or failed operation now"
+      description: |
+        Re-runs the next step now. Needs a step-up. Refused while writes are frozen. Resuming a `held` deletion this way restarts its cooling-off clock (see the design document).
+      x-required-role: admin
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: operation.retry
+      parameters:
+        - { $ref: "#/components/parameters/OperationId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "202":
+          description: "Retry started."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/operations/{operation_id}/withdraw:
+    post:
+      tags: [billing]
+      operationId: withdrawOperation
+      summary: "Withdraw a deletion that is still in its cooling-off period"
+      description: |
+        Containment write. Only a deletion in state `cooling_off` can be withdrawn; the account returns to its
+        previous status. Any other operation or state gives `state_conflict`.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: operation.withdraw
+      x-audit-independent: true
+      parameters:
+        - { $ref: "#/components/parameters/OperationId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RevokeRequest" }
+      responses:
+        "200":
+          description: "Withdrawn."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/operations/{operation_id}/complete-manually:
+    post:
+      tags: [billing]
+      operationId: completeOperationManually
+      summary: "Mark a Paddle step done after cancelling in the Paddle dashboard"
+      description: |
+        The escape for a deletion or cancellation whose Paddle step keeps failing. The owner cancels the
+        subscription in the Paddle dashboard and attests it here. The service re-fetches the subscription when Paddle is
+        reachable and refuses a mismatch; if Paddle is unreachable it accepts the attestation and records that it did.
+        Then the tombstone is purged.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: operation.complete_manually
+      parameters:
+        - { $ref: "#/components/parameters/OperationId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CompleteManuallyRequest" }
+      responses:
+        "200":
+          description: "Completed."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/suspend:
+    post:
+      tags: [moderation]
+      operationId: suspendAccount
+      summary: "Ban or suspend an account"
+      description: |
+        Sets the status to `suspended` (the `account_suspended` behavior), revokes all sessions and manage tokens,
+        and optionally cancels the subscription (`cancel_subscription`). Account object first (fail closed), then D1, as a
+        retryable operation. Data-rights routes keep working. `duration_days` makes it time-limited, enforced by a job and
+        also lazily at request time. Suspending an already suspended account is `state_conflict` unless the parameters
+        match. The blocklist fields belong to the later phase. The user is always notified with a fixed text; the owners
+        are emailed.
+      x-required-role: admin
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: account.suspend
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SuspendRequest" }
+      responses:
+        "200":
+          description: "Suspended."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuspensionResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/unsuspend:
+    post:
+      tags: [moderation]
+      operationId: unsuspendAccount
+      summary: "Lift a suspension"
+      description: |
+        Action-bound step-up and an owner email. Refused for an account in a deletion cooling-off (use the
+        withdraw route). Budget windows kept running during the suspension; sessions are not restored.
+      x-required-role: admin
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: true
+      x-audit-action: account.unsuspend
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UnsuspendRequest" }
+      responses:
+        "200":
+          description: "Unsuspended."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuspensionResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/blocklist:
+    get:
+      tags: [moderation]
+      operationId: listBlocklist
+      summary: "List re-registration blocklist entries"
+      description: |
+        Later phase. Entries hold only keyed hashes, which are never returned. Audited as `blocklist.list`.
+      x-required-role: admin
+      x-phase: later
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: blocklist.list
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: "A page of entries."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlocklistList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/blocklist/{entry_id}/remove:
+    post:
+      tags: [moderation]
+      operationId: removeBlocklistEntry
+      summary: "Remove a blocklist entry"
+      description: |
+        Later phase. Action-bound step-up and an owner email.
+      x-required-role: admin
+      x-phase: later
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: true
+      x-audit-action: blocklist.remove
+      parameters:
+        - { $ref: "#/components/parameters/BlocklistEntryId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: "Removed (idempotent)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlocklistEntry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/deletion:
+    post:
+      tags: [moderation]
+      operationId: requestAccountDeletion
+      summary: "Delete an account (with a cooling-off period)"
+      description: |
+        Action-bound step-up, a reason and `confirm_account_id` equal to the path id. `cooling_off_hours` of 0
+        is owner only; anyone else has a configured minimum. With a cooling-off the account is placed in `suspended`
+        (category `pending_admin_deletion`) and the operation is `cooling_off` until `executes_at`; it can be withdrawn
+        until then, and the user may export or delete the account themselves meanwhile. At execution the system
+        re-validates (requester still enabled, freeze off, account still in the expected state) and otherwise holds the
+        operation and alerts. Execution runs the shared deletion function: the deletion-ledger entry and the tombstone are
+        written first and every session is revoked at that instant, the final email is attempted, then idempotent per-store
+        erase steps run with retry (the email last) and completion is recorded when all are done; only the Paddle ids remain
+        until the cancel succeeds. This is the target deletion model for both the user and the admin.
+      x-required-role: admin
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: account.delete_request
+      x-owner-only-values: { cooling_off_hours: [0] }
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeletionRequest" }
+      responses:
+        "202":
+          description: "Accepted."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/admins:
+    get:
+      tags: [admins]
+      operationId: listAdmins
+      summary: "List admins"
+      description: |
+        Later phase. Audited as `admin.list`.
+      x-required-role: owner
+      x-phase: later
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: admin.list
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: "A page of admins."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/invitations:
+    get:
+      tags: [admins]
+      operationId: listInvitations
+      summary: "List invitations"
+      description: |
+        Later phase. Audited as `invitation.list`.
+      x-required-role: owner
+      x-phase: later
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: invitation.list
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: "A page of invitations (never the code)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitationList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    post:
+      tags: [admins]
+      operationId: createInvitation
+      summary: "Invite an admin by email with a role"
+      description: |
+        Later phase. Single-use invitation, 72 hours by default and 168 at most. A 12-character code is emailed to
+        the invited address, stored only as a keyed HMAC, and never returned by the API. It is accepted only by a request
+        whose verified Access identity has the invited email. The owner must also add the email to the Access allowlist.
+      x-required-role: owner
+      x-phase: later
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: admin.invite
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationCreateRequest" }
+      responses:
+        "201":
+          description: "Invitation created and emailed."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/invitations/accept:
+    post:
+      tags: [admins]
+      operationId: acceptInvitation
+      summary: "Accept an invitation"
+      description: |
+        Later phase. The only route open to a verified Access identity with no admin record. Exempt from the
+        CSRF header (such an identity has no session; the unguessable single-use code is the CSRF defence). The Origin,
+        `Sec-Fetch-Site` and content-type checks still apply. Wrong code, wrong identity, expired, used and over-attempted all
+        return the same `invitation_invalid`. The role comes from the invitation.
+      x-required-role: invitee
+      x-phase: later
+      x-read-only: false
+      x-requires-stepup: false
+      x-allowed-when-frozen: false
+      x-csrf-exempt: true
+      x-destructive: false
+      x-notifies-owner: true
+      x-audit-action: admin.invitation_accept
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationAcceptRequest" }
+      responses:
+        "200":
+          description: "The new admin record."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Admin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/invitations/{invitation_id}/revoke:
+    post:
+      tags: [admins]
+      operationId: revokeInvitation
+      summary: "Revoke a pending invitation"
+      description: |
+        Later phase.
+      x-required-role: owner
+      x-phase: later
+      x-read-only: false
+      x-requires-stepup: false
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: admin.invitation_revoke
+      parameters:
+        - { $ref: "#/components/parameters/InvitationId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: "Revoked (idempotent)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/admins/{admin_id}/role:
+    post:
+      tags: [admins]
+      operationId: changeAdminRole
+      summary: "Change an admin's role"
+      description: |
+        Later phase. Owner only, step-up, owners notified. Not on oneself. Demoting the last enabled owner is
+        `last_owner_protected`, evaluated against one serialised admin-registry object. Ends the target's sessions.
+      x-required-role: owner
+      x-phase: later
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: admin.role_change
+      parameters:
+        - { $ref: "#/components/parameters/AdminId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoleChangeRequest" }
+      responses:
+        "200":
+          description: "Changed."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Admin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/admins/{admin_id}/disable:
+    post:
+      tags: [admins]
+      operationId: disableAdmin
+      summary: "Disable an admin (reversible)"
+      description: |
+        Later phase. Containment write. Same rules as a role change. Ends the target's sessions.
+      x-required-role: owner
+      x-phase: later
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: admin.disable
+      x-audit-independent: true
+      parameters:
+        - { $ref: "#/components/parameters/AdminId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: "Disabled (idempotent)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Admin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/admins/{admin_id}/enable:
+    post:
+      tags: [admins]
+      operationId: enableAdmin
+      summary: "Re-enable a disabled admin"
+      description: |
+        Later phase.
+      x-required-role: owner
+      x-phase: later
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: admin.enable
+      parameters:
+        - { $ref: "#/components/parameters/AdminId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: "Enabled (idempotent)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Admin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/admins/{admin_id}/remove:
+    post:
+      tags: [admins]
+      operationId: removeAdmin
+      summary: "Remove an admin for good"
+      description: |
+        Later phase. Containment write. Marks the record removed and erases the email; the admin id stays so audit
+        rows keep a stable actor. Not on oneself; never the last enabled owner.
+      x-required-role: owner
+      x-phase: later
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: true
+      x-notifies-owner: true
+      x-audit-action: admin.remove
+      x-audit-independent: true
+      parameters:
+        - { $ref: "#/components/parameters/AdminId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: "Removed (idempotent)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Admin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/review-items:
+    get:
+      tags: [billing]
+      operationId: listReviewItems
+      summary: "List owner review items"
+      description: |
+        Items that need an owner decision and are never actioned automatically: chargebacks, refunds that could not restore a grant because the monthly cap was full, repeated failures. Audited as `review.list`.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: review.list
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: "A page of review items."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewItemList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/review-items/{review_item_id}/resolve:
+    post:
+      tags: [billing]
+      operationId: resolveReviewItem
+      summary: "Resolve an owner review item"
+      description: |
+        Records the decision. Any action it leads to (suspension, grant revocation) is a separate, audited call.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: false
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: review.resolve
+      parameters:
+        - { $ref: "#/components/parameters/ReviewItemId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResolveReviewRequest" }
+      responses:
+        "200":
+          description: "Resolved (idempotent)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/audit:
+    get:
+      tags: [audit]
+      operationId: listAuditLog
+      summary: "List audit rows"
+      description: |
+        Newest first, paginated, filterable. Owners see every row; an `admin` sees only the rows where they are the
+        actor (server side); `support` has no access. Cursors are HMAC-bound to the filter and the role. Audited as `audit.list`.
+        There is no route that edits or deletes a row.
+      x-required-role: admin
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: audit.list
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/ActorAdminId" }
+        - { $ref: "#/components/parameters/TargetAccountId" }
+        - { $ref: "#/components/parameters/ActionFilter" }
+        - { $ref: "#/components/parameters/ResultFilter" }
+        - { $ref: "#/components/parameters/From" }
+        - { $ref: "#/components/parameters/To" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: "A page of rows."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/audit/export:
+    post:
+      tags: [audit]
+      operationId: exportAuditLog
+      summary: "Export the audit log as JSON lines"
+      description: |
+        A POST (it writes an audit row and notifies the owners). Action-bound step-up, a few per day. One
+        `AuditRow` per line ordered by `seq`, with the hash fields and the reason text where it still exists. The export of
+        the anchors and the public key for the offline verifier is a separate documented download.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: true
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: true
+      x-audit-action: audit.export
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditExportRequest" }
+      responses:
+        "200":
+          description: "JSON lines attachment."
+          headers:
+            Content-Disposition: { schema: { type: string } }
+          content:
+            application/x-ndjson:
+              schema: { type: string, description: "One AuditRow JSON object per line." }
+              x-line-schema: AuditRow
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/audit/verify:
+    post:
+      tags: [audit]
+      operationId: verifyAuditChain
+      summary: "Recompute the hash chain and check the anchors"
+      description: |
+        A POST (it writes an audit row and notifies the owners). Recomputes the chain, checks the anchor signatures and compares them with the published anchors.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: false
+      x-allowed-when-frozen: true
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: true
+      x-audit-action: audit.verify
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: "Verification result."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditVerification" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+components:
+  securitySchemes:
+    cloudflareAccess:
+      type: apiKey
+      in: header
+      name: Cf-Access-Jwt-Assertion
+      description: |
+        The Access-issued JWT. The admin service verifies it itself: pinned signature algorithm, keys from the
+        Access team's JWKS (cached by `kid` with a bounded last-known-good lifetime), exact issuer, audience equal
+        to the admin application's AUD tag (never any other Access application), expiry and not-before. The
+        verified `email` claim is mapped to an admin record by exact match. The header
+        `Cf-Access-Authenticated-User-Email` is never trusted. A request without a valid JWT is rejected even if the
+        gate is misconfigured. A StudentLLM access token or a manage token is never accepted here, and this JWT is
+        never accepted by the public API.
+  parameters:
+    CsrfHeader:
+      name: X-StudentLLM-Admin-CSRF
+      in: header
+      required: true
+      description: |
+        The session-bound token returned once by `createAdminSession` (`<session id>.<mac>`), kept in memory by the
+        UI. It identifies the server-side session and doubles as the CSRF defence. The service also requires `Origin`
+        equal to the admin hostname, `Sec-Fetch-Site: same-origin` and `Content-Type: application/json`; there is no
+        CORS. Failure gives `csrf_invalid`; an unknown or expired session gives `session_expired`.
+      schema: { type: string, minLength: 20, maxLength: 160 }
+    StepUpHeader:
+      name: X-StudentLLM-Admin-StepUp
+      in: header
+      required: true
+      description: |
+        `<challenge_id>.<base64url WebAuthn assertion>` for exactly this method, full path and body. Single use.
+        Missing gives `stepup_required`; any verification failure (unknown, used, expired, wrong binding, bad
+        signature, user verification missing, counter not increasing) gives `stepup_invalid`.
+      schema: { type: string, minLength: 20, maxLength: 4096 }
+    StepUpHeaderOptional:
+      name: X-StudentLLM-Admin-StepUp
+      in: header
+      required: false
+      description: Required unless the registration was authorised by the single-use enrollment ticket of the bootstrap script.
+      schema: { type: string, minLength: 20, maxLength: 4096 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Client UUID, scoped per admin, valid 24 hours. The record stores a SHA-256 over the method, the full path
+        (with query) and the canonical body (RFC 8785). Looked up right after authentication, the session check and
+        the role check, before the freeze and step-up checks, so a finished request is replayed without a new
+        step-up. Same key and same digest, first call finished: the original status and body again with
+        `Idempotent-Replay: true`. Same key while the first call runs: 409 `idempotency_conflict`,
+        `details.state = in_progress`. An `in_flight` record older than its TTL (120 seconds) can be taken over by the
+        same request. Same key with a different digest: 409, `details.state = payload_mismatch`.
+      schema: { type: string, format: uuid }
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/AccountId" }
+    DeviceId:
+      name: device_id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^dev_[A-Za-z0-9]+$" }
+    GrantId:
+      name: grant_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/GrantId" }
+    OperationId:
+      name: operation_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/OperationId" }
+    BlocklistEntryId:
+      name: entry_id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^blk_[A-Za-z0-9]+$" }
+    InvitationId:
+      name: invitation_id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^inv_[A-Za-z0-9]+$" }
+    AdminId:
+      name: admin_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/AdminId" }
+    CredentialId:
+      name: credential_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/CredentialId" }
+    ReviewItemId:
+      name: review_item_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ReviewItemId" }
+    Purpose:
+      name: purpose
+      in: query
+      required: true
+      description: Why the record is being read. Recorded in the audit row.
+      schema: { $ref: "#/components/schemas/AccessPurpose" }
+    OperationStateFilter:
+      name: state
+      in: query
+      required: false
+      schema: { $ref: "#/components/schemas/OperationState" }
+    ActorAdminId:
+      name: actor_admin_id
+      in: query
+      required: false
+      schema: { $ref: "#/components/schemas/AdminId" }
+    TargetAccountId:
+      name: target_account_id
+      in: query
+      required: false
+      schema: { $ref: "#/components/schemas/AccountId" }
+    ActionFilter:
+      name: action
+      in: query
+      required: false
+      schema: { $ref: "#/components/schemas/AuditAction" }
+    ResultFilter:
+      name: result
+      in: query
+      required: false
+      schema: { $ref: "#/components/schemas/AuditResult" }
+    From:
+      name: from
+      in: query
+      required: false
+      schema: { type: string, format: date-time }
+    To:
+      name: to
+      in: query
+      required: false
+      schema: { type: string, format: date-time }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size. Default 50, maximum 100 (25 for account search).
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque HMAC-bound cursor from `next_cursor`, valid only for the same filter and role.
+      schema: { type: string, maxLength: 512 }
+  responses:
+    BadRequest:
+      description: invalid_request, confirmation_mismatch or invitation_invalid.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthenticated:
+      description: invalid_access_token, session_expired, stepup_required or stepup_invalid.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: admin_not_registered, admin_disabled, forbidden_role, self_action_forbidden or csrf_invalid.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: not_found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: idempotency_conflict, state_conflict, window_overlap or last_owner_protected.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unprocessable:
+      description: limit_exceeded.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: rate_limited.
+      headers:
+        Retry-After: { schema: { type: integer, minimum: 0 } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unavailable:
+      description: admin_writes_frozen, audit_unavailable or internal_error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    ErrorCode:
+      type: string
+      enum:
+        - invalid_request
+        - invalid_access_token
+        - session_expired
+        - stepup_required
+        - stepup_invalid
+        - admin_not_registered
+        - admin_disabled
+        - forbidden_role
+        - self_action_forbidden
+        - csrf_invalid
+        - not_found
+        - idempotency_conflict
+        - state_conflict
+        - window_overlap
+        - last_owner_protected
+        - limit_exceeded
+        - confirmation_mismatch
+        - invitation_invalid
+        - rate_limited
+        - admin_writes_frozen
+        - audit_unavailable
+        - internal_error
+    Error:
+      type: object
+      description: The one error envelope. Never contains content, secrets, tokens or provider text.
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          additionalProperties: false
+          properties:
+            code: { $ref: "#/components/schemas/ErrorCode" }
+            message: { type: string, maxLength: 200 }
+            request_id: { type: string }
+            retry_after_seconds: { type: integer, minimum: 0 }
+            details:
+              type: object
+              description: "Small structured hints. Known keys include required_role, state, limit, max, current, current_status, operation_id, frozen_since. Secrets such as a session token or an invitation code are never placed in the envelope."
+              additionalProperties: true
+    Role:
+      type: string
+      enum: [support, admin, owner]
+    AccountId: { type: string, pattern: "^acc_[A-Za-z0-9]+$" }
+    AdminId: { type: string, pattern: "^adm_[A-Za-z0-9]+$" }
+    GrantId: { type: string, pattern: "^grt_[A-Za-z0-9]+$" }
+    OperationId: { type: string, pattern: "^opr_[A-Za-z0-9]+$" }
+    AuditId: { type: string, pattern: "^aud_[A-Za-z0-9]+$" }
+    CredentialId: { type: string, pattern: "^cred_[A-Za-z0-9]+$" }
+    ReviewItemId: { type: string, pattern: "^rev_[A-Za-z0-9]+$" }
+    Sha256Hex: { type: string, pattern: "^[a-f0-9]{64}$" }
+    AccessPurpose:
+      type: string
+      enum: [support_request, abuse_review, billing_issue, legal_request, security_incident, testing, other]
+    Reason:
+      type: string
+      minLength: 10
+      maxLength: 500
+      description: |
+        Mandatory free text written by the admin. It is stored outside the audit chain (encrypted under a key that is
+        destroyed when the target account is deleted); only a salted commitment hash is in the chained row. State the
+        category and the facts. Do not enter names, email addresses or other personal data; the server rejects strings
+        that look like an email address with `invalid_request`.
+    ReasonRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+    RevokeRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+        notify_user: { type: boolean, default: true }
+    RevokeResult:
+      type: object
+      required: [account_id, devices_revoked, sessions_revoked, manage_tokens_revoked, operation_id]
+      additionalProperties: false
+      properties:
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        devices_revoked: { type: integer, minimum: 0, maximum: 3 }
+        sessions_revoked: { type: integer, minimum: 0 }
+        manage_tokens_revoked: { type: integer, minimum: 0 }
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+    AdminLimits:
+      type: object
+      description: The configured limits currently in force. Each is at or below its contract ceiling. Budget limits are multiples of the standard Plus window, never literal credits.
+      required: [standard_window_credits, grant_max_days, grant_default_percent, grant_max_percent, grant_max_total_percent, grant_max_days_per_account_per_year, grant_max_per_admin_per_day, grant_monthly_cap_windows, deletion_min_cooling_off_hours_non_owner, deletion_max_cooling_off_hours, suspension_max_days, search_distinct_accounts_per_day, user_emails_per_admin_per_hour, stepup_ttl_seconds]
+      additionalProperties: false
+      properties:
+        standard_window_credits: { type: integer, minimum: 1, description: "The credit limit of one standard Plus window (W), from the routing table. Informational." }
+        grant_max_days: { type: integer, minimum: 1, maximum: 90 }
+        grant_default_percent: { type: integer, minimum: 10, maximum: 200 }
+        grant_max_percent: { type: integer, minimum: 10, maximum: 200 }
+        grant_max_total_percent: { type: integer, minimum: 10, maximum: 600, description: "Cap on the sum of the window limits of one grant, in percent of W." }
+        grant_max_days_per_account_per_year: { type: integer, minimum: 1, maximum: 365 }
+        grant_max_per_admin_per_day: { type: integer, minimum: 1, maximum: 100 }
+        grant_monthly_cap_windows: { type: integer, minimum: 0, description: "Global cap on the window limits committed to grants starting in a calendar month, in multiples of W." }
+        deletion_min_cooling_off_hours_non_owner: { type: integer, minimum: 0, maximum: 72 }
+        deletion_max_cooling_off_hours: { type: integer, minimum: 0, maximum: 72 }
+        suspension_max_days: { type: integer, minimum: 1, maximum: 365 }
+        search_distinct_accounts_per_day: { type: integer, minimum: 1 }
+        user_emails_per_admin_per_hour: { type: integer, minimum: 1 }
+        stepup_ttl_seconds: { type: integer, const: 300 }
+    AdminSession:
+      type: object
+      required: [admin_id, email, role, expires_at, idle_expires_at, writes_frozen, credentials_count, server_time]
+      additionalProperties: false
+      properties:
+        admin_id: { $ref: "#/components/schemas/AdminId" }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        expires_at: { type: string, format: date-time, description: Absolute expiry (8 hours after creation). }
+        idle_expires_at: { type: string, format: date-time, description: Idle expiry (30 minutes after the last request). }
+        writes_frozen: { type: boolean }
+        credentials_count: { type: integer, minimum: 0 }
+        server_time: { type: string, format: date-time }
+    AdminSessionCreated:
+      type: object
+      required: [csrf_token, session]
+      additionalProperties: false
+      properties:
+        csrf_token: { type: string, minLength: 20, maxLength: 160, description: "Returned once. Keep it in memory only." }
+        session: { $ref: "#/components/schemas/AdminSession" }
+    StepUpChallengeRequest:
+      type: object
+      required: [method, path, body_sha256]
+      additionalProperties: false
+      properties:
+        method: { type: string, const: POST }
+        path: { type: string, pattern: "^/admin/v1/", maxLength: 512, description: "The full path of the action, with its query string if any." }
+        body_sha256: { $ref: "#/components/schemas/Sha256Hex" }
+    StepUpChallenge:
+      type: object
+      required: [challenge_id, expires_at, public_key_options]
+      additionalProperties: false
+      properties:
+        challenge_id: { type: string, pattern: "^chl_[A-Za-z0-9]+$" }
+        expires_at: { type: string, format: date-time }
+        public_key_options:
+          type: object
+          description: WebAuthn PublicKeyCredentialRequestOptions (challenge, rpId, allowCredentials, timeout) with userVerification set to required.
+          additionalProperties: true
+    Credential:
+      type: object
+      required: [credential_id, label, created_at, last_used_at]
+      additionalProperties: false
+      properties:
+        credential_id: { $ref: "#/components/schemas/CredentialId" }
+        label: { type: string, maxLength: 64 }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+    CredentialList:
+      type: object
+      required: [credentials]
+      additionalProperties: false
+      properties:
+        credentials:
+          type: array
+          maxItems: 10
+          items: { $ref: "#/components/schemas/Credential" }
+    CredentialRegistrationStart:
+      type: object
+      required: [label]
+      additionalProperties: false
+      properties:
+        label: { type: string, minLength: 1, maxLength: 64 }
+        enrollment_ticket: { type: string, minLength: 20, maxLength: 128, description: "Single-use ticket printed once by the bootstrap script, valid for 1 hour (24 hours after a recovery request, plus the waiting period). Accepted only while the admin has no credential (credentials_count is 0); every later credential needs a step-up with an existing one." }
+    CredentialRegistrationOptions:
+      type: object
+      required: [registration_id, expires_at, public_key_options]
+      additionalProperties: false
+      properties:
+        registration_id: { type: string, pattern: "^reg_[A-Za-z0-9]+$" }
+        expires_at: { type: string, format: date-time }
+        public_key_options:
+          type: object
+          description: "WebAuthn PublicKeyCredentialCreationOptions: userVerification required, authenticatorAttachment cross-platform (a security key), attestation none, rp id and origin pinned to the exact admin hostname. The completion is refused if the credential is backup-eligible (BE=1)."
+          additionalProperties: true
+    CredentialRegistrationComplete:
+      type: object
+      required: [registration_id, attestation, reason]
+      additionalProperties: false
+      properties:
+        registration_id: { type: string, pattern: "^reg_[A-Za-z0-9]+$" }
+        attestation:
+          type: object
+          required: [id, type, client_data_json, attestation_object]
+          additionalProperties: false
+          properties:
+            id: { type: string, maxLength: 1024 }
+            type: { type: string, const: public-key }
+            client_data_json: { type: string, maxLength: 4096 }
+            attestation_object: { type: string, maxLength: 16384 }
+        reason: { $ref: "#/components/schemas/Reason" }
+    AccountStatus:
+      type: string
+      description: The account status of the service (see the data table in the cloud plan).
+      enum: [active, suspended, deleting]
+    AccountSearchRequest:
+      type: object
+      additionalProperties: false
+      description: A key lookup stands alone. A status or plan filter is valid only with a creation window of at most 7 days.
+      anyOf:
+        - { required: [account_id] }
+        - { required: [email] }
+        - { required: [email_prefix] }
+        - required: [created_from, created_to]
+          anyOf:
+            - { required: [status] }
+            - { required: [plan_id] }
+      properties:
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        email: { type: string, maxLength: 254, description: Exact match on the stored email. }
+        email_prefix: { type: string, minLength: 6, maxLength: 64 }
+        status: { $ref: "#/components/schemas/AccountStatus" }
+        plan_id: { $ref: "#/components/schemas/PlanId" }
+        created_from: { type: string, format: date-time }
+        created_to: { type: string, format: date-time }
+        limit: { type: integer, minimum: 1, maximum: 25, default: 25 }
+        cursor: { type: string, maxLength: 512 }
+    PlanId:
+      type: string
+      description: "`plus_complimentary` is a window with source `admin_grant`; see the proposed amendments to the public contract."
+      enum: [free, plus_monthly, plus_semester, plus_complimentary]
+    AccountSummary:
+      type: object
+      required: [account_id, email_masked, status, plan_id, created_at]
+      additionalProperties: false
+      properties:
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        email_masked: { type: string, pattern: "^[^@*]{1,2}\\*\\*\\*@[^@]+$", description: "First two characters of the local part, then ***, then the domain. The full email is revealed only by the audited account read." }
+        status: { $ref: "#/components/schemas/AccountStatus" }
+        plan_id: { $ref: "#/components/schemas/PlanId" }
+        created_at: { type: string, format: date-time }
+    AccountSearchResponse:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          maxItems: 25
+          items: { $ref: "#/components/schemas/AccountSummary" }
+        next_cursor: { type: [string, "null"] }
+    WindowSource:
+      type: string
+      enum: [paddle_subscription, paddle_pass, admin_grant]
+    BudgetWindow:
+      type: object
+      required: [window_start, window_end, source, grant_id, state, limit, used, reserved]
+      additionalProperties: false
+      properties:
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        source: { $ref: "#/components/schemas/WindowSource" }
+        grant_id: { type: [string, "null"] }
+        state: { type: string, enum: [scheduled, active, ended, revoked] }
+        limit: { type: integer, minimum: 0 }
+        used: { type: integer, minimum: 0 }
+        reserved: { type: integer, minimum: 0 }
+    AdminPlan:
+      type: object
+      required: [id, status, period_start, period_end, cancel_at_period_end, cancel_pending]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/PlanId" }
+        status: { type: string, enum: [none, active, past_due, canceled, revoked] }
+        period_start: { type: [string, "null"], format: date-time }
+        period_end: { type: [string, "null"], format: date-time }
+        cancel_at_period_end: { type: boolean }
+        cancel_pending: { type: boolean, description: A cancellation operation is waiting for Paddle. }
+    UsageSummary:
+      type: object
+      description: Counters only. Never content, never per-request text or timing of requests.
+      required: [windows]
+      additionalProperties: false
+      properties:
+        windows:
+          type: array
+          maxItems: 3
+          description: The current and the two previous windows.
+          items:
+            type: object
+            required: [window_start, credits_used, requests, credits_by_feature]
+            additionalProperties: false
+            properties:
+              window_start: { type: string, format: date-time }
+              credits_used: { type: integer, minimum: 0 }
+              requests: { type: integer, minimum: 0 }
+              credits_by_feature:
+                type: object
+                additionalProperties: false
+                properties:
+                  chat: { type: integer, minimum: 0 }
+                  transcription: { type: integer, minimum: 0 }
+                  ocr: { type: integer, minimum: 0 }
+        daily:
+          type: array
+          maxItems: 30
+          description: Optional. Present only if the retained usage totals have daily granularity (an open item).
+          items:
+            type: object
+            required: [date, requests, credits_used]
+            additionalProperties: false
+            properties:
+              date: { type: string, format: date }
+              requests: { type: integer, minimum: 0 }
+              credits_used: { type: integer, minimum: 0 }
+    ConsentSummary:
+      type: object
+      required: [provider_set, provider_set_version, features, recorded_at]
+      additionalProperties: false
+      properties:
+        provider_set: { type: string, maxLength: 64 }
+        provider_set_version: { type: integer, minimum: 1 }
+        features: { type: array, items: { type: string, enum: [chat, transcription, ocr] } }
+        recorded_at: { type: string, format: date-time }
+    BillingRefs:
+      type: object
+      description: Opaque Paddle ids, for finding the customer in Paddle. Hidden below the admin role.
+      required: [paddle_customer_id, paddle_subscription_id, last_event_applied_at]
+      additionalProperties: false
+      properties:
+        paddle_customer_id: { type: [string, "null"] }
+        paddle_subscription_id: { type: [string, "null"] }
+        last_event_applied_at: { type: [string, "null"], format: date-time }
+    SuspensionCategory:
+      type: string
+      enum: [abuse, chargeback_fraud, terms_violation, security, legal_request, pending_admin_deletion, other]
+    StatusDetail:
+      type: object
+      required: [category, since, expires_at, operation_id]
+      additionalProperties: false
+      properties:
+        category: { $ref: "#/components/schemas/SuspensionCategory" }
+        since: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+        operation_id: { type: [string, "null"], description: Set when the suspension is the cooling-off period of a deletion. }
+    OperationSummary:
+      type: object
+      required: [operation_id, kind, state]
+      additionalProperties: false
+      properties:
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        kind: { $ref: "#/components/schemas/OperationKind" }
+        state: { $ref: "#/components/schemas/OperationState" }
+    AdminAccount:
+      type: object
+      required: [account_id, email, login_methods, status, status_detail, terms_version, created_at, last_sign_in_at, last_request_at, plan, windows, usage, devices_count, consents, billing, pending_operations]
+      additionalProperties: false
+      properties:
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        email: { type: string }
+        login_methods:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [google, email] }
+        status: { $ref: "#/components/schemas/AccountStatus" }
+        status_detail:
+          oneOf:
+            - { $ref: "#/components/schemas/StatusDetail" }
+            - { type: "null" }
+        terms_version: { type: string }
+        created_at: { type: string, format: date-time }
+        last_sign_in_at: { type: [string, "null"], format: date-time }
+        last_request_at: { type: [string, "null"], format: date-time }
+        plan: { $ref: "#/components/schemas/AdminPlan" }
+        windows:
+          type: array
+          description: Past, current and scheduled windows, newest first (at most 12).
+          maxItems: 12
+          items: { $ref: "#/components/schemas/BudgetWindow" }
+        usage: { $ref: "#/components/schemas/UsageSummary" }
+        devices_count: { type: integer, minimum: 0, maximum: 3 }
+        consents:
+          type: array
+          items: { $ref: "#/components/schemas/ConsentSummary" }
+        billing:
+          oneOf:
+            - { $ref: "#/components/schemas/BillingRefs" }
+            - { type: "null" }
+        pending_operations:
+          type: array
+          items: { $ref: "#/components/schemas/OperationSummary" }
+    AdminDevice:
+      type: object
+      required: [device_id, label, platform, created_at, last_used_at, idle_expires_at, absolute_expires_at]
+      additionalProperties: false
+      properties:
+        device_id: { type: string, pattern: "^dev_[A-Za-z0-9]+$" }
+        label: { type: string, maxLength: 64, description: "User-editable text. Always rendered as text by the UI." }
+        platform: { type: string, maxLength: 32 }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        idle_expires_at: { type: string, format: date-time }
+        absolute_expires_at: { type: string, format: date-time }
+    AdminDeviceList:
+      type: object
+      required: [devices]
+      additionalProperties: false
+      properties:
+        devices:
+          type: array
+          maxItems: 3
+          items: { $ref: "#/components/schemas/AdminDevice" }
+    GrantReasonCategory:
+      type: string
+      enum: [trial, beta_tester, support_goodwill, compensation, partner, testing, other]
+    GrantCreateRequest:
+      type: object
+      required: [days, reason, reason_category]
+      additionalProperties: false
+      properties:
+        days: { type: integer, minimum: 1, maximum: 90, description: "Explicit duration. The configured maximum can be lower than the contract ceiling of 90." }
+        budget_percent: { type: integer, minimum: 10, maximum: 200, default: 100, description: "Budget of each window as a percent of the standard Plus window (W). Overriding the default of 100 is owner only. Capped by configuration." }
+        start_policy: { type: string, enum: [now, after_current_windows], default: now }
+        reason: { $ref: "#/components/schemas/Reason" }
+        reason_category: { $ref: "#/components/schemas/GrantReasonCategory" }
+        note: { type: string, maxLength: 500, description: Optional admin-only note; same content rules as the reason. }
+        notify_user: { type: boolean, default: true }
+    GrantState:
+      type: string
+      enum: [scheduled, active, expired, shortened, revoked]
+    GrantWindow:
+      type: object
+      required: [window_start, window_end, limit, used]
+      additionalProperties: false
+      properties:
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        limit: { type: integer, minimum: 0 }
+        used: { type: integer, minimum: 0 }
+    Grant:
+      type: object
+      required: [grant_id, account_id, state, reason_category, days, starts_at, ends_at, original_ends_at, budget_percent, credits_per_window, credits_cap_total, credits_used, windows, created_by_admin_id, created_at, audit_id, operation_id, note]
+      additionalProperties: false
+      properties:
+        grant_id: { $ref: "#/components/schemas/GrantId" }
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        state: { $ref: "#/components/schemas/GrantState" }
+        reason_category: { $ref: "#/components/schemas/GrantReasonCategory" }
+        days: { type: integer, minimum: 1, maximum: 90 }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        original_ends_at: { type: string, format: date-time }
+        budget_percent: { type: integer, minimum: 10, maximum: 200 }
+        credits_per_window: { type: integer, minimum: 1 }
+        credits_cap_total: { type: integer, minimum: 1, description: Sum of the window limits; the cost cap of this grant. }
+        credits_used: { type: integer, minimum: 0 }
+        windows:
+          type: array
+          maxItems: 4
+          items: { $ref: "#/components/schemas/GrantWindow" }
+        created_by_admin_id: { $ref: "#/components/schemas/AdminId" }
+        created_at: { type: string, format: date-time }
+        audit_id: { $ref: "#/components/schemas/AuditId" }
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        note: { type: [string, "null"] }
+    GrantList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Grant" }
+        next_cursor: { type: [string, "null"] }
+    GrantShortenRequest:
+      type: object
+      required: [new_ends_at, reason]
+      additionalProperties: false
+      properties:
+        new_ends_at: { type: string, format: date-time, description: Must be after now and before the current end. }
+        reason: { $ref: "#/components/schemas/Reason" }
+        notify_user: { type: boolean, default: true }
+    GrantStats:
+      type: object
+      required: [standard_window_credits, monthly_cap_windows, monthly_credit_cap, current_month_committed_credits, months]
+      additionalProperties: false
+      properties:
+        standard_window_credits: { type: integer, minimum: 1, description: "W, the credit limit of one standard Plus window." }
+        monthly_cap_windows: { type: integer, minimum: 0 }
+        monthly_credit_cap: { type: integer, minimum: 0, description: "monthly_cap_windows times W." }
+        current_month_committed_credits: { type: integer, minimum: 0, description: "Credits committed to grant windows that start in the current month; a cut or revoked window keeps max(used, committed share)." }
+        months:
+          type: array
+          items:
+            type: object
+            required: [month, grants_created, credits_granted, credits_used]
+            additionalProperties: false
+            properties:
+              month: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$" }
+              grants_created: { type: integer, minimum: 0 }
+              credits_granted: { type: integer, minimum: 0 }
+              credits_used: { type: integer, minimum: 0 }
+    CancelRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      description: The user is always notified; there is no notify_user switch for cancellations.
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+        note: { type: string, maxLength: 500 }
+    OperationKind:
+      type: string
+      enum: [subscription_cancel, subscription_resume, account_deletion, grant_change, suspension_change, session_revocation]
+    OperationState:
+      type: string
+      description: "pending: waiting for Paddle, a retry or the outbox. cooling_off: deletion not started yet. running: deletion started. held: an execution step was paused (freeze, requester no longer enabled, account state changed) and the owner was alerted. completed, failed (needs an admin), withdrawn, superseded (the user deleted the account first)."
+      enum: [pending, cooling_off, running, held, completed, failed, withdrawn, superseded]
+    OperationErrorCode:
+      type: string
+      description: Fixed codes only, never provider text.
+      enum: [paddle_unavailable, paddle_rejected, paddle_not_found, timeout, internal_error]
+    HoldReason:
+      type: string
+      enum: [freeze, requester_disabled, account_state_changed]
+    Operation:
+      type: object
+      required: [operation_id, kind, account_id, state, effective_from, executes_at, overdue, hold_reason, attempts, last_error_code, next_retry_at, requested_by_admin_id, created_at, updated_at, audit_id]
+      additionalProperties: false
+      properties:
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        kind: { $ref: "#/components/schemas/OperationKind" }
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        state: { $ref: "#/components/schemas/OperationState" }
+        effective_from: { type: [string, "null"], enum: [period_end, immediately, null], description: Cancellations only. }
+        executes_at: { type: [string, "null"], format: date-time, description: End of the cooling-off period for a deletion. }
+        overdue: { type: boolean, description: "A deletion is past executes_at and not running; an owner alert was sent." }
+        hold_reason:
+          oneOf:
+            - { $ref: "#/components/schemas/HoldReason" }
+            - { type: "null" }
+        attempts: { type: integer, minimum: 0 }
+        last_error_code:
+          oneOf:
+            - { $ref: "#/components/schemas/OperationErrorCode" }
+            - { type: "null" }
+        next_retry_at: { type: [string, "null"], format: date-time }
+        requested_by_admin_id: { $ref: "#/components/schemas/AdminId" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        audit_id: { $ref: "#/components/schemas/AuditId" }
+    OperationList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Operation" }
+        next_cursor: { type: [string, "null"] }
+    SuspendRequest:
+      type: object
+      required: [reason, reason_category]
+      additionalProperties: false
+      description: The user is always notified; there is no notify_user switch for a suspension.
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+        reason_category:
+          type: string
+          enum: [abuse, chargeback_fraud, terms_violation, security, legal_request, other]
+        duration_days: { type: integer, minimum: 1, maximum: 365, description: Omit for no end date. The configured maximum can be lower. }
+        cancel_subscription: { type: string, enum: [none, period_end, immediately], default: none, description: "Also cancel the Paddle subscription as part of this one step-up-covered action." }
+        blocklist: { type: boolean, default: false, x-phase: later, description: "Later phase; rejected with invalid_request in the first cut. The UI defaults it on for the fraud category." }
+        blocklist_days: { type: integer, minimum: 1, maximum: 730, x-phase: later, description: "Later phase. Expiry of the blocklist entries; omit for the configured default." }
+    UnsuspendRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+        remove_blocklist: { type: boolean, default: false, x-phase: later }
+        notify_user: { type: boolean, default: true }
+    SuspensionResult:
+      type: object
+      required: [account_id, status, expires_at, sessions_revoked, manage_tokens_revoked, blocklist_entry_ids, operation_id]
+      additionalProperties: false
+      properties:
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        status: { $ref: "#/components/schemas/AccountStatus" }
+        expires_at: { type: [string, "null"], format: date-time }
+        sessions_revoked: { type: integer, minimum: 0 }
+        manage_tokens_revoked: { type: integer, minimum: 0 }
+        blocklist_entry_ids:
+          type: array
+          items: { type: string, pattern: "^blk_[A-Za-z0-9]+$" }
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+    BlocklistEntry:
+      type: object
+      required: [entry_id, kind, key_id, state, created_at, expires_at, created_by_admin_id, reason_category, audit_id]
+      additionalProperties: false
+      properties:
+        entry_id: { type: string, pattern: "^blk_[A-Za-z0-9]+$" }
+        kind: { type: string, enum: [email, google_subject] }
+        key_id: { type: string, pattern: "^bk[0-9]+$", description: Version of the key under which the hash was computed. }
+        state: { type: string, enum: [active, expired, removed] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        created_by_admin_id: { $ref: "#/components/schemas/AdminId" }
+        reason_category: { $ref: "#/components/schemas/SuspensionCategory" }
+        audit_id: { $ref: "#/components/schemas/AuditId" }
+    BlocklistList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/BlocklistEntry" }
+        next_cursor: { type: [string, "null"] }
+    DeletionRequest:
+      type: object
+      required: [reason, confirm_account_id]
+      additionalProperties: false
+      description: The completion email is always sent; send_heads_up controls only the notice at the time of the request.
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+        confirm_account_id: { $ref: "#/components/schemas/AccountId" }
+        cooling_off_hours: { type: integer, minimum: 0, maximum: 72, default: 24, description: "0 is owner only; anyone else has a configured minimum." }
+        send_heads_up: { type: boolean, default: true }
+    CompleteManuallyRequest:
+      type: object
+      required: [reason, confirm_cancelled_in_paddle]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+        confirm_cancelled_in_paddle: { type: boolean, const: true }
+    Admin:
+      type: object
+      required: [admin_id, email, role, status, created_at, created_by_admin_id, last_seen_at, disabled_at]
+      additionalProperties: false
+      properties:
+        admin_id: { $ref: "#/components/schemas/AdminId" }
+        email: { type: [string, "null"], description: Null once the admin is removed. }
+        role: { $ref: "#/components/schemas/Role" }
+        status: { type: string, enum: [active, disabled, removed] }
+        created_at: { type: string, format: date-time }
+        created_by_admin_id: { type: [string, "null"], description: Null for the bootstrap owner. }
+        last_seen_at: { type: [string, "null"], format: date-time }
+        disabled_at: { type: [string, "null"], format: date-time }
+    AdminList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Admin" }
+        next_cursor: { type: [string, "null"] }
+    InvitationCreateRequest:
+      type: object
+      required: [email, role, reason]
+      additionalProperties: false
+      properties:
+        email: { type: string, maxLength: 254 }
+        role: { $ref: "#/components/schemas/Role" }
+        reason: { $ref: "#/components/schemas/Reason" }
+        expires_in_hours: { type: integer, minimum: 1, maximum: 168, default: 72 }
+    Invitation:
+      type: object
+      description: The code is emailed to the invited address and is never part of any response.
+      required: [invitation_id, email, role, state, expires_at, created_by_admin_id, created_at]
+      additionalProperties: false
+      properties:
+        invitation_id: { type: string, pattern: "^inv_[A-Za-z0-9]+$" }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        state: { type: string, enum: [pending, accepted, expired, revoked] }
+        expires_at: { type: string, format: date-time }
+        created_by_admin_id: { $ref: "#/components/schemas/AdminId" }
+        created_at: { type: string, format: date-time }
+    InvitationList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Invitation" }
+        next_cursor: { type: [string, "null"] }
+    InvitationAcceptRequest:
+      type: object
+      required: [invitation_code]
+      additionalProperties: false
+      properties:
+        invitation_code: { type: string, minLength: 12, maxLength: 12, pattern: "^[A-HJ-NP-Z2-9]{12}$" }
+    RoleChangeRequest:
+      type: object
+      required: [role, reason]
+      additionalProperties: false
+      properties:
+        role: { $ref: "#/components/schemas/Role" }
+        reason: { $ref: "#/components/schemas/Reason" }
+    ReviewItem:
+      type: object
+      required: [review_item_id, kind, account_id, state, created_at, resolved_at, resolved_by_admin_id, resolution]
+      additionalProperties: false
+      properties:
+        review_item_id: { $ref: "#/components/schemas/ReviewItemId" }
+        kind: { type: string, enum: [chargeback, refund_restore_capped, operation_failed] }
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        state: { type: string, enum: [open, resolved] }
+        created_at: { type: string, format: date-time }
+        resolved_at: { type: [string, "null"], format: date-time }
+        resolved_by_admin_id: { type: [string, "null"] }
+        resolution: { type: [string, "null"], enum: [no_action, suspended, grant_revoked, other, null] }
+    ReviewItemList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/ReviewItem" }
+        next_cursor: { type: [string, "null"] }
+    ResolveReviewRequest:
+      type: object
+      required: [reason, resolution]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+        resolution: { type: string, enum: [no_action, suspended, grant_revoked, other] }
+    AuditAction:
+      type: string
+      enum:
+        - admin.session_start
+        - admin.session_end
+        - admin.bootstrap
+        - admin.disable
+        - admin.enable
+        - admin.remove
+        - admin.invitation_accept
+        - admin.invitation_revoke
+        - account.devices_read
+        - grant.stats_read
+        - account.suspension_expire
+        - grant.expire
+        - admin.session_evict
+        - account.search
+        - account.read
+        - grant.create
+        - grant.read
+        - grant.shorten
+        - grant.revoke
+        - subscription.cancel_at_period_end
+        - subscription.cancel_immediately
+        - subscription.resume
+        - operation.retry
+        - operation.withdraw
+        - operation.complete_manually
+        - operation.read
+        - operation.step
+        - account.delete_execute
+        - admin.credential_register
+        - admin.credential_remove
+        - operation.hold
+        - account.suspend
+        - account.unsuspend
+        - account.delete_request
+        - device.revoke
+        - sessions.revoke_all
+        - blocklist.add
+        - blocklist.remove
+        - admin.invite
+        - admin.role_change
+        - system.freeze
+        - system.unfreeze
+        - system.auto_freeze
+        - grant.list
+        - operation.list
+        - audit.list
+        - credential.list
+        - admin.list
+        - invitation.list
+        - blocklist.list
+        - review.list
+        - review.resolve
+        - audit.key_rotate
+        - audit.export
+        - audit.verify
+        - audit.denied_overflow
+        - retention.checkpoint
+        - audit.reconcile
+    AuditResult:
+      type: string
+      enum: [success, denied, failed, pending]
+    ParamsNone: { type: object, additionalProperties: false, maxProperties: 0 }
+    ParamsSearch:
+      type: object
+      required: [query_kind, query_hmac, result_count]
+      additionalProperties: false
+      properties:
+        query_kind: { type: string, enum: [email, email_prefix, account_id, filter] }
+        query_hmac: { $ref: "#/components/schemas/Sha256Hex" }
+        result_count: { type: integer, minimum: 0, maximum: 25 }
+    ParamsAccountRead:
+      type: object
+      required: [purpose]
+      additionalProperties: false
+      properties:
+        purpose: { $ref: "#/components/schemas/AccessPurpose" }
+    ParamsGrantCreate:
+      type: object
+      required: [grant_id, operation_id, days, budget_percent, start_policy, reason_category]
+      additionalProperties: false
+      properties:
+        grant_id: { $ref: "#/components/schemas/GrantId" }
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        days: { type: integer, minimum: 1, maximum: 90 }
+        budget_percent: { type: integer, minimum: 10, maximum: 200 }
+        start_policy: { type: string, enum: [now, after_current_windows] }
+        reason_category: { $ref: "#/components/schemas/GrantReasonCategory" }
+    ParamsGrantRef:
+      type: object
+      required: [grant_id]
+      additionalProperties: false
+      properties:
+        grant_id: { $ref: "#/components/schemas/GrantId" }
+    ParamsGrantShorten:
+      type: object
+      required: [grant_id, operation_id, new_ends_at]
+      additionalProperties: false
+      properties:
+        grant_id: { $ref: "#/components/schemas/GrantId" }
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        new_ends_at: { type: string, format: date-time }
+    ParamsGrantRevoke:
+      type: object
+      required: [grant_id, operation_id, released_credits]
+      additionalProperties: false
+      properties:
+        grant_id: { $ref: "#/components/schemas/GrantId" }
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        released_credits: { type: integer, minimum: 0 }
+    ParamsOperationRef:
+      type: object
+      required: [operation_id]
+      additionalProperties: false
+      properties:
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+    ParamsOperationStep:
+      type: object
+      required: [operation_id, step, outcome]
+      additionalProperties: false
+      properties:
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        step: { type: string, enum: [account_object, database, paddle, erase, notify, expire] }
+        outcome: { type: string, enum: [ok, retry, failed] }
+    ParamsOperationHold:
+      type: object
+      required: [operation_id, hold_reason]
+      additionalProperties: false
+      properties:
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        hold_reason: { $ref: "#/components/schemas/HoldReason" }
+    ParamsSuspend:
+      type: object
+      required: [operation_id, reason_category, blocklist, cancel_subscription]
+      additionalProperties: false
+      properties:
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        reason_category: { $ref: "#/components/schemas/SuspensionCategory" }
+        duration_days: { type: [integer, "null"], minimum: 1, maximum: 365 }
+        blocklist: { type: boolean }
+        cancel_subscription: { type: string, enum: [none, period_end, immediately] }
+    ParamsUnsuspend:
+      type: object
+      required: [operation_id, removed_blocklist]
+      additionalProperties: false
+      properties:
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        removed_blocklist: { type: boolean }
+    ParamsDeletion:
+      type: object
+      required: [operation_id, cooling_off_hours, send_heads_up]
+      additionalProperties: false
+      properties:
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        cooling_off_hours: { type: integer, minimum: 0, maximum: 72 }
+        send_heads_up: { type: boolean }
+    ParamsDeviceRevoke:
+      type: object
+      required: [operation_id, device_id]
+      additionalProperties: false
+      properties:
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        device_id: { type: string, pattern: "^dev_[A-Za-z0-9]+$" }
+    ParamsSessionsRevoke:
+      type: object
+      required: [operation_id, sessions_revoked, manage_tokens_revoked]
+      additionalProperties: false
+      properties:
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        sessions_revoked: { type: integer, minimum: 0 }
+        manage_tokens_revoked: { type: integer, minimum: 0 }
+    ParamsBlocklistAdd:
+      type: object
+      required: [entry_id, kind, key_id]
+      additionalProperties: false
+      properties:
+        entry_id: { type: string, pattern: "^blk_[A-Za-z0-9]+$" }
+        kind: { type: string, enum: [email, google_subject] }
+        key_id: { type: string, pattern: "^bk[0-9]+$" }
+    ParamsBlocklistRef:
+      type: object
+      required: [entry_id]
+      additionalProperties: false
+      properties:
+        entry_id: { type: string, pattern: "^blk_[A-Za-z0-9]+$" }
+    ParamsInvite:
+      type: object
+      required: [invitation_id, role]
+      additionalProperties: false
+      properties:
+        invitation_id: { type: string, pattern: "^inv_[A-Za-z0-9]+$" }
+        role: { $ref: "#/components/schemas/Role" }
+    ParamsRoleChange:
+      type: object
+      required: [from_role, to_role]
+      additionalProperties: false
+      properties:
+        from_role: { $ref: "#/components/schemas/Role" }
+        to_role: { $ref: "#/components/schemas/Role" }
+    ParamsFreeze:
+      type: object
+      required: [source]
+      additionalProperties: false
+      properties:
+        source: { type: string, enum: [manual, auto, platform_override] }
+    ParamsReviewResolve:
+      type: object
+      required: [review_item_id, resolution]
+      additionalProperties: false
+      properties:
+        review_item_id: { $ref: "#/components/schemas/ReviewItemId" }
+        resolution: { type: string, enum: [no_action, suspended, grant_revoked, other] }
+    ParamsKeyRotate:
+      type: object
+      required: [key_kind, new_key_id]
+      additionalProperties: false
+      properties:
+        key_kind: { type: string, enum: [chain, anchor] }
+        new_key_id: { type: string, pattern: "^(ck|ak)[0-9]+$" }
+    ParamsAutoFreeze:
+      type: object
+      required: [trigger, count, window_minutes]
+      additionalProperties: false
+      properties:
+        trigger: { type: string, enum: [destructive_actions, write_actions] }
+        count: { type: integer, minimum: 1 }
+        window_minutes: { type: integer, minimum: 1 }
+    ParamsCount:
+      type: object
+      required: [result_count]
+      additionalProperties: false
+      properties:
+        result_count: { type: integer, minimum: 0, maximum: 200 }
+    ParamsCredential:
+      type: object
+      required: [credential_id]
+      additionalProperties: false
+      properties:
+        credential_id: { $ref: "#/components/schemas/CredentialId" }
+    ParamsExport:
+      type: object
+      required: [from_seq, to_seq, rows]
+      additionalProperties: false
+      properties:
+        from_seq: { type: integer, minimum: 1 }
+        to_seq: { type: integer, minimum: 1 }
+        rows: { type: integer, minimum: 0 }
+    ParamsVerify:
+      type: object
+      required: [rows_checked, anchors_checked, ok]
+      additionalProperties: false
+      properties:
+        rows_checked: { type: integer, minimum: 0 }
+        anchors_checked: { type: integer, minimum: 0 }
+        ok: { type: boolean }
+    ParamsOverflow:
+      type: object
+      required: [suppressed_count, window_start]
+      additionalProperties: false
+      properties:
+        suppressed_count: { type: integer, minimum: 1 }
+        window_start: { type: string, format: date-time }
+    ParamsRetention:
+      type: object
+      required: [first_seq, last_seq, last_removed_hash]
+      additionalProperties: false
+      properties:
+        first_seq: { type: integer, minimum: 1 }
+        last_seq: { type: integer, minimum: 1 }
+        last_removed_hash: { $ref: "#/components/schemas/Sha256Hex" }
+    ParamsReconcile:
+      type: object
+      required: [intent_audit_id, resolved_as]
+      additionalProperties: false
+      properties:
+        intent_audit_id: { $ref: "#/components/schemas/AuditId" }
+        resolved_as: { type: string, enum: [success, failed] }
+    AuditRow:
+      type: object
+      description: |
+        Append-only and double-chained. `content_sha256` is the unkeyed SHA-256 of the RFC 8785 canonical JSON of the
+        row without `row_hash`, `content_sha256`, `reason_text` and `reason_state`; it includes `prev_content_sha256`,
+        so a public verifier with no secret can check content integrity up to each signed anchor. `row_hash` is an
+        HMAC-SHA-256, under the key named by `chain_key_id` that only the audit-writer Worker holds, over `prev_hash`,
+        a newline and the canonical JSON of the row without `row_hash`, `reason_text` and `reason_state` (so it
+        includes `content_sha256` and `chain_key_id`). `chain_version` and an environment id (in the genesis hashes)
+        separate versions and environments. There is deliberately no field for an IP address, a user agent, content,
+        a token or a code, and no email address. `params` is one of the per-action schemas below, each with
+        `additionalProperties: false`. `session_ref` is an HMAC of the admin session id (it links the rows of one
+        browser session without any network identifier); `credential_id` is the WebAuthn credential used for the
+        step-up of the action (null if none); `country` is an optional coarse country, off by default. The rows with
+        action `audit.reconcile`, `retention.checkpoint` and `audit.key_rotate` are chain-internal: the `append`
+        method that the admin Worker can call cannot produce them.
+      required: [audit_id, seq, chain_version, chain_key_id, occurred_at, actor_kind, actor_admin_id, actor_role, action, target_account_id, target_admin_id, reason_commitment, reason_text, reason_state, request_id, session_ref, credential_id, country, result, result_code, params, prev_content_sha256, content_sha256, prev_hash, row_hash]
+      additionalProperties: false
+      properties:
+        audit_id: { $ref: "#/components/schemas/AuditId" }
+        seq: { type: integer, minimum: 1 }
+        chain_version: { type: integer, const: 1 }
+        chain_key_id: { type: string, pattern: "^ck[0-9]+$" }
+        occurred_at: { type: string, format: date-time }
+        actor_kind: { type: string, enum: [admin, system, unregistered] }
+        actor_admin_id: { type: [string, "null"] }
+        actor_role:
+          oneOf:
+            - { $ref: "#/components/schemas/Role" }
+            - { type: "null" }
+        action: { $ref: "#/components/schemas/AuditAction" }
+        target_account_id: { type: [string, "null"] }
+        target_admin_id: { type: [string, "null"] }
+        reason_commitment:
+          oneOf:
+            - { $ref: "#/components/schemas/Sha256Hex" }
+            - { type: "null" }
+        reason_text: { type: [string, "null"], maxLength: 500, description: "Not part of the chain. Null once erased." }
+        reason_state: { type: string, enum: [present, erased, none], description: "Not part of the chain." }
+        request_id: { type: string, maxLength: 64 }
+        session_ref:
+          oneOf:
+            - { $ref: "#/components/schemas/Sha256Hex" }
+            - { type: "null" }
+        credential_id:
+          oneOf:
+            - { $ref: "#/components/schemas/CredentialId" }
+            - { type: "null" }
+        country: { type: [string, "null"], pattern: "^[A-Z]{2}$" }
+        result: { $ref: "#/components/schemas/AuditResult" }
+        result_code:
+          oneOf:
+            - { $ref: "#/components/schemas/ErrorCode" }
+            - { type: "null" }
+        params:
+          oneOf:
+            - { $ref: "#/components/schemas/ParamsNone" }
+            - { $ref: "#/components/schemas/ParamsSearch" }
+            - { $ref: "#/components/schemas/ParamsAccountRead" }
+            - { $ref: "#/components/schemas/ParamsGrantCreate" }
+            - { $ref: "#/components/schemas/ParamsGrantRef" }
+            - { $ref: "#/components/schemas/ParamsGrantShorten" }
+            - { $ref: "#/components/schemas/ParamsGrantRevoke" }
+            - { $ref: "#/components/schemas/ParamsOperationRef" }
+            - { $ref: "#/components/schemas/ParamsOperationStep" }
+            - { $ref: "#/components/schemas/ParamsCredential" }
+            - { $ref: "#/components/schemas/ParamsOperationHold" }
+            - { $ref: "#/components/schemas/ParamsSuspend" }
+            - { $ref: "#/components/schemas/ParamsUnsuspend" }
+            - { $ref: "#/components/schemas/ParamsDeletion" }
+            - { $ref: "#/components/schemas/ParamsDeviceRevoke" }
+            - { $ref: "#/components/schemas/ParamsSessionsRevoke" }
+            - { $ref: "#/components/schemas/ParamsBlocklistAdd" }
+            - { $ref: "#/components/schemas/ParamsBlocklistRef" }
+            - { $ref: "#/components/schemas/ParamsInvite" }
+            - { $ref: "#/components/schemas/ParamsRoleChange" }
+            - { $ref: "#/components/schemas/ParamsFreeze" }
+            - { $ref: "#/components/schemas/ParamsAutoFreeze" }
+            - { $ref: "#/components/schemas/ParamsCount" }
+            - { $ref: "#/components/schemas/ParamsReviewResolve" }
+            - { $ref: "#/components/schemas/ParamsKeyRotate" }
+            - { $ref: "#/components/schemas/ParamsExport" }
+            - { $ref: "#/components/schemas/ParamsVerify" }
+            - { $ref: "#/components/schemas/ParamsOverflow" }
+            - { $ref: "#/components/schemas/ParamsRetention" }
+            - { $ref: "#/components/schemas/ParamsReconcile" }
+        prev_content_sha256: { $ref: "#/components/schemas/Sha256Hex" }
+        content_sha256: { $ref: "#/components/schemas/Sha256Hex" }
+        prev_hash: { $ref: "#/components/schemas/Sha256Hex" }
+        row_hash: { $ref: "#/components/schemas/Sha256Hex" }
+      allOf:
+        - if:
+            properties:
+              action: { enum: [admin.session_start, admin.session_end, admin.bootstrap, admin.disable, admin.enable, admin.remove, admin.invitation_accept, admin.invitation_revoke, account.devices_read, grant.stats_read, account.suspension_expire, grant.expire, admin.session_evict] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsNone" }
+        - if:
+            properties:
+              action: { enum: [account.search] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsSearch" }
+        - if:
+            properties:
+              action: { enum: [account.read] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsAccountRead" }
+        - if:
+            properties:
+              action: { enum: [grant.create] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsGrantCreate" }
+        - if:
+            properties:
+              action: { enum: [grant.read] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsGrantRef" }
+        - if:
+            properties:
+              action: { enum: [grant.shorten] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsGrantShorten" }
+        - if:
+            properties:
+              action: { enum: [grant.revoke] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsGrantRevoke" }
+        - if:
+            properties:
+              action: { enum: [subscription.cancel_at_period_end, subscription.cancel_immediately, subscription.resume, operation.retry, operation.withdraw, operation.complete_manually, operation.read] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsOperationRef" }
+        - if:
+            properties:
+              action: { enum: [operation.step, account.delete_execute] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsOperationStep" }
+        - if:
+            properties:
+              action: { enum: [admin.credential_register, admin.credential_remove] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsCredential" }
+        - if:
+            properties:
+              action: { enum: [operation.hold] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsOperationHold" }
+        - if:
+            properties:
+              action: { enum: [account.suspend] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsSuspend" }
+        - if:
+            properties:
+              action: { enum: [account.unsuspend] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsUnsuspend" }
+        - if:
+            properties:
+              action: { enum: [account.delete_request] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsDeletion" }
+        - if:
+            properties:
+              action: { enum: [device.revoke] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsDeviceRevoke" }
+        - if:
+            properties:
+              action: { enum: [sessions.revoke_all] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsSessionsRevoke" }
+        - if:
+            properties:
+              action: { enum: [blocklist.add] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsBlocklistAdd" }
+        - if:
+            properties:
+              action: { enum: [blocklist.remove] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsBlocklistRef" }
+        - if:
+            properties:
+              action: { enum: [admin.invite] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsInvite" }
+        - if:
+            properties:
+              action: { enum: [admin.role_change] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsRoleChange" }
+        - if:
+            properties:
+              action: { enum: [system.freeze, system.unfreeze] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsFreeze" }
+        - if:
+            properties:
+              action: { enum: [system.auto_freeze] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsAutoFreeze" }
+        - if:
+            properties:
+              action: { enum: [grant.list, operation.list, audit.list, credential.list, admin.list, invitation.list, blocklist.list, review.list] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsCount" }
+        - if:
+            properties:
+              action: { enum: [review.resolve] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsReviewResolve" }
+        - if:
+            properties:
+              action: { enum: [audit.key_rotate] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsKeyRotate" }
+        - if:
+            properties:
+              action: { enum: [audit.export] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsExport" }
+        - if:
+            properties:
+              action: { enum: [audit.verify] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsVerify" }
+        - if:
+            properties:
+              action: { enum: [audit.denied_overflow] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsOverflow" }
+        - if:
+            properties:
+              action: { enum: [retention.checkpoint] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsRetention" }
+        - if:
+            properties:
+              action: { enum: [audit.reconcile] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsReconcile" }
+    AuditList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/AuditRow" }
+        next_cursor: { type: [string, "null"] }
+    AuditExportRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        from_seq: { type: integer, minimum: 1 }
+        to_seq: { type: integer, minimum: 1 }
+        reason: { $ref: "#/components/schemas/Reason" }
+    AuditVerification:
+      type: object
+      required: [ok, rows_checked, head_seq, head_hash, first_broken_seq, content_integrity_ok, anchors_checked, anchor_signatures_valid, anchors_match, last_anchor_seq]
+      additionalProperties: false
+      properties:
+        ok: { type: boolean }
+        rows_checked: { type: integer, minimum: 0 }
+        head_seq: { type: integer, minimum: 0 }
+        head_hash: { $ref: "#/components/schemas/Sha256Hex" }
+        first_broken_seq: { type: [integer, "null"] }
+        content_integrity_ok: { type: boolean, description: The unkeyed content chain is intact up to every anchor (the check a public verifier can do without any secret). }
+        anchors_checked: { type: integer, minimum: 0 }
+        anchor_signatures_valid: { type: boolean, description: Every Ed25519 anchor signature verifies under the published public key. }
+        anchors_match: { type: boolean, description: The recomputed chain agrees with every published anchor. }
+        last_anchor_seq: { type: [integer, "null"], description: Sequence number of the latest head digest published outside the database. }
+    SystemState:
+      type: object
+      required: [writes_frozen, frozen_at, frozen_by_admin_id, audit_writer_available, limits, audit_head_seq, audit_head_hash]
+      additionalProperties: false
+      properties:
+        writes_frozen: { type: boolean }
+        frozen_at: { type: [string, "null"], format: date-time }
+        frozen_by_admin_id: { type: [string, "null"] }
+        audit_writer_available: { type: boolean }
+        limits: { $ref: "#/components/schemas/AdminLimits" }
+        audit_head_seq: { type: integer, minimum: 0 }
+        audit_head_hash: { $ref: "#/components/schemas/Sha256Hex" }

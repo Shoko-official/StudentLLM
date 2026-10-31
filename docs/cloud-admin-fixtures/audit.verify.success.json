@@ -1,0 +1,37 @@
+{
+  "name": "audit.verify.success",
+  "operation": "verifyAuditChain",
+  "description": "The chain is recomputed with the key held only by the audit-writer Worker, the content chain and the Ed25519 signatures of the anchors are checked under the published public key, and the anchors are compared with the published copies.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/audit/verify",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+    },
+    "body": {
+      "reason": "Weekly integrity check."
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "ok": true,
+      "rows_checked": 42,
+      "head_seq": 42,
+      "head_hash": "ba00022b520eedef6d2b6d821555919c0308579ddb29bf8af986fe7fc6d2260c",
+      "first_broken_seq": null,
+      "content_integrity_ok": true,
+      "anchors_checked": 3,
+      "anchor_signatures_valid": true,
+      "anchors_match": true,
+      "last_anchor_seq": 40
+    }
+  },
+  "response_schema": "AuditVerification"
+}

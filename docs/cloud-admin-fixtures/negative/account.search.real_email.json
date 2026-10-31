@@ -1,0 +1,37 @@
+{
+  "name": "account.search.real_email",
+  "operation": "searchAccounts",
+  "description": "Negative fixture: validation must fail with a message containing 'example.invalid'. Search results are masked. The full email is revealed only by the audited account read. The request is a POST so the email never appears in a URL.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/accounts/search",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "email": "someone@gmail.com"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "data": [
+        {
+          "account_id": "acc_01EXAMPLE",
+          "email_masked": "st***@gmail.com",
+          "status": "active",
+          "plan_id": "plus_complimentary",
+          "created_at": "2026-11-01T09:00:00Z"
+        }
+      ],
+      "next_cursor": null
+    }
+  },
+  "response_schema": "AccountSearchResponse",
+  "expect_failure": ": fixtures must only use example.invalid addresses"
+}

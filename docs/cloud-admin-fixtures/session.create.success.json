@@ -1,0 +1,34 @@
+{
+  "name": "session.create.success",
+  "operation": "createAdminSession",
+  "description": "Creates the server-side session for the verified Access identity. The session token (also the CSRF token) is returned once and kept in memory by the UI. There is no CSRF header yet and no idempotency key. Freshness is not part of a session: sensitive actions need a step-up bound to the action.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/session",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "Content-Type": "application/json"
+    }
+  },
+  "response": {
+    "status": 201,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001",
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "csrf_token": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
+      "session": {
+        "admin_id": "adm_01EXAMPLEOWNER",
+        "email": "owner@example.invalid",
+        "role": "owner",
+        "expires_at": "2026-11-02T17:00:00Z",
+        "idle_expires_at": "2026-11-02T09:30:00Z",
+        "writes_frozen": false,
+        "credentials_count": 2,
+        "server_time": "2026-11-02T09:00:00Z"
+      }
+    }
+  },
+  "response_schema": "AdminSessionCreated"
+}

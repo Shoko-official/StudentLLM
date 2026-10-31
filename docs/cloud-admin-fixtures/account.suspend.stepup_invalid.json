@@ -1,0 +1,36 @@
+{
+  "name": "account.suspend.stepup_invalid",
+  "operation": "suspendAccount",
+  "description": "The assertion was bound to another action, expired, already used, or failed verification. One generic answer.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/accounts/acc_01EXAMPLE/suspend",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21",
+      "X-StudentLLM-Admin-StepUp": "chl_01EXAMPLE.EXAMPLE_NOT_A_REAL_ASSERTION_BASE64URL"
+    },
+    "body": {
+      "reason": "Repeated automated scraping of the service.",
+      "reason_category": "abuse",
+      "duration_days": 30,
+      "cancel_subscription": "none"
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "stepup_invalid",
+        "message": "The step-up is not valid for this action.",
+        "request_id": "req_01EXAMPLE0000000000000001"
+      }
+    }
+  },
+  "response_schema": "Error"
+}

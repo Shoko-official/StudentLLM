@@ -130,7 +130,7 @@ src/
   *.test.tsx                 UI and storage tests
 scripts/
   provider-smoke.mjs         NVIDIA and LM Studio smoke check
-  validate-cloud-contract.py validates the planned cloud API contract and fixtures
+  validate-cloud-contract.py validates the planned cloud public and admin API contracts and fixtures
   local_asr_server.py        local faster-whisper transcription sidecar
   local_document_server.py   local PDF/OCR/Office/XML document sidecar
   requirements-local-documents.txt  Python sidecar dependencies
@@ -159,6 +159,9 @@ docs/
   cloud-api.md               planned cloud gateway API: conventions and behaviors
   cloud-api.openapi.yaml     OpenAPI 3.1 source of truth for that API
   cloud-api-fixtures/        shared JSON conformance examples for the API
+  cloud-admin.md             planned admin interface of the cloud service: design, roles, audit, UI
+  cloud-admin.openapi.yaml   OpenAPI 3.1 source of truth for the admin API
+  cloud-admin-fixtures/      shared JSON conformance examples for the admin API
   legal/                     draft terms and privacy policy for the cloud tier (not legal advice)
 ```
 

@@ -43,7 +43,10 @@ This is the complete list of what the Service stores about you. It is derived fr
 | Consent records | Append-only records: which provider set and version and which features you agreed to or withdrew, the version of the consent text, and the time | Prove and enforce your consent |
 | Plan | Your plan, status, paid periods, usage windows and their limits, whether it cancels at the end of the period, the customer and subscription identifiers assigned by Paddle, and a plan version counter | Know what you are entitled to |
 | Payment event records | Paddle event identifier, type, time, and a short list of non-sensitive fields (identifiers, status, period, price identifier). **We do not store any other field of the payment events; they are discarded.** Events we cannot match to an account are kept in quarantine without creating an account | Process payments reliably and without duplicates |
-| Deletion record | When you delete your account, a record marked as deleting keeps only the Paddle customer and subscription identifiers until your subscription has been cancelled, then it is purged | Make sure the subscription is cancelled |
+| Deletion record | When you delete your account, it is closed immediately (every session is ended) and your personal data is then erased in a series of steps that are repeated until they all succeed, usually within minutes; your email is erased last, after we have tried to send you the confirmation. A record marked as deleting keeps only an opaque account identifier and the Paddle customer and subscription identifiers until your subscription has been cancelled, then it is purged | Make sure the subscription is cancelled |
+| Deletion log | The opaque account identifier, the time and who requested the deletion (you or us), without your email | Apply the erasure again if we ever have to restore a database backup |
+| Records of actions on accounts | When we act on an account (for example a complimentary period, a cancellation, a suspension or a deletion), we keep a record with the opaque account identifier, the kind of action, the time and the administrator who did it, plus a note we wrote, which becomes unreadable when your account is deleted. [LAWYER: legal basis, retention and whether these records must be part of an access request] | Be accountable for administrator actions and detect abuse |
+| Complimentary-period counter and ban list | A keyed fingerprint of your normalized email (not your email) used to count complimentary periods per person and, if an account is banned, to stop it from registering again. [LAWYER: legal basis, retention, and the information to give] | Limit abuse of free periods; enforce a ban |
 | Usage | Credits used and reserved per usage window and per feature, request counts, and a short ledger of settled requests (request identifier, feature, model name, credits, time) kept 24 hours and then folded into totals | Enforce your budget and show your usage meter |
 | Operational logs | A request identifier, your account identifier, the route, a status code, credits charged, latency and time. No content, no tokens, no IP address | Operate and debug the Service |
 
@@ -120,7 +123,7 @@ Periods are proposals to confirm. [LAWYER: confirm each.]
 | --- | --- |
 | Content in transit | Not stored by us; held in memory for the duration of the request. The provider retains it only as stated in its contract with us ([PLACEHOLDER: provider retention]) |
 | Prompts and answers | Not stored |
-| Account | While your account is open; deleted within [PLACEHOLDER: period, for example 30 days] of closure, once the subscription cancellation has succeeded |
+| Account | While your account is open; erased when the deletion is carried out (at once, or after a waiting period of up to 72 hours when we start the deletion ourselves, during which you can still export your data or delete the account yourself) |
 | Pending sign-in records | Deleted on use or after 10 minutes |
 | Sign-in counters | 24 hours |
 | Sessions and devices | Until they expire or are revoked, then deleted within [PLACEHOLDER: period] |
@@ -132,7 +135,11 @@ Periods are proposals to confirm. [LAWYER: confirm each.]
 | Device counters | While the sessions exist; daily counts [PLACEHOLDER: period, for example 30 days] |
 | Previous refresh token hash and the encrypted successor | The hash until the session ends; the encrypted successor is erased after about 30 seconds or at its first use |
 | Idempotency records | 24 hours |
-| Deletion record | Until the subscription cancellation succeeds, then purged |
+| Deletion record | Until the subscription cancellation succeeds (retried for up to 14 days, then handled by hand), then purged; at most [PLACEHOLDER: maximum period] |
+| Deletion log | At least as long as our database platform keeps backups, plus a margin [PLACEHOLDER: period] |
+| Records of actions on accounts | [PLACEHOLDER: audit retention period, for example 12 months]. They survive the deletion of your account: they hold an opaque identifier and no email, and the note we wrote cannot be read any more |
+| Complimentary-period counter and ban list | The counter 12 months after the last complimentary period; a ban entry until it expires (at most 730 days) [PLACEHOLDER: confirm] |
+| Records that remain after your account is deleted | Only: the records of actions on accounts, the records of administrative operations (identifier, kind, state, time), the ban-list entry of a banned account (a fingerprint, not your email), the deletion log, the complimentary-period counter (a fingerprint, not your email), monthly totals without identifiers, payment event records and operational logs that contain your opaque identifier or Paddle identifiers (each for its own retention above), and idempotency records (fingerprints only, 24 hours). Paddle, as the seller, keeps its own records of your purchase. Platform backups keep older copies until they expire. [LAWYER: confirm each] |
 | Payment event records | [PLACEHOLDER: period, for example 90 days] |
 | Usage ledger and totals | Ledger 24 hours; totals [PLACEHOLDER: period, for example the current and previous 12 months] |
 | Operational logs | [PLACEHOLDER: period, for example 30 days] |

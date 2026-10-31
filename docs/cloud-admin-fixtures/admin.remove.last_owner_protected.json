@@ -1,0 +1,33 @@
+{
+  "name": "admin.remove.last_owner_protected",
+  "operation": "removeAdmin",
+  "description": "Later phase. This refusal is reachable only under concurrency (two owners removing each other at the same moment) or from a runbook script, because nobody can act on their own record and only owners act on owners. The count of remaining enabled owners is evaluated in the same transaction as the change, against one serialised admin-registry object.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/admins/adm_01EXAMPLEOWNER2/remove",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21",
+      "X-StudentLLM-Admin-StepUp": "chl_01EXAMPLE.EXAMPLE_NOT_A_REAL_ASSERTION_BASE64URL"
+    },
+    "body": {
+      "reason": "Offboarding the second owner."
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "last_owner_protected",
+        "message": "The last enabled owner cannot be removed or demoted.",
+        "request_id": "req_01EXAMPLE0000000000000001"
+      }
+    }
+  },
+  "response_schema": "Error"
+}

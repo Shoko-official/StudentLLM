@@ -1,0 +1,36 @@
+{
+  "name": "account.deletion.confirmation_mismatch",
+  "operation": "requestAccountDeletion",
+  "description": "The typed confirmation does not equal the account id in the path. Nothing is changed.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/accounts/acc_01EXAMPLE/deletion",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21",
+      "X-StudentLLM-Admin-StepUp": "chl_01EXAMPLE.EXAMPLE_NOT_A_REAL_ASSERTION_BASE64URL"
+    },
+    "body": {
+      "reason": "Legal erasure request received by email.",
+      "confirm_account_id": "acc_01OTHER",
+      "cooling_off_hours": 24,
+      "send_heads_up": true
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "confirmation_mismatch",
+        "message": "The confirmation does not match the account id.",
+        "request_id": "req_01EXAMPLE0000000000000001"
+      }
+    }
+  },
+  "response_schema": "Error"
+}

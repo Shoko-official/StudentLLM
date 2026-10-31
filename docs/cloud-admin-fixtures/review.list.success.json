@@ -1,0 +1,35 @@
+{
+  "name": "review.list.success",
+  "operation": "listReviewItems",
+  "description": "Owner review items are never actioned automatically. A chargeback raises one; so does a refund that could not fully restore a grant because the monthly cap was full.",
+  "request": {
+    "method": "GET",
+    "path": "/admin/v1/review-items?limit=50",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "data": [
+        {
+          "review_item_id": "rev_01EXAMPLE",
+          "kind": "chargeback",
+          "account_id": "acc_01EXAMPLE",
+          "state": "open",
+          "created_at": "2026-11-02T10:00:00Z",
+          "resolved_at": null,
+          "resolved_by_admin_id": null,
+          "resolution": null
+        }
+      ],
+      "next_cursor": null
+    }
+  },
+  "response_schema": "ReviewItemList"
+}
