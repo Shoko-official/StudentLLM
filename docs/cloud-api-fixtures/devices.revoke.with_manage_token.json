@@ -1,0 +1,21 @@
+{
+  "name": "devices.revoke.with_manage_token",
+  "operation": "revokeDevice",
+  "description": "Revoking with a manage_token sends a notification email to the account address. The revocation is written to the account's Durable Object.",
+  "request": {
+    "method": "DELETE",
+    "path": "/v1/devices/dev_03EXAMPLE",
+    "headers": {
+      "Authorization": "Bearer mt_EXAMPLE_NOT_A_REAL_TOKEN",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    }
+  },
+  "response": {
+    "status": 204,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": null
+  },
+  "response_schema": null
+}

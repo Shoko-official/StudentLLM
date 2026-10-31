@@ -1,0 +1,32 @@
+{
+  "name": "auth-email-request.success",
+  "operation": "authEmailRequest",
+  "description": "Always the same response, whether or not the address exists.",
+  "request": {
+    "method": "POST",
+    "path": "/auth/email/request",
+    "headers": {
+      "Content-Type": "application/json",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    },
+    "body": {
+      "email": "student@example.invalid",
+      "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+      "code_challenge_method": "S256",
+      "terms_version": "2026-11-01",
+      "device_label": "Windows laptop"
+    }
+  },
+  "response": {
+    "status": 202,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "expires_in": 600,
+      "resend_after": 60,
+      "code_length": 8
+    }
+  },
+  "response_schema": "EmailRequestResponse"
+}

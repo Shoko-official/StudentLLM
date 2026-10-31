@@ -1,0 +1,21 @@
+{
+  "name": "account-login-methods.unlink.success",
+  "operation": "unlinkLoginMethod",
+  "description": "Needs a fresh sign-in; sends a notification email. Removing the last method returns invalid_request.",
+  "request": {
+    "method": "DELETE",
+    "path": "/v1/account/login-methods/google",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    }
+  },
+  "response": {
+    "status": 204,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": null
+  },
+  "response_schema": null
+}

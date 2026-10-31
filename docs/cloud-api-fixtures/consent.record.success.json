@@ -1,0 +1,41 @@
+{
+  "name": "consent.record.success",
+  "operation": "recordConsent",
+  "description": "Append-only; one active record per provider set.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/consent",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "provider_set": "ps1",
+      "provider_set_version": 1,
+      "features": [
+        "chat"
+      ],
+      "text_version": "2026-11-01",
+      "granted": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "consent_id": "cns_01EXAMPLE",
+      "provider_set": "ps1",
+      "provider_set_version": 1,
+      "features": [
+        "chat"
+      ],
+      "text_version": "2026-11-01",
+      "granted": true,
+      "recorded_at": "2026-11-01T09:30:00Z"
+    }
+  },
+  "response_schema": "ConsentRecord"
+}

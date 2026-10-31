@@ -1,0 +1,34 @@
+{
+  "name": "auth-email-verify.link_completed",
+  "operation": "authEmailVerify",
+  "description": "Completing a link flow returns success, not a new session. The client passes its current device_id and keeps the same device and tokens.",
+  "request": {
+    "method": "POST",
+    "path": "/auth/email/verify",
+    "headers": {
+      "Content-Type": "application/json",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    },
+    "body": {
+      "email": "student@example.invalid",
+      "code": "K7M2QX9D",
+      "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+      "device_id": "dev_01EXAMPLE"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "linked": true,
+      "method": "email",
+      "login_methods": [
+        "google",
+        "email"
+      ]
+    }
+  },
+  "response_schema": "LinkResult"
+}

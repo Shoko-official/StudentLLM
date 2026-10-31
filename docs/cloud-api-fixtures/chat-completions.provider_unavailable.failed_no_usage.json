@@ -1,0 +1,48 @@
+{
+  "name": "chat-completions.provider_unavailable.failed_no_usage",
+  "operation": "chatCompletions",
+  "description": "A forwarded call that returned a provider error with no completion. Terminal state failed_no_usage: the reservation is released, zero credits are charged, and a same-key retry is allowed.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0",
+      "X-StudentLLM-Consent": "cns_01EXAMPLE",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a11",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "model": "studentllm-large",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Answer from the provided course passages."
+        },
+        {
+          "role": "user",
+          "content": "EXAMPLE QUESTION AND PASSAGES"
+        }
+      ],
+      "stream": false,
+      "max_tokens": 512
+    }
+  },
+  "response": {
+    "status": 503,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001",
+      "Retry-After": "10",
+      "X-StudentLLM-Credits-Charged": "0"
+    },
+    "body": {
+      "error": {
+        "code": "provider_unavailable",
+        "message": "The provider is not available.",
+        "request_id": "req_01EXAMPLE0000000000000001",
+        "retry_after_seconds": 10
+      }
+    }
+  },
+  "response_schema": "Error"
+}

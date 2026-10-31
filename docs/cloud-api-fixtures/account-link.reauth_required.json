@@ -1,0 +1,31 @@
+{
+  "name": "account-link.reauth_required",
+  "operation": "linkLoginMethod",
+  "description": "The session's auth_time is older than 5 minutes (refresh does not renew it).",
+  "request": {
+    "method": "POST",
+    "path": "/v1/account/link",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "method": "google"
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "reauth_required",
+        "message": "Sign in again to continue.",
+        "request_id": "req_01EXAMPLE0000000000000001"
+      }
+    }
+  },
+  "response_schema": "Error"
+}

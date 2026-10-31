@@ -1,0 +1,49 @@
+{
+  "name": "chat-completions.consent_outdated",
+  "operation": "chatCompletions",
+  "description": "The consent id is not the active record (withdrawn, replaced, or the routed model needs another provider set). Nothing is forwarded.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0",
+      "X-StudentLLM-Consent": "cns_01OLD",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a11",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "model": "studentllm-large",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Answer from the provided course passages."
+        },
+        {
+          "role": "user",
+          "content": "EXAMPLE QUESTION AND PASSAGES"
+        }
+      ],
+      "stream": false,
+      "max_tokens": 512
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "consent_outdated",
+        "message": "Your consent does not cover the providers needed for this model.",
+        "request_id": "req_01EXAMPLE0000000000000001",
+        "details": {
+          "provider_set": "ps1",
+          "consent_text_version": "2026-11-01"
+        }
+      }
+    }
+  },
+  "response_schema": "Error"
+}

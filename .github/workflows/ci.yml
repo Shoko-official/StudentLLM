@@ -32,6 +32,11 @@ jobs:
           pip-audit -r requirements-local-documents.txt --progress-spinner off
           pip-audit -r requirements-speech-translation.txt --progress-spinner off
           pip-audit -r requirements-embeddings.txt --progress-spinner off
+          pip-audit -r requirements-cloud-contract.txt --progress-spinner off
+      - name: Validate cloud API contract
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements-cloud-contract.txt
+          python scripts/validate-cloud-contract.py
       - name: Install desktop build dependencies
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev
       - name: Setup Rust

@@ -1,0 +1,46 @@
+{
+  "name": "audio-transcriptions.success",
+  "operation": "transcribeAudio",
+  "description": "One chunk per request; the client applies timestamp offsets when merging chunks. Settled on the provider-reported duration.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/audio/transcriptions",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0",
+      "X-StudentLLM-Consent": "cns_01EXAMPLE",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a11"
+    },
+    "multipart": {
+      "file": "<audio bytes omitted>",
+      "model": "studentllm-transcribe",
+      "language": "fr",
+      "response_format": "verbose_json",
+      "duration_hint_seconds": 60
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001",
+      "X-StudentLLM-Credits-Remaining": "8123",
+      "X-StudentLLM-Credits-Limit": "12500",
+      "X-StudentLLM-Credits-Reset": "2026-12-01T00:00:00Z",
+      "X-StudentLLM-Plan-Version": "7",
+      "X-StudentLLM-Credits-Charged": "60"
+    },
+    "body": {
+      "text": "EXAMPLE TRANSCRIPT",
+      "language": "fr",
+      "duration_seconds": 59.4,
+      "segments": [
+        {
+          "start": 0.0,
+          "end": 4.2,
+          "text": "EXAMPLE SEGMENT"
+        }
+      ]
+    }
+  },
+  "response_schema": "TranscriptionResponse"
+}

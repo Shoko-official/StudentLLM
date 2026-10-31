@@ -1,0 +1,36 @@
+{
+  "name": "auth-refresh.success",
+  "operation": "authRefresh",
+  "description": "Rotation. auth_time is unchanged by refresh.",
+  "request": {
+    "method": "POST",
+    "path": "/auth/refresh",
+    "headers": {
+      "Content-Type": "application/json",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    },
+    "body": {
+      "refresh_token": "rt_EXAMPLE_NOT_A_REAL_TOKEN",
+      "device_id": "dev_01EXAMPLE"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "access_token": "eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE2.EXAMPLE",
+      "token_type": "Bearer",
+      "expires_in": 900,
+      "refresh_token": "rt_EXAMPLE_SUCCESSOR_NOT_A_REAL_TOKEN",
+      "device_id": "dev_01EXAMPLE",
+      "account": {
+        "account_id": "acc_01EXAMPLE",
+        "email": "student@example.invalid",
+        "plan": "plus"
+      }
+    }
+  },
+  "response_schema": "TokenResponse"
+}

@@ -1,0 +1,36 @@
+{
+  "name": "usage.get.free_account",
+  "operation": "getUsage",
+  "description": "A free account gets a valid response: no window, zero credits.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/usage",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "window": null,
+      "credits": {
+        "limit": 0,
+        "used": 0,
+        "reserved": 0,
+        "remaining": 0,
+        "resets_at": null
+      },
+      "by_feature": {
+        "chat": 0,
+        "transcription": 0,
+        "ocr": 0
+      },
+      "requests": 0
+    }
+  },
+  "response_schema": "Usage"
+}

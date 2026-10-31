@@ -1,0 +1,48 @@
+{
+  "name": "chat-completions.terms_required",
+  "operation": "chatCompletions",
+  "description": "The account has not accepted the current terms. Checked before plan and consent. Account, export, delete, logout, devices and terms routes are never blocked by this.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0",
+      "X-StudentLLM-Consent": "cns_01EXAMPLE",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a11",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "model": "studentllm-large",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Answer from the provided course passages."
+        },
+        {
+          "role": "user",
+          "content": "EXAMPLE QUESTION AND PASSAGES"
+        }
+      ],
+      "stream": false,
+      "max_tokens": 512
+    }
+  },
+  "response": {
+    "status": 403,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "terms_required",
+        "message": "Accept the current terms to continue.",
+        "request_id": "req_01EXAMPLE0000000000000001",
+        "details": {
+          "terms_version": "2027-01-15"
+        }
+      }
+    }
+  },
+  "response_schema": "Error"
+}

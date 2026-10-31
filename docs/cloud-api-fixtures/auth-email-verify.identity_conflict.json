@@ -1,0 +1,33 @@
+{
+  "name": "auth-email-verify.identity_conflict",
+  "operation": "authEmailVerify",
+  "description": "Link completion where the email differs from the account's email or belongs to another account.",
+  "request": {
+    "method": "POST",
+    "path": "/auth/email/verify",
+    "headers": {
+      "Content-Type": "application/json",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    },
+    "body": {
+      "email": "other@example.invalid",
+      "code": "K7M2QX9D",
+      "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+      "device_id": "dev_01EXAMPLE"
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "identity_conflict",
+        "message": "This email cannot be linked to the account.",
+        "request_id": "req_01EXAMPLE0000000000000001"
+      }
+    }
+  },
+  "response_schema": "Error"
+}

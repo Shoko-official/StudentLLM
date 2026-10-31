@@ -1,0 +1,30 @@
+{
+  "name": "status.get.success",
+  "operation": "getStatus",
+  "description": "Only after sign-in or an explicit click.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/status",
+    "headers": {
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001",
+      "X-StudentLLM-Min-Client": "0.2.0"
+    },
+    "body": {
+      "status": "ok",
+      "min_client_version": "0.2.0",
+      "features": {
+        "chat": true,
+        "transcription": true,
+        "ocr": true
+      },
+      "server_time": "2026-11-01T09:31:00Z"
+    }
+  },
+  "response_schema": "Status"
+}
