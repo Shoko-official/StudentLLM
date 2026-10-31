@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
 import re
+import select
+import socket
 import threading
+import time
 import zipfile
 from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,7 +36,8 @@ except ModuleNotFoundError:  # Running this file directly from the scripts direc
 
 
 class DocumentHandler(BaseHTTPRequestHandler):
-    server_version = "StudentLLM-Documents/1.2"
+    server_version = "StudentLLM-Documents/1.3"
+    pdf_time_budget = 240.0
 
     def _write_json(self, status: int, payload: dict[str, object]) -> None:
         encoded = json.dumps(payload).encode("utf-8")
@@ -99,7 +104,11 @@ class DocumentHandler(BaseHTTPRequestHandler):
             payload = self.rfile.read(length)
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0].lower()
             if content_type == "application/pdf":
-                model, pages = extract_pdf(payload)
+                model, pages = run_pdf_extraction(
+                    payload,
+                    budget_seconds=self.pdf_time_budget,
+                    should_abort=lambda: client_disconnected(self.connection),
+                )
             elif content_type.startswith("image/"):
                 model, pages = extract_image(payload)
             elif content_type in {
@@ -115,6 +124,14 @@ class DocumentHandler(BaseHTTPRequestHandler):
                 self._write_json(415, {"error": "This document type is not supported by the local extractor."})
                 return
             self._write_json(200, {"model": model, "pages": pages})
+        except ExtractionAborted:
+            return  # The client went away; there is nobody to answer.
+        except ExtractionTimeout as error:
+            self._write_json(504, {"error": str(error)})
+        except ExtractionBusy as error:
+            self._write_json(503, {"error": str(error)})
+        except DocumentLimitError as error:
+            self._write_json(422, {"error": str(error)})
         except Exception:
             self._write_json(422, {"error": "Document extraction failed."})
 
@@ -126,6 +143,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument(
+        "--pdf-time-budget", type=float, default=PDF_TIME_BUDGET_SECONDS,
+        help="Seconds one PDF request may run before it is stopped (default: %(default)s).",
+    )
     return parser.parse_args()
 
 
@@ -323,6 +344,22 @@ def extract_docx(payload: bytes) -> tuple[str, list[dict[str, object]]]:
     return "docx-xml", [_document_page(blocks)]
 
 
+def _pptx_shape_text(shape: ElementTree.Element, namespace: str) -> str:
+    """Text of a shape with one line per `a:p` paragraph and `a:br` as a line break."""
+    paragraphs = []
+    for paragraph in shape.findall(f"{namespace}p"):
+        parts = []
+        for node in paragraph.iter():
+            if node.tag == f"{namespace}t" and node.text:
+                parts.append(node.text)
+            elif node.tag == f"{namespace}br":
+                parts.append("\n")
+        text = "".join(parts).strip()
+        if text:
+            paragraphs.append(text)
+    return "\n".join(paragraphs)
+
+
 def extract_pptx(payload: bytes) -> tuple[str, list[dict[str, object]]]:
     namespace = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
     presentation = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
@@ -338,7 +375,7 @@ def extract_pptx(payload: bytes) -> tuple[str, list[dict[str, object]]]:
             blocks = []
             # Shape text lives in `p:txBody` (PresentationML); table cells use `a:txBody` (DrawingML).
             for shape in (element for element in root.iter() if element.tag in {f"{presentation}txBody", f"{namespace}txBody"}):
-                text = _text_from_xml(shape)
+                text = _pptx_shape_text(shape, namespace)
                 if text:
                     blocks.append({"x": 0, "y": len(blocks) * 20, "width": 0, "height": 0, "text": text, "kind": "paragraph"})
             pages.append(_document_page(blocks, page_number))
@@ -507,8 +544,34 @@ def has_unmapped_glyphs(text: str, threshold: float = 0.1) -> bool:
 MAX_PDF_PAGES = 500
 PDF_OCR_SCALE = 2
 
+# Time and size limits for one PDF request. pdfminer.six is pure Python and its box-ordering step is quadratic in
+# the number of text boxes, so pathological pages (thousands of scattered words) can take a minute or more.
+PDF_TIME_BUDGET_SECONDS = 240.0  # Below the five-minute client timeout so the client gets an answer, not an abort.
+PDF_FULL_LAYOUT_MAX_BASELINES = 200  # Distinct text baselines on a page above which box ordering is skipped.
+PDF_FULL_LAYOUT_MAX_CHARACTERS = 20_000
+PDF_MAX_PAGE_CHARACTERS = 30_000  # Above this a page is not parsed as text (time grows steeply): it is read by OCR, or rejected.
+PDF_MAX_CONCURRENT_JOBS = 2
+PDF_QUEUE_WAIT_SECONDS = 30.0
+
 # PDFium is not thread-safe and the sidecar serves requests on several threads.
 _PDFIUM_LOCK = threading.Lock()
+_PDF_JOBS = threading.BoundedSemaphore(PDF_MAX_CONCURRENT_JOBS)
+
+
+class DocumentLimitError(ValueError):
+    """The document exceeds a size or complexity limit; the message is safe to show to the user."""
+
+
+class ExtractionTimeout(Exception):
+    """The request used up its time budget and its worker was stopped."""
+
+
+class ExtractionAborted(Exception):
+    """The client disconnected and the worker was stopped."""
+
+
+class ExtractionBusy(Exception):
+    """Too many PDF requests are already running."""
 
 
 def _span_font(name: str) -> str:
@@ -581,21 +644,56 @@ def render_pdf_page_png(document: object, page_index: int) -> bytes:
         page.close()
 
 
-def extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
-    from pdfminer.high_level import extract_pages
+def _iter_characters(element: object):
+    from pdfminer.layout import LTChar, LTContainer
+
+    if isinstance(element, LTChar):
+        yield element
+    elif isinstance(element, LTContainer):
+        for child in element:
+            yield from _iter_characters(child)
+
+
+def analyze_pdf_page(layout_page: object) -> bool:
+    """Run pdfminer's layout analysis on a raw page and return False when the page is too dense to parse.
+
+    A normal page gets the full analysis, which also orders the text boxes (columns). A page with many scattered
+    text lines skips the quadratic box ordering and keeps top-to-bottom order, which is 100 times faster.
+    """
     from pdfminer.layout import LAParams
+
+    characters = list(_iter_characters(layout_page))
+    if len(characters) > PDF_MAX_PAGE_CHARACTERS:
+        return False
+    baselines = len({round(character.y0) for character in characters})
+    simple = len(characters) > PDF_FULL_LAYOUT_MAX_CHARACTERS or baselines > PDF_FULL_LAYOUT_MAX_BASELINES
+    layout_page.analyze(LAParams(all_texts=True, boxes_flow=None) if simple else LAParams(all_texts=True))
+    return True
+
+
+def extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
+    from pdfminer.converter import PDFPageAggregator
+    from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
     from pdfminer.pdfpage import PDFPage
 
     page_count = 0
     for _ in PDFPage.get_pages(BytesIO(pdf_bytes)):
         page_count += 1
         if page_count > MAX_PDF_PAGES:
-            raise ValueError("The PDF contains too many pages.")
+            raise DocumentLimitError(f"The PDF has more than {MAX_PDF_PAGES} pages.")
 
     pages: list[dict[str, object]] = []
-    for page_number, layout_page in enumerate(
-        extract_pages(BytesIO(pdf_bytes), laparams=LAParams(all_texts=True)), start=1
-    ):
+    too_dense: list[int] = []
+    resources = PDFResourceManager()
+    device = PDFPageAggregator(resources, laparams=None)  # Raw characters first; the analysis is chosen per page.
+    interpreter = PDFPageInterpreter(resources, device)
+    for page_number, page in enumerate(PDFPage.get_pages(BytesIO(pdf_bytes)), start=1):
+        interpreter.process_page(page)
+        layout_page = device.get_result()
+        if not analyze_pdf_page(layout_page):
+            too_dense.append(page_number)
+            pages.append({"pageNumber": page_number, "text": "", "blocks": []})
+            continue
         layout_blocks, width, height = pdf_layout_blocks(layout_page)
         text = "\n".join(block_text(block) for block in layout_blocks).strip()
         pages.append({
@@ -604,9 +702,17 @@ def extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
             "blocks": formula_aware_pdf_blocks(layout_blocks, width, height),
         })
 
-    # A page with no text layer, or one whose glyphs cannot be mapped to letters, is rasterised and read by OCR.
     ocr_ready = has_ocr_dependencies()
-    ocr_pages = [page for page in pages if not page["text"] or (ocr_ready and has_unmapped_glyphs(str(page["text"])))]
+    if too_dense and not ocr_ready:
+        raise DocumentLimitError(
+            f"Page {too_dense[0]} has more than {PDF_MAX_PAGE_CHARACTERS:,} text characters, which is too many to read "
+            "as text in a reasonable time. Install the OCR dependencies so such pages can be read as images."
+        )
+    # A page with no text layer, or one whose glyphs cannot be mapped to letters, is rasterised and read by OCR.
+    ocr_pages = [
+        page for page in pages
+        if page["pageNumber"] in too_dense or not page["text"] or (ocr_ready and has_unmapped_glyphs(str(page["text"])))
+    ]
     if ocr_pages:
         import pypdfium2
 
@@ -622,9 +728,80 @@ def extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
     return ("pdfminer+rapidocr" if ocr_pages else "pdfminer"), pages
 
 
+def _pdf_worker(pdf_bytes: bytes, connection: object) -> None:
+    """Entry point of the extraction process: sends ("ok", result), ("limit", message) or ("error", "")."""
+    try:
+        connection.send(("ok", extract_pdf(pdf_bytes)))
+    except DocumentLimitError as error:
+        connection.send(("limit", str(error)))
+    except BaseException:
+        connection.send(("error", ""))
+    finally:
+        connection.close()
+
+
+def client_disconnected(connection: socket.socket) -> bool:
+    """True when the peer has closed the connection (the request body has already been read)."""
+    try:
+        readable, _, _ = select.select([connection], [], [], 0)
+        return bool(readable) and connection.recv(1, socket.MSG_PEEK) == b""
+    except (OSError, ValueError):
+        return True
+
+
+def run_pdf_extraction(
+    pdf_bytes: bytes,
+    budget_seconds: float = PDF_TIME_BUDGET_SECONDS,
+    should_abort: object = None,
+    worker: object = None,
+) -> tuple[str, list[dict[str, object]]]:
+    """Extract a PDF in a separate process that is killed when the time budget runs out or the client leaves.
+
+    pdfminer.six cannot be interrupted from inside, and a thread that keeps running after the client gave up
+    keeps using a CPU, so the work lives in a process that can be stopped for good.
+    """
+    if not _PDF_JOBS.acquire(timeout=PDF_QUEUE_WAIT_SECONDS):
+        raise ExtractionBusy("The document service is busy with other PDFs. Try again in a moment.")
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(target=worker or _pdf_worker, args=(pdf_bytes, sender), daemon=True)
+    try:
+        process.start()
+        sender.close()
+        deadline = time.monotonic() + budget_seconds
+        while True:
+            if receiver.poll(0.1):
+                try:
+                    kind, value = receiver.recv()
+                except EOFError as error:
+                    raise RuntimeError("The PDF worker stopped without a result.") from error
+                break
+            if not process.is_alive() and not receiver.poll(0):
+                raise RuntimeError("The PDF worker stopped without a result.")
+            if should_abort is not None and should_abort():
+                raise ExtractionAborted()
+            if time.monotonic() >= deadline:
+                raise ExtractionTimeout(
+                    f"PDF extraction was stopped after {budget_seconds:g} seconds. The document is too large or too "
+                    "complex for the local extractor; split it or export it again."
+                )
+    finally:
+        if process.is_alive():
+            process.kill()
+        process.join(10)
+        receiver.close()
+        _PDF_JOBS.release()
+    if kind == "ok":
+        return value
+    if kind == "limit":
+        raise DocumentLimitError(value)
+    raise RuntimeError("PDF extraction failed.")
+
+
 def main() -> None:
     arguments = parse_args()
     host = validate_local_host(arguments.host)
+    DocumentHandler.pdf_time_budget = arguments.pdf_time_budget
     server = ThreadingHTTPServer((host, arguments.port), DocumentHandler)
     server.daemon_threads = True
     print(f"StudentLLM local document extraction listening on http://{host}:{arguments.port}")

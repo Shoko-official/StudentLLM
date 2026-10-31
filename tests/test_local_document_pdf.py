@@ -5,7 +5,12 @@ libraries are missing so the plain benchmark checks keep running without them.
 """
 
 import json
+import multiprocessing
+import os
+import random
+import socket
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -81,7 +86,7 @@ class PdfExtractionTests(unittest.TestCase):
     def test_rejects_documents_with_too_many_pages(self):
         pdf = pdf_fixtures.text_pdf([[("F1", 10, 72, 700, "x")]] * (local_document_server.MAX_PDF_PAGES + 1))
 
-        with self.assertRaisesRegex(ValueError, "too many pages"):
+        with self.assertRaisesRegex(ValueError, "more than 500 pages"):
             local_document_server.extract_pdf(pdf)
 
     def test_rejects_data_that_is_not_a_pdf(self):
@@ -122,7 +127,7 @@ class PdfExtractionTests(unittest.TestCase):
             blocks, width, height = real_layout_blocks(layout_page)
             seen.append(layout_page.pageid)
             if len(seen) == 1:
-                blocks = [{"type": 0, "bbox": (72, 80, 200, 92), "lines": [{"spans": [{"text": "Montrr qu ", "font": "F1"}]}]}]
+                blocks = [{"type": 0, "bbox": (72, 80, 200, 92), "lines": [{"spans": [{"text": "Montr\ue027r qu\ue027 \ue025\ue02a\ue023", "font": "F1"}]}]}]
             return blocks, width, height
 
         ocr_blocks = [{"x": 1, "y": 2, "width": 3, "height": 4, "text": "Montrer que chacun", "kind": "text"}]
@@ -241,6 +246,206 @@ class DocumentServerHttpTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertEqual(body["pages"][0]["text"], "Slide one")
+
+
+def _sleepy_worker(pdf_bytes, connection):
+    """A worker that never answers, to exercise the time budget and the cleanup."""
+    time.sleep(120)
+
+
+def _limit_worker(pdf_bytes, connection):
+    connection.send(("limit", "This document has too much of something."))
+    connection.close()
+
+
+def _crashing_worker(pdf_bytes, connection):
+    os._exit(3)
+
+
+def _no_children(timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not multiprocessing.active_children():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def scattered_words_pdf(words: int, seed: int = 7) -> bytes:
+    generator = random.Random(seed)
+    runs = [("F1", 8, generator.uniform(20, 560), generator.uniform(20, 770), f"word{index}") for index in range(words)]
+    return pdf_fixtures.text_pdf([runs])
+
+
+@unittest.skipUnless(PDF_ENGINES, "pdfminer.six and pypdfium2 are not installed")
+class PdfComplexityLimitTests(unittest.TestCase):
+    def analyses(self, pdf: bytes):
+        """Run extract_pdf and return the boxes_flow value each page was analysed with."""
+        from pdfminer.layout import LTPage
+
+        original = LTPage.analyze
+        flows = []
+
+        def recording(page, laparams):
+            flows.append(laparams.boxes_flow)
+            return original(page, laparams)
+
+        with mock.patch.object(LTPage, "analyze", recording):
+            result = local_document_server.extract_pdf(pdf)
+        return result, flows
+
+    def test_a_normal_page_gets_the_full_layout_analysis(self):
+        (_, pages), flows = self.analyses(pdf_fixtures.article_pdf())
+
+        self.assertEqual(len(pages), 2)
+        self.assertEqual(flows, [0.5, 0.5])
+
+    def test_a_page_with_many_scattered_lines_skips_the_quadratic_box_ordering(self):
+        with mock.patch.object(local_document_server, "PDF_FULL_LAYOUT_MAX_BASELINES", 2):
+            (_, pages), flows = self.analyses(pdf_fixtures.article_pdf())
+
+        self.assertEqual(flows, [None, None])
+        self.assertIn("Quarterly Energy Report", pages[0]["text"])
+
+    def test_a_page_with_thousands_of_scattered_words_stays_fast(self):
+        started = time.monotonic()
+        model, pages = local_document_server.extract_pdf(scattered_words_pdf(3000))
+
+        self.assertEqual(model, "pdfminer")
+        self.assertIn("word0", pages[0]["text"])
+        self.assertLess(time.monotonic() - started, 20, "full box ordering of this page takes 40 s or more")
+
+    def test_a_page_above_the_character_cap_is_rejected_with_a_clear_message_without_ocr(self):
+        with mock.patch.object(local_document_server, "PDF_MAX_PAGE_CHARACTERS", 10), \
+                mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=False):
+            with self.assertRaisesRegex(local_document_server.DocumentLimitError, "Page 1 has more than 10 text characters"):
+                local_document_server.extract_pdf(pdf_fixtures.article_pdf())
+
+    def test_a_page_above_the_character_cap_is_read_by_ocr_when_it_is_installed(self):
+        calls = []
+
+        def fake_ocr(image):
+            calls.append(image)
+            return "rapidocr", [{"x": 0, "y": 0, "width": 1, "height": 1, "text": "From OCR", "kind": "text"}]
+
+        with mock.patch.object(local_document_server, "PDF_MAX_PAGE_CHARACTERS", 150), \
+                mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=True), \
+                mock.patch.object(local_document_server, "ocr_image", side_effect=fake_ocr):
+            model, pages = local_document_server.extract_pdf(pdf_fixtures.article_pdf())
+
+        self.assertEqual(model, "pdfminer+rapidocr")
+        self.assertEqual(len(calls), 1)  # Only page 1 (about 250 characters) is above the cap.
+        self.assertEqual(pages[0]["text"], "From OCR")
+        self.assertIn("Meters were read monthly", pages[1]["text"])
+
+
+@unittest.skipUnless(PDF_ENGINES, "pdfminer.six and pypdfium2 are not installed")
+class IsolatedExtractionTests(unittest.TestCase):
+    def tearDown(self):
+        self.assertTrue(_no_children(), "a worker process is still running")
+        self.assertEqual(local_document_server._PDF_JOBS._value, local_document_server.PDF_MAX_CONCURRENT_JOBS)
+
+    def test_returns_the_extraction_result_from_the_worker_process(self):
+        model, pages = local_document_server.run_pdf_extraction(pdf_fixtures.article_pdf(), budget_seconds=120)
+
+        self.assertEqual(model, "pdfminer")
+        self.assertEqual(len(pages), 2)
+
+    def test_stops_the_worker_when_the_time_budget_runs_out(self):
+        started = time.monotonic()
+        with self.assertRaisesRegex(local_document_server.ExtractionTimeout, "stopped after 1 seconds"):
+            local_document_server.run_pdf_extraction(b"%PDF", budget_seconds=1, worker=_sleepy_worker)
+
+        self.assertLess(time.monotonic() - started, 15)
+
+    def test_stops_the_worker_when_the_client_disconnects(self):
+        checks = []
+
+        def abort_after_a_moment():
+            checks.append(time.monotonic())
+            return len(checks) > 3
+
+        with self.assertRaises(local_document_server.ExtractionAborted):
+            local_document_server.run_pdf_extraction(b"%PDF", budget_seconds=60, should_abort=abort_after_a_moment, worker=_sleepy_worker)
+
+    def test_reports_a_document_limit_from_the_worker(self):
+        with self.assertRaisesRegex(local_document_server.DocumentLimitError, "too much of something"):
+            local_document_server.run_pdf_extraction(b"%PDF", budget_seconds=60, worker=_limit_worker)
+
+    def test_reports_a_worker_that_dies_without_a_result(self):
+        with self.assertRaisesRegex(RuntimeError, "without a result"):
+            local_document_server.run_pdf_extraction(b"%PDF", budget_seconds=60, worker=_crashing_worker)
+
+    def test_refuses_new_work_when_the_slots_are_taken_and_does_not_leak_a_slot(self):
+        slots = threading.BoundedSemaphore(1)
+        slots.acquire()
+        with mock.patch.object(local_document_server, "_PDF_JOBS", slots), \
+                mock.patch.object(local_document_server, "PDF_QUEUE_WAIT_SECONDS", 0.2):
+            with self.assertRaises(local_document_server.ExtractionBusy):
+                local_document_server.run_pdf_extraction(pdf_fixtures.article_pdf(), budget_seconds=60)
+        slots.release()
+
+    def test_a_garbage_pdf_reports_an_error_not_a_hang(self):
+        with self.assertRaises(RuntimeError):
+            local_document_server.run_pdf_extraction(b"not a pdf", budget_seconds=60)
+
+
+@unittest.skipUnless(PDF_ENGINES, "pdfminer.six and pypdfium2 are not installed")
+class DocumentServerLimitHttpTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), local_document_server.DocumentHandler)
+        cls.server.daemon_threads = True
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.port = cls.server.server_address[1]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def post(self, body=b"%PDF-1.4"):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/extract", data=body, headers={"Content-Type": "application/pdf"}, method="POST"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read())
+
+    def test_answers_504_with_a_plain_message_when_the_budget_is_used_up(self):
+        with mock.patch.object(local_document_server, "_pdf_worker", _sleepy_worker), \
+                mock.patch.object(local_document_server.DocumentHandler, "pdf_time_budget", 1.0):
+            status, body = self.post()
+
+        self.assertEqual(status, 504)
+        self.assertIn("stopped after 1 seconds", body["error"])
+        self.assertTrue(_no_children())
+
+    def test_answers_422_with_the_limit_message(self):
+        with mock.patch.object(local_document_server, "_pdf_worker", _limit_worker):
+            status, body = self.post()
+
+        self.assertEqual(status, 422)
+        self.assertEqual(body["error"], "This document has too much of something.")
+
+    def test_kills_the_worker_when_the_client_hangs_up(self):
+        payload = b"%PDF-1.4"
+        with mock.patch.object(local_document_server, "_pdf_worker", _sleepy_worker), \
+                mock.patch.object(local_document_server.DocumentHandler, "pdf_time_budget", 100.0):
+            connection = socket.create_connection(("127.0.0.1", self.port))
+            connection.sendall(
+                b"POST /extract HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/pdf\r\n"
+                + f"Content-Length: {len(payload)}\r\n\r\n".encode() + payload
+            )
+            deadline = time.monotonic() + 15
+            while not multiprocessing.active_children() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertTrue(multiprocessing.active_children(), "the worker never started")
+            connection.close()
+            self.assertTrue(_no_children(15), "the worker kept running after the client left")
+        self.assertEqual(local_document_server._PDF_JOBS._value, local_document_server.PDF_MAX_CONCURRENT_JOBS)
 
 
 if __name__ == "__main__":

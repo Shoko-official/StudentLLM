@@ -89,6 +89,28 @@ class LocalDocumentServerTests(unittest.TestCase):
         self.assertEqual([block['kind'] for block in pages[0]['blocks']], ['heading', 'paragraph', 'table'])
         self.assertEqual(pages[0]['blocks'][2]['rows'], [['Name', 'Value'], ['A', '2']])
 
+    def test_extracts_pptx_paragraphs_on_separate_lines_and_keeps_line_breaks(self):
+        import io
+        import zipfile
+
+        slide = (
+            '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+            'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>'
+            "<p:sp><p:txBody><a:p><a:r><a:t>Slide title</a:t></a:r></a:p></p:txBody></p:sp>"
+            "<p:sp><p:txBody><a:p><a:r><a:t>Slide body text</a:t></a:r></a:p>"
+            "<a:p><a:r><a:t>Second </a:t></a:r><a:r><a:t>bullet</a:t></a:r><a:br/><a:r><a:t>wrapped</a:t></a:r></a:p>"
+            "<a:p/></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+        )
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("ppt/slides/slide1.xml", slide)
+
+        model, pages = extract_document(buffer.getvalue(), "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+
+        self.assertEqual(model, "pptx-xml")
+        self.assertEqual([block["text"] for block in pages[0]["blocks"]], ["Slide title", "Slide body text\nSecond bullet\nwrapped"])
+        self.assertEqual(pages[0]["text"], "Slide title\nSlide body text\nSecond bullet\nwrapped")
+
     def test_extracts_html_tables_as_structured_blocks(self):
         model, pages = extract_document(
             b'<h1>Results</h1><table><tr><th>Term</th><th>Value</th></tr><tr><td>Loss</td><td>0.2</td></tr></table>',
