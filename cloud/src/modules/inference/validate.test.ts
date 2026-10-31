@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../http/envelope";
 import { pngDataUrl } from "../../testing/inference-harness";
-import { tokenCost } from "./credits";
+import { TEMPLATE_FRAMING_TOKENS, TOKENS_PER_MESSAGE_OVERHEAD, TOKENS_REPLY_PRIMING, tokenCost } from "./credits";
 import { buildRoutingTable, DEFAULT_ROUTING, type ChatRoute } from "./routing";
 import { validateChatRequest } from "./validate-chat";
 
@@ -27,10 +27,11 @@ describe("validateChatRequest", () => {
       textTable,
     );
     expect(v).toMatchObject({ stream: true, temperature: 1, topP: 0.5, stop: "x", reasoningEffort: "high", maxTokens: 4096 });
-    // A token per byte: priming 3 + two messages x 4 + (6 + 3 message bytes + 1 stop byte) = 21 (a hard upper bound).
-    expect(v.inputTokenEstimate).toBe(21);
-    // The tighter count (used only to settle a stream that failed): the same 11 framing tokens + ceil(10 / 2).
-    expect(v.inputTokenCount).toBe(16);
+    // A token per byte: priming 3 + the template allowance 64 + two messages x 4 + (6 + 3 message bytes + 1 stop byte) = 85.
+    expect(v.inputTokenEstimate).toBe(3 + TEMPLATE_FRAMING_TOKENS + 8 + 10);
+    expect(v.inputTokenEstimate).toBe(85);
+    // The tighter count (used only to settle a stream that failed): the same 75 framing tokens + ceil(10 / 2).
+    expect(v.inputTokenCount).toBe(80);
     expect(v.messages).toEqual([
       { role: "system", content: "abcdef" },
       { role: "user", content: [{ type: "text", text: "abc" }] },
@@ -51,6 +52,27 @@ describe("validateChatRequest", () => {
     const small = validateChatRequest(ok(), textTable);
     expect(small.inputTokenEstimate).toBeLessThan(window);
     expect(failure(() => validateChatRequest({ model: "studentllm-large", messages: [{ role: "user", content: "x".repeat(8 * window + 1) }] }, textTable)).code).toBe("payload_too_large");
+  });
+
+  it("reserves about 190 credits for a 100 KiB prompt and at most 240 at the context window (the price of the hard bound)", () => {
+    const reserve = (bytes: number, extra: Record<string, unknown> = {}) => {
+      const v = validateChatRequest({ model: "studentllm-large", messages: [{ role: "user", content: "x".repeat(bytes) }], ...extra }, textTable);
+      return tokenCost(chat.price, v.inputTokenEstimate, v.maxTokens);
+    };
+    expect(reserve(102_400)).toBeGreaterThanOrEqual(190);
+    expect(reserve(102_400)).toBeLessThanOrEqual(200);
+    // The input bound stops at the context window, so no prompt reserves more than about this.
+    expect(reserve(400_000)).toBeLessThanOrEqual(240);
+    expect(reserve(400_000)).toBeGreaterThanOrEqual(235);
+    // A short answer reserves almost only the input.
+    expect(reserve(102_400, { max_tokens: 100 })).toBeLessThan(reserve(102_400) - 20);
+  });
+
+  it("adds a flat allowance for the provider's chat template to every request, once", () => {
+    const one = validateChatRequest(ok({ messages: [{ role: "user", content: "" }] }), textTable);
+    expect(one.inputTokenEstimate).toBe(TOKENS_REPLY_PRIMING + TEMPLATE_FRAMING_TOKENS + TOKENS_PER_MESSAGE_OVERHEAD);
+    const two = validateChatRequest(ok({ messages: [{ role: "user", content: "" }, { role: "assistant", content: "" }] }), textTable);
+    expect(two.inputTokenEstimate - one.inputTokenEstimate).toBe(TOKENS_PER_MESSAGE_OVERHEAD);
   });
 
   describe("the input estimate is a hard upper bound of what any tokenizer can produce", () => {

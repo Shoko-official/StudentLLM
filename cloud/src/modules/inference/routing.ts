@@ -69,6 +69,12 @@ export interface ChatRoute extends BaseRoute {
 
 export interface TranscriptionRoute extends BaseRoute {
   readonly feature: "transcription";
+  /**
+   * Keep this SMALL until audio is enabled for real. A compressed container (Opus, MP3, AAC) can hold far more audio
+   * than its size suggests and the gateway cannot read its duration: it reserves the whole `maxAudioSeconds` price, but
+   * a provider that reports MORE than `maxAudioSeconds` is charged only up to the reservation, so the cost above the cap
+   * is the gateway's. This byte cap is what bounds that exposure (and `audio_duration_above_cap` counts it).
+   */
   readonly maxAudioBytes: number;
   readonly maxAudioSeconds: number;
   /** Credits per minute of audio, integer. */

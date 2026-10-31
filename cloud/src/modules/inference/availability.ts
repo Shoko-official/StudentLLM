@@ -39,8 +39,13 @@ export async function spendCapReached(deps: Deps, now: number, reserving = 0): P
  * full reservation for a request that may never have been accepted, which is the signal to revisit that rule.
  */
 export async function recordUnknownOutcome(deps: Deps, kind: string, now: number): Promise<void> {
+  await recordCounter(deps, `upstream_unknown_${kind}`, now);
+}
+
+/** Counts one operational event of the day (a counter, never content, never an account). It never fails a request. */
+export async function recordCounter(deps: Deps, name: string, now: number): Promise<void> {
   try {
-    await deps.stores.switches.incrementCounter(`upstream_unknown_${kind}`, dayPeriod(now));
+    await deps.stores.switches.incrementCounter(name, dayPeriod(now));
   } catch {
     // A counter must never fail a request.
   }

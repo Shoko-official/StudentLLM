@@ -128,8 +128,22 @@ Each module implements its own and puts it on its deps object, so a caller write
   capped at the context window), so the reservation covers whatever a tokenizer does with hostile text; settlement uses
   the provider's usage and is capped at the reservation. A stream that fails in the middle is settled on a tighter count
   (two bytes a token, rounded once over the whole text). A usage above the context window is a provider failure.
-- **Audio**: a WAV is reserved on `max(declared, header duration, bytes / 4000)`, never the header alone; any other
-  container is reserved at the route's whole `maxAudioSeconds` price and refunded on the provider-reported duration.
+  The price of the bound: a large prompt reserves a lot even though it usually costs far less (about 190 credits for
+  100 KiB of text with the default output limit, at most about 240 at the context window), released at settlement.
+  The reservation also carries a flat allowance (`TEMPLATE_FRAMING_TOKENS`, 64) for the chat template the provider wraps
+  around the messages (gpt-oss: the Harmony system header and role/channel markers), which the byte bound does not
+  count; at the default price it is about a tenth of a credit, so it is also absorbed by the one-credit minimum.
+  Settlement never exceeds the reservation, whatever the provider reports: that cap is deliberate.
+- **Audio**: only PCM-style WAVs are accepted, and only when the header agrees with itself (format tag 1, 3 or
+  0xFFFE; 8, 16, 24 or 32 bits; at least 8000 Hz; `blockAlign = channels x bits / 8`; `byteRate = sampleRate x
+  blockAlign`), because a decoder honours the sample rate and the format tag, not the gateway's guess. Then the header
+  duration is the real one and a WAV is reserved on `max(declared, header duration, bytes / 8000)`. Any other container
+  (Opus, MP3, AAC, FLAC, WebM) is reserved at the route's whole `maxAudioSeconds` price and refunded on the
+  provider-reported duration.
+  **Residual risk**: the gateway cannot read the duration of a compressed container, and a low-bitrate or
+  silence-suppressed file can hold more audio than `maxAudioSeconds`. The charge is capped at the reservation, so what
+  lies above the cap is not recovered. The counter `audio_duration_above_cap` counts every provider answer above the
+  cap, and `maxAudioBytes` must stay small before audio is enabled: that byte cap is what bounds the exposure.
 - **Kill switches and the spend cap** (`availability.ts`; the cap stops new requests once the settled spend plus the
   request's own reservation would pass it, and may be overshot by the reservations in flight at that moment), **the reconciler** (`sweeper.ts`, an on-access sweep and the
   cron tasks `inference-sweep` and `inference-expire`) and **the seam** (`seam.ts`: `usageSnapshot`, `purgeLedger`).

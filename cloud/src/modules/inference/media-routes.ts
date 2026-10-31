@@ -8,7 +8,7 @@
 import { ApiError, jsonResponse } from "../../http/envelope";
 import type { RequestContext } from "../../http/context";
 import { Attempt, setCreditHeaders, type SettleSummary } from "./attempt";
-import { assertAvailable, recordUnknownOutcome } from "./availability";
+import { assertAvailable, recordCounter, recordUnknownOutcome } from "./availability";
 import { audioSettlementCredits } from "./credits";
 import { IdempotencyGuard } from "./guard";
 import { assertConsentCoversModel, assertConsentStillActive } from "./hooks";
@@ -83,6 +83,12 @@ export async function transcribeAudio(ctx: RequestContext): Promise<Response> {
         signal,
       }),
     );
+    // A provider that reports more audio than the route allows means the file was longer than the gateway could tell
+    // (a low-bitrate or silence-suppressed container). The charge stays capped at the reservation, so what lies above
+    // the cap is not recovered: count it, so that it shows up before it matters.
+    if (result.durationSeconds !== null && result.durationSeconds > input.route.maxAudioSeconds) {
+      await recordCounter(deps, "audio_duration_above_cap", deps.clock.now());
+    }
     // Settled on the duration the PROVIDER reports; the full reservation when it reports none.
     const credits = audioSettlementCredits(attempt.reservedCredits, input.route.price.perMinute, result.durationSeconds);
     const summary = await attempt.settle(credits);

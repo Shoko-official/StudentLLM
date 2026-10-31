@@ -13,6 +13,7 @@ import {
   estimateTokensFromBytes,
   MAX_PLAUSIBLE_BYTES_PER_TOKEN,
   TOKENS_PER_MESSAGE_OVERHEAD,
+  TEMPLATE_FRAMING_TOKENS,
   TOKENS_REPLY_PRIMING,
   utf8Length,
 } from "./credits";
@@ -111,7 +112,7 @@ export function validateChatRequest(raw: unknown, routing: RoutingTable): Valida
   if (!Array.isArray(raw.messages) || raw.messages.length < 1) throw invalid("messages must be a non-empty array.");
   if (raw.messages.length > MAX_MESSAGES) throw new ApiError("payload_too_large", { message: "Too many messages." });
 
-  let fixedTokens = TOKENS_REPLY_PRIMING; // framing and images: tokens that are not text bytes
+  let fixedTokens = TOKENS_REPLY_PRIMING + TEMPLATE_FRAMING_TOKENS; // framing and images: tokens that are not text bytes
   let textBytes = 0;
   let images = 0;
   const messages: UpstreamMessage[] = [];

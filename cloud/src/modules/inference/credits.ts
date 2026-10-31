@@ -30,6 +30,16 @@ export const MAX_PLAUSIBLE_BYTES_PER_TOKEN = 8;
 export const TOKENS_PER_MESSAGE_OVERHEAD = 4;
 export const TOKENS_REPLY_PRIMING = 3;
 
+/**
+ * A flat allowance for the chat template the provider wraps around the messages. gpt-oss uses the Harmony format:
+ * a system header (identity, knowledge cutoff, date, reasoning effort), role and channel markers and the end markers
+ * of every message, none of which is text the client sent, so the one-token-per-byte bound does not count it. Dozens
+ * of tokens in practice; 64 covers it. It is added once per request on top of the per-message overhead. At the default
+ * price it is about a tenth of a credit, so it is also absorbed by the one-credit minimum of a request; it is kept as
+ * a constant so that a model with a longer template changes one number, and the reservation stays an upper bound.
+ */
+export const TEMPLATE_FRAMING_TOKENS = 64;
+
 const encoder = new TextEncoder();
 
 export function utf8Length(text: string): number {
