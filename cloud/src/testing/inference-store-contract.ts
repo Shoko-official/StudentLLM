@@ -275,6 +275,16 @@ export function runInferenceStoreContract(label: string, factory: StoreFactory):
       expect((await rateLimits.hitAccount("b", "content", 7, 60_000, T0 + 1)).remaining).toBe(5); // b was not purged
     });
 
+    it("counts operational events atomically per name and period, and refuses a name that could carry content", async () => {
+      const { switches } = factory();
+      const totals = await Promise.all(Array.from({ length: 20 }, () => switches.incrementCounter("upstream_unknown_network", "day:2026-11-01")));
+      expect(new Set(totals).size).toBe(20); // every caller saw its own running total
+      expect(await switches.getCounter("upstream_unknown_network", "day:2026-11-01")).toBe(20);
+      expect(await switches.getCounter("upstream_unknown_network", "day:2026-11-02")).toBe(0);
+      expect(await switches.getCounter("upstream_unknown_timeout", "day:2026-11-01")).toBe(0);
+      await expect(switches.incrementCounter("Has Spaces And Text", "day:2026-11-01")).rejects.toThrow(RangeError);
+    });
+
     it("adds spend atomically and keeps day and month totals apart", async () => {
       const { switches } = factory();
       await Promise.all(Array.from({ length: 25 }, () => switches.addSpend("day:2026-11-01", 4)));

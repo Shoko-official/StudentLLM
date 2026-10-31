@@ -62,6 +62,18 @@ export function assertConsentCoversModel(ctx: RequestContext, providerSetId: str
   if (!row || row.providerSetId !== providerSetId) throw consentOutdated(ctx.deps, feature, providerSetId);
 }
 
+/**
+ * The same check once more, right before the budget is reserved. The hook ran before the body was read, and a body can
+ * take a while to arrive: a consent withdrawn or replaced in that time must stop the request here, before anything is
+ * reserved or sent upstream. One read of the account's active record for the provider set.
+ */
+export async function assertConsentStillActive(ctx: RequestContext, providerSetId: string, feature: Feature): Promise<void> {
+  const row = ctx.locals.consent;
+  if (!row) throw consentOutdated(ctx.deps, feature, providerSetId);
+  const active = await ctx.deps.stores.consents.getActive(requirePrincipal(ctx).accountId, row.providerSetId);
+  if (active?.consentId !== row.consentId) throw consentOutdated(ctx.deps, feature, providerSetId);
+}
+
 const checkRateLimit: (deps: Deps) => Step = (deps) => async (ctx) => {
   const principal = requirePrincipal(ctx);
   const { rate } = deps.inference.settings;

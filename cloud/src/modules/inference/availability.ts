@@ -21,11 +21,29 @@ export async function addSpend(deps: Deps, credits: number, now: number): Promis
   await Promise.all([deps.stores.switches.addSpend(dayPeriod(now), credits), deps.stores.switches.addSpend(monthPeriod(now), credits)]);
 }
 
-/** True when the day or month total reached the cap: the hard stop. */
-export async function spendCapReached(deps: Deps, now: number): Promise<boolean> {
+/**
+ * True when the day or month total has reached the cap, or would pass it with `reserving` more credits (the request
+ * about to be reserved). The totals hold SETTLED credits: requests already in flight have reserved but not yet
+ * settled, so the cap can be overshot by at most the reservations in flight at that moment (requests in flight x the
+ * largest reservation). It stops new requests once reached; it is not an exact ceiling.
+ */
+export async function spendCapReached(deps: Deps, now: number, reserving = 0): Promise<boolean> {
   const cap = deps.inference.settings.spendCap;
   const [day, month] = await Promise.all([deps.stores.switches.getSpend(dayPeriod(now)), deps.stores.switches.getSpend(monthPeriod(now))]);
-  return day >= cap.dayCredits || month >= cap.monthCredits;
+  return day >= cap.dayCredits || month >= cap.monthCredits || day + reserving > cap.dayCredits || month + reserving > cap.monthCredits;
+}
+
+/**
+ * Counts an unknown outcome that was charged in full, by kind and day (a counter, never content). A Workers `fetch`
+ * rejection carries no reliable cause, so most network errors land here: the counter shows how many users paid the
+ * full reservation for a request that may never have been accepted, which is the signal to revisit that rule.
+ */
+export async function recordUnknownOutcome(deps: Deps, kind: string, now: number): Promise<void> {
+  try {
+    await deps.stores.switches.incrementCounter(`upstream_unknown_${kind}`, dayPeriod(now));
+  } catch {
+    // A counter must never fail a request.
+  }
 }
 
 /** The targets of a model whose provider is not switched off, in order. Empty when nothing can serve it. */
@@ -40,12 +58,13 @@ export async function liveTargets(deps: Deps, route: ModelRoute): Promise<ModelT
 
 /**
  * Throws `kill_switch` when the model is disabled in the routing table, a global or feature switch is on, every
- * provider of the model is switched off, or the global spend cap is reached. Otherwise returns the usable targets.
+ * provider of the model is switched off, or the global spend cap is reached (or would be passed by the reservation about to be made). Otherwise returns the
+ * usable targets.
  */
-export async function assertAvailable(deps: Deps, route: ModelRoute, now: number): Promise<ModelTarget[]> {
+export async function assertAvailable(deps: Deps, route: ModelRoute, now: number, reserving = 0): Promise<ModelTarget[]> {
   const retry = { retryAfterSeconds: deps.inference.settings.retryAfter.killSwitchSeconds };
   if (!route.enabled) throw new ApiError("kill_switch", retry);
-  if (await spendCapReached(deps, now)) throw new ApiError("kill_switch", retry);
+  if (await spendCapReached(deps, now, reserving)) throw new ApiError("kill_switch", retry);
   const targets = await liveTargets(deps, route);
   if (targets.length === 0) throw new ApiError("kill_switch", retry);
   return targets;

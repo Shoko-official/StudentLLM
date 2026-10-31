@@ -20,7 +20,7 @@ import { routeMeta } from "../../http/context";
 import type { PipelineHooks } from "../../http/pipeline";
 import type { Router } from "../../http/router";
 import type { ScheduledTask } from "../../scheduled";
-import { getUsage, listModels, listProviderSets } from "./catalog";
+import { getUsage, listModels } from "./catalog";
 import { chatCompletions } from "./chat";
 import { createHooks } from "./hooks";
 import { ocrImage, transcribeAudio } from "./media-routes";
@@ -94,7 +94,8 @@ export function createInferenceScheduledTasks(deps: Deps): ScheduledTask[] {
 
 export function registerInferenceRoutes(router: Router, _deps: Deps): void {
   router.add("GET", "/v1/models", listModels, routeMeta({ operationId: "listModels" }));
-  router.add("GET", "/v1/provider-sets", listProviderSets, routeMeta({ operationId: "listProviderSets" }));
+  // GET /v1/provider-sets belongs to the account module (with consent); it reads the sets from this module's routing
+  // table through `providerSetViews(deps.inference.routing)` (catalog.ts).
   router.add("GET", "/v1/usage", getUsage, routeMeta({ operationId: "getUsage" }));
   router.add(
     "POST",

@@ -17,6 +17,13 @@ export interface ProviderEndpoint {
   readonly baseUrl: string;
   /** The server secret that holds this provider's API key. */
   readonly secret: SecretName;
+  /**
+   * Whether a 4xx answer of this provider may have been BILLED (some providers charge for a request they rejected
+   * after reading it, for example a prompt refused by a safety filter). False (the default): a 4xx is an explicit
+   * error with no completion, `failed_no_usage`, zero credits. True: a 4xx is an unknown outcome and settles at the
+   * full reservation. 5xx and redirects are always definitive. Groq: false, PLACEHOLDER to verify in its terms.
+   */
+  readonly clientErrorMayBeBilled?: boolean;
 }
 
 /** A named, versioned list of providers the user consents to (`GET /v1/provider-sets`). */

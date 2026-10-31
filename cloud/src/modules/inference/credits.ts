@@ -8,12 +8,23 @@
 export const TOKENS_PER_MILLION = 1_000_000;
 
 /**
- * Server-side token estimate: one token per 3 UTF-8 bytes, rounded up. English and French text average 4 to 5
- * bytes per token, so this over-estimates on purpose: a reservation that is too large is released at settlement,
- * one that is too small would let the provider cost exceed what was reserved (the charge is capped at the
- * reservation). The estimate is never taken from a client-declared value.
+ * The reservation's input estimate is a HARD UPPER BOUND: one token per UTF-8 byte. No tokenizer produces more
+ * tokens than bytes, so whatever the input is (spaced single characters, rare Unicode, anything hostile), the
+ * provider's cost cannot exceed what was reserved. A reservation that is too large is only released at settlement,
+ * one that is too small would let the provider cost exceed it (the charge is capped at the reservation, so the
+ * gateway would absorb the difference). The estimate is never taken from a client-declared value.
  */
-export const BYTES_PER_TOKEN_ESTIMATE = 3;
+export const BYTES_PER_TOKEN_ESTIMATE = 1;
+
+/**
+ * Where the gateway must COUNT tokens (it cannot ask the provider: a stream that failed in the middle), it uses a
+ * tighter ratio than the reservation bound, so a failure does not bill the full hard bound: two bytes per token,
+ * rounded up once over the whole text (never per piece, which would bill every small delta a whole token).
+ */
+export const COUNTED_BYTES_PER_TOKEN = 2;
+
+/** No realistic tokenizer exceeds this many bytes per token: an input longer than this times the window cannot fit. */
+export const MAX_PLAUSIBLE_BYTES_PER_TOKEN = 8;
 
 /** Per-message framing tokens (role, separators) added to the estimate of a chat request. */
 export const TOKENS_PER_MESSAGE_OVERHEAD = 4;
@@ -31,6 +42,11 @@ export function estimateTextTokens(text: string): number {
 
 export function estimateTokensFromBytes(bytes: number): number {
   return Math.ceil(bytes / BYTES_PER_TOKEN_ESTIMATE);
+}
+
+/** Tokens counted on the gateway for text it has seen (see `COUNTED_BYTES_PER_TOKEN`). */
+export function countTokensFromBytes(bytes: number): number {
+  return Math.ceil(bytes / COUNTED_BYTES_PER_TOKEN);
 }
 
 /** Tokens an image may cost, from its DECODED size on the server: a floor plus a size term. */
@@ -88,8 +104,25 @@ export interface Usage {
   outputTokens: number;
 }
 
-function count(value: unknown): number | null {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+/** Largest token count accepted from a provider when the caller gives no bound (tests, other callers). */
+export const DEFAULT_USAGE_BOUND = 10_000_000;
+
+function count(value: unknown, bound: number): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= bound ? value : null;
+}
+
+/**
+ * True when a usage object carries a number no honest provider reports: not finite (a JSON `1e999` parses to
+ * Infinity) or above `bound` (the model's context window). That is not a missing usage but a provider that cannot be
+ * trusted: the caller treats the answer as a provider failure and settles in full.
+ */
+export function isImplausibleUsage(raw: unknown, bound: number): boolean {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const u = raw as Record<string, unknown>;
+  const values = [u.prompt_tokens, u.completion_tokens, u.total_tokens];
+  const details = u.completion_tokens_details;
+  if (details !== null && typeof details === "object" && !Array.isArray(details)) values.push((details as Record<string, unknown>).reasoning_tokens);
+  return values.some((v) => typeof v === "number" && (!Number.isFinite(v) || v > bound));
 }
 
 /**
@@ -99,12 +132,12 @@ function count(value: unknown): number | null {
  * fractional number counts as malformed) or reports no tokens at all, and the caller then settles at the full
  * reservation: a doubtful usage must never be free.
  */
-export function parseUsage(raw: unknown): Usage | null {
+export function parseUsage(raw: unknown, bound: number = DEFAULT_USAGE_BOUND): Usage | null {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const u = raw as Record<string, unknown>;
-  const prompt = count(u.prompt_tokens);
-  const completion = u.completion_tokens === undefined ? null : count(u.completion_tokens);
-  const total = u.total_tokens === undefined ? null : count(u.total_tokens);
+  const prompt = count(u.prompt_tokens, bound);
+  const completion = u.completion_tokens === undefined ? null : count(u.completion_tokens, bound);
+  const total = u.total_tokens === undefined ? null : count(u.total_tokens, bound);
   if (u.prompt_tokens === undefined || prompt === null) return null;
   if (u.completion_tokens !== undefined && completion === null) return null;
   if (u.total_tokens !== undefined && total === null) return null;
@@ -116,7 +149,7 @@ export function parseUsage(raw: unknown): Usage | null {
     if (typeof details !== "object" || Array.isArray(details)) return null;
     const r = (details as Record<string, unknown>).reasoning_tokens;
     if (r !== undefined) {
-      const n = count(r);
+      const n = count(r, bound);
       if (n === null) return null;
       reasoning = n;
     }

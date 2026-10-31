@@ -5,10 +5,10 @@
 import { ApiError, jsonResponse } from "../../http/envelope";
 import { requirePrincipal, type RequestContext } from "../../http/context";
 import { Attempt, setCreditHeaders, type SettleSummary } from "./attempt";
-import { assertAvailable } from "./availability";
-import { atLeastOne, estimateTextTokens, parseUsage, settlementCredits, tokenCost, type Outcome, type Usage } from "./credits";
+import { assertAvailable, recordUnknownOutcome } from "./availability";
+import { atLeastOne, countTokensFromBytes, isImplausibleUsage, parseUsage, settlementCredits, tokenCost, utf8Length, type Outcome, type Usage } from "./credits";
 import { IdempotencyGuard } from "./guard";
-import { assertConsentCoversModel } from "./hooks";
+import { assertConsentCoversModel, assertConsentStillActive } from "./hooks";
 import { readTextLimited, UpstreamError, classifyFetchError, type ChatCall } from "./provider";
 import type { ModelTarget } from "./routing";
 import { streamChat } from "./stream";
@@ -72,9 +72,11 @@ async function readCompletion(ctx: RequestContext, upstream: Response, chat: Val
     };
   });
 
-  const usage = parseUsage(json.usage);
+  // A count above the context window is a provider that cannot be trusted: an unknown outcome, settled in full (503).
+  if (isImplausibleUsage(json.usage, chat.route.contextWindow)) throw new UpstreamError("malformed");
+  const usage = parseUsage(json.usage, chat.route.contextWindow);
   // The schema requires `usage`: when the provider reported none, say what the gateway estimated.
-  const reported = usage ?? { inputTokens: chat.inputTokenEstimate, outputTokens: estimateTextTokens(outputText) };
+  const reported = usage ?? { inputTokens: chat.inputTokenCount, outputTokens: countTokensFromBytes(utf8Length(outputText)) };
   return {
     usage,
     body: {
@@ -129,7 +131,7 @@ async function forward(ctx: RequestContext, attempt: Attempt, chat: ValidatedCha
           attempt,
           upstream,
           route: chat.route,
-          inputTokenEstimate: chat.inputTokenEstimate,
+          inputTokenCount: chat.inputTokenCount,
           abort: timer.abort,
           clearTimer: timer.clear,
         });
@@ -144,6 +146,7 @@ async function forward(ctx: RequestContext, attempt: Attempt, chat: ValidatedCha
         continue;
       }
       // Timeout, abort, reset after bytes were sent, missing or unreadable response: an UNKNOWN outcome.
+      await recordUnknownOutcome(deps, failed.kind, deps.clock.now());
       timer.clear();
       timer.abort.abort();
       throw providerUnavailable(ctx, await attempt.settle(attempt.reservedCredits));
@@ -154,7 +157,15 @@ async function forward(ctx: RequestContext, attempt: Attempt, chat: ValidatedCha
   if (completion) {
     // A reported usage settles the request; a missing or doubtful one is the full reservation.
     const outcome: Outcome = completion.usage ? { kind: "usage", usage: completion.usage } : { kind: "unknown" };
-    const summary = await attempt.settle(settlementCredits(attempt.reservedCredits, chat.route.price, outcome));
+    let credits: number;
+    try {
+      credits = settlementCredits(attempt.reservedCredits, chat.route.price, outcome);
+    } catch {
+      // Arithmetic that cannot be done (an overflow): treat the answer as unusable and charge the whole reservation,
+      // with a 503, never a 500 that leaves the reservation to the sweep.
+      throw providerUnavailable(ctx, await attempt.settle(attempt.reservedCredits));
+    }
+    const summary = await attempt.settle(credits);
     setCreditHeaders(ctx, summary);
     return jsonResponse(completion.body, ctx.requestId, { headers: { "X-StudentLLM-Credits-Charged": String(summary.charged) } });
   }
@@ -170,10 +181,13 @@ export async function chatCompletions(ctx: RequestContext): Promise<Response> {
     const chat = validateChatRequest(await ctx.body.json(), deps.inference.routing);
     // The provider set of the ROUTED model must be the one the user consented to.
     assertConsentCoversModel(ctx, chat.route.providerSetId, "chat");
-    const targets = await assertAvailable(deps, chat.route, deps.clock.now());
-
-    // Step 10: the budget reservation: input tokens counted on the server plus the clamped maximum output.
+    // The reservation: the input as a hard upper bound plus the clamped maximum output.
     const credits = atLeastOne(tokenCost(chat.route.price, chat.inputTokenEstimate, chat.maxTokens));
+    const targets = await assertAvailable(deps, chat.route, deps.clock.now(), credits);
+
+    // Step 10: the budget reservation. The consent is looked at once more right before it: the body may have taken a
+    // while to arrive, and a withdrawal in that time must stop the request before anything is reserved or sent.
+    await assertConsentStillActive(ctx, chat.route.providerSetId, "chat");
     const attempt = await Attempt.open(ctx, { route: chat.route, credits });
     guard.attempt = attempt;
     return await forward(ctx, attempt, chat, targets);

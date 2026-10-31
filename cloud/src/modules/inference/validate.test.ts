@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../http/envelope";
 import { pngDataUrl } from "../../testing/inference-harness";
+import { tokenCost } from "./credits";
 import { buildRoutingTable, DEFAULT_ROUTING, type ChatRoute } from "./routing";
 import { validateChatRequest } from "./validate-chat";
 
@@ -26,23 +27,77 @@ describe("validateChatRequest", () => {
       textTable,
     );
     expect(v).toMatchObject({ stream: true, temperature: 1, topP: 0.5, stop: "x", reasoningEffort: "high", maxTokens: 4096 });
-    // priming 3 + two messages x 4 + ceil(6/3) + ceil(3/3) = 14
-    expect(v.inputTokenEstimate).toBe(14);
+    // A token per byte: priming 3 + two messages x 4 + (6 + 3 message bytes + 1 stop byte) = 21 (a hard upper bound).
+    expect(v.inputTokenEstimate).toBe(21);
+    // The tighter count (used only to settle a stream that failed): the same 11 framing tokens + ceil(10 / 2).
+    expect(v.inputTokenCount).toBe(16);
     expect(v.messages).toEqual([
       { role: "system", content: "abcdef" },
       { role: "user", content: [{ type: "text", text: "abc" }] },
     ]);
   });
 
-  it("clamps max_tokens to the model limit and to what the context window leaves", () => {
+  it("clamps max_tokens to the model limit", () => {
     expect(validateChatRequest(ok({ max_tokens: 10 }), textTable).maxTokens).toBe(10);
     expect(validateChatRequest(ok({ max_tokens: 10_000 }), textTable).maxTokens).toBe(4096);
-    // An input of about 130,000 tokens leaves a few hundred tokens of room in the 131,072 window.
-    const long = "x".repeat(3 * 130_900);
-    const v = validateChatRequest({ model: "studentllm-large", messages: [{ role: "user", content: long }] }, textTable);
-    expect(v.maxTokens).toBeLessThan(500);
-    expect(v.maxTokens).toBeGreaterThanOrEqual(1);
-    expect(failure(() => validateChatRequest({ model: "studentllm-large", messages: [{ role: "user", content: "x".repeat(3 * 131_100) }] }, textTable)).code).toBe("payload_too_large");
+    expect(validateChatRequest(ok({ max_tokens: 1 }), textTable).maxTokens).toBe(1);
+  });
+
+  it("caps the input bound at the context window, and refuses an input that cannot fit at 8 bytes a token", () => {
+    const window = chat.contextWindow;
+    const big = validateChatRequest({ model: "studentllm-large", messages: [{ role: "user", content: "x".repeat(400_000) }] }, textTable);
+    expect(big.inputTokenEstimate).toBe(window); // 400,000 bytes would be more than the window: capped
+    expect(big.inputTokenCount).toBe(window);
+    const small = validateChatRequest(ok(), textTable);
+    expect(small.inputTokenEstimate).toBeLessThan(window);
+    expect(failure(() => validateChatRequest({ model: "studentllm-large", messages: [{ role: "user", content: "x".repeat(8 * window + 1) }] }, textTable)).code).toBe("payload_too_large");
+  });
+
+  describe("the input estimate is a hard upper bound of what any tokenizer can produce", () => {
+    // No tokenizer yields more tokens than UTF-8 bytes. These are the inputs that fool a bytes-per-token ratio.
+    const hostile: Array<[string, string]> = [
+      ["spaced single characters", "a ".repeat(5000)],
+      ["rare Unicode (4-byte code points)", "\u{1f600}\u{1f4a9}".repeat(1500)],
+      ["one-byte punctuation runs", "!?;:".repeat(2500)],
+      ["combining marks", "e\u0301\u0302\u0303".repeat(2000)],
+      ["digits", "7".repeat(10_000)],
+      ["a lone CJK character per word", "\u65e5 ".repeat(4000)],
+    ];
+    for (const [name, text] of hostile) {
+      it(`covers ${name}`, () => {
+        const bytes = new TextEncoder().encode(text).length;
+        const v = validateChatRequest({ model: "studentllm-large", messages: [{ role: "user", content: text }], max_tokens: 1 }, textTable);
+        expect(v.inputTokenEstimate).toBeGreaterThanOrEqual(Math.min(bytes, chat.contextWindow));
+        // Even if a provider billed one token per byte and the output hit max_tokens: 1, the reservation covers the cost.
+        const worstCase = tokenCost(chat.price, Math.min(bytes, chat.contextWindow), 1);
+        expect(tokenCost(chat.price, v.inputTokenEstimate, v.maxTokens)).toBeGreaterThanOrEqual(worstCase);
+      });
+    }
+
+    it("counts the bytes of stop sequences and of a json_schema, not only the messages", () => {
+      const schema = { type: "json_schema", json_schema: { name: "s", schema: { type: "object", description: "q".repeat(3000) } } };
+      const base = validateChatRequest(ok(), textTable).inputTokenEstimate;
+      const withSchema = validateChatRequest(ok({ response_format: schema }), textTable).inputTokenEstimate;
+      expect(withSchema - base).toBeGreaterThanOrEqual(3000);
+      const withStop = validateChatRequest(ok({ stop: ["s".repeat(200), "t".repeat(200)] }), textTable).inputTokenEstimate;
+      expect(withStop - base).toBe(400);
+    });
+
+    it("never reserves less than the worst plausible cost over random hostile inputs (seeded)", () => {
+      let a = 99;
+      const next = () => ((a = (a * 1103515245 + 12345) % 2147483648) / 2147483648);
+      const alphabet = ["a", " ", "\u00e9", "\u65e5", "\u{1f600}", "!", "7", "\n", "\u0301"];
+      for (let i = 0; i < 300; i++) {
+        const length = 1 + Math.floor(next() * 2000);
+        let text = "";
+        for (let j = 0; j < length; j++) text += alphabet[Math.floor(next() * alphabet.length)];
+        const maxTokens = 1 + Math.floor(next() * 4096);
+        const bytes = new TextEncoder().encode(text).length;
+        const v = validateChatRequest({ model: "studentllm-large", messages: [{ role: "user", content: text }], max_tokens: maxTokens }, textTable);
+        const reserved = tokenCost(chat.price, v.inputTokenEstimate, v.maxTokens);
+        expect(reserved).toBeGreaterThanOrEqual(tokenCost(chat.price, bytes, maxTokens));
+      }
+    });
   });
 
   it("rejects what the schema does not allow", () => {

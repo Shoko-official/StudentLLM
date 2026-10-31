@@ -7,7 +7,15 @@
 // otherwise carry content into a response or a log.
 
 import { ApiError } from "../../http/envelope";
-import { estimateImageTokens, estimateTextTokens, TOKENS_PER_MESSAGE_OVERHEAD, TOKENS_REPLY_PRIMING } from "./credits";
+import {
+  countTokensFromBytes,
+  estimateImageTokens,
+  estimateTokensFromBytes,
+  MAX_PLAUSIBLE_BYTES_PER_TOKEN,
+  TOKENS_PER_MESSAGE_OVERHEAD,
+  TOKENS_REPLY_PRIMING,
+  utf8Length,
+} from "./credits";
 import type { UpstreamImagePart, UpstreamMessage, UpstreamTextPart } from "./provider";
 import type { ChatRoute, RoutingTable } from "./routing";
 
@@ -15,15 +23,21 @@ export interface ValidatedChat {
   route: ChatRoute;
   messages: UpstreamMessage[];
   stream: boolean;
-  /** Clamped to the model's limit and to what is left of the context window. */
+  /** Clamped to the model's limit. */
   maxTokens: number;
   temperature?: number;
   topP?: number;
   stop?: string | string[];
   responseFormat?: Record<string, unknown>;
   reasoningEffort?: "low" | "medium" | "high";
-  /** Server-side estimate of the input tokens (text bytes and decoded image sizes), never a client value. */
+  /**
+   * The HARD UPPER BOUND of the input tokens that the reservation is made on: one token per UTF-8 byte of every text
+   * the request carries (messages, `stop`, the `json_schema`) plus the framing and the images, capped at the context
+   * window. Never a client value.
+   */
   inputTokenEstimate: number;
+  /** A tighter count of the same input, used only to settle a stream that failed in the middle (never the reservation). */
+  inputTokenCount: number;
 }
 
 const ALLOWED = new Set(["model", "messages", "stream", "max_tokens", "temperature", "top_p", "stop", "response_format", "reasoning_effort"]);
@@ -97,16 +111,17 @@ export function validateChatRequest(raw: unknown, routing: RoutingTable): Valida
   if (!Array.isArray(raw.messages) || raw.messages.length < 1) throw invalid("messages must be a non-empty array.");
   if (raw.messages.length > MAX_MESSAGES) throw new ApiError("payload_too_large", { message: "Too many messages." });
 
-  let tokens = TOKENS_REPLY_PRIMING;
+  let fixedTokens = TOKENS_REPLY_PRIMING; // framing and images: tokens that are not text bytes
+  let textBytes = 0;
   let images = 0;
   const messages: UpstreamMessage[] = [];
   for (const m of raw.messages as unknown[]) {
     if (!isObject(m)) throw invalid("A message must be an object.");
     for (const k of Object.keys(m)) if (k !== "role" && k !== "content") throw invalid("A message contains an unknown field.");
     if (m.role !== "system" && m.role !== "user" && m.role !== "assistant") throw invalid("A message has an invalid role.");
-    tokens += TOKENS_PER_MESSAGE_OVERHEAD;
+    fixedTokens += TOKENS_PER_MESSAGE_OVERHEAD;
     if (typeof m.content === "string") {
-      tokens += estimateTextTokens(m.content);
+      textBytes += utf8Length(m.content);
       messages.push({ role: m.role, content: m.content });
       continue;
     }
@@ -117,7 +132,7 @@ export function validateChatRequest(raw: unknown, routing: RoutingTable): Valida
       if (p.type === "text") {
         for (const k of Object.keys(p)) if (k !== "type" && k !== "text") throw invalid("A content part contains an unknown field.");
         if (typeof p.text !== "string") throw invalid("A text part needs a text string.");
-        tokens += estimateTextTokens(p.text);
+        textBytes += utf8Length(p.text);
         parts.push({ type: "text", text: p.text });
       } else if (p.type === "image_url") {
         for (const k of Object.keys(p)) if (k !== "type" && k !== "image_url") throw invalid("A content part contains an unknown field.");
@@ -128,7 +143,7 @@ export function validateChatRequest(raw: unknown, routing: RoutingTable): Valida
         images++;
         if (images > route.maxImages) throw new ApiError("payload_too_large", { message: "Too many images." });
         const image = parseImage(p.image_url.url, route);
-        tokens += image.tokens;
+        fixedTokens += image.tokens;
         parts.push(image.part);
       } else {
         throw invalid("A content part has an invalid type.");
@@ -142,7 +157,8 @@ export function validateChatRequest(raw: unknown, routing: RoutingTable): Valida
     messages,
     stream: false,
     maxTokens: route.maxOutputTokens,
-    inputTokenEstimate: tokens,
+    inputTokenEstimate: 0,
+    inputTokenCount: 0,
   };
 
   if (raw.stream !== undefined) {
@@ -157,10 +173,7 @@ export function validateChatRequest(raw: unknown, routing: RoutingTable): Valida
     }
     requested = raw.max_tokens;
   }
-  // Clamp to the model's limit, then to what the context window leaves after the input.
-  const room = route.contextWindow - tokens;
-  if (room < 1) throw new ApiError("payload_too_large", { message: "The input exceeds the context window." });
-  result.maxTokens = Math.min(requested, route.maxOutputTokens, room);
+  result.maxTokens = Math.min(requested, route.maxOutputTokens);
 
   if (raw.temperature !== undefined) {
     if (typeof raw.temperature !== "number" || !Number.isFinite(raw.temperature) || raw.temperature < 0 || raw.temperature > 2) {
@@ -180,6 +193,7 @@ export function validateChatRequest(raw: unknown, routing: RoutingTable): Valida
       throw invalid("stop must be a string or an array of up to 4 strings.");
     }
     result.stop = typeof raw.stop === "string" ? raw.stop : (stops as string[]);
+    for (const stop of stops as string[]) textBytes += utf8Length(stop);
   }
   if (raw.response_format !== undefined) {
     const rf = raw.response_format;
@@ -189,7 +203,10 @@ export function validateChatRequest(raw: unknown, routing: RoutingTable): Valida
       if (!isObject(rf.json_schema)) throw invalid("response_format json_schema must be an object.");
       clean.json_schema = rf.json_schema;
     }
-    if (JSON.stringify(clean).length > MAX_RESPONSE_FORMAT_BYTES) throw new ApiError("payload_too_large", { message: "response_format is too large." });
+    const formatBytes = utf8Length(JSON.stringify(clean));
+    if (formatBytes > MAX_RESPONSE_FORMAT_BYTES) throw new ApiError("payload_too_large", { message: "response_format is too large." });
+    // The provider reads the schema as part of the prompt: its bytes count like any other text.
+    textBytes += formatBytes;
     result.responseFormat = clean;
   }
   if (raw.reasoning_effort !== undefined) {
@@ -198,5 +215,14 @@ export function validateChatRequest(raw: unknown, routing: RoutingTable): Valida
     }
     result.reasoningEffort = raw.reasoning_effort;
   }
+
+  // Even at the largest plausible bytes per token the input cannot fit the window: refuse it up front. Anything
+  // below that is the provider's to judge (it answers 400, which releases the reservation).
+  if (textBytes + fixedTokens > route.contextWindow * MAX_PLAUSIBLE_BYTES_PER_TOKEN) {
+    throw new ApiError("payload_too_large", { message: "The input exceeds the context window." });
+  }
+  // The reservation is a hard upper bound (a token per byte), capped at the window: no tokenizer can bill more.
+  result.inputTokenEstimate = Math.min(route.contextWindow, estimateTokensFromBytes(textBytes) + fixedTokens);
+  result.inputTokenCount = Math.min(result.inputTokenEstimate, countTokensFromBytes(textBytes) + fixedTokens);
   return result;
 }

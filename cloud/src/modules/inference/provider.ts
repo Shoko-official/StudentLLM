@@ -16,6 +16,8 @@ import type { ProviderEndpoint } from "./routing";
 export type UpstreamFailureKind =
   /** An explicit error response (a non-2xx status, or a 2xx body that is an error) with no completion. */
   | "error_response"
+  /** A 4xx answer from a provider that may bill rejected requests (`clientErrorMayBeBilled`): an unknown outcome. */
+  | "billable_error"
   /** A redirect response: not followed, an explicit response with no completion. */
   | "redirect"
   /** A connection failure before the request was accepted (DNS, refused, unreachable, TLS). */
@@ -141,6 +143,12 @@ function errorCode(error: unknown): string | undefined {
  * The Workers `fetch` rejects with a generic `TypeError` and does not say whether the request was accepted. Only an
  * error that names a connect-time cause counts as "before the request was accepted"; a timer, an abort or any other
  * error is an unknown outcome and is charged in full. This is deliberately conservative (docs/cloud-api.md).
+ *
+ * The effect: on Workers most network rejections carry no usable cause, so the user pays the whole reservation for a
+ * request that may never have been accepted (the contract defines `failed_no_usage` strictly, and the reverse mistake
+ * would be free usage). Every such outcome is counted per kind and day (`upstream_unknown_network`,
+ * `upstream_unknown_timeout`, ... in `SwitchStore.getCounter`), so the rule can be revisited with data once the real
+ * error shapes are known.
  */
 export function classifyFetchError(error: unknown, signal: AbortSignal | undefined): UpstreamError {
   if (signal?.aborted) {
@@ -243,7 +251,8 @@ export function createOpenAiCompatibleProvider(options: OpenAiProviderOptions): 
     if (!response.ok) {
       // The provider's error text is not read: it is mapped to a fixed code by the caller.
       void response.body?.cancel().catch(() => undefined);
-      throw new UpstreamError("error_response");
+      const clientError = response.status >= 400 && response.status < 500;
+      throw new UpstreamError(clientError && endpoint.clientErrorMayBeBilled === true ? "billable_error" : "error_response");
     }
     return response;
   }

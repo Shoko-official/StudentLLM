@@ -1,4 +1,5 @@
-// GET /v1/models, GET /v1/provider-sets and GET /v1/usage: read-only views of the routing table and the ledger.
+// GET /v1/models and GET /v1/usage: read-only views of the routing table and the ledger, and `providerSetViews`, the
+// provider sets for the account module (GET /v1/provider-sets, consent).
 
 import { jsonResponse } from "../../http/envelope";
 import { requirePrincipal, type Handler } from "../../http/context";
@@ -74,19 +75,6 @@ export function providerSetViews(routing: RoutingTable): ProviderSetView[] {
   }));
 }
 
-export const listProviderSets: Handler = (ctx) => {
-  requirePrincipal(ctx);
-  const provider_sets = providerSetViews(ctx.deps.inference.routing).map((set) => ({
-    id: set.id,
-    version: set.version,
-    providers: [...set.providers],
-    regions: [...set.regions],
-    consent_text_version: set.consentTextVersion,
-    features: [...set.features],
-  }));
-  return jsonResponse({ provider_sets }, ctx.requestId);
-};
-
 export const getUsage: Handler = async (ctx) => {
   const { accountId } = requirePrincipal(ctx);
   const { deps } = ctx;
@@ -97,6 +85,9 @@ export const getUsage: Handler = async (ctx) => {
     const spec = planWindow(ctx.plan ?? null, now, deps.inference.settings.windowCredits);
     if (spec) window = await deps.stores.ledger.ensureWindow(accountId, spec);
   }
+  // `ensureWindow` returns an existing window even when it was revoked (a refund): its budget is gone, so it is shown
+  // as no window at all, exactly like a free account.
+  if (window && window.revokedAt !== null) window = null;
   if (!window) {
     // A free account gets a valid answer: no window, zero credits.
     return jsonResponse(

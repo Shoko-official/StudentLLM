@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { expectFixtureConformance, loadFixture, validateAgainst } from "../../testing";
 import { ACCOUNT_ID, completion, makeInferenceHarness, routingWithMedia, SECRET_PROMPT } from "../../testing/inference-harness";
+import { providerSetViews } from "./catalog";
+import { DEFAULT_ROUTING } from "./routing";
 
 const body = { model: "studentllm-large", messages: [{ role: "user", content: `Question ${SECRET_PROMPT}` }] };
 
@@ -59,16 +61,49 @@ describe("GET /v1/models", () => {
   });
 });
 
-describe("GET /v1/provider-sets", () => {
-  it("lists the sets with provider names, regions and the consent text version", async () => {
+describe("provider sets (served by the account module, read from this routing table)", () => {
+  it("builds the views the consent screen and POST /v1/consent need: names, regions, versions", () => {
     const h = makeInferenceHarness();
-    const res = await h.get("/v1/provider-sets");
-    await expectFixtureConformance(res.clone(), loadFixture("provider-sets.list.success"));
-    const json = await res.json();
-    expect(json.provider_sets).toHaveLength(1);
-    expect(json.provider_sets[0]).toMatchObject({ id: "ps1", version: 1, providers: ["Groq"], consent_text_version: "2026-11-01", features: ["chat"] });
+    const views = providerSetViews(h.t.deps.inference.routing);
+    expect(views).toHaveLength(1);
+    expect(views[0]).toMatchObject({ id: "ps1", version: 1, providers: ["Groq"], consentTextVersion: "2026-11-01", features: ["chat"] });
     // The region is a placeholder until it is verified with the provider.
-    expect(json.provider_sets[0].regions[0]).toContain("PLACEHOLDER");
+    expect(views[0]!.regions[0]).toContain("PLACEHOLDER");
+    // The shape is what the contract's ProviderSet asks for, once renamed.
+    const wire = views.map((v) => ({ id: v.id, version: v.version, providers: v.providers, regions: v.regions, consent_text_version: v.consentTextVersion, features: v.features }));
+    expect(validateAgainst("ProviderSetList", { provider_sets: wire })).toEqual([]);
+  });
+
+  it("agrees on versions with GET /v1/models and with the consent check, so one record satisfies all three", async () => {
+    const h = makeInferenceHarness({ consent: false });
+    const view = providerSetViews(h.t.deps.inference.routing)[0]!;
+    const models = (await (await h.get("/v1/models")).json()).data;
+    expect(models[0].provider_set).toBe(view.id);
+    expect(models[0].provider_set_version).toBe(view.version);
+
+    // A consent recorded with exactly the version the provider set reports is accepted by the check ...
+    const grant = (consentId: string, version: number, text: string) =>
+      h.stores.consents.record({ consentId, accountId: ACCOUNT_ID, providerSetId: view.id, providerSetVersion: version, features: ["chat"], textVersion: text, granted: true }, h.clock.now());
+    await grant("cns_agree", view.version, view.consentTextVersion);
+    expect((await h.chat(body, { "X-StudentLLM-Consent": "cns_agree" })).status).toBe(200);
+    // ... and one recorded against a version the views do not report is not, whichever side moves.
+    await grant("cns_old_version", view.version + 1, view.consentTextVersion);
+    const staleVersion = await h.chat(body, { "X-StudentLLM-Consent": "cns_old_version" });
+    expect(staleVersion.status).toBe(409);
+    await grant("cns_old_text", view.version, "2020-01-01");
+    expect((await h.chat(body, { "X-StudentLLM-Consent": "cns_old_text" })).status).toBe(409);
+  });
+
+  it("moves all three together when the table changes (a new set version needs a new consent)", async () => {
+    const bumped = { ...DEFAULT_ROUTING, providerSets: [{ ...DEFAULT_ROUTING.providerSets[0]!, version: 2, consentTextVersion: "2027-01-01" }] };
+    const h = makeInferenceHarness({ routing: bumped });
+    const view = providerSetViews(h.t.deps.inference.routing)[0]!;
+    expect([view.version, view.consentTextVersion]).toEqual([2, "2027-01-01"]);
+    expect((await (await h.get("/v1/models")).json()).data[0].provider_set_version).toBe(2);
+    // The harness's seeded consent was recorded for version 1 and is now outdated.
+    const res = await h.chat(body);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.details).toEqual({ provider_set: "ps1", consent_text_version: "2027-01-01" });
   });
 });
 
@@ -119,6 +154,23 @@ describe("GET /v1/usage", () => {
     expect(json.credits.remaining).toBe(15000 - json.credits.reserved);
     release();
     await pending;
+  });
+
+  it("does not show the budget of a revoked window (a refund)", async () => {
+    const h = makeInferenceHarness({ upstream: () => completion("ok", { prompt: 900, completion: 120 }) });
+    await h.chat(body); // creates the window
+    expect((await (await h.get("/v1/usage")).json()).credits.limit).toBe(15000);
+    await h.stores.ledger.revokeWindows(ACCOUNT_ID, h.clock.now());
+    const res = await h.get("/v1/usage");
+    expect(res.status).toBe(200);
+    // Like a free account: no window, zero credits, no meter headers. Not the revoked window's 15000.
+    expect(await res.json()).toEqual({
+      window: null,
+      credits: { limit: 0, used: 0, reserved: 0, remaining: 0, resets_at: null },
+      by_feature: { chat: 0, transcription: 0, ocr: 0 },
+      requests: 0,
+    });
+    expect(res.headers.get("X-StudentLLM-Credits-Limit")).toBeNull();
   });
 
   it("is per account", async () => {

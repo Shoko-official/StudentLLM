@@ -16,7 +16,8 @@
 import type { RequestContext } from "../../http/context";
 import { sseErrorEvent } from "../../http/envelope";
 import { formatTime, type Attempt } from "./attempt";
-import { estimateTextTokens, parseUsage, settlementCredits, type Outcome, type Usage } from "./credits";
+import { countTokensFromBytes, isImplausibleUsage, parseUsage, settlementCredits, utf8Length, type Outcome, type Usage } from "./credits";
+import { recordUnknownOutcome } from "./availability";
 import { classifyFetchError, UpstreamError } from "./provider";
 import type { ChatRoute } from "./routing";
 import { SseFormatError, SseParser, type SseEvent } from "./sse";
@@ -26,7 +27,8 @@ export interface ChatStreamArgs {
   attempt: Attempt;
   upstream: Response;
   route: ChatRoute;
-  inputTokenEstimate: number;
+  /** The tight count of the input (see `ValidatedChat.inputTokenCount`), used only when the stream fails in the middle. */
+  inputTokenCount: number;
   abort: AbortController;
   clearTimer: () => void;
 }
@@ -37,8 +39,11 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 export interface SanitizedChunk {
   chunk: Record<string, unknown> | null;
-  /** Tokens of the text this chunk carries, estimated on the gateway. */
-  tokens: number;
+  /**
+   * UTF-8 bytes of the text this chunk carries. Bytes, not tokens: the caller adds them up over the whole stream and
+   * converts once, so a stream of tiny deltas is not billed a whole token per delta.
+   */
+  bytes: number;
 }
 
 /**
@@ -48,7 +53,7 @@ export interface SanitizedChunk {
  */
 export function sanitizeChunk(json: Record<string, unknown>, modelId: string, fallbackId: string, fallbackCreated: number): SanitizedChunk {
   const choices: Array<Record<string, unknown>> = [];
-  let tokens = 0;
+  let bytes = 0;
   if (Array.isArray(json.choices)) {
     json.choices.forEach((c: unknown, i: number) => {
       if (!isObject(c)) return;
@@ -57,11 +62,11 @@ export function sanitizeChunk(json: Record<string, unknown>, modelId: string, fa
         if (c.delta.role === "assistant") delta.role = "assistant";
         if (typeof c.delta.content === "string") {
           delta.content = c.delta.content;
-          tokens += estimateTextTokens(c.delta.content);
+          bytes += utf8Length(c.delta.content);
         }
         if (typeof c.delta.reasoning === "string") {
           delta.reasoning = c.delta.reasoning;
-          tokens += estimateTextTokens(c.delta.reasoning);
+          bytes += utf8Length(c.delta.reasoning);
         }
       }
       choices.push({
@@ -71,7 +76,7 @@ export function sanitizeChunk(json: Record<string, unknown>, modelId: string, fa
       });
     });
   }
-  if (choices.length === 0) return { chunk: null, tokens: 0 };
+  if (choices.length === 0) return { chunk: null, bytes: 0 };
   return {
     chunk: {
       id: typeof json.id === "string" ? json.id : fallbackId,
@@ -80,10 +85,14 @@ export function sanitizeChunk(json: Record<string, unknown>, modelId: string, fa
       model: modelId,
       choices,
     },
-    tokens,
+    bytes,
   };
 }
 
+/**
+ * explicit: the provider reported an error or sent malformed data (settled on counted tokens);
+ * unknown: a timeout, a reset, a truncated stream, a usage no honest provider reports (settled in full).
+ */
 type Failure = "explicit" | "unknown";
 
 const encoder = new TextEncoder();
@@ -120,7 +129,7 @@ class ChatStream {
   private failure: Failure | null = null;
   private usage: Usage | null = null;
   private usageSeen = false;
-  private emittedTokens = 0;
+  private emittedBytes = 0;
   private lastBeat: number;
 
   constructor(private readonly a: ChatStreamArgs) {
@@ -159,7 +168,13 @@ class ChatStream {
   }
 
   private async pull(controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> {
-    while (this.queue.length === 0 && !this.terminated) await this.step();
+    try {
+      while (this.queue.length === 0 && !this.terminated) await this.step();
+    } catch {
+      // Anything unexpected (a store failure, a bug) must not leave the reservation open and the stream hanging:
+      // settle at the full reservation (an unknown outcome) and tell the client.
+      if (!this.terminated) await this.finish(null);
+    }
     if (this.cancelled) return; // the client left while this pull was waiting; the cancel path settled
     while (this.queue.length > 0) controller.enqueue(encoder.encode(this.queue.shift()!));
     if (this.terminated) controller.close();
@@ -233,12 +248,19 @@ class ChatStream {
       return;
     }
     if (json.usage !== undefined && json.usage !== null) {
+      const bound = this.a.route.contextWindow;
+      // A count no honest provider reports (above the model's context window, or not even finite) is not a missing
+      // usage but a provider that cannot be trusted: a failure, settled in full.
+      if (isImplausibleUsage(json.usage, bound)) {
+        this.failure = "unknown";
+        return;
+      }
       this.usageSeen = true;
-      this.usage = parseUsage(json.usage);
+      this.usage = parseUsage(json.usage, bound);
     }
-    const { chunk, tokens } = sanitizeChunk(json, this.a.route.id, this.fallbackId, this.fallbackCreated);
+    const { chunk, bytes } = sanitizeChunk(json, this.a.route.id, this.fallbackId, this.fallbackCreated);
     if (chunk) {
-      this.emittedTokens += tokens;
+      this.emittedBytes += bytes;
       this.queue.push(`data: ${JSON.stringify(chunk)}\n\n`);
     }
   }
@@ -267,41 +289,58 @@ class ChatStream {
     return `event: usage\ndata: ${JSON.stringify(payload)}\n\n`;
   }
 
-  private async finishSuccess(): Promise<void> {
-    const { attempt, route } = this.a;
-    // A usage the provider reported settles the request; no usage chunk (or a doubtful one) is the full reservation.
-    const outcome: Outcome = this.usage ? { kind: "usage", usage: this.usage } : { kind: "unknown" };
-    const credits = settlementCredits(attempt.reservedCredits, route.price, outcome);
-    this.end();
-    try {
-      const summary = await attempt.settle(credits);
-      this.queue.push(this.usageEvent(summary), "data: [DONE]\n\n");
-    } catch {
-      this.queue.push(sseErrorEvent("internal_error", this.a.ctx.requestId));
-    }
+  private finishSuccess(): Promise<void> {
+    return this.finish("success");
   }
 
-  private async fail(mode: Failure, error?: unknown): Promise<void> {
-    const { ctx, attempt, route } = this.a;
+  private fail(mode: Failure, error?: unknown): Promise<void> {
     if (!this.committed && this.queue.length === 0) {
       // Before the first byte: the caller answers with the normal HTTP status and envelope. (When content was
       // already produced the provider has worked, so the failure is reported mid-stream and settled on tokens.)
-      throw mode === "explicit" ? new UpstreamError("error_response") : classifyFetchError(error, this.a.abort.signal);
+      return Promise.reject(mode === "explicit" ? new UpstreamError("error_response") : classifyFetchError(error, this.a.abort.signal));
     }
-    const outcome: Outcome =
-      mode === "explicit"
-        ? { kind: "counted", inputTokens: this.a.inputTokenEstimate, emittedOutputTokens: this.emittedTokens }
-        : { kind: "unknown" };
-    const credits = settlementCredits(attempt.reservedCredits, route.price, outcome);
+    if (mode === "unknown") void recordUnknownOutcome(this.a.ctx.deps, classifyFetchError(error, this.a.abort.signal).kind, this.a.ctx.deps.clock.now());
+    return this.finish(mode);
+  }
+
+  /**
+   * The one way a stream ends after its first byte, whatever happened. `end()` always runs first, so the connection,
+   * the timer and the stream state are released even if the settlement below throws. The credits are computed inside
+   * the `try`: if that fails (an overflow, a bug) the attempt is settled at the FULL reservation and the client gets
+   * `event: error`, never a silent hang or a reservation left open.
+   * `how`: "success" (usage event and [DONE]), a failure mode, or null for an unexpected exception (full, error event).
+   */
+  private async finish(how: "success" | Failure | null): Promise<void> {
+    const { ctx, attempt, route } = this.a;
     this.end();
+    let credits = attempt.reservedCredits;
+    let ok = how === "success";
     try {
-      await attempt.settle(credits);
-      this.queue.push(
-        sseErrorEvent("provider_unavailable", ctx.requestId, {
-          message: "The provider stopped responding.",
-          retryAfterSeconds: ctx.deps.inference.settings.retryAfter.providerSeconds,
-        }),
-      );
+      const outcome: Outcome =
+        how === "success"
+          ? this.usage
+            ? { kind: "usage", usage: this.usage }
+            : { kind: "unknown" } // no usage chunk (or a doubtful one): the full reservation
+          : how === "explicit"
+            ? { kind: "counted", inputTokens: this.a.inputTokenCount, emittedOutputTokens: countTokensFromBytes(this.emittedBytes) }
+            : { kind: "unknown" };
+      credits = settlementCredits(attempt.reservedCredits, route.price, outcome);
+    } catch {
+      credits = attempt.reservedCredits;
+      ok = false;
+    }
+    try {
+      const summary = await attempt.settle(credits);
+      if (ok) {
+        this.queue.push(this.usageEvent(summary), "data: [DONE]\n\n");
+      } else {
+        this.queue.push(
+          sseErrorEvent("provider_unavailable", ctx.requestId, {
+            message: "The provider stopped responding.",
+            retryAfterSeconds: ctx.deps.inference.settings.retryAfter.providerSeconds,
+          }),
+        );
+      }
     } catch {
       this.queue.push(sseErrorEvent("internal_error", ctx.requestId));
     }

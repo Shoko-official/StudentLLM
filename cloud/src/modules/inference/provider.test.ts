@@ -164,7 +164,7 @@ describe("sanitizeChunk", () => {
   it("keeps the delta text and reasoning, rewrites the model and drops provider extensions", () => {
     const raw = parse(chunkFrame("hello"));
     (raw.choices as Array<Record<string, unknown>>)[0]!.delta = { role: "assistant", content: "hello", reasoning: "thinking", tool_calls: [{ id: "x" }], refusal: "no" };
-    const { chunk, tokens } = sanitizeChunk(raw, "studentllm-large", "fallback", 1);
+    const { chunk, bytes } = sanitizeChunk(raw, "studentllm-large", "fallback", 1);
     expect(chunk).toEqual({
       id: "chatcmpl-upstream",
       object: "chat.completion.chunk",
@@ -172,7 +172,7 @@ describe("sanitizeChunk", () => {
       model: "studentllm-large",
       choices: [{ index: 0, delta: { role: "assistant", content: "hello", reasoning: "thinking" }, finish_reason: null }],
     });
-    expect(tokens).toBe(Math.ceil(5 / 3) + Math.ceil(8 / 3));
+    expect(bytes).toBe(5 + 8); // bytes, summed over the whole stream by the caller and converted once
   });
 
   it("returns no chunk for a usage-only or empty-choices chunk, and falls back for a missing id", () => {

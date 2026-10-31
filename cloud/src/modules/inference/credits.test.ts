@@ -6,6 +6,7 @@ import {
   atLeastOne,
   audioCost,
   audioSettlementCredits,
+  countTokensFromBytes,
   estimateImageTokens,
   estimateTextTokens,
   imageCost,
@@ -211,18 +212,26 @@ describe("parseUsage", () => {
 });
 
 describe("estimates and the other prices", () => {
-  it("estimates a token per 3 bytes, rounded up, counting UTF-8 bytes", () => {
+  it("bounds the input from above: a token per UTF-8 byte, whatever the text", () => {
     expect(estimateTextTokens("")).toBe(0);
     expect(estimateTextTokens("a")).toBe(1);
-    expect(estimateTextTokens("abc")).toBe(1);
-    expect(estimateTextTokens("abcd")).toBe(2);
-    expect(estimateTextTokens("é")).toBe(1); // 2 bytes
-    expect(estimateTextTokens("日本語")).toBe(3); // 9 bytes
+    expect(estimateTextTokens("abcd")).toBe(4);
+    expect(estimateTextTokens("\u00e9")).toBe(2); // 2 bytes
+    expect(estimateTextTokens("\u65e5\u672c\u8a9e")).toBe(9); // 3 bytes each
+    expect(estimateTextTokens("\u{1f600}")).toBe(4);
     const next = rng(10);
     for (let i = 0; i < 500; i++) {
       const text = "x".repeat(int(next, 3000));
-      expect(estimateTextTokens(text)).toBe(Math.ceil(text.length / 3));
+      expect(estimateTextTokens(text)).toBe(text.length);
     }
+  });
+
+  it("counts what was seen on the gateway at two bytes a token, rounded once over the whole text", () => {
+    expect(countTokensFromBytes(0)).toBe(0);
+    expect(countTokensFromBytes(1)).toBe(1);
+    expect(countTokensFromBytes(1000)).toBe(500);
+    // 1000 deltas of one byte are 500 tokens, not 1000: rounding per delta would bill a token for every delta.
+    expect(countTokensFromBytes(1000)).toBeLessThan(1000 * countTokensFromBytes(1));
   });
 
   it("estimates an image from its decoded size with a floor", () => {

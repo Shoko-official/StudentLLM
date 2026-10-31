@@ -18,7 +18,13 @@ export interface InferenceSettings {
   heartbeatMs: number;
   /** Credits in one budget window (cost-normalized: one credit is 0.0001 EUR at the routing-table price). */
   windowCredits: number;
-  /** The global spend cap, in cost-normalized credits across all accounts. At the cap new requests get `kill_switch`. */
+  /**
+   * The global spend cap, in cost-normalized credits across all accounts. A new request gets `kill_switch` once the
+   * SETTLED total has reached the cap or its own reservation would pass it. It is not an exact ceiling: requests
+   * already in flight have reserved but not settled, so the spend can overshoot by up to the reservations in flight
+   * (requests in flight x the largest reservation, about 27 credits for the default model). Size the cap with that
+   * margin; an exact ceiling would need to reserve against the cap in the same step as the account's reservation.
+   */
   spendCap: { dayCredits: number; monthCredits: number };
   /** Largest upstream JSON body the gateway reads for a non-streaming call. */
   maxUpstreamBodyBytes: number;

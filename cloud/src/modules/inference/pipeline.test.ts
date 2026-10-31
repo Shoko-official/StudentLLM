@@ -1,6 +1,7 @@
 // The hooks of the inference module in the order of the contract: consent, rate limit, idempotency, concurrency
 // slot, then the body, the kill switches and the budget reservation.
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { sha256Hex } from "../../crypto/hash";
 import { ApiError } from "../../http/envelope";
@@ -476,8 +477,8 @@ describe("kill switches and the global spend cap", () => {
 
   it("stops at the global spend cap, and settlements feed it", async () => {
     const h = makeInferenceHarness({
-      settings: { spendCap: { dayCredits: 5, monthCredits: 1000 } },
-      upstream: () => completion("ok", { prompt: 1_000_000, completion: 100_000 }),
+      settings: { spendCap: { dayCredits: 100, monthCredits: 1000 } },
+      upstream: () => completion("ok", { prompt: 20_000, completion: 4000 }),
     });
     const res = await h.chat(body({ max_tokens: 4000 }));
     expect(res.status).toBe(200);
@@ -486,13 +487,40 @@ describe("kill switches and the global spend cap", () => {
     expect(await h.stores.switches.getSpend(dayPeriod(h.clock.now()))).toBe(charged);
     expect(await h.stores.switches.getSpend(monthPeriod(h.clock.now()))).toBe(charged);
 
-    await h.stores.switches.addSpend(dayPeriod(h.clock.now()), 5);
+    await h.stores.switches.addSpend(dayPeriod(h.clock.now()), 100);
     const refused = await h.chat(body());
     expect(refused.status).toBe(503);
     expect(await code(refused)).toBe("kill_switch");
 
     h.clock.advance(24 * 3_600_000); // the next day starts a new total
     expect((await h.chat(body())).status).toBe(200);
+  });
+
+  it("refuses a request whose reservation would pass the cap, not only one that arrives after it was reached", async () => {
+    const h = makeInferenceHarness({ settings: { spendCap: { dayCredits: 30, monthCredits: 1000 } } });
+    await h.stores.switches.addSpend(dayPeriod(h.clock.now()), 10);
+    // A reservation for the whole 4096-token output is 27 credits: 10 + 27 > 30, although 10 < 30.
+    const refused = await h.chat({ model: "studentllm-large", messages: [{ role: "user", content: "hi" }] });
+    expect(refused.status).toBe(503);
+    expect(await code(refused)).toBe("kill_switch");
+    expect(h.upstreamCalls).toHaveLength(0);
+    expect(await windowOf(h)).toBeNull(); // nothing was reserved
+    // A small request still fits under the cap.
+    expect((await h.chat(body({ max_tokens: 10 }))).status).toBe(200);
+  });
+
+  it("documents that the cap is exact only for settled spend: the in-flight reservations can overshoot it", async () => {
+    // Two requests are admitted together (neither has settled), so together they can pass the cap by their reservations.
+    const g = gates();
+    const h = makeInferenceHarness({ upstream: g.upstream, settings: { spendCap: { dayCredits: 40, monthCredits: 1000 } } });
+    const noMax = { model: "studentllm-large", messages: [{ role: "user", content: "hi" }] };
+    const a = h.chat(noMax);
+    const b = h.chat(noMax);
+    while (g.count() < 2) await tick();
+    g.release();
+    expect([(await a).status, (await b).status]).toEqual([200, 200]); // 2 x 27 > 40: the bound is the reservations in flight
+    const source = readFileSync(new URL("./availability.ts", import.meta.url), "utf8");
+    expect(source).toMatch(/overshot by at most the reservations in flight/);
   });
 });
 
@@ -519,8 +547,9 @@ describe("the body", () => {
 
   it("answers payload_too_large when the input does not fit the context window", async () => {
     const h = makeInferenceHarness();
-    // 131,072 tokens at 3 bytes each: about 400 KB of text is already too much.
-    const res = await h.chat({ model: "studentllm-large", messages: [{ role: "user", content: "x".repeat(450_000) }] });
+    // Even at 8 bytes a token, 131,072 tokens hold about 1 MiB: 1.2 MB of text cannot fit. (Anything smaller is the
+    // provider's to judge; its 400 releases the reservation.)
+    const res = await h.chat({ model: "studentllm-large", messages: [{ role: "user", content: "x".repeat(1_200_000) }] });
     expect(res.status).toBe(413);
     expect(h.upstreamCalls).toHaveLength(0);
   });
