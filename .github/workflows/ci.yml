@@ -49,6 +49,10 @@ jobs:
         run: npm run check
       - name: Benchmark adapter checks
         run: npm run benchmarks:check && npm run asr:test
+      - name: Document sidecar tests with the real PDF engines
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements-local-documents.txt
+          python -m unittest tests.test_local_document_server tests.test_local_document_pdf tests.test_local_document_security tests.test_local_server_contract
       - name: Unit and integration tests
         run: npm run test:run
       - name: Production build
@@ -66,6 +70,31 @@ jobs:
         run: |
           cargo test --manifest-path src-tauri/Cargo.toml navigation::tests::denies_the_dev_server_without_debug_assertions -- --exact 2>&1 | tee navigation-release.log
           grep -q "test result: ok. 1 passed" navigation-release.log
+
+  licenses:
+    name: Licence policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - name: Licence policy self-test
+        run: npm run licenses:test
+      - name: Third-party notices match the lockfiles
+        run: node scripts/generate-third-party-notices.mjs --check
+      - name: No strong-copyleft or unknown licences (npm, Cargo, Python requirements)
+        # Reads the lockfiles, `cargo metadata` and `pip install --dry-run --report`; nothing is installed.
+        run: npm run licenses:check:all
 
   cloud-gateway:
     name: Cloud gateway
