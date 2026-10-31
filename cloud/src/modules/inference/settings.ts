@@ -16,8 +16,6 @@ export interface InferenceSettings {
   reservationMarginMs: number;
   /** A stream extends its reservation and its concurrency lease at most this often while it makes progress. */
   heartbeatMs: number;
-  /** Credits in one budget window (cost-normalized: one credit is 0.0001 EUR at the routing-table price). */
-  windowCredits: number;
   /**
    * The global spend cap, in cost-normalized credits across all accounts. A new request gets `kill_switch` once the
    * SETTLED total has reached the cap or its own reservation would pass it. It is not an exact ceiling: requests
@@ -51,8 +49,6 @@ export const DEFAULT_SETTINGS: InferenceSettings = {
   maxConcurrent: 2,
   reservationMarginMs: 60_000,
   heartbeatMs: 30_000,
-  // 15000 credits = 1.50 EUR: the worst-case cost ceiling per Plus user per month in docs/cloud-plan.md.
-  windowCredits: 15_000,
   // 500000 credits = 50 EUR per day, 5000000 credits = 500 EUR per month.
   spendCap: { dayCredits: 500_000, monthCredits: 5_000_000 },
   maxUpstreamBodyBytes: 4 * 1024 * 1024,
@@ -82,7 +78,6 @@ export function mergeSettings(overrides: DeepPartial<InferenceSettings> | undefi
   positive(merged.maxConcurrent, "maxConcurrent");
   positive(merged.reservationMarginMs, "reservationMarginMs");
   positive(merged.heartbeatMs, "heartbeatMs");
-  positive(merged.windowCredits, "windowCredits");
   positive(merged.spendCap.dayCredits, "day spend cap");
   positive(merged.spendCap.monthCredits, "month spend cap");
   return merged;

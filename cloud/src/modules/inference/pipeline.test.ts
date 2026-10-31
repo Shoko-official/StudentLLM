@@ -364,12 +364,12 @@ describe("the budget", () => {
     await h.chat(body());
     await h.chat(body());
     expect(await h.stores.ledger.listWindows(ACCOUNT_ID)).toHaveLength(1);
-    expect(await windowOf(h)).toMatchObject({ start: PERIOD.start, end: PERIOD.end, limit: 15000, requests: 2 });
+    expect(await windowOf(h)).toMatchObject({ start: PERIOD.start, end: PERIOD.end, limit: 12500, requests: 2 });
   });
 
   it("answers budget_exhausted with the reset time, forwards nothing and lets the key retry", async () => {
     const fx = loadFixture("chat-completions.budget_exhausted");
-    const h = makeInferenceHarness({ settings: { windowCredits: 5 } });
+    const h = makeInferenceHarness({ windowCredits: 5 });
     const key = h.key();
     const res = await h.chat({ ...(fx.request.body as object), max_tokens: 4000 }, { "Idempotency-Key": key });
     await expectFixtureConformance(res.clone(), fx);
@@ -383,7 +383,7 @@ describe("the budget", () => {
   });
 
   it("reconciles expired reservations on access before refusing for budget", async () => {
-    const h = makeInferenceHarness({ settings: { windowCredits: 100 } });
+    const h = makeInferenceHarness({ windowCredits: 100 });
     await h.chat(body()); // creates the window (and spends 1 credit)
     // A request that was reserved long ago and never finished still holds 99 credits.
     await h.stores.ledger.reserve(ACCOUNT_ID, {
@@ -406,7 +406,8 @@ describe("the budget", () => {
       stores: chaosStores(createInMemoryStores(), 77),
       upstream: g.upstream,
       // 60 credits: two full-output reservations (27 each) fit, a third does not.
-      settings: { windowCredits: 60, maxConcurrent: 20, rate: { content: { limit: 100, windowMs: 60_000 } } },
+      windowCredits: 60,
+      settings: { maxConcurrent: 20, rate: { content: { limit: 100, windowMs: 60_000 } } },
     });
     const noMax = { model: "studentllm-large", messages: [{ role: "user", content: "hi" }] };
     let refused = 0;

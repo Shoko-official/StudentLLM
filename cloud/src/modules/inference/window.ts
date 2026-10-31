@@ -3,6 +3,7 @@
 // The billing module owns the plan and its paid periods; this module only derives the window of the current period
 // when the ledger has none yet (`LedgerStore.ensureWindow` creates it and never resets an existing one).
 
+import type { Deps } from "../../deps";
 import type { PaidPeriod, PlanRecord } from "../../storage";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -42,6 +43,23 @@ function windowOfPeriod(period: PaidPeriod, now: number): { start: number; end: 
     if (start <= now && now < end) return { start, end };
   }
   return null;
+}
+
+/**
+ * The credits of one window of this plan, from the BILLING module's settings (`windowCredits[plan.planId]`): billing
+ * owns the plan and its budget, so the window this module creates lazily (when `reserve` finds none) can never differ
+ * from the one the webhook creates. Null for a free account or a plan billing has no budget for.
+ */
+export function windowLimit(deps: Deps, plan: PlanRecord | null): number | null {
+  if (!plan || plan.planId === "free") return null;
+  const credits = (deps.billing.settings?.windowCredits as Partial<Record<string, number>> | undefined)?.[plan.planId];
+  return typeof credits === "number" && Number.isSafeInteger(credits) && credits > 0 ? credits : null;
+}
+
+/** The window to create now for this account (see `windowLimit` and `planWindow`), or null when it has none to spend. */
+export function lazyWindowSpec(deps: Deps, plan: PlanRecord | null, now: number): WindowSpec | null {
+  const limit = windowLimit(deps, plan);
+  return limit === null ? null : planWindow(plan, now, limit);
 }
 
 /**

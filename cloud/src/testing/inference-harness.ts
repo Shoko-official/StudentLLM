@@ -8,6 +8,7 @@
 import { loadConfig } from "../config";
 import { defaultRequestId } from "../deps";
 import type { Step } from "../http/context";
+import { createBillingDeps } from "../modules/billing";
 import { createInferenceDeps, type InferenceOptions } from "../modules/inference";
 import type { ProviderRegistry } from "../modules/inference/provider";
 import { DEFAULT_ROUTING, type RoutingConfig } from "../modules/inference/routing";
@@ -188,6 +189,10 @@ export interface HarnessOptions {
   clock?: ManualClock;
   /** false: no plan on the account (a free account). Default true. */
   plus?: boolean;
+  /** The plan to seed instead of the default monthly Plus plan (for example one read from a webhook-created plan). */
+  plan?: PlanRecord;
+  /** Credits of one budget window, set in the BILLING settings (where the module reads them from). Default: billing's own. */
+  windowCredits?: number;
   /** false: no consent record. Default true. */
   consent?: boolean;
   /** Replace fake hooks of the other modules, for example `{ checkPlan: ... }`. */
@@ -235,16 +240,19 @@ export function makeInferenceHarness(options: HarnessOptions = {}): Harness {
   const upstream = fakeUpstream(options.upstream ?? (() => completion("OK", { prompt: 10, completion: 5 })));
   const fetchImpl = options.fetch ?? upstream.fetch;
   const config = loadConfig(testEnv());
-  const inference = createInferenceDeps(
-    { config, clock, stores, ids: { requestId: defaultRequestId }, fetch: fetchImpl, log: { request: () => undefined } },
-    { routing: options.routing ?? DEFAULT_ROUTING, settings: options.settings, providers: options.providers },
+  const core = { config, clock, stores, ids: { requestId: defaultRequestId }, fetch: fetchImpl, log: { request: () => undefined } };
+  const inference = createInferenceDeps(core, { routing: options.routing ?? DEFAULT_ROUTING, settings: options.settings, providers: options.providers });
+  // The budget of a window is the billing module's setting: the harness changes it there, like a deployment would.
+  const billing = createBillingDeps(
+    core,
+    options.windowCredits === undefined ? {} : { settings: { windowCredits: { plus_monthly: options.windowCredits, plus_semester: options.windowCredits } } },
   );
   const t = makeTestApp({
     config,
     stores,
     clock,
     fetch: fetchImpl,
-    deps: { inference },
+    deps: { inference, billing },
     hooks: {
       authenticate: fakeAuthenticate(accessPrincipal({ accountId: ACCOUNT_ID })),
       checkTermsAndStatus: options.hooks?.checkTermsAndStatus ?? passThrough,
@@ -257,7 +265,7 @@ export function makeInferenceHarness(options: HarnessOptions = {}): Harness {
   // Seed (synchronously enough: the in-memory stores resolve immediately, and every request awaits `ready`).
   const ready = (async () => {
     await stores.accounts.create({ accountId: ACCOUNT_ID, email: "student@example.invalid", googleSubject: null, loginMethods: ["email"], termsVersion: "2026-11-01", now: TEST_START_MS });
-    if (options.plus !== false) await stores.accounts.savePlan(planRecord(), { expectedPlanVersion: 0 });
+    if (options.plus !== false) await stores.accounts.savePlan(options.plan ?? planRecord(), { expectedPlanVersion: 0 });
     if (options.consent !== false) {
       await stores.consents.record(
         { consentId: CONSENT_ID, accountId: ACCOUNT_ID, providerSetId: "ps1", providerSetVersion: 1, features: ["chat", "transcription", "ocr"], textVersion: "2026-11-01", granted: true },

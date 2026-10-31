@@ -54,11 +54,11 @@ describe("stream passthrough", () => {
     const h = makeInferenceHarness({ upstream: () => sseResponse([chunkFrame("a"), usageFrame({ prompt: 10, completion: 10 }), DONE_FRAME]) });
     const res = await h.chat(body());
     // Reserved for the whole output limit.
-    expect(Number(res.headers.get("X-StudentLLM-Credits-Remaining"))).toBe(15000 - FULL_OUTPUT_RESERVATION);
-    expect(res.headers.get("X-StudentLLM-Credits-Limit")).toBe("15000");
+    expect(Number(res.headers.get("X-StudentLLM-Credits-Remaining"))).toBe(12500 - FULL_OUTPUT_RESERVATION);
+    expect(res.headers.get("X-StudentLLM-Credits-Limit")).toBe("12500");
     expect(res.headers.get("X-StudentLLM-Credits-Charged")).toBeNull(); // streams use the usage event
     const events = parseSse(await res.text());
-    expect(JSON.parse(events.find((e) => e.event === "usage")!.data)).toMatchObject({ credits_charged: 1, credits_remaining: 14999 });
+    expect(JSON.parse(events.find((e) => e.event === "usage")!.data)).toMatchObject({ credits_charged: 1, credits_remaining: 12499 });
   });
 });
 

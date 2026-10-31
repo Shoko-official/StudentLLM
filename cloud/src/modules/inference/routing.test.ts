@@ -77,12 +77,12 @@ describe("settings", () => {
     expect(s.maxConcurrent).toBe(5);
     expect(s.rate.content).toEqual({ limit: 7, windowMs: DEFAULT_SETTINGS.rate.content.windowMs });
     expect(s.rate.read).toEqual(DEFAULT_SETTINGS.rate.read);
-    expect(s.windowCredits).toBe(15000);
+    expect("windowCredits" in s).toBe(false); // the budget of a window belongs to the billing module
   });
 
   it("refuses nonsense", () => {
     expect(() => mergeSettings({ maxConcurrent: 0 })).toThrow(/maxConcurrent/);
-    expect(() => mergeSettings({ windowCredits: 1.5 })).toThrow(/windowCredits/);
+    expect(() => mergeSettings({ heartbeatMs: 1.5 })).toThrow(/heartbeatMs/);
   });
 
   it("states placeholders as placeholders", () => {

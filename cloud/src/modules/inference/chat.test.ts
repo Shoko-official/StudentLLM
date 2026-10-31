@@ -51,8 +51,8 @@ describe("POST /v1/chat/completions, non-streaming", () => {
     expect(json.usage).toEqual({ prompt_tokens: 900, completion_tokens: 120, total_tokens: 1020 });
     // ceil((900 x 1620 + 120 x 6480) / 1e6) = ceil(2.2356) = 3 credits: rounded up once for the request.
     expect(res.headers.get("X-StudentLLM-Credits-Charged")).toBe("3");
-    expect(res.headers.get("X-StudentLLM-Credits-Limit")).toBe("15000");
-    expect(res.headers.get("X-StudentLLM-Credits-Remaining")).toBe("14997");
+    expect(res.headers.get("X-StudentLLM-Credits-Limit")).toBe("12500");
+    expect(res.headers.get("X-StudentLLM-Credits-Remaining")).toBe("12497");
     expect(res.headers.get("X-StudentLLM-Credits-Reset")).toBe("2026-12-01T00:00:00Z");
     expect(res.headers.get("X-StudentLLM-Plan-Version")).toBe("1");
     expect(await windowOf(h)).toMatchObject({ used: 3, reserved: 0, requests: 1 });

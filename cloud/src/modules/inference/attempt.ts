@@ -17,7 +17,7 @@ import { addSpend } from "./availability";
 import type { ModelRoute } from "./routing";
 import { sweepAccount } from "./sweeper";
 import { formatTime } from "./time";
-import { planWindow } from "./window";
+import { lazyWindowSpec } from "./window";
 
 export { formatTime };
 
@@ -123,7 +123,7 @@ export class Attempt {
     let result = await reserveOnce();
     if (!result.ok && result.reason === "no_window") {
       // The window is created lazily from the paid period. Without a covering period there is no plan to spend.
-      const spec = planWindow(ctx.plan ?? null, now, deps.inference.settings.windowCredits);
+      const spec = lazyWindowSpec(deps, ctx.plan ?? null, now);
       if (!spec) throw new ApiError("plan_required");
       await ledger.ensureWindow(accountId, spec);
       result = await reserveOnce();

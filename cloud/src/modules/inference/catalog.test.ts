@@ -126,9 +126,9 @@ describe("GET /v1/usage", () => {
     const json = await res.json();
     expect(validateAgainst("Usage", json)).toEqual([]);
     expect(json.window).toEqual({ start: "2026-11-01T00:00:00Z", end: "2026-12-01T00:00:00Z" });
-    expect(json.credits).toEqual({ limit: 15000, used: 0, reserved: 0, remaining: 15000, resets_at: "2026-12-01T00:00:00Z" });
-    expect(res.headers.get("X-StudentLLM-Credits-Remaining")).toBe("15000");
-    expect(res.headers.get("X-StudentLLM-Credits-Limit")).toBe("15000");
+    expect(json.credits).toEqual({ limit: 12500, used: 0, reserved: 0, remaining: 12500, resets_at: "2026-12-01T00:00:00Z" });
+    expect(res.headers.get("X-StudentLLM-Credits-Remaining")).toBe("12500");
+    expect(res.headers.get("X-StudentLLM-Credits-Limit")).toBe("12500");
     expect(res.headers.get("X-StudentLLM-Credits-Reset")).toBe("2026-12-01T00:00:00Z");
   });
 
@@ -139,7 +139,7 @@ describe("GET /v1/usage", () => {
     const res = await h.get("/v1/usage");
     await expectFixtureConformance(res.clone(), loadFixture("usage.get.success"));
     const json = await res.json();
-    expect(json.credits).toMatchObject({ used: 6, reserved: 0, remaining: 14994 });
+    expect(json.credits).toMatchObject({ used: 6, reserved: 0, remaining: 12494 });
     expect(json.by_feature).toEqual({ chat: 6, transcription: 0, ocr: 0 });
     expect(json.requests).toBe(2);
   });
@@ -151,7 +151,7 @@ describe("GET /v1/usage", () => {
     while (!release) await new Promise((r) => setTimeout(r, 5));
     const json = await (await h.get("/v1/usage")).json();
     expect(json.credits.reserved).toBeGreaterThan(20);
-    expect(json.credits.remaining).toBe(15000 - json.credits.reserved);
+    expect(json.credits.remaining).toBe(12500 - json.credits.reserved);
     release();
     await pending;
   });
@@ -159,11 +159,11 @@ describe("GET /v1/usage", () => {
   it("does not show the budget of a revoked window (a refund)", async () => {
     const h = makeInferenceHarness({ upstream: () => completion("ok", { prompt: 900, completion: 120 }) });
     await h.chat(body); // creates the window
-    expect((await (await h.get("/v1/usage")).json()).credits.limit).toBe(15000);
+    expect((await (await h.get("/v1/usage")).json()).credits.limit).toBe(12500);
     await h.stores.ledger.revokeWindows(ACCOUNT_ID, h.clock.now());
     const res = await h.get("/v1/usage");
     expect(res.status).toBe(200);
-    // Like a free account: no window, zero credits, no meter headers. Not the revoked window's 15000.
+    // Like a free account: no window, zero credits, no meter headers. Not the revoked window's 12500.
     expect(await res.json()).toEqual({
       window: null,
       credits: { limit: 0, used: 0, reserved: 0, remaining: 0, resets_at: null },

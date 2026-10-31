@@ -7,7 +7,7 @@ import { formatTime, setCreditHeaders } from "./attempt";
 import { liveTargets, spendCapReached } from "./availability";
 import type { Feature } from "../../storage";
 import type { ModelRoute, RoutingTable } from "./routing";
-import { planWindow } from "./window";
+import { lazyWindowSpec } from "./window";
 
 /** Credits per 1000 tokens as the contract shows them (a number); the table stores integers per million. */
 const per1k = (perMillion: number): number => perMillion / 1000;
@@ -82,7 +82,7 @@ export const getUsage: Handler = async (ctx) => {
   let window = await deps.stores.ledger.getCurrentWindow(accountId, now);
   if (!window) {
     // A paid account that has not spent anything yet has no window row: show the one it would get.
-    const spec = planWindow(ctx.plan ?? null, now, deps.inference.settings.windowCredits);
+    const spec = lazyWindowSpec(deps, ctx.plan ?? null, now);
     if (spec) window = await deps.stores.ledger.ensureWindow(accountId, spec);
   }
   // `ensureWindow` returns an existing window even when it was revoked (a refund): its budget is gone, so it is shown
