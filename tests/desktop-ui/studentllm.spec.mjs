@@ -114,4 +114,40 @@ describe('StudentLLM packaged desktop workflow', () => {
     await expect($$('.recent-artifact')).toBeElementsArrayOfSize(0);
     await expect($$('.artifact-preview')).toBeElementsArrayOfSize(0);
   });
+
+  it('keeps the webview on the application when script tries to navigate away', async () => {
+    const appOrigin = /^(?:tauri:\/\/localhost|https?:\/\/tauri\.localhost)(?:[/?#]|$)/;
+    await expect(await visible('.topbar')).toBeDisplayed();
+    expect(await browser.getUrl()).toMatch(appOrigin);
+
+    // The initial load bypasses Tauri's navigation hook, so this is the only check that the guard denies in a real webview.
+    for (const target of ['https://example.com/', 'http://localhost:1234/']) {
+      await browser.execute((url) => { window.location.href = url; }, target);
+      await browser.pause(3_000);
+      expect(await browser.getUrl()).toMatch(appOrigin);
+      await expect(await visible('.topbar')).toBeDisplayed();
+    }
+
+    // A same-origin navigation still works, so the denial above is the guard and not a frozen page.
+    await browser.execute(() => { window.location.hash = '#navigation-guard-check'; });
+    await browser.waitUntil(async () => (await browser.getUrl()).endsWith('#navigation-guard-check'), { timeout: 10_000 });
+    await browser.execute(() => { window.location.hash = ''; });
+
+    // App-created blob documents (the source previews) must keep loading under the guard, whichever origin the engine writes into the blob URL.
+    await browser.execute(() => {
+      const url = URL.createObjectURL(new Blob(['<p>blob preview</p>'], { type: 'text/html' }));
+      const frame = document.createElement('iframe');
+      frame.id = 'navigation-guard-blob-frame';
+      frame.src = url;
+      document.body.append(frame);
+    });
+    await browser.waitUntil(async () => browser.execute(() => {
+      try {
+        return document.getElementById('navigation-guard-blob-frame')?.contentDocument?.body?.textContent === 'blob preview';
+      } catch {
+        return false;
+      }
+    }), { timeout: 15_000, timeoutMsg: 'The blob document did not load in the frame.' });
+    await browser.execute(() => { document.getElementById('navigation-guard-blob-frame')?.remove(); });
+  });
 });
