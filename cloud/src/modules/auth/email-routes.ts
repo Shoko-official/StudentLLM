@@ -116,6 +116,8 @@ export function emailRequestHandler(deps: Deps): Handler {
       redirectUri: null,
       appState: null,
       deviceLabel: body.device_label ?? null,
+      googleSubject: null,
+      googleEmail: null,
       termsVersion: body.terms_version,
       linkTicketId: link?.ticketHash ?? null,
       codeHash: await emailCodeHash(codeKey, email, code, body.code_challenge),

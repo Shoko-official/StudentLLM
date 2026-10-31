@@ -76,7 +76,7 @@ export function runAuthStoreContract(label: string, factory: StoreFactory): void
       const { authChallenges } = factory();
       const pending: PendingSignIn = {
         id: "g1", kind: "google", stateHash: "sh", emailHash: null, codeChallenge: "cc", redirectType: "loopback",
-        redirectUri: "http://127.0.0.1:50321/callback", appState: "app-state-0123456789", deviceLabel: "Laptop",
+        redirectUri: "http://127.0.0.1:50321/callback", appState: "app-state-0123456789", deviceLabel: "Laptop", googleSubject: "sub-1", googleEmail: "a@example.invalid",
         termsVersion: "v1", linkTicketId: null, codeHash: null, accountId: null, attempts: 0, resends: 0, createdAt: T0, expiresAt: T0 + 600_000,
       };
       await authChallenges.put(pending);
@@ -89,7 +89,7 @@ export function runAuthStoreContract(label: string, factory: StoreFactory): void
     const setup = async (stores: Stores) => {
       await stores.authChallenges.put({
         id: "p1", kind: "email", stateHash: null, emailHash: EH, codeChallenge: "cc", redirectType: null, redirectUri: null, appState: null,
-        deviceLabel: null, termsVersion: "v1", linkTicketId: null, codeHash: "right", accountId: null, attempts: 0, resends: 0,
+        deviceLabel: null, googleSubject: null, googleEmail: null, termsVersion: "v1", linkTicketId: null, codeHash: "right", accountId: null, attempts: 0, resends: 0,
         createdAt: T0, expiresAt: T0 + 600_000,
       });
     };

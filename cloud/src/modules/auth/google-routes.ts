@@ -131,6 +131,8 @@ export function authStartHandler(deps: Deps): Handler {
       redirectUri: q.redirect_uri,
       appState: q.state,
       deviceLabel: null,
+      googleSubject: null,
+      googleEmail: null,
       termsVersion: q.terms_version,
       linkTicketId: link?.ticketHash ?? null,
       codeHash: null,
@@ -151,7 +153,8 @@ export function authStartHandler(deps: Deps): Handler {
 }
 
 type Resolution =
-  | { ok: true; account: AccountRecord; linked: boolean }
+  /** `account` is null for a new user: the account is created at /auth/token (after the PKCE proof). */
+  | { ok: true; account: AccountRecord | null; linked: boolean; newIdentity?: { subject: string; email: string } }
   | { ok: false; error: RedirectErrorCode };
 
 /** Applies the identity rules to a verified Google identity. */
@@ -179,25 +182,15 @@ async function resolveIdentity(
 
   // Lookup by subject first, then by email. A known subject is that account even if Google's email changed
   // since (the stored email is not updated). A matching email alone never links or merges accounts.
-  let account = bySubject;
+  // Nothing is created or recorded here: a new account and the acceptance of the terms are made at /auth/token,
+  // once the app proved it holds the PKCE verifier.
+  const account = bySubject;
   if (!account) {
     if (await accounts.getByEmail(email)) return { ok: false, error: "identity_conflict" };
-    const created = await accounts.create({
-      accountId: randomToken("acc_", 16),
-      email,
-      googleSubject: identity.subject,
-      loginMethods: ["google"],
-      termsVersion: pending.termsVersion,
-      now,
-    });
-    if (!created.ok) return { ok: false, error: "identity_conflict" };
-    account = created.account;
+    return { ok: true, account: null, linked: false, newIdentity: { subject: identity.subject, email } };
   }
   if (!account.loginMethods.includes("google")) return { ok: false, error: "identity_conflict" };
   if (account.status === "deleting") return { ok: false, error: "access_denied" };
-  if (account.termsVersion !== pending.termsVersion) {
-    account = (await accounts.acceptTerms(account.accountId, pending.termsVersion, now)) ?? account;
-  }
   return { ok: true, account, linked: false };
 }
 
@@ -243,11 +236,13 @@ export function authCallbackHandler(deps: Deps): Handler {
       id: randomToken("pg_", 16),
       stateHash: null,
       codeHash: await googleAuthCodeHash(codeKey, authCode),
-      accountId: resolved.account.accountId,
+      accountId: resolved.account?.accountId ?? null,
+      googleSubject: resolved.newIdentity?.subject ?? null,
+      googleEmail: resolved.newIdentity?.email ?? null,
       createdAt: now,
       expiresAt: now + GOOGLE_CODE_TTL_MS,
     });
-    if (resolved.linked) {
+    if (resolved.linked && resolved.account) {
       ctx.waitUntil(
         deps.auth.email
           .send({ kind: "login_method_linked", to: resolved.account.email, method: "google" })
@@ -265,7 +260,8 @@ export function authTokenHandler(deps: Deps): Handler {
     const { authChallenges, accounts } = deps.stores;
     const codeKey = deps.config.secret("CODE_HMAC_KEY").reveal();
     const pending = await authChallenges.getByCodeHash(await googleAuthCodeHash(codeKey, body.code), now);
-    if (!pending || pending.kind !== "google" || pending.accountId === null || pending.redirectUri === null) throw new ApiError("invalid_code");
+    if (!pending || pending.kind !== "google" || pending.redirectUri === null) throw new ApiError("invalid_code");
+    if (pending.accountId === null && (pending.googleSubject === null || pending.googleEmail === null)) throw new ApiError("invalid_code");
 
     // A wrong verifier or redirect address burns the code (OAuth security guidance): it cannot be tried again.
     const redirectOk = constantTimeEqual(pending.redirectUri, body.redirect_uri);
@@ -275,14 +271,42 @@ export function authTokenHandler(deps: Deps): Handler {
       throw new ApiError("invalid_code");
     }
 
-    const account = await accounts.getById(pending.accountId);
-    if (!account || account.status === "deleting") throw new ApiError("invalid_code");
-
+    // The link was made at the callback; completion returns success, not a session.
     if (pending.linkTicketId !== null) {
-      // The link was made at the callback; completion returns success, not a session.
+      const linked = pending.accountId ? await accounts.getById(pending.accountId) : null;
+      if (!linked || linked.status === "deleting") throw new ApiError("invalid_code");
       if (!(await authChallenges.consume(pending.id, now))) throw new ApiError("invalid_code");
-      const result: LinkResult = { linked: true, method: "google", login_methods: account.loginMethods };
+      const result: LinkResult = { linked: true, method: "google", login_methods: linked.loginMethods };
       return jsonResponse(result, ctx.requestId);
+    }
+
+    // The terms the user accepted must still be the current ones.
+    if (pending.termsVersion !== deps.config.termsVersion) throw termsRequired(deps);
+    let account = pending.accountId !== null ? await accounts.getById(pending.accountId) : null;
+    if (pending.accountId === null) {
+      // A new user: the account is created now, after the PKCE proof, with the accepted terms.
+      const created = await accounts.create({
+        accountId: randomToken("acc_", 16),
+        email: pending.googleEmail!,
+        googleSubject: pending.googleSubject,
+        loginMethods: ["google"],
+        termsVersion: pending.termsVersion,
+        now,
+      });
+      if (created.ok) account = created.account;
+      else {
+        // The same code redeemed twice at once: the other call created this very identity, which is the same user.
+        account = await accounts.getByGoogleSubject(pending.googleSubject!);
+        if (!account) {
+          await authChallenges.consume(pending.id, now);
+          throw new ApiError("identity_conflict"); // the address was taken between the callback and now
+        }
+      }
+    }
+    if (!account || account.status === "deleting" || !account.loginMethods.includes("google")) throw new ApiError("invalid_code");
+    // Signing in with the current terms is the explicit acceptance of them.
+    if (account.termsVersion !== pending.termsVersion) {
+      account = (await accounts.acceptTerms(account.accountId, pending.termsVersion, now)) ?? account;
     }
 
     const result = await completeSignIn(deps, { account, pendingId: pending.id, deviceId: body.device_id, deviceLabel: body.device_label });

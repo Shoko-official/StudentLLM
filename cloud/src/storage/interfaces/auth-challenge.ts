@@ -23,6 +23,13 @@ export interface PendingSignIn {
    */
   redirectUri: string | null;
   appState: string | null;
+  /**
+   * Google: the verified identity of a sign-in that will CREATE an account, held for the 60 seconds of the
+   * authorization code so that the account is created at `/auth/token`, after the PKCE proof, and not at the
+   * callback. Null otherwise (an existing account is named by `accountId`).
+   */
+  googleSubject: string | null;
+  googleEmail: string | null;
   /** The device label from the request, held for at most the 10 minutes of the pending sign-in. */
   deviceLabel: string | null;
   termsVersion: string;

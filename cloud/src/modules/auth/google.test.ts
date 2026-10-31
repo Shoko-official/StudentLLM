@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { base64urlEncode, utf8Encode } from "../../crypto/encoding";
 import { sha256Hex } from "../../crypto/hash";
+import { createInMemoryStores } from "../../storage";
 import { bearer, makeAuthApp, pkcePair, type AuthHarness } from "../../testing/auth-app";
+import { chaosStores } from "../../testing/store-contract";
 import { FakeGoogle, type FakeIdentity, type TokenOverrides } from "../../testing/fake-google";
 import type { TokenResponse } from "../../types";
 import { classifyRedirectUri } from "./google-routes";
@@ -413,6 +415,67 @@ describe("POST /auth/token", () => {
     expect(body.error.code).toBe("device_limit_reached");
     expect(body.manage_token).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain("mt_");
+  });
+});
+
+describe("nothing is created before the PKCE proof", () => {
+  it("creates no account at the callback, and creates it at /auth/token with the accepted terms", async () => {
+    const t = await makeAuthApp();
+    const pkce = await pkcePair();
+    const { back } = await browserLeg(t, IDENTITY, { challenge: pkce.challenge });
+    expect(back!.searchParams.get("code")).toBeTruthy();
+    expect(await t.stores.accounts.getByEmail(IDENTITY.email)).toBeNull();
+    expect(await t.stores.accounts.getByGoogleSubject(IDENTITY.sub)).toBeNull();
+
+    // A wrong verifier burns the code: still no account, ever.
+    const attacker = await pkcePair();
+    expect(await code(await t.post("/auth/token", tokenBody(back!.searchParams.get("code")!, attacker.verifier)))).toBe("invalid_code");
+    expect(await t.stores.accounts.getByEmail(IDENTITY.email)).toBeNull();
+
+    // The right verifier on a fresh flow creates it, with the terms of the flow.
+    const pkce2 = await pkcePair();
+    const second = await browserLeg(t, IDENTITY, { challenge: pkce2.challenge });
+    expect(await t.stores.accounts.getByEmail(IDENTITY.email)).toBeNull();
+    const res = await t.post("/auth/token", tokenBody(second.back!.searchParams.get("code")!, pkce2.verifier));
+    expect(res.status).toBe(200);
+    const account = (await t.stores.accounts.getByEmail(IDENTITY.email))!;
+    expect(account).toMatchObject({ googleSubject: IDENTITY.sub, loginMethods: ["google"], termsVersion: t.deps.config.termsVersion });
+  });
+
+  it("does not record the terms of an existing account at the callback either", async () => {
+    const t = await makeAuthApp();
+    await t.googleSignIn(IDENTITY);
+    const account = (await t.stores.accounts.getByEmail(IDENTITY.email))!;
+    await t.stores.accounts.acceptTerms(account.accountId, "2025-01-01", t.clock.now());
+    const pkce = await pkcePair();
+    const { back } = await browserLeg(t, IDENTITY, { challenge: pkce.challenge });
+    expect(back!.searchParams.get("code")).toBeTruthy();
+    expect((await t.stores.accounts.getById(account.accountId))!.termsVersion).toBe("2025-01-01");
+    expect((await t.post("/auth/token", tokenBody(back!.searchParams.get("code")!, pkce.verifier))).status).toBe(200);
+    expect((await t.stores.accounts.getById(account.accountId))!.termsVersion).toBe(t.deps.config.termsVersion);
+  });
+
+  it("creates the account once when the same code is redeemed in parallel", async () => {
+    const t = await makeAuthApp({ stores: chaosStores(createInMemoryStores(), 21) });
+    const pkce = await pkcePair();
+    const { back } = await browserLeg(t, IDENTITY, { challenge: pkce.challenge });
+    const c = back!.searchParams.get("code")!;
+    const results = await Promise.all(Array.from({ length: 6 }, () => t.post("/auth/token", tokenBody(c, pkce.verifier))));
+    expect(results.filter((r) => r.status === 200)).toHaveLength(1);
+    const account = (await t.stores.accounts.getByEmail(IDENTITY.email))!;
+    expect(await t.stores.devices.list(account.accountId)).toHaveLength(1);
+  });
+
+  it("answers identity_conflict at /auth/token when the address was taken after the callback", async () => {
+    const t = await makeAuthApp();
+    const pkce = await pkcePair();
+    const { back } = await browserLeg(t, IDENTITY, { challenge: pkce.challenge });
+    // The same address signs up by email in between.
+    await t.stores.accounts.create({ accountId: "acc_other", email: IDENTITY.email, googleSubject: null, loginMethods: ["email"], termsVersion: t.deps.config.termsVersion, now: t.clock.now() });
+    const res = await t.post("/auth/token", tokenBody(back!.searchParams.get("code")!, pkce.verifier));
+    expect(res.status).toBe(409);
+    expect(await code(res)).toBe("identity_conflict");
+    expect((await t.stores.accounts.getByEmail(IDENTITY.email))!.googleSubject).toBeNull();
   });
 });
 

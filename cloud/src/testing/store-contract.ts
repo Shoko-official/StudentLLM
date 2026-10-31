@@ -649,7 +649,7 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
     const EH = "eh" as StableHash;
     const pending = (over: Partial<PendingSignIn> = {}): PendingSignIn => ({
       id: "p1", kind: "email", stateHash: null, emailHash: EH, codeChallenge: "cc", redirectType: null, termsVersion: "v1",
-      linkTicketId: null, redirectUri: null, appState: null, deviceLabel: null, codeHash: "right", accountId: null, attempts: 0, resends: 0, createdAt: T0, expiresAt: T0 + 600_000, ...over,
+      linkTicketId: null, redirectUri: null, appState: null, deviceLabel: null, googleSubject: null, googleEmail: null, codeHash: "right", accountId: null, attempts: 0, resends: 0, createdAt: T0, expiresAt: T0 + 600_000, ...over,
     });
     const verify = (candidateCodeHash: string, over: { consume?: boolean; maxAttempts?: number; now?: number } = {}) =>
       factoryStores!.authChallenges.verifyEmailCode({ emailHash: EH, candidateCodeHash, maxAttempts: over.maxAttempts ?? 5, consume: over.consume ?? true, now: over.now ?? T0 });
