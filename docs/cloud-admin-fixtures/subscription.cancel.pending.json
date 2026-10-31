@@ -1,0 +1,42 @@
+{
+  "name": "subscription.cancel.pending",
+  "operation": "cancelSubscription",
+  "description": "A cancellation at period end. Paddle was unreachable, so the operation stays visible as pending with a retry time; windows are unchanged until Paddle confirms.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/accounts/acc_01EXAMPLE/subscription/cancel",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+    },
+    "body": {
+      "effective_from": "period_end",
+      "reason": "User asked by email to stop renewal, ticket EX-1187.",
+      "notify_user": true
+    }
+  },
+  "response": {
+    "status": 202,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "operation_id": "opr_01EXAMPLECANCEL",
+      "kind": "subscription_cancel",
+      "account_id": "acc_01EXAMPLE",
+      "state": "pending",
+      "effective_from": "period_end",
+      "executes_at": null,
+      "attempts": 1,
+      "last_error_code": "paddle_unavailable",
+      "next_retry_at": "2026-11-02T10:35:00Z",
+      "requested_by_admin_id": "adm_01EXAMPLEADMIN",
+      "created_at": "2026-11-02T10:30:00Z",
+      "updated_at": "2026-11-02T10:30:05Z",
+      "audit_id": "aud_01EXAMPLE0044"
+    }
+  },
+  "response_schema": "Operation"
+}

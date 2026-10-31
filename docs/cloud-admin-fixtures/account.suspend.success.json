@@ -1,0 +1,41 @@
+{
+  "name": "account.suspend.success",
+  "operation": "suspendAccount",
+  "description": "A 30-day ban with a blocklist entry for the email and the Google subject id. Sessions and manage tokens are revoked; the data-rights routes keep working for the user.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/accounts/acc_01EXAMPLE/suspend",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+    },
+    "body": {
+      "reason": "Repeated automated scraping of the service, ticket EX-2201.",
+      "reason_category": "abuse",
+      "duration_days": 30,
+      "blocklist": true,
+      "blocklist_days": 365,
+      "notify_user": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "account_id": "acc_01EXAMPLE",
+      "status": "suspended",
+      "expires_at": "2026-12-02T10:00:00Z",
+      "sessions_revoked": 2,
+      "manage_tokens_revoked": 0,
+      "blocklist_entry_ids": [
+        "blk_01EXAMPLEMAIL",
+        "blk_01EXAMPLEGSUB"
+      ]
+    }
+  },
+  "response_schema": "SuspensionResult"
+}

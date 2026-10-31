@@ -1,0 +1,22 @@
+{
+  "description": "Shared conformance fixtures for the admin API. Each file has an operation (an operationId of docs/cloud-admin.openapi.yaml), a request, a response and the schema that the response body must match. All values are examples, not real tokens, addresses, ids or hashes. Validate with scripts/validate-cloud-contract.py.",
+  "fixtures": [
+    "session.get.success.json",
+    "account.read.success.json",
+    "grant.create.success.json",
+    "grant.create.window_overlap.json",
+    "grant.create.limit_exceeded.json",
+    "grant.create.forbidden_role.json",
+    "grant.create.idempotency_conflict.json",
+    "account.suspend.success.json",
+    "account.suspend.reauth_required.json",
+    "account.deletion.cooling_off.json",
+    "account.deletion.confirmation_mismatch.json",
+    "subscription.cancel.pending.json",
+    "sessions.revoke_all.writes_frozen.json",
+    "admin.remove.last_owner_protected.json",
+    "invitation.create.success.json",
+    "invitation.accept.invalid.json",
+    "audit.list.success.json"
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "name": "grant.create.limit_exceeded",
+  "operation": "createGrant",
+  "description": "The per-account yearly cap on grant days would be exceeded. The cap is configuration; the response names the limit and the room left.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/accounts/acc_01EXAMPLE/grants",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+    },
+    "body": {
+      "days": 60,
+      "credit_budget_per_window": 12500,
+      "start_policy": "now",
+      "reason": "Private beta tester, ticket EX-1042.",
+      "reason_category": "beta_tester",
+      "notify_user": true
+    }
+  },
+  "response": {
+    "status": 422,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "limit_exceeded",
+        "message": "This grant would exceed a configured limit.",
+        "request_id": "req_01EXAMPLE0000000000000001",
+        "details": {
+          "limit": "grant_max_days_per_account_per_year",
+          "max": 180,
+          "current": 150
+        }
+      }
+    }
+  },
+  "response_schema": "Error"
+}

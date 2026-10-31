@@ -1,0 +1,65 @@
+{
+  "name": "audit.list.success",
+  "operation": "listAuditLog",
+  "description": "Two consecutive rows, newest first. Each row_hash is the SHA-256 of prev_hash, a newline and the canonical JSON of the row, so the validator recomputes the chain. There is no IP address, no content and no token in a row.",
+  "request": {
+    "method": "GET",
+    "path": "/admin/v1/audit?target_account_id=acc_01EXAMPLE&limit=2",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "data": [
+        {
+          "audit_id": "aud_01EXAMPLE0042",
+          "seq": 42,
+          "occurred_at": "2026-11-02T10:30:10Z",
+          "actor_kind": "admin",
+          "actor_admin_id": "adm_01EXAMPLEADMIN",
+          "actor_role": "admin",
+          "action": "grant.create",
+          "target_account_id": "acc_01EXAMPLE",
+          "target_admin_id": null,
+          "reason": "Private beta tester, ticket EX-1042.",
+          "request_id": "req_01EXAMPLE0000000000000001",
+          "result": "success",
+          "result_code": null,
+          "params": {
+            "days": 30,
+            "credits_per_window": 12500,
+            "start_policy": "now",
+            "grant_id": "grt_01EXAMPLE"
+          },
+          "prev_hash": "0d834722f7cebbc6a8f6bf1f4ca4aac0a621d37937c1e59d53f97aad09d84f41",
+          "row_hash": "08aa34060f77e450476c3f8b08b01db1bf925a439ba4f06e263afa9c5c4ee09d"
+        },
+        {
+          "audit_id": "aud_01EXAMPLE0041",
+          "seq": 41,
+          "occurred_at": "2026-11-02T10:29:40Z",
+          "actor_kind": "admin",
+          "actor_admin_id": "adm_01EXAMPLEADMIN",
+          "actor_role": "admin",
+          "action": "account.read",
+          "target_account_id": "acc_01EXAMPLE",
+          "target_admin_id": null,
+          "reason": null,
+          "request_id": "req_01EXAMPLE0000000000000040",
+          "result": "success",
+          "result_code": null,
+          "params": {},
+          "prev_hash": "abababababababababababababababababababababababababababababababab",
+          "row_hash": "0d834722f7cebbc6a8f6bf1f4ca4aac0a621d37937c1e59d53f97aad09d84f41"
+        }
+      ],
+      "next_cursor": null
+    }
+  },
+  "response_schema": "AuditList"
+}

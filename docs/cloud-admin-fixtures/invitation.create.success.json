@@ -1,0 +1,37 @@
+{
+  "name": "invitation.create.success",
+  "operation": "createInvitation",
+  "description": "An invitation by email with a role. The 12-character code is sent to the invited address by the service and is never returned by the API. The owner must also add the email to the Access allowlist.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/invitations",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+    },
+    "body": {
+      "email": "new-admin@example.invalid",
+      "role": "support",
+      "reason": "Part-time support helper for the beta, ticket EX-6002.",
+      "expires_in_hours": 72
+    }
+  },
+  "response": {
+    "status": 201,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "invitation_id": "inv_01EXAMPLE",
+      "email": "new-admin@example.invalid",
+      "role": "support",
+      "state": "pending",
+      "expires_at": "2026-11-05T10:30:00Z",
+      "created_by_admin_id": "adm_01EXAMPLEOWNER",
+      "created_at": "2026-11-02T10:30:00Z"
+    }
+  },
+  "response_schema": "Invitation"
+}

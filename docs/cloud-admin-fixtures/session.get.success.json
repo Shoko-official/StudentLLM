@@ -1,0 +1,30 @@
+{
+  "name": "session.get.success",
+  "operation": "getAdminSession",
+  "description": "The session of an owner who has not re-authenticated recently. The CSRF token is returned here, kept in memory by the UI, and never placed in a URL or in storage.",
+  "request": {
+    "method": "GET",
+    "path": "/admin/v1/session",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001",
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "admin_id": "adm_01EXAMPLEOWNER",
+      "email": "owner@example.invalid",
+      "role": "owner",
+      "csrf_token": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
+      "reauth_fresh_until": null,
+      "writes_frozen": false,
+      "server_time": "2026-11-02T09:00:00Z"
+    }
+  },
+  "response_schema": "AdminSession"
+}

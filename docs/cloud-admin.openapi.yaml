@@ -1,0 +1,1999 @@
+openapi: 3.1.0
+info:
+  title: StudentLLM Cloud Admin API
+  version: 1.0.0-draft
+  summary: Planned HTTP contract of the admin surface of the optional StudentLLM cloud service (not implemented).
+  description: |
+    Machine-readable contract of the admin surface. `docs/cloud-admin.md` explains it and holds the design
+    decisions; `docs/cloud-plan.md` holds the product plan. Draft for review. Conformance fixtures live in
+    `docs/cloud-admin-fixtures/`.
+
+    **Separate surface.** This API is served only on the admin hostname, under the `/admin/v1` prefix, behind a
+    zero-trust gate (Cloudflare Access or an equivalent). The desktop app never calls it. The public contract
+    (`docs/cloud-api.openapi.yaml`) does not list it, and the public API never accepts an admin credential.
+
+    **Authentication.** Every request carries the Access JWT in `Cf-Access-Jwt-Assertion`. The admin service
+    verifies it itself (signature, issuer, audience, expiry, pinned algorithm), maps the verified email to an
+    admin record and fails closed. There are no passwords, no API keys and no long-lived admin tokens. Operations
+    marked `x-requires-fresh-auth` need a re-authentication within the last 300 seconds
+    (`reauth_required` otherwise).
+
+    **Roles.** `support` < `admin` < `owner`. Each operation states the minimum role in `x-required-role`
+    (`invitee` is the single route open to a verified identity that is not yet an admin). A higher role always
+    includes a lower one, except where `x-required-role` is `owner` (only owners).
+
+    **Writes.** Every state-changing operation (any non-GET route, except the read-only POST routes marked
+    `x-read-only`) needs: the CSRF header, an `Idempotency-Key`, and a mandatory `reason` in the body. They are
+    all blocked by the global freeze (`admin_writes_frozen`) unless marked `x-allowed-when-frozen`. Operations
+    marked `x-destructive` additionally notify the owners by email.
+
+    **Privacy.** The admin surface returns only what the service stores. No response, audit row or error carries
+    course content, a prompt, a model answer, an IP address, a token or a one-time code.
+
+    **Errors.** One envelope (`Error`), the same style as the public API, with its own code list (`ErrorCode`).
+    Messages are English, short, and never contain content, secrets or provider text.
+
+    **Pagination.** Cursor pagination: request `limit` and `cursor`, response `data` and `next_cursor`
+    (`null` on the last page). No offset pagination.
+
+    **Versioning.** The `/admin/v1` prefix is stable. Additive changes (optional fields, endpoints, error codes,
+    enum values clients must tolerate) are allowed inside it. Hard ceilings written as schema `maximum` values
+    (for example grant days and credits) can only be lowered by configuration and raised by a new contract version.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: https://admin.example.invalid
+    description: "[PLACEHOLDER: admin hostname, distinct from the public API hostname]"
+security:
+  - cloudflareAccess: []
+tags:
+  - name: session
+  - name: system
+  - name: accounts
+  - name: grants
+  - name: billing
+  - name: moderation
+  - name: admins
+  - name: audit
+paths:
+  /admin/v1/session:
+    get:
+      tags: [session]
+      operationId: getAdminSession
+      summary: Who am I, plus the CSRF token for this session
+      description: |
+        Maps the verified Access identity to an admin record and returns the role, the freshness of the last
+        re-authentication, the freeze state and a CSRF token bound to this session (kept in memory by the UI,
+        never in storage or a URL). The first call of a new session writes an `admin.session_start` audit row.
+        A verified identity with no admin record gets `admin_not_registered`; the UI then offers the invitation
+        screen (the only route open to such an identity is `POST /admin/v1/invitations/accept`).
+      x-required-role: support
+      x-audit-action: admin.session_start
+      responses:
+        "200":
+          description: The session.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminSession" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/session/reauth:
+    post:
+      tags: [session]
+      operationId: startReauth
+      summary: Start a step-up re-authentication
+      description: |
+        Records that a step-up started now and returns the URL that forces a fresh login at the gate (a
+        dedicated Access application with the shortest session lifetime, or the service-side passkey step-up
+        if the platform cannot do that; see the design document). The step-up completes on
+        `GET /admin/v1/session/reauth/complete`. Not a data change: no idempotency key or reason.
+      x-required-role: support
+      x-read-only: true
+      x-allowed-when-frozen: true
+      x-audit-action: admin.reauth_start
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      responses:
+        "200":
+          description: Where to go.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReauthStart" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/session/reauth/complete:
+    get:
+      tags: [session]
+      operationId: completeReauth
+      summary: Finish a step-up re-authentication (browser redirect target)
+      description: |
+        Accepted only if a step-up was started for this session and the presented Access JWT was issued after it
+        started. On success the session records `reauth_at = now` and the browser is redirected to the UI. On
+        any failure the redirect carries `?reauth=failed` with no detail. The route changes only the caller's
+        own session freshness, from verified data, so a forged navigation gives an attacker nothing.
+      x-required-role: support
+      x-allowed-when-frozen: true
+      x-audit-action: admin.reauth_complete
+      responses:
+        "303":
+          description: Redirect to the UI.
+          headers:
+            Location: { schema: { type: string } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /admin/v1/system:
+    get:
+      tags: [system]
+      operationId: getSystemState
+      summary: Freeze state, configured limits and the audit chain head
+      x-required-role: support
+      responses:
+        "200":
+          description: System state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemState" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/system/freeze:
+    post:
+      tags: [system]
+      operationId: freezeAdminWrites
+      summary: Freeze all admin writes (kill switch)
+      description: |
+        Every write route then returns `admin_writes_frozen`; reads, the audit log and the unfreeze route keep
+        working. Any admin may freeze (a fast response to a suspected compromise); only an owner can unfreeze.
+        Repeating while frozen is a no-op that returns the current state. Notifies the owners.
+      x-required-role: admin
+      x-allowed-when-frozen: true
+      x-destructive: true
+      x-audit-action: system.freeze
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: Frozen.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/system/unfreeze:
+    post:
+      tags: [system]
+      operationId: unfreezeAdminWrites
+      summary: Lift the freeze (owner, fresh re-authentication)
+      x-required-role: owner
+      x-requires-fresh-auth: true
+      x-allowed-when-frozen: true
+      x-destructive: true
+      x-audit-action: system.unfreeze
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: Unfrozen.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemState" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/accounts/search:
+    post:
+      tags: [accounts]
+      operationId: searchAccounts
+      summary: Search accounts by email, email prefix, account id or status
+      description: |
+        A POST with a JSON body so that an email address never appears in a URL, a log line or browser
+        history. Read only: no reason and no idempotency key. The email is the stored sign-in email,
+        compared after the same normalization the service uses. `email_prefix` needs at least 6 characters.
+        Pages hold at most 25 results and the route has its own tight rate limit. The audit row records the
+        kind of query and the number of results, never the query value.
+      x-required-role: support
+      x-read-only: true
+      x-audit-action: account.search
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccountSearchRequest" }
+      responses:
+        "200":
+          description: A page of account summaries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountSearchResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}:
+    get:
+      tags: [accounts]
+      operationId: getAdminAccount
+      summary: Read one account record
+      description: |
+        Account metadata only: id, verified email, login methods, status, plan and budget windows (with their
+        source), usage totals, device count, consent state, pending operations. `billing` (Paddle ids) is `null`
+        for the `support` role. Never contains content. Every call writes an `account.read` audit row before
+        the response is sent; if the audit write fails the read fails (`audit_unavailable`).
+      x-required-role: support
+      x-audit-action: account.read
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+      responses:
+        "200":
+          description: The account.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminAccount" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/devices:
+    get:
+      tags: [accounts]
+      operationId: listAccountDevices
+      summary: List the devices and their session metadata
+      description: Device label, platform name, dates and expiry only. No IP address and no token. Audited as `account.devices_read`.
+      x-required-role: support
+      x-audit-action: account.devices_read
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+      responses:
+        "200":
+          description: Devices (at most 3).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminDeviceList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/devices/{device_id}/revoke:
+    post:
+      tags: [accounts]
+      operationId: revokeAccountDevice
+      summary: Revoke one device and its session family
+      description: |
+        Uses the same domain function as `DELETE /v1/devices/{device_id}`: the revocation is written to the
+        account's Durable Object and is effective on the next inference request. Sends a notification email to the
+        account address unless `notify_user` is false.
+      x-required-role: admin
+      x-audit-action: device.revoke
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/DeviceId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RevokeRequest" }
+      responses:
+        "200":
+          description: Revoked (idempotent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevokeResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/sessions/revoke-all:
+    post:
+      tags: [accounts]
+      operationId: revokeAllAccountSessions
+      summary: Revoke every session and manage token of an account
+      description: |
+        Revokes all session families, all devices and all unexpired manage tokens through the same domain
+        functions the public API uses. The account itself is unchanged (use the suspend route to block it). Sends
+        a notification email unless `notify_user` is false.
+      x-required-role: admin
+      x-audit-action: sessions.revoke_all
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RevokeRequest" }
+      responses:
+        "200":
+          description: Revoked (idempotent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevokeResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/grants:
+    get:
+      tags: [grants]
+      operationId: listAccountGrants
+      summary: List the complimentary grants of an account
+      description: Audited as `grant.list`. Paginated.
+      x-required-role: support
+      x-audit-action: grant.list
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: A page of grants.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrantList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    post:
+      tags: [grants]
+      operationId: createGrant
+      summary: Grant a complimentary period (free trial)
+      description: |
+        Creates a grant and its budget windows with source `admin_grant`, with no payment. `days` is explicit
+        (1 to the configured maximum, never above the contract ceiling of 90). `credit_budget_per_window` is an
+        optional override, within the configured cap (never above the contract ceiling); the default is the
+        standard Plus window limit. A grant is split into windows of at most 30 days (the last one prorated and
+        rounded down). Rules, enforced by the shared window domain function:
+        one window per period and no stacking (a grant never overlaps another window);
+        `start_policy: now` is refused with `window_overlap` while a paid or granted window is active;
+        `after_current_windows` queues after windows whose end is known and is refused for an auto-renewing
+        subscription; the account must be `active`; the per-grant total credit cap, the per-account yearly
+        grant-day cap, the per-admin daily count and the global monthly grant credit cap must all hold
+        (`limit_exceeded` with `details.limit`). The target cannot be the acting admin's own user account
+        (`self_action_forbidden`). Sends a notification email unless `notify_user` is false.
+      x-required-role: admin
+      x-audit-action: grant.create
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GrantCreateRequest" }
+      responses:
+        "201":
+          description: Grant created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/grants/{grant_id}:
+    get:
+      tags: [grants]
+      operationId: getGrant
+      summary: Read one grant
+      description: Audited as `grant.read`.
+      x-required-role: support
+      x-audit-action: grant.read
+      parameters:
+        - { $ref: "#/components/parameters/GrantId" }
+      responses:
+        "200":
+          description: The grant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/grants/{grant_id}/shorten:
+    post:
+      tags: [grants]
+      operationId: shortenGrant
+      summary: Shorten a grant
+      description: |
+        Moves the end of the grant earlier (never later; a longer period is a new grant, so the caps stay
+        honest). Windows after the new end are removed, the window containing it is cut, and credits already
+        used stay used. Bumps the plan version. Sends a notification email unless `notify_user` is false.
+      x-required-role: admin
+      x-audit-action: grant.shorten
+      parameters:
+        - { $ref: "#/components/parameters/GrantId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GrantShortenRequest" }
+      responses:
+        "200":
+          description: Shortened.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/grants/{grant_id}/revoke:
+    post:
+      tags: [grants]
+      operationId: revokeGrant
+      summary: Revoke a grant
+      description: |
+        Ends every window of the grant now; the remaining credits become unusable on the next request (the
+        revocation is written to the account's Durable Object). Credits already used stay used and counted.
+        Only the grant's own windows are touched, never a paid window. Bumps the plan version.
+      x-required-role: admin
+      x-audit-action: grant.revoke
+      parameters:
+        - { $ref: "#/components/parameters/GrantId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RevokeRequest" }
+      responses:
+        "200":
+          description: Revoked (idempotent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/stats/grants:
+    get:
+      tags: [grants]
+      operationId: getGrantStats
+      summary: Grant totals for cost monitoring
+      description: |
+        Aggregates only, no account ids: credits granted and used by month, the configured monthly cap and how
+        much of it is committed. The same totals feed the gateway's cost monitoring and the global spend cap.
+      x-required-role: admin
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Totals.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrantStats" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/accounts/{account_id}/subscription/cancel:
+    post:
+      tags: [billing]
+      operationId: cancelSubscription
+      summary: Cancel (résilier) the Paddle subscription
+      description: |
+        `effective_from: period_end` schedules the cancellation at the end of the paid period (Paddle
+        `next_billing_period`); `immediately` cancels now, ends the current paid window at once and needs a
+        fresh re-authentication. The call creates an operation and answers 202 with state `pending`: the
+        windows change only when Paddle has confirmed (the response of the cancel call, then the subscription
+        webhook). A failure leaves the operation `pending` with `next_retry_at` (bounded backoff, an owner
+        alert after repeated failures) and an admin can retry it. A semester pass has no subscription to cancel:
+        the route returns `state_conflict`. Refunds are not issued here (see the design document). Sends a
+        notification email unless `notify_user` is false.
+      x-required-role: admin
+      x-audit-action: subscription.cancel
+      x-conditionally-fresh-auth: "effective_from = immediately"
+      x-conditionally-destructive: "effective_from = immediately"
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CancelRequest" }
+      responses:
+        "202":
+          description: Accepted; the operation is pending until Paddle confirms.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/operations:
+    get:
+      tags: [billing]
+      operationId: listOperations
+      summary: List cancellation and deletion operations
+      description: Filter by state to find what is pending or failed. Paginated. Not an account read, so not individually audited.
+      x-required-role: support
+      parameters:
+        - { name: state, in: query, required: false, schema: { $ref: "#/components/schemas/OperationState" } }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: A page of operations.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/operations/{operation_id}:
+    get:
+      tags: [billing]
+      operationId: getOperation
+      summary: Read one operation
+      x-required-role: support
+      parameters:
+        - { $ref: "#/components/parameters/OperationId" }
+      responses:
+        "200":
+          description: The operation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/operations/{operation_id}/retry:
+    post:
+      tags: [billing]
+      operationId: retryOperation
+      summary: Retry a pending or failed operation now
+      description: |
+        Re-runs the next step of a cancellation or deletion immediately instead of waiting for the scheduled
+        retry. Steps are idempotent against Paddle (an already canceled subscription counts as success after a
+        re-fetch).
+      x-required-role: admin
+      x-audit-action: operation.retry
+      parameters:
+        - { $ref: "#/components/parameters/OperationId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "202":
+          description: Retry started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/operations/{operation_id}/withdraw:
+    post:
+      tags: [billing]
+      operationId: withdrawOperation
+      summary: Withdraw a deletion that is still in its cooling-off period
+      description: |
+        Only a deletion in state `cooling_off` can be withdrawn; the account returns to the status it had
+        before the request. Any other operation or state gives `state_conflict`: a started deletion or a
+        confirmed cancellation cannot be undone.
+      x-required-role: admin
+      x-audit-action: operation.withdraw
+      parameters:
+        - { $ref: "#/components/parameters/OperationId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RevokeRequest" }
+      responses:
+        "200":
+          description: Withdrawn.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/suspend:
+    post:
+      tags: [moderation]
+      operationId: suspendAccount
+      summary: Ban or suspend an account
+      description: |
+        Sets the account status to `suspended` (the existing `account_suspended` behavior), revokes all sessions
+        and manage tokens, and optionally adds a keyed-hash entry to the blocklist so the email and the Google
+        subject id cannot register again. Data-rights routes keep working exactly as the public contract
+        requires. `duration_days` makes the suspension time-limited (a scheduled job lifts it and writes a
+        system audit row); omitted means until an admin lifts it. Needs a fresh re-authentication; notifies the
+        owners. The user gets a notification email with a fixed text for the reason category and the support
+        route, unless `notify_user` is false. Cannot target the acting admin's own user account.
+      x-required-role: admin
+      x-requires-fresh-auth: true
+      x-destructive: true
+      x-audit-action: account.suspend
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SuspendRequest" }
+      responses:
+        "200":
+          description: Suspended.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuspensionResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/unsuspend:
+    post:
+      tags: [moderation]
+      operationId: unsuspendAccount
+      summary: Lift a suspension
+      description: |
+        Sets the status back to `active`. Budget windows kept running during the suspension (time is not
+        paused). Sessions revoked by the suspension are not restored: the user signs in again. Optionally
+        removes the blocklist entries created by that suspension.
+      x-required-role: admin
+      x-audit-action: account.unsuspend
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UnsuspendRequest" }
+      responses:
+        "200":
+          description: Unsuspended.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuspensionResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/blocklist:
+    get:
+      tags: [moderation]
+      operationId: listBlocklist
+      summary: List re-registration blocklist entries
+      description: Entries hold only a keyed hash, which is never returned; the list shows kind, dates, creator and category. Paginated.
+      x-required-role: admin
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: A page of entries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlocklistList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/blocklist/{entry_id}/remove:
+    post:
+      tags: [moderation]
+      operationId: removeBlocklistEntry
+      summary: Remove a blocklist entry
+      x-required-role: admin
+      x-audit-action: blocklist.remove
+      parameters:
+        - { $ref: "#/components/parameters/BlocklistEntryId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: Removed (idempotent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlocklistEntry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/accounts/{account_id}/deletion:
+    post:
+      tags: [moderation]
+      operationId: requestAccountDeletion
+      summary: Delete an account (with an optional cooling-off period)
+      description: |
+        Needs a fresh re-authentication, a mandatory reason and `confirm_account_id` equal to the path id
+        (`confirmation_mismatch` otherwise; the UI also makes the admin type the id). With
+        `cooling_off_hours` above 0 the account is first placed in `suspended` (so it cannot be used, while the
+        data-rights routes still work and the user can export or delete the account themselves) and the
+        operation is `cooling_off` until `executes_at`; it can be withdrawn until then. At execution, and
+        immediately when `cooling_off_hours` is 0, the shared deletion domain function runs: tombstone `deleting`
+        keeping only the Paddle ids, cancel at Paddle immediately (retry with backoff and an owner alert),
+        purge everything else once the cancel succeeded, final notification email. The user also gets a
+        heads-up email when the request is made unless `notify_user` is false. Notifies the owners. Cannot target
+        the acting admin's own user account.
+      x-required-role: admin
+      x-requires-fresh-auth: true
+      x-destructive: true
+      x-audit-action: account.delete_request
+      parameters:
+        - { $ref: "#/components/parameters/AccountId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeletionRequest" }
+      responses:
+        "202":
+          description: Accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Operation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/admins:
+    get:
+      tags: [admins]
+      operationId: listAdmins
+      summary: List admins
+      description: Removed admins are not listed. Paginated.
+      x-required-role: owner
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: A page of admins.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/invitations:
+    get:
+      tags: [admins]
+      operationId: listInvitations
+      summary: List invitations
+      x-required-role: owner
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: A page of invitations (never the code).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitationList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    post:
+      tags: [admins]
+      operationId: createInvitation
+      summary: Invite an admin by email with a role
+      description: |
+        Creates a single-use invitation that expires (72 hours by default, 168 at most). The service emails a
+        12-character code to the invited address; the code is stored only as a keyed hash and is never returned
+        by the API or shown to the inviting owner. The invitation is accepted only by a request whose verified
+        Access identity has the invited email, so the owner must also add that email to the Access allowlist
+        (a manual step in v1). Needs a fresh re-authentication; notifies the owners. One pending invitation
+        per email.
+      x-required-role: owner
+      x-requires-fresh-auth: true
+      x-destructive: true
+      x-audit-action: admin.invite
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationCreateRequest" }
+      responses:
+        "201":
+          description: Invitation created and emailed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/invitations/accept:
+    post:
+      tags: [admins]
+      operationId: acceptInvitation
+      summary: Accept an invitation
+      description: |
+        The only route open to a verified Access identity that has no admin record. The identity's email must
+        equal the invitation email; the body carries the emailed code. Wrong code, wrong identity, expired,
+        used and over-attempted (5 attempts) all return the same `invitation_invalid`. The role comes from the
+        invitation, never from the request. Naturally single-use, so there is no idempotency key. Notifies the
+        owners.
+      x-required-role: invitee
+      x-allowed-when-frozen: false
+      x-audit-action: admin.invitation_accept
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationAcceptRequest" }
+      responses:
+        "200":
+          description: The new admin record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Admin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/invitations/{invitation_id}/revoke:
+    post:
+      tags: [admins]
+      operationId: revokeInvitation
+      summary: Revoke a pending invitation
+      x-required-role: owner
+      x-audit-action: admin.invitation_revoke
+      parameters:
+        - { $ref: "#/components/parameters/InvitationId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: Revoked (idempotent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/admins/{admin_id}/role:
+    post:
+      tags: [admins]
+      operationId: changeAdminRole
+      summary: Change an admin's role
+      description: |
+        Owner only, fresh re-authentication, notifies the owners. An owner cannot change their own role
+        (`self_action_forbidden`). Demoting the last enabled owner is refused (`last_owner_protected`); the
+        check and the change are one atomic step. The admin's open sessions are ended so the new role applies
+        at once.
+      x-required-role: owner
+      x-requires-fresh-auth: true
+      x-destructive: true
+      x-audit-action: admin.role_change
+      parameters:
+        - { $ref: "#/components/parameters/AdminId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoleChangeRequest" }
+      responses:
+        "200":
+          description: Changed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Admin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/admins/{admin_id}/disable:
+    post:
+      tags: [admins]
+      operationId: disableAdmin
+      summary: Disable an admin (reversible)
+      description: "Same rules as a role change: owner only, fresh re-authentication, not on oneself, never the last enabled owner. Ends the admin's sessions. Notifies the owners."
+      x-required-role: owner
+      x-requires-fresh-auth: true
+      x-destructive: true
+      x-audit-action: admin.disable
+      parameters:
+        - { $ref: "#/components/parameters/AdminId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: Disabled (idempotent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Admin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/admins/{admin_id}/enable:
+    post:
+      tags: [admins]
+      operationId: enableAdmin
+      summary: Re-enable a disabled admin
+      x-required-role: owner
+      x-requires-fresh-auth: true
+      x-destructive: true
+      x-audit-action: admin.enable
+      parameters:
+        - { $ref: "#/components/parameters/AdminId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: Enabled (idempotent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Admin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/admins/{admin_id}/remove:
+    post:
+      tags: [admins]
+      operationId: removeAdmin
+      summary: Remove an admin for good
+      description: |
+        Marks the record removed and erases the email; the admin id stays so that audit rows keep a stable
+        actor. Same rules as disabling: owner only, fresh re-authentication, not on oneself, never the last
+        enabled owner (`last_owner_protected`). Notifies the owners.
+      x-required-role: owner
+      x-requires-fresh-auth: true
+      x-destructive: true
+      x-audit-action: admin.remove
+      parameters:
+        - { $ref: "#/components/parameters/AdminId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: Removed (idempotent).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Admin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/audit:
+    get:
+      tags: [audit]
+      operationId: listAuditLog
+      summary: List audit rows
+      description: |
+        Newest first, paginated, filterable by actor, target account, action, result and time. Owners see every
+        row; an `admin` sees only the rows where they are the actor (enforced on the server); `support` cannot
+        use the route. There is no route that edits or deletes an audit row.
+      x-required-role: admin
+      parameters:
+        - { name: actor_admin_id, in: query, required: false, schema: { $ref: "#/components/schemas/AdminId" } }
+        - { name: target_account_id, in: query, required: false, schema: { $ref: "#/components/schemas/AccountId" } }
+        - { name: action, in: query, required: false, schema: { $ref: "#/components/schemas/AuditAction" } }
+        - { name: result, in: query, required: false, schema: { $ref: "#/components/schemas/AuditResult" } }
+        - { name: from, in: query, required: false, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: false, schema: { type: string, format: date-time } }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: A page of rows.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/audit/export:
+    get:
+      tags: [audit]
+      operationId: exportAuditLog
+      summary: Export the audit log as JSON lines
+      description: |
+        Owner only, fresh re-authentication, a few exports per day. One `AuditRow` per line, ordered by `seq`,
+        with the hash fields so that an offline verifier can check the chain. The export itself writes an
+        `audit.export` row.
+      x-required-role: owner
+      x-requires-fresh-auth: true
+      x-audit-action: audit.export
+      parameters:
+        - { name: from_seq, in: query, required: false, schema: { type: integer, minimum: 1 } }
+        - { name: to_seq, in: query, required: false, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200":
+          description: JSON lines attachment.
+          headers:
+            Content-Disposition: { schema: { type: string } }
+          content:
+            application/x-ndjson:
+              schema: { type: string, description: "One AuditRow JSON object per line." }
+              x-line-schema: AuditRow
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/audit/verify:
+    get:
+      tags: [audit]
+      operationId: verifyAuditChain
+      summary: Recompute the hash chain and compare it with the external anchors
+      description: Owner only. Reports whether the chain is intact, the head, and the first broken sequence number if any. Writes an `audit.verify` row.
+      x-required-role: owner
+      x-audit-action: audit.verify
+      responses:
+        "200":
+          description: Verification result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditVerification" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+components:
+  securitySchemes:
+    cloudflareAccess:
+      type: apiKey
+      in: header
+      name: Cf-Access-Jwt-Assertion
+      description: |
+        The Access-issued JWT. The admin service verifies it itself: pinned signature algorithm, keys from the
+        Access team's JWKS (cached with `kid`), exact issuer, audience equal to the admin application's AUD tag
+        (never any other Access application), expiry and not-before. The verified `email` claim is mapped to an
+        admin record by exact match. A request without a valid JWT is rejected even if the gate is
+        misconfigured. A StudentLLM access token or a manage token is never accepted here, and this JWT is never
+        accepted by the public API.
+  parameters:
+    CsrfHeader:
+      name: X-StudentLLM-Admin-CSRF
+      in: header
+      required: true
+      description: |
+        CSRF token returned by `GET /admin/v1/session`, bound to the session. Required on every POST. The
+        service also requires `Origin` equal to the admin hostname, `Sec-Fetch-Site: same-origin` and
+        `Content-Type: application/json`; there is no CORS. Failure gives `csrf_invalid`.
+      schema: { type: string, minLength: 20, maxLength: 128 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Client UUID, scoped per admin and route, valid 24 hours. Admin requests carry no user content, so the
+        record includes a SHA-256 of the canonical body. Same key and same body: the original status and body
+        are returned again with `Idempotent-Replay: true` and nothing runs twice. Same key while the first call
+        is running: 409 `idempotency_conflict` with `details.state = in_progress`. Same key with a different
+        body: 409 `idempotency_conflict` with `details.state = payload_mismatch`. Only calls that reached the
+        domain function are recorded, so a request rejected for validation, role or freeze can be retried with
+        the same key after it is fixed.
+      schema: { type: string, format: uuid }
+    AccountId:
+      name: account_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/AccountId" }
+    DeviceId:
+      name: device_id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^dev_[A-Za-z0-9]+$" }
+    GrantId:
+      name: grant_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/GrantId" }
+    OperationId:
+      name: operation_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/OperationId" }
+    BlocklistEntryId:
+      name: entry_id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^blk_[A-Za-z0-9]+$" }
+    InvitationId:
+      name: invitation_id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^inv_[A-Za-z0-9]+$" }
+    AdminId:
+      name: admin_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/AdminId" }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size. Default 50, maximum 100 (25 for account search).
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from `next_cursor`.
+      schema: { type: string, maxLength: 512 }
+  responses:
+    BadRequest:
+      description: invalid_request, confirmation_mismatch or invitation_invalid.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthenticated:
+      description: invalid_access_token or reauth_required.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: admin_not_registered, admin_disabled, forbidden_role, self_action_forbidden or csrf_invalid.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: not_found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: idempotency_conflict, state_conflict, window_overlap or last_owner_protected.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unprocessable:
+      description: limit_exceeded.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: rate_limited.
+      headers:
+        Retry-After: { schema: { type: integer, minimum: 0 } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unavailable:
+      description: admin_writes_frozen, audit_unavailable or internal_error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    ErrorCode:
+      type: string
+      enum:
+        - invalid_request
+        - invalid_access_token
+        - reauth_required
+        - admin_not_registered
+        - admin_disabled
+        - forbidden_role
+        - self_action_forbidden
+        - csrf_invalid
+        - not_found
+        - idempotency_conflict
+        - state_conflict
+        - window_overlap
+        - last_owner_protected
+        - limit_exceeded
+        - confirmation_mismatch
+        - invitation_invalid
+        - rate_limited
+        - admin_writes_frozen
+        - audit_unavailable
+        - internal_error
+    Error:
+      type: object
+      description: The one error envelope. Never contains content, secrets, tokens or provider text.
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          additionalProperties: false
+          properties:
+            code: { $ref: "#/components/schemas/ErrorCode" }
+            message: { type: string }
+            request_id: { type: string }
+            retry_after_seconds: { type: integer, minimum: 0 }
+            details:
+              type: object
+              description: "Small structured hints. Known keys include required_role, state, limit, max, current_status, max_age_seconds, operation_id. Secrets such as a CSRF token or an invitation code are never placed in the envelope."
+              additionalProperties: true
+    Role:
+      type: string
+      enum: [support, admin, owner]
+    AccountId: { type: string, pattern: "^acc_[A-Za-z0-9]+$" }
+    AdminId: { type: string, pattern: "^adm_[A-Za-z0-9]+$" }
+    GrantId: { type: string, pattern: "^grt_[A-Za-z0-9]+$" }
+    OperationId: { type: string, pattern: "^opr_[A-Za-z0-9]+$" }
+    AuditId: { type: string, pattern: "^aud_[A-Za-z0-9]+$" }
+    Sha256Hex: { type: string, pattern: "^[a-f0-9]{64}$" }
+    Reason:
+      type: string
+      minLength: 10
+      maxLength: 500
+      description: |
+        Mandatory free text written by the admin. It is stored in the audit row. It must not contain course
+        content, a prompt, an answer or an email address (the server rejects strings that look like an email
+        address with `invalid_request`); use a ticket reference instead.
+    ReasonRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+    RevokeRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+        notify_user: { type: boolean, default: true }
+    RevokeResult:
+      type: object
+      required: [account_id, devices_revoked, sessions_revoked, manage_tokens_revoked]
+      additionalProperties: false
+      properties:
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        devices_revoked: { type: integer, minimum: 0, maximum: 3 }
+        sessions_revoked: { type: integer, minimum: 0 }
+        manage_tokens_revoked: { type: integer, minimum: 0 }
+    AdminLimits:
+      type: object
+      description: The configured limits currently in force. Each is at or below its contract ceiling.
+      required: [grant_max_days, grant_default_credits_per_window, grant_max_credits_per_window, grant_max_total_credits, grant_max_days_per_account_per_year, grant_monthly_credit_cap, deletion_max_cooling_off_hours, suspension_max_days, reauth_max_age_seconds]
+      additionalProperties: false
+      properties:
+        grant_max_days: { type: integer, minimum: 1, maximum: 90 }
+        grant_default_credits_per_window: { type: integer, minimum: 1, maximum: 25000 }
+        grant_max_credits_per_window: { type: integer, minimum: 1, maximum: 25000 }
+        grant_max_total_credits: { type: integer, minimum: 1, maximum: 75000 }
+        grant_max_days_per_account_per_year: { type: integer, minimum: 1, maximum: 365 }
+        grant_monthly_credit_cap: { type: integer, minimum: 0 }
+        deletion_max_cooling_off_hours: { type: integer, minimum: 0, maximum: 72 }
+        suspension_max_days: { type: integer, minimum: 1, maximum: 365 }
+        reauth_max_age_seconds: { type: integer, const: 300 }
+    AdminSession:
+      type: object
+      required: [admin_id, email, role, csrf_token, reauth_fresh_until, writes_frozen, server_time]
+      additionalProperties: false
+      properties:
+        admin_id: { $ref: "#/components/schemas/AdminId" }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        csrf_token: { type: string, minLength: 20, maxLength: 128, description: "Bound to this session; keep in memory only." }
+        reauth_fresh_until: { type: [string, "null"], format: date-time, description: "End of the 5-minute freshness window, or null when the last re-authentication is older." }
+        writes_frozen: { type: boolean }
+        server_time: { type: string, format: date-time }
+    ReauthStart:
+      type: object
+      required: [reauth_url, expires_at]
+      additionalProperties: false
+      properties:
+        reauth_url: { type: string }
+        expires_at: { type: string, format: date-time }
+    SystemState:
+      type: object
+      required: [writes_frozen, frozen_at, frozen_by_admin_id, limits, audit_head_seq, audit_head_hash]
+      additionalProperties: false
+      properties:
+        writes_frozen: { type: boolean }
+        frozen_at: { type: [string, "null"], format: date-time }
+        frozen_by_admin_id: { type: [string, "null"] }
+        limits: { $ref: "#/components/schemas/AdminLimits" }
+        audit_head_seq: { type: integer, minimum: 0 }
+        audit_head_hash: { $ref: "#/components/schemas/Sha256Hex" }
+    AccountStatus:
+      type: string
+      description: The account status of the service (see the data table in the cloud plan).
+      enum: [active, suspended, deleting]
+    AccountSearchRequest:
+      type: object
+      additionalProperties: false
+      anyOf:
+        - { required: [account_id] }
+        - { required: [email] }
+        - { required: [email_prefix] }
+        - { required: [status] }
+      properties:
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        email: { type: string, maxLength: 254, description: "Exact match on the stored email." }
+        email_prefix: { type: string, minLength: 6, maxLength: 64 }
+        status: { $ref: "#/components/schemas/AccountStatus" }
+        plan_id: { $ref: "#/components/schemas/PlanId" }
+        limit: { type: integer, minimum: 1, maximum: 25, default: 25 }
+        cursor: { type: string, maxLength: 512 }
+    PlanId:
+      type: string
+      description: "`plus_complimentary` is internal to the admin surface for a window with source `admin_grant` (see the design document for the public-contract question)."
+      enum: [free, plus_monthly, plus_semester, plus_complimentary]
+    AccountSummary:
+      type: object
+      required: [account_id, email, status, plan_id, created_at]
+      additionalProperties: false
+      properties:
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        email: { type: string }
+        status: { $ref: "#/components/schemas/AccountStatus" }
+        plan_id: { $ref: "#/components/schemas/PlanId" }
+        created_at: { type: string, format: date-time }
+    AccountSearchResponse:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          maxItems: 25
+          items: { $ref: "#/components/schemas/AccountSummary" }
+        next_cursor: { type: [string, "null"] }
+    WindowSource:
+      type: string
+      enum: [paddle_subscription, paddle_pass, admin_grant]
+    BudgetWindow:
+      type: object
+      required: [window_start, window_end, source, grant_id, state, limit, used, reserved]
+      additionalProperties: false
+      properties:
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        source: { $ref: "#/components/schemas/WindowSource" }
+        grant_id: { type: [string, "null"] }
+        state: { type: string, enum: [scheduled, active, ended, revoked] }
+        limit: { type: integer, minimum: 0 }
+        used: { type: integer, minimum: 0 }
+        reserved: { type: integer, minimum: 0 }
+    AdminPlan:
+      type: object
+      required: [id, status, period_start, period_end, cancel_at_period_end, cancel_pending]
+      additionalProperties: false
+      properties:
+        id: { $ref: "#/components/schemas/PlanId" }
+        status: { type: string, enum: [none, active, past_due, canceled, revoked] }
+        period_start: { type: [string, "null"], format: date-time }
+        period_end: { type: [string, "null"], format: date-time }
+        cancel_at_period_end: { type: boolean }
+        cancel_pending: { type: boolean, description: "A cancellation operation is waiting for Paddle." }
+    UsageSummary:
+      type: object
+      description: Counters only. Never content, never per-request text or timing of requests.
+      required: [windows]
+      additionalProperties: false
+      properties:
+        windows:
+          type: array
+          maxItems: 3
+          description: The current and the two previous windows.
+          items:
+            type: object
+            required: [window_start, credits_used, requests, credits_by_feature]
+            additionalProperties: false
+            properties:
+              window_start: { type: string, format: date-time }
+              credits_used: { type: integer, minimum: 0 }
+              requests: { type: integer, minimum: 0 }
+              credits_by_feature:
+                type: object
+                additionalProperties: false
+                properties:
+                  chat: { type: integer, minimum: 0 }
+                  transcription: { type: integer, minimum: 0 }
+                  ocr: { type: integer, minimum: 0 }
+        daily:
+          type: array
+          maxItems: 30
+          description: Optional. Present only if the retained usage totals have daily granularity (an open item).
+          items:
+            type: object
+            required: [date, requests, credits_used]
+            additionalProperties: false
+            properties:
+              date: { type: string, format: date }
+              requests: { type: integer, minimum: 0 }
+              credits_used: { type: integer, minimum: 0 }
+    ConsentSummary:
+      type: object
+      required: [provider_set, provider_set_version, features, recorded_at]
+      additionalProperties: false
+      properties:
+        provider_set: { type: string }
+        provider_set_version: { type: integer, minimum: 1 }
+        features: { type: array, items: { type: string, enum: [chat, transcription, ocr] } }
+        recorded_at: { type: string, format: date-time }
+    BillingRefs:
+      type: object
+      description: Opaque Paddle ids, for finding the customer in Paddle. Hidden from the `support` role.
+      required: [paddle_customer_id, paddle_subscription_id, last_event_applied_at]
+      additionalProperties: false
+      properties:
+        paddle_customer_id: { type: [string, "null"] }
+        paddle_subscription_id: { type: [string, "null"] }
+        last_event_applied_at: { type: [string, "null"], format: date-time }
+    StatusDetail:
+      type: object
+      required: [category, since, expires_at, operation_id]
+      additionalProperties: false
+      properties:
+        category: { $ref: "#/components/schemas/SuspensionCategory" }
+        since: { type: string, format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+        operation_id: { type: [string, "null"], description: "Set when the suspension is the cooling-off period of a deletion." }
+    OperationSummary:
+      type: object
+      required: [operation_id, kind, state]
+      additionalProperties: false
+      properties:
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        kind: { $ref: "#/components/schemas/OperationKind" }
+        state: { $ref: "#/components/schemas/OperationState" }
+    AdminAccount:
+      type: object
+      required: [account_id, email, login_methods, status, status_detail, terms_version, created_at, last_sign_in_at, last_request_at, plan, windows, usage, devices_count, consents, billing, pending_operations]
+      additionalProperties: false
+      properties:
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        email: { type: string }
+        login_methods:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [google, email] }
+        status: { $ref: "#/components/schemas/AccountStatus" }
+        status_detail:
+          oneOf:
+            - { $ref: "#/components/schemas/StatusDetail" }
+            - { type: "null" }
+        terms_version: { type: string }
+        created_at: { type: string, format: date-time }
+        last_sign_in_at: { type: [string, "null"], format: date-time }
+        last_request_at: { type: [string, "null"], format: date-time }
+        plan: { $ref: "#/components/schemas/AdminPlan" }
+        windows:
+          type: array
+          description: Past, current and scheduled windows, newest first (at most 12).
+          maxItems: 12
+          items: { $ref: "#/components/schemas/BudgetWindow" }
+        usage: { $ref: "#/components/schemas/UsageSummary" }
+        devices_count: { type: integer, minimum: 0, maximum: 3 }
+        consents:
+          type: array
+          items: { $ref: "#/components/schemas/ConsentSummary" }
+        billing:
+          oneOf:
+            - { $ref: "#/components/schemas/BillingRefs" }
+            - { type: "null" }
+        pending_operations:
+          type: array
+          items: { $ref: "#/components/schemas/OperationSummary" }
+    AdminDevice:
+      type: object
+      required: [device_id, label, platform, created_at, last_used_at, idle_expires_at, absolute_expires_at]
+      additionalProperties: false
+      properties:
+        device_id: { type: string, pattern: "^dev_[A-Za-z0-9]+$" }
+        label: { type: string, maxLength: 64, description: "User-editable text. Always rendered as text by the UI." }
+        platform: { type: string, maxLength: 32 }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        idle_expires_at: { type: string, format: date-time }
+        absolute_expires_at: { type: string, format: date-time }
+    AdminDeviceList:
+      type: object
+      required: [devices]
+      additionalProperties: false
+      properties:
+        devices:
+          type: array
+          maxItems: 3
+          items: { $ref: "#/components/schemas/AdminDevice" }
+    GrantReasonCategory:
+      type: string
+      enum: [trial, beta_tester, support_goodwill, compensation, partner, testing, other]
+    GrantCreateRequest:
+      type: object
+      required: [days, reason, reason_category]
+      additionalProperties: false
+      properties:
+        days: { type: integer, minimum: 1, maximum: 90, description: "Explicit duration. The configured maximum can be lower than the contract ceiling of 90." }
+        credit_budget_per_window: { type: integer, minimum: 1, maximum: 25000, description: "Optional override of the credits per window. Defaults to the standard Plus window limit; capped by configuration." }
+        start_policy: { type: string, enum: [now, after_current_windows], default: now }
+        reason: { $ref: "#/components/schemas/Reason" }
+        reason_category: { $ref: "#/components/schemas/GrantReasonCategory" }
+        note: { type: string, maxLength: 500, description: "Optional admin-only note; same content rules as the reason." }
+        notify_user: { type: boolean, default: true }
+    GrantState:
+      type: string
+      enum: [scheduled, active, expired, shortened, revoked]
+    GrantWindow:
+      type: object
+      required: [window_start, window_end, limit, used]
+      additionalProperties: false
+      properties:
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        limit: { type: integer, minimum: 0 }
+        used: { type: integer, minimum: 0 }
+    Grant:
+      type: object
+      required: [grant_id, account_id, state, reason_category, days, starts_at, ends_at, original_ends_at, credits_per_window, credits_cap_total, credits_used, windows, created_by_admin_id, created_at, audit_id, note]
+      additionalProperties: false
+      properties:
+        grant_id: { $ref: "#/components/schemas/GrantId" }
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        state: { $ref: "#/components/schemas/GrantState" }
+        reason_category: { $ref: "#/components/schemas/GrantReasonCategory" }
+        days: { type: integer, minimum: 1, maximum: 90 }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        original_ends_at: { type: string, format: date-time }
+        credits_per_window: { type: integer, minimum: 1 }
+        credits_cap_total: { type: integer, minimum: 1, description: "Sum of the window limits; the cost cap of this grant." }
+        credits_used: { type: integer, minimum: 0 }
+        windows:
+          type: array
+          maxItems: 4
+          items: { $ref: "#/components/schemas/GrantWindow" }
+        created_by_admin_id: { $ref: "#/components/schemas/AdminId" }
+        created_at: { type: string, format: date-time }
+        audit_id: { $ref: "#/components/schemas/AuditId" }
+        note: { type: [string, "null"] }
+    GrantList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Grant" }
+        next_cursor: { type: [string, "null"] }
+    GrantShortenRequest:
+      type: object
+      required: [new_ends_at, reason]
+      additionalProperties: false
+      properties:
+        new_ends_at: { type: string, format: date-time, description: "Must be after now and before the current end." }
+        reason: { $ref: "#/components/schemas/Reason" }
+        notify_user: { type: boolean, default: true }
+    GrantStats:
+      type: object
+      required: [months, monthly_credit_cap, current_month_committed_credits]
+      additionalProperties: false
+      properties:
+        monthly_credit_cap: { type: integer, minimum: 0 }
+        current_month_committed_credits: { type: integer, minimum: 0, description: "Credits of all grant windows that start in the current month, counted at their full limit." }
+        months:
+          type: array
+          items:
+            type: object
+            required: [month, grants_created, credits_granted, credits_used]
+            additionalProperties: false
+            properties:
+              month: { type: string, pattern: "^[0-9]{4}-[0-9]{2}$" }
+              grants_created: { type: integer, minimum: 0 }
+              credits_granted: { type: integer, minimum: 0 }
+              credits_used: { type: integer, minimum: 0 }
+    CancelRequest:
+      type: object
+      required: [effective_from, reason]
+      additionalProperties: false
+      properties:
+        effective_from: { type: string, enum: [period_end, immediately] }
+        reason: { $ref: "#/components/schemas/Reason" }
+        note: { type: string, maxLength: 500 }
+        notify_user: { type: boolean, default: true }
+    OperationKind:
+      type: string
+      enum: [subscription_cancel, account_deletion]
+    OperationState:
+      type: string
+      description: "pending: waiting for Paddle or a retry. cooling_off: deletion not started yet. running: deletion started. completed, failed (needs an admin), withdrawn."
+      enum: [pending, cooling_off, running, completed, failed, withdrawn]
+    OperationErrorCode:
+      type: string
+      description: Fixed codes only, never provider text.
+      enum: [paddle_unavailable, paddle_rejected, paddle_not_found, timeout, internal_error]
+    Operation:
+      type: object
+      required: [operation_id, kind, account_id, state, effective_from, executes_at, attempts, last_error_code, next_retry_at, requested_by_admin_id, created_at, updated_at, audit_id]
+      additionalProperties: false
+      properties:
+        operation_id: { $ref: "#/components/schemas/OperationId" }
+        kind: { $ref: "#/components/schemas/OperationKind" }
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        state: { $ref: "#/components/schemas/OperationState" }
+        effective_from: { type: [string, "null"], enum: [period_end, immediately, null], description: "Cancellations only." }
+        executes_at: { type: [string, "null"], format: date-time, description: "End of the cooling-off period for a deletion." }
+        attempts: { type: integer, minimum: 0 }
+        last_error_code:
+          oneOf:
+            - { $ref: "#/components/schemas/OperationErrorCode" }
+            - { type: "null" }
+        next_retry_at: { type: [string, "null"], format: date-time }
+        requested_by_admin_id: { $ref: "#/components/schemas/AdminId" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        audit_id: { $ref: "#/components/schemas/AuditId" }
+    OperationList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Operation" }
+        next_cursor: { type: [string, "null"] }
+    SuspensionCategory:
+      type: string
+      enum: [abuse, chargeback_fraud, terms_violation, security, legal_request, pending_admin_deletion, other]
+    SuspendRequest:
+      type: object
+      required: [reason, reason_category]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+        reason_category:
+          type: string
+          enum: [abuse, chargeback_fraud, terms_violation, security, legal_request, other]
+        duration_days: { type: integer, minimum: 1, maximum: 365, description: "Omit for no end date. The configured maximum can be lower." }
+        blocklist: { type: boolean, default: false, description: "Also add keyed-hash entries (email, Google subject id) to the re-registration blocklist." }
+        blocklist_days: { type: integer, minimum: 1, maximum: 730, description: "Expiry of the blocklist entries; omit for the configured default." }
+        notify_user: { type: boolean, default: true }
+    UnsuspendRequest:
+      type: object
+      required: [reason]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+        remove_blocklist: { type: boolean, default: false }
+        notify_user: { type: boolean, default: true }
+    SuspensionResult:
+      type: object
+      required: [account_id, status, expires_at, sessions_revoked, manage_tokens_revoked, blocklist_entry_ids]
+      additionalProperties: false
+      properties:
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        status: { $ref: "#/components/schemas/AccountStatus" }
+        expires_at: { type: [string, "null"], format: date-time }
+        sessions_revoked: { type: integer, minimum: 0 }
+        manage_tokens_revoked: { type: integer, minimum: 0 }
+        blocklist_entry_ids:
+          type: array
+          items: { type: string, pattern: "^blk_[A-Za-z0-9]+$" }
+    BlocklistEntry:
+      type: object
+      required: [entry_id, kind, state, created_at, expires_at, created_by_admin_id, reason_category, audit_id]
+      additionalProperties: false
+      properties:
+        entry_id: { type: string, pattern: "^blk_[A-Za-z0-9]+$" }
+        kind: { type: string, enum: [email, google_subject] }
+        state: { type: string, enum: [active, expired, removed] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        created_by_admin_id: { $ref: "#/components/schemas/AdminId" }
+        reason_category: { $ref: "#/components/schemas/SuspensionCategory" }
+        audit_id: { $ref: "#/components/schemas/AuditId" }
+    BlocklistList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/BlocklistEntry" }
+        next_cursor: { type: [string, "null"] }
+    DeletionRequest:
+      type: object
+      required: [reason, confirm_account_id]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+        note: { type: string, maxLength: 500 }
+        confirm_account_id: { $ref: "#/components/schemas/AccountId" }
+        cooling_off_hours: { type: integer, minimum: 0, maximum: 72, default: 24 }
+        notify_user: { type: boolean, default: true }
+    Admin:
+      type: object
+      required: [admin_id, email, role, status, created_at, created_by_admin_id, last_seen_at, disabled_at]
+      additionalProperties: false
+      properties:
+        admin_id: { $ref: "#/components/schemas/AdminId" }
+        email: { type: [string, "null"], description: "Null once the admin is removed." }
+        role: { $ref: "#/components/schemas/Role" }
+        status: { type: string, enum: [active, disabled, removed] }
+        created_at: { type: string, format: date-time }
+        created_by_admin_id: { type: [string, "null"], description: "Null for the bootstrap owner." }
+        last_seen_at: { type: [string, "null"], format: date-time }
+        disabled_at: { type: [string, "null"], format: date-time }
+    AdminList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Admin" }
+        next_cursor: { type: [string, "null"] }
+    InvitationCreateRequest:
+      type: object
+      required: [email, role, reason]
+      additionalProperties: false
+      properties:
+        email: { type: string, maxLength: 254 }
+        role: { $ref: "#/components/schemas/Role" }
+        reason: { $ref: "#/components/schemas/Reason" }
+        expires_in_hours: { type: integer, minimum: 1, maximum: 168, default: 72 }
+    Invitation:
+      type: object
+      description: The code is emailed to the invited address and is never part of any response.
+      required: [invitation_id, email, role, state, expires_at, created_by_admin_id, created_at]
+      additionalProperties: false
+      properties:
+        invitation_id: { type: string, pattern: "^inv_[A-Za-z0-9]+$" }
+        email: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        state: { type: string, enum: [pending, accepted, expired, revoked] }
+        expires_at: { type: string, format: date-time }
+        created_by_admin_id: { $ref: "#/components/schemas/AdminId" }
+        created_at: { type: string, format: date-time }
+    InvitationList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Invitation" }
+        next_cursor: { type: [string, "null"] }
+    InvitationAcceptRequest:
+      type: object
+      required: [invitation_code]
+      additionalProperties: false
+      properties:
+        invitation_code: { type: string, minLength: 12, maxLength: 12, pattern: "^[A-HJ-NP-Z2-9]{12}$" }
+    RoleChangeRequest:
+      type: object
+      required: [role, reason]
+      additionalProperties: false
+      properties:
+        role: { $ref: "#/components/schemas/Role" }
+        reason: { $ref: "#/components/schemas/Reason" }
+    AuditAction:
+      type: string
+      enum:
+        - admin.session_start
+        - admin.reauth_start
+        - admin.reauth_complete
+        - admin.bootstrap
+        - admin.invite
+        - admin.invitation_revoke
+        - admin.invitation_accept
+        - admin.role_change
+        - admin.disable
+        - admin.enable
+        - admin.remove
+        - account.search
+        - account.read
+        - account.devices_read
+        - account.suspend
+        - account.unsuspend
+        - account.suspension_expire
+        - account.delete_request
+        - account.delete_execute
+        - device.revoke
+        - sessions.revoke_all
+        - grant.create
+        - grant.list
+        - grant.read
+        - grant.shorten
+        - grant.revoke
+        - grant.expire
+        - subscription.cancel
+        - operation.retry
+        - operation.withdraw
+        - operation.step
+        - blocklist.add
+        - blocklist.remove
+        - system.freeze
+        - system.unfreeze
+        - audit.export
+        - audit.verify
+        - retention.checkpoint
+    AuditResult:
+      type: string
+      enum: [success, denied, failed, pending]
+    AuditRow:
+      type: object
+      description: |
+        Append-only and hash-chained. There is deliberately no field for an IP address, a user agent, content,
+        a token or a code, and no email address. `params` is a small allowlisted map of non-personal scalar
+        parameters (for example days, role, effective_from).
+      required: [audit_id, seq, occurred_at, actor_kind, actor_admin_id, actor_role, action, target_account_id, target_admin_id, reason, request_id, result, result_code, params, prev_hash, row_hash]
+      additionalProperties: false
+      properties:
+        audit_id: { $ref: "#/components/schemas/AuditId" }
+        seq: { type: integer, minimum: 1 }
+        occurred_at: { type: string, format: date-time }
+        actor_kind: { type: string, enum: [admin, system] }
+        actor_admin_id: { type: [string, "null"] }
+        actor_role:
+          oneOf:
+            - { $ref: "#/components/schemas/Role" }
+            - { type: "null" }
+        action: { $ref: "#/components/schemas/AuditAction" }
+        target_account_id: { type: [string, "null"] }
+        target_admin_id: { type: [string, "null"] }
+        reason: { type: [string, "null"] }
+        request_id: { type: string }
+        result: { $ref: "#/components/schemas/AuditResult" }
+        result_code:
+          oneOf:
+            - { $ref: "#/components/schemas/ErrorCode" }
+            - { type: "null" }
+        params:
+          type: object
+          additionalProperties:
+            type: [string, integer, boolean, "null"]
+        prev_hash: { $ref: "#/components/schemas/Sha256Hex" }
+        row_hash: { $ref: "#/components/schemas/Sha256Hex" }
+    AuditList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/AuditRow" }
+        next_cursor: { type: [string, "null"] }
+    AuditVerification:
+      type: object
+      required: [ok, rows_checked, head_seq, head_hash, first_broken_seq, last_anchor_seq, anchors_match]
+      additionalProperties: false
+      properties:
+        ok: { type: boolean }
+        rows_checked: { type: integer, minimum: 0 }
+        head_seq: { type: integer, minimum: 0 }
+        head_hash: { $ref: "#/components/schemas/Sha256Hex" }
+        first_broken_seq: { type: [integer, "null"] }
+        last_anchor_seq: { type: [integer, "null"], description: "Sequence number of the latest head digest published outside the database." }
+        anchors_match: { type: boolean, description: "The recomputed chain agrees with every published anchor." }

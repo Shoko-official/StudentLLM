@@ -1,0 +1,79 @@
+{
+  "name": "account.read.success",
+  "operation": "getAdminAccount",
+  "description": "A support read of one account. Metadata only: plan and windows with their source, counters, device count, consent state. The Paddle ids are null for the support role. The call writes an account.read audit row.",
+  "request": {
+    "method": "GET",
+    "path": "/admin/v1/accounts/acc_01EXAMPLE",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001",
+      "Cache-Control": "no-store"
+    },
+    "body": {
+      "account_id": "acc_01EXAMPLE",
+      "email": "student@example.invalid",
+      "login_methods": [
+        "email",
+        "google"
+      ],
+      "status": "active",
+      "status_detail": null,
+      "terms_version": "2026-11-01",
+      "created_at": "2026-11-01T09:00:00Z",
+      "last_sign_in_at": "2026-11-02T08:10:00Z",
+      "last_request_at": "2026-11-02T08:42:00Z",
+      "plan": {
+        "id": "plus_complimentary",
+        "status": "active",
+        "period_start": "2026-11-02T10:00:00Z",
+        "period_end": "2026-12-02T10:00:00Z",
+        "cancel_at_period_end": false,
+        "cancel_pending": false
+      },
+      "windows": [
+        {
+          "window_start": "2026-11-02T10:00:00Z",
+          "window_end": "2026-12-02T10:00:00Z",
+          "source": "admin_grant",
+          "grant_id": "grt_01EXAMPLE",
+          "state": "active",
+          "limit": 12500,
+          "used": 4377,
+          "reserved": 0
+        }
+      ],
+      "usage": {
+        "windows": [
+          {
+            "window_start": "2026-11-02T10:00:00Z",
+            "credits_used": 4377,
+            "requests": 61,
+            "credits_by_feature": {
+              "chat": 4377
+            }
+          }
+        ]
+      },
+      "devices_count": 2,
+      "consents": [
+        {
+          "provider_set": "ps1",
+          "provider_set_version": 1,
+          "features": [
+            "chat"
+          ],
+          "recorded_at": "2026-11-01T09:30:00Z"
+        }
+      ],
+      "billing": null,
+      "pending_operations": []
+    }
+  },
+  "response_schema": "AdminAccount"
+}

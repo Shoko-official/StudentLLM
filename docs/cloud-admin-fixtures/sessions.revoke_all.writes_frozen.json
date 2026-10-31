@@ -1,0 +1,37 @@
+{
+  "name": "sessions.revoke_all.writes_frozen",
+  "operation": "revokeAllAccountSessions",
+  "description": "While the global freeze is on, every write route is refused. Reads keep working.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/accounts/acc_01EXAMPLE/sessions/revoke-all",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+    },
+    "body": {
+      "reason": "Suspected token theft reported by the user, ticket EX-4410.",
+      "notify_user": true
+    }
+  },
+  "response": {
+    "status": 503,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "admin_writes_frozen",
+        "message": "Admin writes are frozen.",
+        "request_id": "req_01EXAMPLE0000000000000001",
+        "retry_after_seconds": 60,
+        "details": {
+          "frozen_since": "2026-11-02T09:55:00Z"
+        }
+      }
+    }
+  },
+  "response_schema": "Error"
+}
