@@ -163,11 +163,22 @@ type PendingSourceRemoval = {
 const RECORDING_NOTICE_STORAGE_KEY = 'studentllm.recording-notice.v1';
 const RECORDING_NOTICE_VERSION = 1;
 const SERVICES_STORAGE_KEY = 'studentllm.services.v1';
-type ServiceSettings = { llmUrl: string; model: string; asrUrl: string; documentsUrl: string };
+type ServiceSettings = { llmProvider: string; llmUrl: string; model: string; nimModel: string; asrUrl: string; documentsUrl: string };
+// NVIDIA NIM goes through the dev server's credential proxy, so it is only offered in development builds.
+const NIM_AVAILABLE = import.meta.env.DEV;
+const NIM_PROXY_BASE_URL = '/nvidia-nim/v1';
+const NIM_PROXY_ERROR_HEADER = 'x-studentllm-proxy-error';
+const DEFAULT_NIM_MODEL = 'openai/gpt-oss-20b';
+const usesNim = (settings: ServiceSettings) => NIM_AVAILABLE && settings.llmProvider === 'nvidia-nim';
+const llmConnection = (settings: ServiceSettings) => usesNim(settings)
+  ? { baseUrl: NIM_PROXY_BASE_URL, model: settings.nimModel || DEFAULT_NIM_MODEL }
+  : { baseUrl: settings.llmUrl, model: settings.model };
 function loadServiceSettings(): ServiceSettings {
   const defaults = {
+    llmProvider: 'lm-studio',
     llmUrl: import.meta.env.VITE_LM_STUDIO_BASE_URL?.trim() || (import.meta.env.DEV ? '/lm-studio/v1' : 'http://127.0.0.1:1234/v1'),
     model: import.meta.env.VITE_LM_STUDIO_MODEL?.trim() || 'openai/gpt-oss-20b',
+    nimModel: DEFAULT_NIM_MODEL,
     asrUrl: import.meta.env.VITE_LOCAL_ASR_BASE_URL?.trim() || 'http://127.0.0.1:8765',
     documentsUrl: import.meta.env.VITE_LOCAL_DOCUMENT_BASE_URL?.trim() || 'http://127.0.0.1:8766',
   };
@@ -177,6 +188,7 @@ function loadServiceSettings(): ServiceSettings {
       if (typeof saved?.[key] === 'string' && saved[key].trim()) defaults[key] = saved[key].trim();
     }
   } catch { /* Use configured defaults if saved connection settings cannot be read. */ }
+  if (defaults.llmProvider !== 'nvidia-nim' || !NIM_AVAILABLE) defaults.llmProvider = 'lm-studio';
   return defaults;
 }
 const packagedIpcSmokeRequested = import.meta.env.VITE_STUDENTLLM_PACKAGED_IPC_SMOKE === 'true';
@@ -389,7 +401,15 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const semanticReviewAttemptedIds = useRef(new Set<string>());
   const semanticReviewRunning = useRef(false);
   const [semanticReviewTick, setSemanticReviewTick] = useState(0);
-  const localProvider = useMemo(() => provider === undefined ? (serviceSettings.llmUrl ? createLocalLLMProvider({ MODE: import.meta.env.MODE, VITE_LM_STUDIO_AUTO_CONNECT: connectionsEnabled ? 'true' : import.meta.env.VITE_LM_STUDIO_AUTO_CONNECT, VITE_LM_STUDIO_BASE_URL: serviceSettings.llmUrl, VITE_LM_STUDIO_MODEL: serviceSettings.model }) : null) : provider, [provider, serviceSettings, connectionsEnabled]);
+  const localProvider = useMemo(() => {
+    if (provider !== undefined) return provider;
+    const connection = llmConnection(serviceSettings);
+    if (!connection.baseUrl) return null;
+    const created = createLocalLLMProvider({ MODE: import.meta.env.MODE, VITE_LM_STUDIO_AUTO_CONNECT: connectionsEnabled ? 'true' : import.meta.env.VITE_LM_STUDIO_AUTO_CONNECT, VITE_LM_STUDIO_BASE_URL: connection.baseUrl, VITE_LM_STUDIO_MODEL: connection.model });
+    // The NIM proxy exposes no embeddings route, so retrieval keeps its lexical ranking instead of a doomed request.
+    if (created && usesNim(serviceSettings)) return { generate: created.generate.bind(created), supportsStructuredOutputs: created.supportsStructuredOutputs };
+    return created;
+  }, [provider, serviceSettings, connectionsEnabled]);
   const localSpeechEngine = useMemo(() => speechEngine === undefined ? createLocalSpeechEngine({ VITE_LOCAL_ASR_BASE_URL: serviceSettings.asrUrl, VITE_LOCAL_ASR_LANGUAGE: import.meta.env.VITE_LOCAL_ASR_LANGUAGE }) : speechEngine, [speechEngine, serviceSettings]);
   const localDocumentEngine = useMemo(() => documentEngine === undefined ? createLocalDocumentEngine({ VITE_LOCAL_DOCUMENT_BASE_URL: serviceSettings.documentsUrl }) : documentEngine, [documentEngine, serviceSettings]);
   const sourceBlobStore = useMemo(() => sourceBlobStoreOverride ?? createSourceBlobStore(), [sourceBlobStoreOverride]);
@@ -1164,6 +1184,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     ]);
     setSidecarHealth({ asr, documents });
     setManagedSidecars(managed);
+    if (usesNim(settings)) {
+      await checkNim(settings);
+      setIsCheckingSidecars(false);
+      return;
+    }
     try {
       if (!settings.llmUrl) throw new Error('Set an LM Studio address.');
       const response = await fetch(`${normalizeServiceBaseUrl(settings.llmUrl)}/models`, { signal: AbortSignal.timeout(3000) });
@@ -1175,10 +1200,15 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setAvailableModels(models);
       const detectedModel = models.find((model: string) => model === settings.model) ?? models[0];
       if (detectedModel && detectedModel !== settings.model) {
-        const detectedSettings = { ...settings, model: detectedModel };
-        setServiceSettings((current) => current.llmUrl === settings.llmUrl ? detectedSettings : current);
-        setServiceDraft((current) => current.llmUrl === settings.llmUrl ? detectedSettings : current);
-        try { localStorage.setItem(SERVICES_STORAGE_KEY, JSON.stringify(detectedSettings)); } catch { /* Keep the detected model for this session. */ }
+        // A late result must not overwrite a connection the user has switched since, in memory or on disk.
+        const sameConnection = (current: ServiceSettings) => current.llmUrl === settings.llmUrl && current.llmProvider === settings.llmProvider;
+        setServiceSettings((current) => {
+          if (!sameConnection(current)) return current;
+          const detectedSettings = { ...current, model: detectedModel };
+          try { localStorage.setItem(SERVICES_STORAGE_KEY, JSON.stringify(detectedSettings)); } catch { /* Keep the detected model for this session. */ }
+          return detectedSettings;
+        });
+        setServiceDraft((current) => sameConnection(current) ? { ...current, model: detectedModel } : current);
         setLlmHealth(`Connected. Detected and selected ${detectedModel}.`);
       } else if (detectedModel) {
         setLlmHealth('Connected. Selected model is available.');
@@ -1190,6 +1220,41 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setLlmHealth('Unavailable. Start the LM Studio server and load a model.');
     }
     setIsCheckingSidecars(false);
+  };
+
+  // The NIM catalog is large and some entries cannot generate, so the chosen model is never replaced automatically.
+  const checkNim = async (settings: ServiceSettings) => {
+    setAvailableModels([]);
+    const model = llmConnection(settings).model;
+    try {
+      const response = await fetch(`${NIM_PROXY_BASE_URL}/models`, { signal: AbortSignal.timeout(10_000) });
+      const proxyError = response.headers?.get?.(NIM_PROXY_ERROR_HEADER);
+      if (proxyError === 'missing_key') {
+        setLlmHealth('Unavailable. NVIDIA_API_KEY is not set on this computer. Set it, then restart the dev server.');
+        return;
+      }
+      if (proxyError === 'forbidden') {
+        setLlmHealth('Unavailable. The dev server only accepts NVIDIA NIM requests from a current browser at a localhost address.');
+        return;
+      }
+      if (!proxyError && (response.status === 401 || response.status === 403)) {
+        setLlmHealth('Unavailable. NVIDIA rejected NVIDIA_API_KEY. Check the key, then restart the dev server.');
+        return;
+      }
+      if (!response.ok) {
+        setLlmHealth(`Unavailable. NVIDIA NIM answered with HTTP ${response.status}. Try again later.`);
+        return;
+      }
+      const body = await readJsonResponse(response, 'NVIDIA NIM');
+      const models: string[] = Array.isArray(body.data)
+        ? body.data.map((entry: { id?: unknown }) => typeof entry?.id === 'string' ? entry.id.trim() : '').filter(Boolean)
+        : [];
+      setLlmHealth(models.includes(model)
+        ? `Connected. ${model} is available in the NVIDIA catalog (${models.length} models).`
+        : `Connected, but ${model} is not in the NVIDIA catalog (${models.length} models). Check the model name.`);
+    } catch {
+      setLlmHealth('Unavailable. NVIDIA NIM could not be reached.');
+    }
   };
 
   const saveServiceSettings = (event: FormEvent) => {
@@ -2622,12 +2687,18 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       {showTranscriptPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowTranscriptPanel(false)}><section className="modal transcript-modal" role="dialog" aria-modal="true" aria-labelledby="transcript-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Transcript archive</span><h2 id="transcript-panel-title">Full transcript <span className="modal-count">{transcript.length}</span></h2>{visibleLiveTranscript.length > 0 && <span className="review-badge">Live preview</span>}</div><button className="icon-button" aria-label="Close full transcript" onClick={() => setShowTranscriptPanel(false)}><X size={17} /></button></div><p className="modal-description">Review every indexed segment from {activeLesson.title}. Changes are saved to this course workspace.</p><div className={`transcript-list modal-transcript-list ${compactTranscript ? 'compact' : ''}`}>{transcript.length || visibleLiveTranscript.length ? [...transcript, ...visibleLiveTranscript].map(renderTranscriptSegment) : <p className="empty-state">This course has no transcript segments yet.</p>}</div></section></div>}
       {showSettingsPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettingsPanel(false)}><section className="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace preferences</span><h2 id="settings-panel-title">Settings</h2></div><button className="icon-button" aria-label="Close settings" onClick={() => setShowSettingsPanel(false)}><X size={17} /></button></div><p className="modal-description">Connect your local services. Recording and text import work without an AI model.</p>
         <form className="connection-settings" onSubmit={saveServiceSettings}>
-          <div className="connection-field"><label htmlFor="local-llm-url">LM Studio address</label><input id="local-llm-url" value={serviceDraft.llmUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, llmUrl: event.target.value }))} placeholder="/lm-studio/v1" /><small>Works with LM Studio, Bionic, and any OpenAI-compatible local server.</small></div>
-          <label>Model<input value={serviceDraft.model} onChange={(event) => setServiceDraft((current) => ({ ...current, model: event.target.value }))} placeholder="Model identifier in LM Studio" /></label>
+          {NIM_AVAILABLE && <label>AI provider<select value={serviceDraft.llmProvider} onChange={(event) => setServiceDraft((current) => ({ ...current, llmProvider: event.target.value }))}><option value="lm-studio">LM Studio (local)</option><option value="nvidia-nim">NVIDIA NIM (cloud)</option></select></label>}
+          {usesNim(serviceDraft) ? <>
+            <p className="connection-notice" role="note">While NVIDIA NIM is selected, lecture transcripts, imported document text, notes and your questions are sent to NVIDIA automatically to format notes, answer chat and build study material. The dev server reads the key from NVIDIA_API_KEY on this computer; it never reaches this page.</p>
+            <label>NVIDIA model<input value={serviceDraft.nimModel} onChange={(event) => setServiceDraft((current) => ({ ...current, nimModel: event.target.value }))} placeholder={DEFAULT_NIM_MODEL} /></label>
+          </> : <>
+            <div className="connection-field"><label htmlFor="local-llm-url">LM Studio address</label><input id="local-llm-url" value={serviceDraft.llmUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, llmUrl: event.target.value }))} placeholder="/lm-studio/v1" /><small>Works with LM Studio, Bionic, and any OpenAI-compatible local server.</small></div>
+            <label>Model<input value={serviceDraft.model} onChange={(event) => setServiceDraft((current) => ({ ...current, model: event.target.value }))} placeholder="Model identifier in LM Studio" /></label>
+          </>}
           <label>Speech service address<input value={serviceDraft.asrUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, asrUrl: event.target.value }))} placeholder="http://127.0.0.1:8765" /></label>
           <label>Document service address<input value={serviceDraft.documentsUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, documentsUrl: event.target.value }))} placeholder="http://127.0.0.1:8766" /></label>
           <button className="primary-submit" disabled={isRecording || isFinalizingRecording || isStartingRecording || isCheckingSidecars} type="submit">Save connections</button>
-          <p className="empty-state" role="status">LM Studio / Bionic: {isCheckingSidecars ? 'Checking...' : llmHealth}</p>{availableModels.length > 0 && <p className="detected-models">Detected local models: {availableModels.join(', ')}</p>}
+          <p className="empty-state" role="status">{usesNim(serviceSettings) ? 'NVIDIA NIM' : 'LM Studio / Bionic'}: {isCheckingSidecars ? 'Checking...' : llmHealth}</p>{availableModels.length > 0 && <p className="detected-models">Detected local models: {availableModels.join(', ')}</p>}
         </form><div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>Audio and document sidecars are checked without interrupting any running local model.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>ASR sidecar</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document sidecar</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Animated icons by <a href="https://lordicon.com/" target="_blank" rel="noreferrer">Lordicon</a>.</p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
       {isNativeRuntime() && <div className="managed-sidecar-tray" aria-label="Managed local services"><span>Managed services</span><span aria-live="polite">{managedSidecars.filter((sidecar) => sidecar.running).length}/2 running</span><button type="button" onClick={() => void startConfiguredSidecars()}>Start</button><button type="button" onClick={() => void stopConfiguredSidecars()}>Stop</button></div>}
       <div className="toast-stack">
