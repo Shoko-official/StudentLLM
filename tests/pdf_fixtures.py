@@ -117,6 +117,26 @@ def image_only_pdf(pixels: bytes, width: int, height: int, pages: int = 1) -> by
     return writer.render(_page_tree(writer, contents, resources))
 
 
+def decompression_bomb_pdf(decoded_size: int) -> bytes:
+    """A valid one-page PDF whose Flate content stream is blank space that decodes to `decoded_size` bytes.
+
+    The compressed stream is about a thousandth of that size, so the file stays small. It is a stand-in for a
+    malicious file and holds nothing but whitespace.
+    """
+    compressor = zlib.compressobj(9)
+    block = b" " * (1 << 20)
+    chunks = []
+    remaining = decoded_size
+    while remaining > 0:
+        part = min(remaining, len(block))
+        chunks.append(compressor.compress(block[:part]))
+        remaining -= part
+    chunks.append(compressor.flush())
+    writer = _PdfWriter()
+    content = writer.stream(b"/Filter /FlateDecode", b"".join(chunks))
+    return writer.render(_page_tree(writer, [content], b"<< >>"))
+
+
 def article_pdf() -> bytes:
     """Two pages with a heading, body paragraphs, a bullet list and a monospaced snippet."""
     first: list[TextRun] = [

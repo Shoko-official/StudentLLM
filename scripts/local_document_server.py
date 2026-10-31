@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import multiprocessing
+import multiprocessing.connection
+import os
 import re
 import select
 import socket
+import sys
 import threading
 import time
 import zipfile
+import zlib
 from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
@@ -38,6 +43,7 @@ except ModuleNotFoundError:  # Running this file directly from the scripts direc
 class DocumentHandler(BaseHTTPRequestHandler):
     server_version = "StudentLLM-Documents/1.3"
     pdf_time_budget = 240.0
+    pdf_memory_limit_mb = 2048
 
     def _write_json(self, status: int, payload: dict[str, object]) -> None:
         encoded = json.dumps(payload).encode("utf-8")
@@ -84,6 +90,12 @@ class DocumentHandler(BaseHTTPRequestHandler):
                 "pptx-xml",
             ],
             "ocrAvailable": ocr_available,
+            "limits": {
+                "pdfPages": MAX_PDF_PAGES,
+                "pdfTimeBudgetSeconds": self.pdf_time_budget,
+                "pdfWorkerMemoryMb": self.pdf_memory_limit_mb,
+                "pdfStreamMegabytes": PDF_MAX_STREAM_BYTES // (1024 * 1024),
+            },
         })
 
     def do_POST(self) -> None:
@@ -107,6 +119,7 @@ class DocumentHandler(BaseHTTPRequestHandler):
                 model, pages = run_pdf_extraction(
                     payload,
                     budget_seconds=self.pdf_time_budget,
+                    memory_limit_mb=self.pdf_memory_limit_mb,
                     should_abort=lambda: client_disconnected(self.connection),
                 )
             elif content_type.startswith("image/"):
@@ -130,6 +143,8 @@ class DocumentHandler(BaseHTTPRequestHandler):
             self._write_json(504, {"error": str(error)})
         except ExtractionBusy as error:
             self._write_json(503, {"error": str(error)})
+        except ExtractionCrashed as error:
+            self._write_json(422, {"error": str(error)})
         except DocumentLimitError as error:
             self._write_json(422, {"error": str(error)})
         except Exception:
@@ -146,6 +161,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pdf-time-budget", type=float, default=PDF_TIME_BUDGET_SECONDS,
         help="Seconds one PDF request may run before it is stopped (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--pdf-memory-limit-mb", type=int, default=PDF_WORKER_MEMORY_LIMIT_MB,
+        help="Memory one PDF worker process may use, in MB; 0 disables the limit (default: %(default)s).",
     )
     return parser.parse_args()
 
@@ -552,6 +571,11 @@ PDF_FULL_LAYOUT_MAX_CHARACTERS = 20_000
 PDF_MAX_PAGE_CHARACTERS = 30_000  # Above this a page is not parsed as text (time grows steeply): it is read by OCR, or rejected.
 PDF_MAX_CONCURRENT_JOBS = 2
 PDF_QUEUE_WAIT_SECONDS = 30.0
+PDF_MAX_STREAM_BYTES = 64 * 1024 * 1024  # Largest size one PDF stream may decode to; a decompression bomb is refused.
+PDF_WORKER_MEMORY_LIMIT_MB = 2048  # Memory one worker may use (0 disables the limit).
+PDF_WORKER_DEADLINE_GRACE_SECONDS = 10.0  # A worker ends itself this long after the request budget.
+WORKER_EXIT_DEADLINE = 70
+WORKER_EXIT_ORPHANED = 71
 
 # PDFium is not thread-safe and the sidecar serves requests on several threads.
 _PDFIUM_LOCK = threading.Lock()
@@ -572,6 +596,16 @@ class ExtractionAborted(Exception):
 
 class ExtractionBusy(Exception):
     """Too many PDF requests are already running."""
+
+
+class ExtractionCrashed(Exception):
+    """The worker died without an answer, most often because it ran out of memory."""
+
+    def __init__(self, memory_limit_mb: int) -> None:
+        super().__init__(
+            "PDF extraction stopped unexpectedly. This usually means the document needs more memory than the local "
+            f"extractor allows ({memory_limit_mb} MB) or is damaged. Split it into smaller files or export it again."
+        )
 
 
 def _span_font(name: str) -> str:
@@ -671,7 +705,7 @@ def analyze_pdf_page(layout_page: object) -> bool:
     return True
 
 
-def extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
+def _extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
     from pdfminer.converter import PDFPageAggregator
     from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
     from pdfminer.pdfpage import PDFPage
@@ -728,12 +762,175 @@ def extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
     return ("pdfminer+rapidocr" if ocr_pages else "pdfminer"), pages
 
 
-def _pdf_worker(pdf_bytes: bytes, connection: object) -> None:
+class _BoundedZlib:
+    """Stands in for `zlib` inside pdfminer.pdftypes so one Flate stream cannot expand past a limit."""
+
+    error = zlib.error
+
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+
+    def decompressobj(self, *arguments: object, **keywords: object) -> object:
+        return zlib.decompressobj(*arguments, **keywords)
+
+    def decompress(self, data: bytes, *_arguments: object) -> bytes:
+        decompressor = zlib.decompressobj()
+        output = decompressor.decompress(data, self._limit + 1)
+        if len(output) > self._limit:
+            raise _stream_too_large(self._limit)
+        output += decompressor.flush()
+        if not decompressor.eof:
+            raise zlib.error("incomplete or truncated stream")  # Same as zlib.decompress, so pdfminer falls back as before.
+        return output
+
+
+def _stream_too_large(limit: int) -> DocumentLimitError:
+    return DocumentLimitError(
+        f"A stream in this PDF expands to more than {limit // (1024 * 1024)} MB when decompressed, which the local "
+        "extractor does not accept. The file may be damaged or malicious."
+    )
+
+
+@contextlib.contextmanager
+def bounded_stream_decoding(limit: int | None = None):
+    """Make pdfminer.six refuse any PDF stream that decodes to more than `limit` bytes (default PDF_MAX_STREAM_BYTES)."""
+    from pdfminer import pdftypes
+
+    limit = PDF_MAX_STREAM_BYTES if limit is None else limit
+    original_zlib, original_decode = pdftypes.zlib, pdftypes.PDFStream.decode
+
+    def decode(stream: object) -> None:
+        original_decode(stream)  # type: ignore[arg-type]
+        data = getattr(stream, "data", None)
+        if data is not None and len(data) > limit:  # LZW, ASCII85, run-length and predictor output
+            raise _stream_too_large(limit)
+
+    pdftypes.zlib = _BoundedZlib(limit)
+    pdftypes.PDFStream.decode = decode
+    try:
+        yield
+    finally:
+        pdftypes.zlib = original_zlib
+        pdftypes.PDFStream.decode = original_decode
+
+
+def extract_pdf(pdf_bytes: bytes, max_stream_bytes: int | None = None) -> tuple[str, list[dict[str, object]]]:
+    with bounded_stream_decoding(max_stream_bytes):
+        return _extract_pdf(pdf_bytes)
+
+
+def memory_limit_message(megabytes: int) -> str:
+    return (
+        f"This PDF needs more than the {megabytes} MB of memory that the local extractor allows for one document. "
+        "Split it into smaller files or export it again with fewer or smaller images."
+    )
+
+
+def apply_worker_memory_limit(megabytes: int) -> str:
+    """Cap this process's memory; returns "enforced" or a plain reason why it could not be applied.
+
+    POSIX: RLIMIT_DATA (RLIMIT_AS where that is missing). Linux enforces it; macOS may ignore it, so there it is best
+    effort. Windows: a job object with a per-process memory limit, set through ctypes.
+    """
+    if megabytes <= 0:
+        return "disabled"
+    limit = megabytes * 1024 * 1024
+    try:
+        if os.name == "nt":
+            return _limit_windows_process_memory(limit)
+        import resource
+
+        kind = getattr(resource, "RLIMIT_DATA", None) or resource.RLIMIT_AS
+        _soft, hard = resource.getrlimit(kind)
+        resource.setrlimit(kind, (limit if hard == resource.RLIM_INFINITY else min(limit, hard), hard))
+        return "enforced" if sys.platform.startswith("linux") else "best effort (this platform may ignore it)"
+    except Exception as error:  # noqa: BLE001 - a missing limit must not stop extraction
+        return f"not applied ({type(error).__name__}: {error})"
+
+
+def _limit_windows_process_memory(limit: int) -> str:
+    import ctypes
+    from ctypes import wintypes
+
+    class IoCounters(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_ulonglong) for name in (
+            "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+            "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+    class BasicLimits(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class ExtendedLimits(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", BasicLimits), ("IoInfo", IoCounters), ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        return f"not applied (CreateJobObject failed: {ctypes.get_last_error()})"
+    info = ExtendedLimits()
+    info.BasicLimitInformation.LimitFlags = 0x00000100  # JOB_OBJECT_LIMIT_PROCESS_MEMORY
+    info.ProcessMemoryLimit = limit
+    if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):  # JobObjectExtendedLimitInformation
+        return f"not applied (SetInformationJobObject failed: {ctypes.get_last_error()})"
+    if not kernel32.AssignProcessToJobObject(job, kernel32.GetCurrentProcess()):
+        return f"not applied (AssignProcessToJobObject failed: {ctypes.get_last_error()})"
+    return "enforced"
+
+
+def start_worker_guard(deadline_seconds: float) -> None:
+    """In a worker process: exit when the parent dies and when the worker's own deadline passes.
+
+    The parent normally kills the worker. This covers a parent that was itself killed (the desktop shell stops
+    sidecars with a hard kill) and a parent that is stuck, so no worker is left running without a limit.
+    """
+    parent = multiprocessing.parent_process()
+    if parent is None:
+        return
+
+    def watch() -> None:
+        parent_gone = multiprocessing.connection.wait([parent.sentinel], timeout=deadline_seconds)
+        os._exit(WORKER_EXIT_ORPHANED if parent_gone else WORKER_EXIT_DEADLINE)
+
+    threading.Thread(target=watch, name="pdf-worker-guard", daemon=True).start()
+
+
+def prepare_worker(budget_seconds: float, memory_limit_mb: int) -> str:
+    start_worker_guard(budget_seconds + PDF_WORKER_DEADLINE_GRACE_SECONDS)
+    status = apply_worker_memory_limit(memory_limit_mb)
+    if status not in {"enforced", "disabled"}:
+        print(f"PDF worker memory limit: {status}", file=sys.stderr, flush=True)
+    return status
+
+
+def _pdf_worker(
+    pdf_bytes: bytes,
+    connection: object,
+    budget_seconds: float = PDF_TIME_BUDGET_SECONDS,
+    memory_limit_mb: int = PDF_WORKER_MEMORY_LIMIT_MB,
+    max_stream_bytes: int = PDF_MAX_STREAM_BYTES,
+) -> None:
     """Entry point of the extraction process: sends ("ok", result), ("limit", message) or ("error", "")."""
     try:
-        connection.send(("ok", extract_pdf(pdf_bytes)))
+        prepare_worker(budget_seconds, memory_limit_mb)
+        connection.send(("ok", extract_pdf(pdf_bytes, max_stream_bytes)))
     except DocumentLimitError as error:
         connection.send(("limit", str(error)))
+    except MemoryError:
+        connection.send(("limit", memory_limit_message(memory_limit_mb)))
     except BaseException:
         connection.send(("error", ""))
     finally:
@@ -754,30 +951,41 @@ def run_pdf_extraction(
     budget_seconds: float = PDF_TIME_BUDGET_SECONDS,
     should_abort: object = None,
     worker: object = None,
+    memory_limit_mb: int = PDF_WORKER_MEMORY_LIMIT_MB,
+    max_stream_bytes: int = PDF_MAX_STREAM_BYTES,
 ) -> tuple[str, list[dict[str, object]]]:
     """Extract a PDF in a separate process that is killed when the time budget runs out or the client leaves.
 
     pdfminer.six cannot be interrupted from inside, and a thread that keeps running after the client gave up
-    keeps using a CPU, so the work lives in a process that can be stopped for good.
+    keeps using a CPU, so the work lives in a process that can be stopped for good. The worker also limits its own
+    memory and time and exits when this process dies, so a hard-killed sidecar leaves nothing running.
     """
     if not _PDF_JOBS.acquire(timeout=PDF_QUEUE_WAIT_SECONDS):
         raise ExtractionBusy("The document service is busy with other PDFs. Try again in a moment.")
-    context = multiprocessing.get_context("spawn")
-    receiver, sender = context.Pipe(duplex=False)
-    process = context.Process(target=worker or _pdf_worker, args=(pdf_bytes, sender), daemon=True)
-    try:
+    receiver = sender = process = None
+    started = False
+    try:  # Everything after the slot was taken is inside the try, so an early failure cannot leak the slot.
+        context = multiprocessing.get_context("spawn")
+        receiver, sender = context.Pipe(duplex=False)
+        process = context.Process(
+            target=worker or _pdf_worker,
+            args=(pdf_bytes, sender, budget_seconds, memory_limit_mb, max_stream_bytes),
+            daemon=True,
+        )
         process.start()
+        started = True
         sender.close()
+        sender = None
         deadline = time.monotonic() + budget_seconds
         while True:
             if receiver.poll(0.1):
                 try:
                     kind, value = receiver.recv()
                 except EOFError as error:
-                    raise RuntimeError("The PDF worker stopped without a result.") from error
+                    raise ExtractionCrashed(memory_limit_mb) from error
                 break
             if not process.is_alive() and not receiver.poll(0):
-                raise RuntimeError("The PDF worker stopped without a result.")
+                raise ExtractionCrashed(memory_limit_mb)
             if should_abort is not None and should_abort():
                 raise ExtractionAborted()
             if time.monotonic() >= deadline:
@@ -786,11 +994,16 @@ def run_pdf_extraction(
                     "complex for the local extractor; split it or export it again."
                 )
     finally:
-        if process.is_alive():
-            process.kill()
-        process.join(10)
-        receiver.close()
-        _PDF_JOBS.release()
+        try:
+            if process is not None and started:
+                if process.is_alive():
+                    process.kill()
+                process.join(10)
+        finally:
+            for end in (receiver, sender):
+                if end is not None:
+                    end.close()
+            _PDF_JOBS.release()
     if kind == "ok":
         return value
     if kind == "limit":
@@ -802,6 +1015,7 @@ def main() -> None:
     arguments = parse_args()
     host = validate_local_host(arguments.host)
     DocumentHandler.pdf_time_budget = arguments.pdf_time_budget
+    DocumentHandler.pdf_memory_limit_mb = arguments.pdf_memory_limit_mb
     server = ThreadingHTTPServer((host, arguments.port), DocumentHandler)
     server.daemon_threads = True
     print(f"StudentLLM local document extraction listening on http://{host}:{arguments.port}")

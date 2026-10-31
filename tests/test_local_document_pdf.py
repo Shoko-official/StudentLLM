@@ -8,7 +8,11 @@ import json
 import multiprocessing
 import os
 import random
+import signal
 import socket
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -16,6 +20,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from io import BytesIO
 from unittest import mock
 
@@ -36,6 +41,7 @@ try:
 except ImportError:
     OCR_ENGINE = False
 
+REPOSITORY_ROOT = str(Path(__file__).resolve().parent.parent)
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
@@ -209,6 +215,10 @@ class DocumentServerHttpTests(unittest.TestCase):
         self.assertNotIn("scanned-pdf-ocr", health["capabilities"])
         self.assertFalse(health["ocrAvailable"])
         self.assertNotIn("pymupdf", json.dumps(health).lower())
+        self.assertEqual(health["limits"]["pdfPages"], 500)
+        self.assertEqual(health["limits"]["pdfTimeBudgetSeconds"], local_document_server.DocumentHandler.pdf_time_budget)
+        self.assertEqual(health["limits"]["pdfWorkerMemoryMb"], local_document_server.DocumentHandler.pdf_memory_limit_mb)
+        self.assertEqual(health["limits"]["pdfStreamMegabytes"], 64)
 
     def test_health_advertises_ocr_when_it_is_installed(self):
         with mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=True):
@@ -248,17 +258,17 @@ class DocumentServerHttpTests(unittest.TestCase):
         self.assertEqual(body["pages"][0]["text"], "Slide one")
 
 
-def _sleepy_worker(pdf_bytes, connection):
+def _sleepy_worker(pdf_bytes, connection, *_settings):
     """A worker that never answers, to exercise the time budget and the cleanup."""
     time.sleep(120)
 
 
-def _limit_worker(pdf_bytes, connection):
+def _limit_worker(pdf_bytes, connection, *_settings):
     connection.send(("limit", "This document has too much of something."))
     connection.close()
 
 
-def _crashing_worker(pdf_bytes, connection):
+def _crashing_worker(pdf_bytes, connection, *_settings):
     os._exit(3)
 
 
@@ -373,7 +383,7 @@ class IsolatedExtractionTests(unittest.TestCase):
             local_document_server.run_pdf_extraction(b"%PDF", budget_seconds=60, worker=_limit_worker)
 
     def test_reports_a_worker_that_dies_without_a_result(self):
-        with self.assertRaisesRegex(RuntimeError, "without a result"):
+        with self.assertRaisesRegex(local_document_server.ExtractionCrashed, "stopped unexpectedly"):
             local_document_server.run_pdf_extraction(b"%PDF", budget_seconds=60, worker=_crashing_worker)
 
     def test_refuses_new_work_when_the_slots_are_taken_and_does_not_leak_a_slot(self):
@@ -423,6 +433,13 @@ class DocumentServerLimitHttpTests(unittest.TestCase):
         self.assertIn("stopped after 1 seconds", body["error"])
         self.assertTrue(_no_children())
 
+    def test_answers_422_for_a_decompression_bomb_with_a_plain_message(self):
+        status, body = self.post(pdf_fixtures.decompression_bomb_pdf(local_document_server.PDF_MAX_STREAM_BYTES + 2 * 1024 * 1024))
+
+        self.assertEqual(status, 422)
+        self.assertIn("expands to more than 64 MB when decompressed", body["error"])
+        self.assertEqual(local_document_server._PDF_JOBS._value, local_document_server.PDF_MAX_CONCURRENT_JOBS)
+
     def test_answers_422_with_the_limit_message(self):
         with mock.patch.object(local_document_server, "_pdf_worker", _limit_worker):
             status, body = self.post()
@@ -446,6 +463,200 @@ class DocumentServerLimitHttpTests(unittest.TestCase):
             connection.close()
             self.assertTrue(_no_children(15), "the worker kept running after the client left")
         self.assertEqual(local_document_server._PDF_JOBS._value, local_document_server.PDF_MAX_CONCURRENT_JOBS)
+
+
+class _FailingContext:
+    """A multiprocessing context whose Pipe(), Process() or Process.start() fails, to prove the job slot is returned."""
+
+    def __init__(self, fail):
+        self.fail = fail
+        self.real = multiprocessing.get_context("spawn")
+
+    def Pipe(self, *arguments, **keywords):
+        if self.fail == "pipe":
+            raise OSError("no pipe for you")
+        return self.real.Pipe(*arguments, **keywords)
+
+    def Process(self, *arguments, **keywords):
+        if self.fail == "process":
+            raise OSError("no process for you")
+        process = self.real.Process(*arguments, **keywords)
+        if self.fail == "start":
+            def refuse():
+                raise OSError("cannot start")
+            process.start = refuse
+        return process
+
+
+def _pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        kernel32.CloseHandle(handle)
+        return code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _force_kill(pid: int) -> None:
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
+    else:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _guarded_sleepy_worker(pdf_bytes, connection, budget_seconds=60, *_settings):
+    """Starts the real guard, reports its pid, then sleeps for a long time."""
+    local_document_server.prepare_worker(budget_seconds, 0)
+    with open(os.environ["STUDENTLLM_TEST_PID_FILE"], "w", encoding="ascii") as handle:
+        handle.write(str(os.getpid()))
+    time.sleep(300)
+
+
+def _short_deadline_worker(pdf_bytes, connection, *_settings):
+    local_document_server.start_worker_guard(0.5)
+    time.sleep(300)
+
+
+def _hungry_worker(pdf_bytes, connection, budget_seconds, memory_limit_mb, *_settings):
+    status = local_document_server.prepare_worker(budget_seconds, memory_limit_mb)
+    try:
+        hoard = bytearray(memory_limit_mb * 4 * 1024 * 1024)
+        connection.send(("ok", (f"allocated {len(hoard)} bytes with the limit {status}", [])))
+    except MemoryError:
+        connection.send(("limit", local_document_server.memory_limit_message(memory_limit_mb)))
+
+
+@unittest.skipUnless(PDF_ENGINES, "pdfminer.six and pypdfium2 are not installed")
+class SlotAccountingTests(unittest.TestCase):
+    def tearDown(self):
+        self.assertTrue(_no_children())
+        self.assertEqual(local_document_server._PDF_JOBS._value, local_document_server.PDF_MAX_CONCURRENT_JOBS)
+
+    def test_an_early_failure_never_leaks_the_job_slot(self):
+        for failure in ("pipe", "process", "start"):
+            for _ in range(local_document_server.PDF_MAX_CONCURRENT_JOBS + 1):  # more attempts than there are slots
+                with mock.patch.object(multiprocessing, "get_context", return_value=_FailingContext(failure)):
+                    with self.assertRaises(OSError):
+                        local_document_server.run_pdf_extraction(pdf_fixtures.article_pdf(), budget_seconds=30)
+            self.assertEqual(local_document_server._PDF_JOBS._value, local_document_server.PDF_MAX_CONCURRENT_JOBS, failure)
+
+        model, pages = local_document_server.run_pdf_extraction(pdf_fixtures.article_pdf(), budget_seconds=120)
+        self.assertEqual(model, "pdfminer")
+        self.assertEqual(len(pages), 2)
+
+
+@unittest.skipUnless(PDF_ENGINES, "pdfminer.six and pypdfium2 are not installed")
+class WorkerSelfDefenceTests(unittest.TestCase):
+    def test_a_worker_exits_by_itself_when_the_sidecar_is_killed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = os.path.join(directory, "worker.pid")
+            script = (
+                "from scripts import local_document_server as s\n"
+                "from tests.test_local_document_pdf import _guarded_sleepy_worker\n"
+                "s.run_pdf_extraction(b'%PDF', budget_seconds=600, worker=_guarded_sleepy_worker)\n"
+            )
+            sidecar = subprocess.Popen(
+                [sys.executable, "-c", script], cwd=REPOSITORY_ROOT, env={**os.environ, "STUDENTLLM_TEST_PID_FILE": pid_file},
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            worker_pid = None
+            try:
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline and worker_pid is None:
+                    if os.path.exists(pid_file) and os.path.getsize(pid_file):
+                        with open(pid_file, encoding="ascii") as handle:
+                            worker_pid = int(handle.read())
+                    time.sleep(0.2)
+                self.assertIsNotNone(worker_pid, "the worker never reported its pid")
+                self.assertTrue(_pid_alive(worker_pid))
+
+                sidecar.kill()  # A hard kill, like Child::kill in the desktop supervisor: no cleanup code runs.
+                sidecar.wait(30)
+
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline and _pid_alive(worker_pid):
+                    time.sleep(0.2)
+                self.assertFalse(_pid_alive(worker_pid), "the worker outlived its parent")
+            finally:
+                if sidecar.poll() is None:
+                    sidecar.kill()
+                if worker_pid is not None and _pid_alive(worker_pid):
+                    _force_kill(worker_pid)
+
+    def test_a_worker_ends_itself_at_its_own_deadline(self):
+        context = multiprocessing.get_context("spawn")
+        receiver, sender = context.Pipe(duplex=False)
+        process = context.Process(target=_short_deadline_worker, args=(b"", sender), daemon=True)
+        process.start()
+        sender.close()
+        try:
+            process.join(60)
+            self.assertFalse(process.is_alive(), "the worker ignored its deadline")
+            self.assertEqual(process.exitcode, local_document_server.WORKER_EXIT_DEADLINE)
+        finally:
+            if process.is_alive():
+                process.kill()
+            receiver.close()
+
+
+@unittest.skipUnless(PDF_ENGINES, "pdfminer.six and pypdfium2 are not installed")
+class MemoryAndStreamLimitTests(unittest.TestCase):
+    def tearDown(self):
+        self.assertTrue(_no_children())
+        self.assertEqual(local_document_server._PDF_JOBS._value, local_document_server.PDF_MAX_CONCURRENT_JOBS)
+
+    def test_a_decompression_bomb_is_refused_with_a_plain_message_and_frees_the_slot(self):
+        bomb = pdf_fixtures.decompression_bomb_pdf(8 * 1024 * 1024)
+        self.assertLess(len(bomb), 64 * 1024)  # a few kilobytes expand to eight megabytes
+
+        with self.assertRaisesRegex(local_document_server.DocumentLimitError, "expands to more than 1 MB when decompressed"):
+            local_document_server.run_pdf_extraction(bomb, budget_seconds=120, max_stream_bytes=1024 * 1024)
+
+    def test_the_default_stream_cap_stops_a_bomb_before_it_is_decoded(self):
+        bomb = pdf_fixtures.decompression_bomb_pdf(local_document_server.PDF_MAX_STREAM_BYTES + 4 * 1024 * 1024)
+
+        with self.assertRaisesRegex(local_document_server.DocumentLimitError, "expands to more than 64 MB"):
+            local_document_server.run_pdf_extraction(bomb, budget_seconds=120)
+
+    def test_a_normal_pdf_is_not_affected_by_the_stream_cap(self):
+        model, pages = local_document_server.run_pdf_extraction(pdf_fixtures.article_pdf(), budget_seconds=120, max_stream_bytes=1024 * 1024)
+
+        self.assertEqual(model, "pdfminer")
+        self.assertIn("Quarterly Energy Report", pages[0]["text"])
+
+    @unittest.skipIf(sys.platform == "darwin", "macOS ignores the data-size limit, so the cap is only best effort there")
+    def test_the_worker_memory_limit_turns_an_allocation_failure_into_a_plain_message(self):
+        with self.assertRaisesRegex(local_document_server.DocumentLimitError, "needs more than the 200 MB of memory"):
+            local_document_server.run_pdf_extraction(b"%PDF", budget_seconds=120, worker=_hungry_worker, memory_limit_mb=200)
+
+    @unittest.skipIf(sys.platform == "darwin", "macOS ignores the data-size limit, so the cap is only best effort there")
+    def test_a_real_bomb_that_passes_the_stream_cap_still_hits_the_memory_limit(self):
+        bomb = pdf_fixtures.decompression_bomb_pdf(600 * 1024 * 1024)
+        self.assertLess(len(bomb), 2 * 1024 * 1024)
+
+        with self.assertRaises(local_document_server.DocumentLimitError) as caught:
+            local_document_server.run_pdf_extraction(bomb, budget_seconds=120, memory_limit_mb=300, max_stream_bytes=2 * 1024**3)
+        self.assertRegex(str(caught.exception), "memory")
+
+    def test_a_memory_limit_of_zero_disables_the_cap(self):
+        self.assertEqual(local_document_server.apply_worker_memory_limit(0), "disabled")
+
+    def test_a_worker_that_dies_without_an_answer_is_reported_with_the_memory_hint(self):
+        with self.assertRaisesRegex(local_document_server.ExtractionCrashed, "needs more memory than the local extractor allows \\(512 MB\\)"):
+            local_document_server.run_pdf_extraction(b"%PDF", budget_seconds=60, worker=_crashing_worker, memory_limit_mb=512)
 
 
 if __name__ == "__main__":
