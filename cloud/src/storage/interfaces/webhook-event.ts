@@ -15,6 +15,7 @@ export const WEBHOOK_FIELD_NAMES = [
   "product_id",
   "status",
   "action",
+  "adjustment_type",
   "currency",
   "period_start",
   "period_end",
@@ -64,5 +65,10 @@ export interface WebhookEventStore {
   release(eventId: string, attempt: number): Promise<boolean>;
   get(eventId: string): Promise<WebhookEventRecord | null>;
   listQuarantined(): Promise<WebhookEventRecord[]>;
+  /**
+   * A quarantined event was applied after all (for example a chargeback that arrived before its purchase): moves it
+   * to `processed` so it is not replayed twice. False when the event is not quarantined.
+   */
+  markReplayed(eventId: string, now: number): Promise<boolean>;
   deleteOlderThan(beforeMs: number): Promise<number>;
 }

@@ -88,6 +88,78 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
     });
   });
 
+  describe(`${label}: billing, id indexes, tombstone and extra cancellations`, () => {
+    it("resolves a payment to its account, and keeps resolving the ids an account used after its plan moved on", async () => {
+      const stores = await accountWith();
+      await stores.accounts.applyPlanEvent("acc_1", T0, () => plan({ revokedPurchaseIds: ["txn_refunded"] }));
+      expect(await stores.accounts.findAccountIdByPurchase("txn_1")).toBe("acc_1"); // the purchase of a period
+      expect(await stores.accounts.findAccountIdByPurchase("txn_refunded")).toBe("acc_1"); // a refunded payment is remembered
+      expect(await stores.accounts.findAccountIdByPurchase("txn_nope")).toBeNull();
+      await stores.accounts.applyPlanEvent("acc_1", T0 + 1, (cur) => ({
+        ...cur!,
+        paddleCustomerId: "ctm_2",
+        retiredCustomerIds: ["ctm_1"],
+        paddleSubscriptionId: "sub_2",
+        retiredSubscriptionIds: ["sub_1"],
+        extraCancels: [{ subscriptionId: "sub_dup", customerId: "ctm_1", reason: "duplicate", requestedAt: T0, attempts: 0, nextAttemptAt: T0, alerted: false }],
+      }));
+      for (const id of ["ctm_1", "ctm_2"]) expect(await stores.accounts.findAccountIdByPaddleCustomer(id), id).toBe("acc_1");
+      for (const id of ["sub_1", "sub_2", "sub_dup"]) expect(await stores.accounts.findAccountIdByPaddleSubscription(id), id).toBe("acc_1");
+      await stores.accounts.purgeAccount("acc_1");
+      for (const id of ["ctm_1", "ctm_2"]) expect(await stores.accounts.findAccountIdByPaddleCustomer(id)).toBeNull();
+      expect(await stores.accounts.findAccountIdByPurchase("txn_1")).toBeNull();
+      expect(await stores.accounts.findAccountIdByPaddleSubscription("sub_dup")).toBeNull();
+    });
+
+    it("never gives an id to a second account", async () => {
+      const stores = await accountWith("acc_1");
+      await stores.accounts.create({ accountId: "acc_2", email: "b@example.invalid", googleSubject: null, loginMethods: ["email"], termsVersion: "v1", now: T0 });
+      await stores.accounts.applyPlanEvent("acc_1", T0, () => plan());
+      await stores.accounts.applyPlanEvent("acc_2", T0, () => plan({ accountId: "acc_2" }));
+      expect(await stores.accounts.findAccountIdByPaddleCustomer("ctm_1")).toBe("acc_1");
+      expect(await stores.accounts.findAccountIdByPurchase("txn_1")).toBe("acc_1");
+    });
+
+    it("keeps every subscription and customer id in the deletion tombstone", async () => {
+      const stores = await accountWith();
+      await stores.accounts.applyPlanEvent("acc_1", T0, () =>
+        plan({
+          retiredSubscriptionIds: ["sub_old"],
+          retiredCustomerIds: ["ctm_old"],
+          extraCancels: [{ subscriptionId: "sub_dup", customerId: null, reason: "duplicate", requestedAt: T0, attempts: 1, nextAttemptAt: T0 + 10, alerted: false }],
+        }),
+      );
+      const t = await stores.accounts.markDeleting("acc_1", T0 + 1);
+      expect([...t!.paddleSubscriptionIds].sort()).toEqual(["sub_1", "sub_dup", "sub_old"]);
+      expect([...t!.paddleCustomerIds].sort()).toEqual(["ctm_1", "ctm_old"]);
+    });
+
+    it("lists an account whose only waiting cancellation is an extra one, when it is due", async () => {
+      const stores = await accountWith();
+      await stores.accounts.applyPlanEvent("acc_1", T0, () =>
+        plan({ extraCancels: [{ subscriptionId: "sub_dup", customerId: null, reason: "duplicate", requestedAt: T0, attempts: 1, nextAttemptAt: T0 + 100, alerted: false }] }),
+      );
+      expect(await stores.accounts.listPendingCancels(T0 + 99, 10)).toEqual([]);
+      expect(await stores.accounts.listPendingCancels(T0 + 100, 10)).toEqual(["acc_1"]);
+    });
+  });
+
+  describe(`${label}: billing, WebhookEventStore replay`, () => {
+    it("moves a quarantined event to processed once, and only a quarantined one", async () => {
+      const { webhookEvents } = factory();
+      const ev = { eventId: "evt_q", eventType: "adjustment.updated", occurredAt: T0 };
+      const c = await webhookEvents.claim(ev, T0, 60_000);
+      expect(await webhookEvents.markReplayed("evt_q", T0 + 1)).toBe(false); // still processing
+      await webhookEvents.complete("evt_q", c.record.attempt, "quarantined", { transaction_id: "txn_1", action: "chargeback", adjustment_type: "full" }, T0 + 2);
+      expect((await webhookEvents.listQuarantined()).map((e) => e.eventId)).toEqual(["evt_q"]);
+      expect(await webhookEvents.markReplayed("evt_q", T0 + 3)).toBe(true);
+      expect(await webhookEvents.markReplayed("evt_q", T0 + 4)).toBe(false);
+      expect(await webhookEvents.listQuarantined()).toEqual([]);
+      expect((await webhookEvents.claim(ev, T0 + 5, 60_000)).outcome).toBe("duplicate");
+      expect(await webhookEvents.markReplayed("evt_ghost", T0)).toBe(false);
+    });
+  });
+
   describe(`${label}: billing, plan version touch`, () => {
     it("bumps the plan version without changing the plan or its event ordering", async () => {
       const stores = await accountWith();
@@ -165,6 +237,61 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
       expect(await ledger.getCurrentWindow("a", at)).toBeNull();
       expect(await ledger.truncateWindows("a", at)).toBe(0); // repeating changes nothing
       expect(await ledger.truncateWindows("a", at + DAY)).toBe(0); // and never extends
+    });
+
+    describe("conditional insert of a grant", () => {
+      const spec = (startDays: number, days: number, limit = 10) => ({ start: T0 + startDays * DAY, end: T0 + (startDays + days) * DAY, limit });
+
+      it("inserts all the windows of a grant, as grant windows", async () => {
+        const { ledger } = factory();
+        const r = await ledger.insertGrantWindows("a", "grt_1", [spec(0, 30), spec(30, 15, 5)]);
+        expect(r).toMatchObject({ ok: true, existed: false });
+        expect((await ledger.listWindows("a")).map((w) => [w.source, w.grantId, w.limit, w.used])).toEqual([["admin_grant", "grt_1", 10, 0], ["admin_grant", "grt_1", 5, 0]]);
+      });
+
+      it("returns the windows of a grant that already exists, unchanged, whatever the new request says", async () => {
+        const { ledger } = factory();
+        await ledger.insertGrantWindows("a", "grt_1", [spec(0, 30)]);
+        await ledger.reserve("a", { requestId: "r", feature: "chat", credits: 4, now: T0 + 1000, expiresAt: T0 + 60_000, idempotency: null });
+        await ledger.settle("a", { requestId: "r", credits: 4, logicalModelId: "m", now: T0 + 2000 });
+        const again = await ledger.insertGrantWindows("a", "grt_1", [spec(100, 5, 999)]);
+        expect(again).toMatchObject({ ok: true, existed: true });
+        expect(again.ok && again.windows).toHaveLength(1);
+        expect(again.ok && again.windows[0]).toMatchObject({ start: T0, limit: 10, used: 4 });
+        expect(await ledger.listWindows("a")).toHaveLength(1);
+      });
+
+      it("rejects any overlap with a live or queued window of any source, inserting nothing", async () => {
+        const { ledger } = factory();
+        await ledger.ensureWindow("a", { start: T0 + 40 * DAY, end: T0 + 70 * DAY, limit: 5 }); // queued paid window
+        const r = await ledger.insertGrantWindows("a", "grt_1", [spec(0, 30), spec(30, 30)]); // the second runs into it
+        expect(r).toMatchObject({ ok: false, reason: "overlap", conflict: { source: "paddle", start: T0 + 40 * DAY } });
+        expect(await ledger.listWindows("a")).toHaveLength(1); // all or nothing
+        expect((await ledger.insertGrantWindows("a", "grt_2", [spec(70, 10)])).ok).toBe(true); // touching at the edge is not an overlap
+      });
+
+      it("ignores revoked windows for overlap, but a start they use is taken", async () => {
+        const { ledger } = factory();
+        await ledger.ensureWindow("a", { start: T0, end: T0 + 30 * DAY, limit: 5 });
+        await ledger.revokeWindows("a", T0);
+        expect(await ledger.insertGrantWindows("a", "grt_1", [spec(0, 10)])).toEqual({ ok: false, reason: "start_taken" });
+        expect((await ledger.insertGrantWindows("a", "grt_1", [spec(1, 10)])).ok).toBe(true);
+      });
+
+      it("of parallel inserts for the same time exactly one wins, whole", async () => {
+        const { ledger } = factory();
+        const results = await Promise.all(Array.from({ length: 8 }, (_, i) => ledger.insertGrantWindows("a", `grt_${i}`, [spec(0, 30), spec(30, 30)])));
+        expect(results.filter((r) => r.ok)).toHaveLength(1);
+        expect(await ledger.listWindows("a")).toHaveLength(2);
+      });
+
+      it("keeps accounts apart", async () => {
+        const { ledger } = factory();
+        await ledger.insertGrantWindows("a", "grt_1", [spec(0, 30)]);
+        expect((await ledger.insertGrantWindows("b", "grt_1", [spec(0, 30)])).ok).toBe(true);
+        expect(await ledger.listWindows("a")).toHaveLength(1);
+        expect(await ledger.listWindows("b")).toHaveLength(1);
+      });
     });
 
     it("targets exactly one window by its start", async () => {

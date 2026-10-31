@@ -90,6 +90,14 @@ export class InMemoryWebhookEventStore implements WebhookEventStore {
     return e ? copy(e) : null;
   }
 
+  async markReplayed(eventId: string, now: number) {
+    const e = this.events.get(eventId);
+    if (!e || e.state !== "quarantined") return false;
+    e.state = "processed";
+    e.updatedAt = now;
+    return true;
+  }
+
   async listQuarantined() {
     return [...this.events.values()].filter((e) => e.state === "quarantined").map(copy);
   }

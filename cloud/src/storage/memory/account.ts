@@ -16,6 +16,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const copy = <T>(value: T): T => structuredClone(value);
 
+/** The earliest time a cancellation of this plan (the plan's own or an extra one) is due, or null when none waits. */
+function dueAt(plan: PlanRecord): number | null {
+  const times = [plan.pendingCancel?.nextAttemptAt, ...(plan.extraCancels ?? []).map((e) => e.nextAttemptAt)].filter((t): t is number => typeof t === "number");
+  return times.length === 0 ? null : Math.min(...times);
+}
+
 /** Key-sorted JSON; undefined values and a null `pendingCancel` are dropped so "absent" and "null" compare equal. */
 function canonical(value: unknown): string {
   return JSON.stringify(value, (key, v: unknown) => {
@@ -35,6 +41,7 @@ export class InMemoryAccountStore implements AccountStore {
   private readonly plans = new Map<string, PlanRecord>();
   private readonly bySubscription = new Map<string, string>();
   private readonly byCustomer = new Map<string, string>();
+  private readonly byPurchase = new Map<string, string>();
   private readonly tombstones = new Map<string, DeletionTombstone>();
   private readonly deletionClaims = new Map<string, number>();
   private readonly retries = new Map<string, { cancelAttempts: number; nextAttemptAt: number; manualReview: boolean }>();
@@ -136,12 +143,19 @@ export class InMemoryAccountStore implements AccountStore {
   }
 
   private store(a: AccountRecord, plan: PlanRecord): number {
-    const previous = this.plans.get(plan.accountId);
-    if (previous?.paddleSubscriptionId) this.bySubscription.delete(previous.paddleSubscriptionId);
-    if (previous?.paddleCustomerId) this.byCustomer.delete(previous.paddleCustomerId);
     this.plans.set(plan.accountId, copy(plan));
-    if (plan.paddleSubscriptionId) this.bySubscription.set(plan.paddleSubscriptionId, plan.accountId);
-    if (plan.paddleCustomerId) this.byCustomer.set(plan.paddleCustomerId, plan.accountId);
+    // The indexes only grow while the account exists: an id the account used stays resolvable after the plan
+    // moved on (a refund names a customer or a payment from an earlier purchase). The first owner of an id keeps it.
+    const claim = (index: Map<string, string>, id: string | null | undefined): void => {
+      if (id && !index.has(id)) index.set(id, plan.accountId);
+    };
+    claim(this.bySubscription, plan.paddleSubscriptionId);
+    for (const id of plan.retiredSubscriptionIds ?? []) claim(this.bySubscription, id);
+    for (const e of plan.extraCancels ?? []) claim(this.bySubscription, e.subscriptionId);
+    claim(this.byCustomer, plan.paddleCustomerId);
+    for (const id of plan.retiredCustomerIds ?? []) claim(this.byCustomer, id);
+    for (const period of plan.paidPeriods) claim(this.byPurchase, period.purchaseId);
+    for (const id of plan.revokedPurchaseIds ?? []) claim(this.byPurchase, id);
     a.planVersion += 1;
     return a.planVersion;
   }
@@ -183,8 +197,10 @@ export class InMemoryAccountStore implements AccountStore {
 
   async listPendingCancels(now: number, limit: number) {
     return [...this.plans.values()]
-      .filter((p) => p.pendingCancel != null && p.pendingCancel.nextAttemptAt <= now)
-      .sort((x, y) => x.pendingCancel!.nextAttemptAt - y.pendingCancel!.nextAttemptAt)
+      .map((p) => ({ p, due: dueAt(p) }))
+      .filter((x) => x.due !== null && x.due <= now)
+      .sort((x, y) => x.due! - y.due!)
+      .map((x) => x.p)
       .slice(0, limit)
       .map((p) => p.accountId);
   }
@@ -197,16 +213,26 @@ export class InMemoryAccountStore implements AccountStore {
     return this.byCustomer.get(customerId) ?? null;
   }
 
+  async findAccountIdByPurchase(transactionId: string) {
+    return this.byPurchase.get(transactionId) ?? null;
+  }
+
   async markDeleting(accountId: string, now: number) {
     const existing = this.tombstones.get(accountId);
     if (existing) return copy(existing);
     const a = this.accounts.get(accountId);
     if (!a) return null;
     const plan = this.plans.get(accountId);
+    const subscriptionIds = new Set<string>();
+    for (const id of [plan?.paddleSubscriptionId, ...(plan?.retiredSubscriptionIds ?? []), ...(plan?.extraCancels ?? []).map((e) => e.subscriptionId)]) if (id) subscriptionIds.add(id);
+    const customerIds = new Set<string>();
+    for (const id of [plan?.paddleCustomerId, ...(plan?.retiredCustomerIds ?? [])]) if (id) customerIds.add(id);
     const tombstone: DeletionTombstone = {
       accountId,
       paddleCustomerId: plan?.paddleCustomerId ?? null,
       paddleSubscriptionId: plan?.paddleSubscriptionId ?? null,
+      paddleSubscriptionIds: [...subscriptionIds],
+      paddleCustomerIds: [...customerIds],
       createdAt: now,
     };
     this.tombstones.set(accountId, tombstone);
@@ -269,9 +295,9 @@ export class InMemoryAccountStore implements AccountStore {
       this.byEmail.delete(a.email);
       if (a.googleSubject !== null) this.byGoogle.delete(a.googleSubject);
     }
-    const p = this.plans.get(accountId);
-    if (p?.paddleSubscriptionId) this.bySubscription.delete(p.paddleSubscriptionId);
-    if (p?.paddleCustomerId) this.byCustomer.delete(p.paddleCustomerId);
+    for (const index of [this.bySubscription, this.byCustomer, this.byPurchase]) {
+      for (const [id, owner] of [...index]) if (owner === accountId) index.delete(id);
+    }
     this.accounts.delete(accountId);
     this.plans.delete(accountId);
     this.tombstones.delete(accountId);

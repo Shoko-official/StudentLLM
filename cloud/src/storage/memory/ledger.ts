@@ -91,6 +91,48 @@ export class InMemoryLedgerStore implements LedgerStore {
     return copy(w);
   }
 
+  async insertGrantWindows(accountId: string, grantId: string, specs: ReadonlyArray<{ start: number; end: number; limit: number }>) {
+    // Synchronous from the first read to the last write, so it is atomic (an adapter does this in one step).
+    const own = [...this.windows.values()].filter((w) => w.accountId === accountId && w.grantId === grantId && w.source === "admin_grant" && w.revokedAt === null);
+    if (own.length > 0) return { ok: true as const, existed: true, windows: own.sort((a, b) => a.start - b.start).map(copy) };
+    if (specs.length === 0) throw new RangeError("a grant needs at least one window");
+    for (const spec of specs) {
+      assertCredits(spec.limit, "limit");
+      if (spec.end <= spec.start) throw new RangeError("window end must be after its start");
+    }
+    for (const spec of specs) {
+      for (const w of this.windows.values()) {
+        if (w.accountId !== accountId) continue;
+        if (w.revokedAt === null && spec.start < w.end && spec.end > w.start) return { ok: false as const, reason: "overlap" as const, conflict: copy(w) };
+        if (w.start === spec.start) return { ok: false as const, reason: "start_taken" as const };
+      }
+    }
+    for (let i = 0; i < specs.length; i++) {
+      for (let j = i + 1; j < specs.length; j++) {
+        if (specs[i]!.start < specs[j]!.end && specs[i]!.end > specs[j]!.start) throw new RangeError("the windows of a grant must not overlap each other");
+      }
+    }
+    const created: BudgetWindow[] = [];
+    for (const spec of specs) {
+      const w: BudgetWindow = {
+        accountId,
+        start: spec.start,
+        source: "admin_grant",
+        grantId,
+        end: spec.end,
+        limit: spec.limit,
+        used: 0,
+        reserved: 0,
+        byFeature: { chat: 0, transcription: 0, ocr: 0 },
+        requests: 0,
+        revokedAt: null,
+      };
+      this.windows.set(this.wKey(accountId, spec.start), w);
+      created.push(copy(w));
+    }
+    return { ok: true as const, existed: false, windows: created };
+  }
+
   async getCurrentWindow(accountId: string, now: number) {
     const w = this.current(accountId, now);
     return w ? copy(w) : null;

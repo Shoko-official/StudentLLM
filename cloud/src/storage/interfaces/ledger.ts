@@ -107,6 +107,23 @@ export interface LedgerStore {
     accountId: string,
     input: { start: number; end: number; limit: number; source?: WindowSource; grantId?: string },
   ): Promise<BudgetWindow>;
+  /**
+   * The conditional insert of a grant: ALL of `windows` or none, atomically.
+   * - If windows of `grantId` already exist (not revoked), they are returned unchanged (`existed: true`): a replay
+   *   creates nothing and resets nothing.
+   * - Otherwise it rejects with `overlap` (naming the first conflicting window) when any new window overlaps a window
+   *   of the account that is not revoked, whatever its source, live or queued; and with `start_taken` when a window
+   *   (even a revoked one) already uses the exact start of one of them. Nothing is inserted in either case.
+   */
+  insertGrantWindows(
+    accountId: string,
+    grantId: string,
+    windows: ReadonlyArray<{ start: number; end: number; limit: number }>,
+  ): Promise<
+    | { ok: true; existed: boolean; windows: BudgetWindow[] }
+    | { ok: false; reason: "overlap"; conflict: BudgetWindow }
+    | { ok: false; reason: "start_taken" }
+  >;
   getCurrentWindow(accountId: string, now: number): Promise<BudgetWindow | null>;
   listWindows(accountId: string): Promise<BudgetWindow[]>;
   /**

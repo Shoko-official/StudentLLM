@@ -55,6 +55,21 @@ export interface PaidPeriod {
   revokedAt?: number;
 }
 
+/**
+ * A subscription that must be canceled at Paddle although it is not the plan's current one: a duplicate bought by
+ * a parallel checkout, or a replaced subscription whose own cancellation was still pending. Retried like
+ * `pendingCancel`, by subscription id, always immediately. Ids only.
+ */
+export interface ExtraCancel {
+  subscriptionId: string;
+  customerId: string | null;
+  reason: "duplicate" | "retired";
+  requestedAt: number;
+  attempts: number;
+  nextAttemptAt: number;
+  alerted: boolean;
+}
+
 /** A cancellation Paddle has not confirmed yet. It is visible, retried with backoff, and never silently dropped. */
 export interface PendingCancel {
   when: "period_end" | "now";
@@ -89,12 +104,20 @@ export interface PlanRecord {
    * can add a period it paid for but never takes the plan back to a subscription that was replaced.
    */
   retiredSubscriptionIds?: string[];
+  /** Every customer id this account has used besides the current one (events keep resolving through them). */
+  retiredCustomerIds?: string[];
+  /** Subscriptions that still have to be canceled at Paddle (see ExtraCancel). */
+  extraCancels?: ExtraCancel[];
 }
 
 export interface DeletionTombstone {
   accountId: string;
   paddleCustomerId: string | null;
   paddleSubscriptionId: string | null;
+  /** Every subscription id the account has seen (current, replaced, duplicate): all must be canceled before the purge. */
+  paddleSubscriptionIds: string[];
+  /** Every customer id the account has used. */
+  paddleCustomerIds: string[];
   createdAt: number;
 }
 
@@ -175,8 +198,15 @@ export interface AccountStore {
   touchPlanVersion(accountId: string): Promise<number | null>;
   /** Accounts whose plan has a `pendingCancel` due at `now` (earliest first, at most `limit`). */
   listPendingCancels(now: number, limit: number): Promise<string[]>;
+  /**
+   * Resolves through every subscription id the account has used (current, replaced, duplicate): the index never
+   * forgets an id while the account exists.
+   */
   findAccountIdByPaddleSubscription(subscriptionId: string): Promise<string | null>;
+  /** As above for customer ids (current and retired): a refund keeps resolving after a customer id changed. */
   findAccountIdByPaddleCustomer(customerId: string): Promise<string | null>;
+  /** The account whose plan holds this Paddle transaction as the purchase of a period, or remembers it as refunded. */
+  findAccountIdByPurchase(transactionId: string): Promise<string | null>;
 
   /**
    * Erases the account at once and keeps only a tombstone with the Paddle ids (and the retry bookkeeping): the
