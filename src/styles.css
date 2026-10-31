@@ -530,3 +530,11 @@ html { scroll-padding-top: 72px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; animation-delay: 0ms !important; }
 }
+
+/* Windows High Contrast and other forced-color modes drop background tints and shadows, which is how the selected tab,
+   the open course and the needs-review segments were marked. Draw them with text decoration and borders instead. */
+@media (forced-colors: active) {
+  .view-tabs button.active { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; }
+  .tree-lesson.active { outline: 2px solid Highlight; outline-offset: -2px; }
+  .transcript-item.needs-review { border-left: 4px solid Highlight; }
+}
