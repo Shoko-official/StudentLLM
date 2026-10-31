@@ -27,6 +27,20 @@ fn is_dev_server(url: &Url) -> bool {
         && url.username().is_empty()
 }
 
+/// `blob:` URLs the app made for its source previews. Most engines write the creating origin into
+/// the URL (`blob:http://tauri.localhost/<uuid>`); WebKit may write `null` for a custom scheme
+/// (`blob:null/<uuid>`). A blob only holds content created in this webview, and a navigation that
+/// leaves it for another URL is checked again.
+fn is_local_blob(url: &Url) -> bool {
+    let path = url.path();
+    if let Some(id) = path.strip_prefix("null/") {
+        return id.len() >= 8 && id.bytes().all(|byte| byte.is_ascii_hexdigit() || byte == b'-');
+    }
+    Url::parse(path)
+        .map(|inner| inner.scheme() != "blob" && (is_app_origin(&inner) || is_dev_server(&inner)))
+        .unwrap_or(false)
+}
+
 /// Decides whether the webview may navigate to `url`.
 ///
 /// Allowed: the bundled app origins, the development server in debug builds, `about:blank`, and
@@ -36,9 +50,7 @@ pub fn is_allowed_navigation(url: &Url) -> bool {
         return true;
     }
     if url.scheme() == "blob" {
-        return Url::parse(url.path())
-            .map(|inner| inner.scheme() != "blob" && (is_app_origin(&inner) || is_dev_server(&inner)))
-            .unwrap_or(false);
+        return is_local_blob(url);
     }
     is_app_origin(url) || is_dev_server(url)
 }
@@ -89,6 +101,17 @@ mod tests {
     }
 
     #[test]
+    fn allows_the_opaque_blob_origin_webkit_may_produce() {
+        assert!(allowed("blob:null/5f1c0d7e-0000-4000-8000-000000000000"));
+        assert!(allowed("blob:null/5F1C0D7E00004000800000000000000A"));
+        assert!(!allowed("blob:null/"));
+        assert!(!allowed("blob:null/short"));
+        assert!(!allowed("blob:null/5f1c0d7e/../secret"));
+        assert!(!allowed("blob:null/5f1c0d7e-0000-4000-8000-000000000000/extra"));
+        assert!(!allowed("blob:nullx/5f1c0d7e-0000-4000-8000-000000000000"));
+    }
+
+    #[test]
     fn denies_external_hosts_and_look_alikes() {
         assert!(!allowed("https://example.com/?d=secret"));
         assert!(!allowed("http://tauri.localhost.example.com/"));
@@ -108,6 +131,16 @@ mod tests {
         assert!(!allowed("javascript:alert(1)"));
         assert!(!allowed("ftp://tauri.localhost/"));
         assert!(!allowed("about:srcdoc"));
+    }
+
+    // Pins the shipped behaviour. It only exists without debug assertions; CI runs it with
+    // CARGO_PROFILE_TEST_DEBUG_ASSERTIONS=false (see the quality job).
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn denies_the_dev_server_without_debug_assertions() {
+        assert!(!allowed("http://127.0.0.1:1420/"));
+        assert!(!allowed("http://localhost:1420/"));
+        assert!(!allowed("blob:http://127.0.0.1:1420/5f1c0d7e-0000-4000-8000-000000000000"));
     }
 
     #[test]
