@@ -549,7 +549,8 @@ test.describe('StudentLLM workspace', () => {
       buffer: Buffer.from('{"format":"studentllm-course","version":1}'),
     });
 
-    await expect(page.getByText('The course import could not be completed.')).toBeVisible();
+    await expect(page.getByRole('alert')).toContainText('broken.studentllm.json could not be imported.');
+    await expect(page.getByRole('alert')).toContainText('Nothing was changed.');
     await expect(page.getByRole('heading', { name: 'Attention & Scaled Dot-Product' }).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Self-attention and Context' })).toBeVisible();
   });
