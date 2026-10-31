@@ -1192,7 +1192,7 @@ test.describe('StudentLLM workspace', () => {
   });
 
   for (const failure of [
-    { label: 'a failed provider request', content: 'Fixture generation unavailable.', status: 503, error: 'Provider request failed (503): Fixture generation unavailable.' },
+    { label: 'a failed provider request', content: 'Fixture generation unavailable.', status: 503, error: 'Fixture generation unavailable.' },
     { label: 'an empty provider answer', content: '   ', status: 200, error: 'The model returned no final answer.' },
   ]) {
     test(`does not save study material after ${failure.label}`, async ({ page }) => {

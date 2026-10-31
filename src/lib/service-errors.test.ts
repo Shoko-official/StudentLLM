@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AI_TIMEOUT_MESSAGE, AI_UNREACHABLE_MESSAGE, describeAiFailure, describeDocumentFailure, describeServiceUnreachable, describeSpeechFailure, isNetworkFailure } from './service-errors';
+import { AI_TIMEOUT_MESSAGE, AI_UNREACHABLE_MESSAGE, CLOUD_AI_UNREACHABLE_MESSAGE, describeAiFailure, describeDocumentFailure, describeServiceUnreachable, describeSpeechFailure, isNetworkFailure } from './service-errors';
 
 describe('service error messages', () => {
   it('explains an unreachable model without the HTTP status', () => {
@@ -33,7 +33,8 @@ describe('service error messages', () => {
   it('tells a damaged or protected document apart from a service that is not running', () => {
     const rejected = describeDocumentFailure(new Error('Local document extraction failed (422): Document extraction failed.'));
     expect(rejected).toMatch(/damaged or protected by a password/);
-    expect(rejected).not.toMatch(/Start it|refresh/);
+    expect(rejected).toMatch(/missing a component/);
+    expect(rejected).not.toMatch(/Start it/);
     expect(describeDocumentFailure(new TypeError('Failed to fetch'))).toMatch(/offline\. Start it/);
     expect(describeDocumentFailure(new Error('Local document extraction timed out.'))).toMatch(/document service is offline or took too long/);
     expect(describeDocumentFailure(new Error('The document is too large.'))).toBe('The document is too large.');
@@ -46,6 +47,20 @@ describe('service error messages', () => {
     expect(describeSpeechFailure(new Error('No speech was detected in this recording.'))).toBe('No speech was detected in this recording.');
     const refused = describeSpeechFailure(new Error('Local transcription failed (422): Transcription failed.'));
     expect(refused).toMatch(/silent, empty, damaged/);
+    expect(refused).toMatch(/missing a component/);
     expect(refused).not.toMatch(/422/);
+  });
+
+  it('treats any 502, 503 or 504 as an unreachable model, whatever body the gateway attached', () => {
+    expect(describeAiFailure(new Error('Provider request failed (502): <html><body>Bad Gateway</body></html>'))).toBe(AI_UNREACHABLE_MESSAGE);
+    expect(describeAiFailure(new Error('Provider request failed (504): upstream timed out'))).toBe(`${AI_UNREACHABLE_MESSAGE} The server said: upstream timed out`);
+    expect(describeAiFailure(new Error(`Provider request failed (503): ${'x'.repeat(500)}`))).toBe(AI_UNREACHABLE_MESSAGE);
+    expect(describeAiFailure(new Error('Provider request failed (500): Context length exceeded'))).toContain('Context length exceeded');
+  });
+
+  it('does not tell a cloud provider user to start LM Studio', () => {
+    const message = describeAiFailure(new Error('Provider request failed (502)'), undefined, { cloud: true });
+    expect(message).toBe(CLOUD_AI_UNREACHABLE_MESSAGE);
+    expect(message).not.toMatch(/LM Studio/);
   });
 });

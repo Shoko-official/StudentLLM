@@ -212,6 +212,11 @@ export const RichText = memo(function RichText({ content, highlightExtractedMath
         urlTransform={safeUrlTransform}
         components={{
           img: ({ alt }) => <span className="rich-image-alt" role="img" aria-label={alt || 'Image omitted'}>{alt || 'Image omitted'}</span>,
+          // Only real external addresses are links. An empty, relative or in-page href would reload or navigate this single-page
+          // app away from the course (and an empty href reloads it outright), so it is shown as plain text instead.
+          a: ({ href, children }) => (typeof href === 'string' && /^(?:https?:|mailto:)/i.test(href.trim())
+            ? <a href={href}>{children}</a>
+            : <span className="rich-link-inert">{children}</span>),
         }}
       >
         {normalizeMathDelimiters(repairUnclosedInlineLatex(normalizeMarkdownLatex(content)))}

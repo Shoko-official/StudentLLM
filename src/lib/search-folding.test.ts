@@ -21,7 +21,7 @@ describe('accent-insensitive search for French text', () => {
     expect(textMatchesQuery('cote', 'côté')).toBe(true);
     expect(textMatchesQuery('Le château', 'chateaux')).toBe(false);
     expect(textMatchesQuery('naïve', 'naive')).toBe(true);
-    expect(textMatchesQuery('œuvre', 'oeuvre')).toBe(false);
+    expect(textMatchesQuery('œuvre', 'ouvre')).toBe(false);
   });
 
   it('keeps the same length so the highlighted part is the original accented text', () => {
@@ -39,5 +39,14 @@ describe('accent-insensitive search for French text', () => {
     }
     expect(textMatchesQuery('texte avec 😀 et (parenthèses)', '😀')).toBe(true);
     expect(textMatchesQuery('texte avec (parenthèses)', '(parentheses)')).toBe(true);
+  });
+
+  it('lets a query typed with oe or ae find the ligature, and the reverse', () => {
+    expect(textMatchesQuery('Le cœur et l’œuvre', 'coeur')).toBe(true);
+    expect(textMatchesQuery('Le cœur et l’œuvre', 'oeuvre')).toBe(true);
+    expect(textMatchesQuery('Le coeur', 'cœur')).toBe(true);
+    expect(textMatchesQuery('Ex aequo', 'æquo')).toBe(true);
+    expect(textMatchesQuery('Le cœur', 'cour')).toBe(false);
+    expect(buildSnippet('Le cœur bat vite.', 'coeur').find((part) => part.match)?.text).toBe('cœur');
   });
 });

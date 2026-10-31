@@ -116,7 +116,11 @@ function computeQueryVariants(query: string): string[] {
     return symbol && symbol !== PIPE ? symbol : word;
   });
   const unmarked = typed.replace(/[*_`#~>\\$]/g, '').replace(/\s+/g, ' ').trim();
-  return [...new Set([typed, stripped, foldForSearch(symbolic), unmarked])].filter(Boolean);
+  // Ligatures are typed as two letters: let `coeur` find `cœur` and `cœur` find `coeur`.
+  const ligature = (text: string) => text.replace(/oe/g, 'œ').replace(/ae/g, 'æ');
+  const unligature = (text: string) => text.replace(/œ/g, 'oe').replace(/æ/g, 'ae');
+  const base = [typed, stripped, foldForSearch(symbolic), unmarked];
+  return [...new Set([...base, ...base.map(ligature), ...base.map(unligature)])].filter(Boolean);
 }
 
 /** Window of the raw source worth stripping: the head, or the area around a raw match in a very long text. */
