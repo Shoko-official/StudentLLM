@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, vi } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 import { PENDING_SOURCE_ERASE_STORAGE_KEY } from './lib/pending-source-erase';
@@ -68,6 +68,7 @@ describe('erasing stored originals', () => {
   beforeEach(() => {
     vi.stubEnv('VITE_LM_STUDIO_AUTO_CONNECT', 'false');
     localStorage.clear();
+    sessionStorage.clear();
     localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(workspaceWithSource()));
     localStorage.setItem(RECORDING_NOTICE_STORAGE_KEY, JSON.stringify({ version: 1, acknowledgedAt: new Date().toISOString() }));
   });
@@ -165,23 +166,40 @@ describe('erasing stored originals', () => {
     expect(ledger()).toEqual([]);
   });
 
-  it.each([
-    ['another tab owns the workspace', () => { stopSaving(); return () => undefined; }],
-    ['the browser store is full', failSaving],
-  ])('keeps the originals and the interrupted recording of a course deleted while %s', async (_name, breakSaving) => {
+  it('does not delete a course while another tab owns the workspace, and says so', async () => {
     const user = userEvent.setup();
     const sources = blobStore();
     const chunks = chunkStore(3);
     render(<App provider={null} sourceBlobStore={sources} recordingChunkStore={chunks} />);
     await act(async () => { await Promise.resolve(); });
-    // The recording was interrupted in this window (after the start-up recovery pass).
     savePendingRecording({ recordingId: 'interrupted-recording', lessonId: FIXTURE_LESSON_ID, lessonTitle: 'Attention & Scaled Dot-Product', startedAt: 1 });
-    const restore = breakSaving();
+    stopSaving();
+    await user.click(screen.getByLabelText('Course actions'));
+    await user.click(screen.getByRole('button', { name: 'Delete course' }));
+    await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
+
+    // Nothing done in this window is stored, so the course would only come back after a reload: it is not deleted at all.
+    expect(await screen.findByText(/Saving is paused in this window, so the course was not deleted/)).toBeInTheDocument();
+    expect(screen.getAllByText('Attention & Scaled Dot-Product').length).toBeGreaterThan(0);
+    expect(sources.remove).not.toHaveBeenCalled();
+    expect(chunks.clear).not.toHaveBeenCalled();
+    expect(listPendingRecordings().map((pending) => pending.recordingId)).toEqual(['interrupted-recording']);
+    expect(ledger()).toEqual([]);
+  });
+
+  it('keeps the originals and the interrupted recording of a course deleted while the browser store is full, and says it comes back', async () => {
+    const user = userEvent.setup();
+    const sources = blobStore();
+    const chunks = chunkStore(3);
+    render(<App provider={null} sourceBlobStore={sources} recordingChunkStore={chunks} />);
+    await act(async () => { await Promise.resolve(); });
+    savePendingRecording({ recordingId: 'interrupted-recording', lessonId: FIXTURE_LESSON_ID, lessonTitle: 'Attention & Scaled Dot-Product', startedAt: 1 });
+    const restore = failSaving();
     try {
       await user.click(screen.getByLabelText('Course actions'));
       await user.click(screen.getByRole('button', { name: 'Delete course' }));
       await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
-      await screen.findByText(/Its files are kept until your changes can be saved/);
+      await screen.findByText(/the change could not be saved, so it comes back after a reload/);
     } finally {
       restore();
     }
@@ -193,11 +211,57 @@ describe('erasing stored originals', () => {
   });
 });
 
+describe('unrecovered recordings in Settings', () => {
+  beforeEach(() => {
+    vi.stubEnv('VITE_LM_STUDIO_AUTO_CONNECT', 'false');
+    localStorage.clear();
+    sessionStorage.clear();
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(createFixtureWorkspace()));
+    localStorage.setItem(RECORDING_NOTICE_STORAGE_KEY, JSON.stringify({ version: 1, acknowledgedAt: new Date().toISOString() }));
+    savePendingRecording({ recordingId: 'lost-recording', lessonId: 'course-that-is-gone', lessonTitle: 'A course that is gone', startedAt: 1 });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('keeps the manifest and the audio, lists the recording in Settings, and removes it on request', async () => {
+    const user = userEvent.setup();
+    const chunks = chunkStore(4);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(<App provider={null} sourceBlobStore={blobStore()} recordingChunkStore={chunks} />);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    // The course is not in the workspace but audio exists: the manifest is kept.
+    expect(listPendingRecordings().map((pending) => pending.recordingId)).toEqual(['lost-recording']);
+
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    const panel = await screen.findByRole('group', { name: 'Unrecovered recordings' });
+    expect(panel).toHaveTextContent('A course that is gone');
+    await user.click(within(panel).getByRole('button', { name: 'Remove recording' }));
+
+    await waitFor(() => expect(chunks.clear).toHaveBeenCalledWith('lost-recording'));
+    expect(listPendingRecordings()).toEqual([]);
+    expect(screen.queryByRole('group', { name: 'Unrecovered recordings' })).not.toBeInTheDocument();
+  });
+
+  it('removes nothing when the student declines', async () => {
+    const user = userEvent.setup();
+    const chunks = chunkStore(4);
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    render(<App provider={null} sourceBlobStore={blobStore()} recordingChunkStore={chunks} />);
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove recording' }));
+    expect(chunks.clear).not.toHaveBeenCalled();
+    expect(listPendingRecordings()).toHaveLength(1);
+  });
+});
+
 describe('interrupted recordings and an unreadable workspace', () => {
   const damaged = '{"version":1,"activeLessonId":"a","lessons":[{"id":"a","subject":"Maths"';
   beforeEach(() => {
     vi.stubEnv('VITE_LM_STUDIO_AUTO_CONNECT', 'false');
     localStorage.clear();
+    sessionStorage.clear();
     localStorage.setItem(RECORDING_NOTICE_STORAGE_KEY, JSON.stringify({ version: 1, acknowledgedAt: new Date().toISOString() }));
     localStorage.setItem(WORKSPACE_STORAGE_KEY, damaged);
     savePendingRecording({ recordingId: 'lost-course-recording', lessonId: 'lesson-that-was-not-read', lessonTitle: 'Maths', startedAt: 1 });
@@ -253,6 +317,7 @@ describe('reloading from the stale-tab banner', () => {
   beforeEach(() => {
     vi.stubEnv('VITE_LM_STUDIO_AUTO_CONNECT', 'false');
     localStorage.clear();
+    sessionStorage.clear();
     localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(createFixtureWorkspace()));
     localStorage.setItem(RECORDING_NOTICE_STORAGE_KEY, JSON.stringify({ version: 1, acknowledgedAt: new Date().toISOString() }));
   });

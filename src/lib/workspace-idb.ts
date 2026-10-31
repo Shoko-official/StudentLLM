@@ -17,6 +17,8 @@ export type WorkspaceIdbErrorCode =
   | 'quota'
   /** The connection was closed under us (database deleted, upgraded elsewhere, browser data cleared). */
   | 'closed'
+  /** A request or the whole load did not finish in time. */
+  | 'timeout'
   | 'failed';
 
 export class WorkspaceIdbError extends Error {
@@ -38,7 +40,8 @@ function toError(error: unknown, fallback: string): WorkspaceIdbError {
   const name = typeof error === 'object' && error !== null ? (error as { name?: unknown }).name : undefined;
   const message = error instanceof Error && error.message ? error.message : fallback;
   if (isQuotaError(error)) return new WorkspaceIdbError('quota', message, error);
-  if (name === 'InvalidStateError' || name === 'TransactionInactiveError') return new WorkspaceIdbError('closed', message, error);
+  // Safari reports a dead connection as "Connection to Indexed Database server lost".
+  if (name === 'InvalidStateError' || name === 'TransactionInactiveError' || /connection to indexed database server lost/i.test(message)) return new WorkspaceIdbError('closed', message, error);
   return new WorkspaceIdbError('failed', message, error);
 }
 
@@ -162,6 +165,15 @@ export class WorkspaceIdb {
     });
   }
 
+  /** The snapshot and the metadata as they were at one instant: another tab cannot save between the two reads. */
+  getSnapshotAndMeta(): Promise<{ snapshot: unknown; meta: WorkspaceMeta | undefined }> {
+    return this.run<{ snapshot: unknown; meta: WorkspaceMeta | undefined }>('readonly', (store, finish, guard) => {
+      const snapshot = store.get(SNAPSHOT_KEY);
+      const meta = store.get(META_KEY);
+      meta.onsuccess = guard(() => finish({ snapshot: snapshot.result, meta: parseMeta(meta.result) }));
+    });
+  }
+
   keysWithPrefix(prefix: string): Promise<string[]> {
     return this.run<string[]>('readonly', (store, finish, guard) => {
       const request = store.getAllKeys(IDBKeyRange.bound(prefix, prefix + String.fromCharCode(0xffff)));
@@ -189,6 +201,42 @@ export class WorkspaceIdb {
     return this.run<void>('readwrite', (store, finish) => {
       for (const [key, value] of entries) store.put(value, key);
       finish(undefined);
+    });
+  }
+
+  /** Deletes `key` only if it still holds exactly `value`: it never removes what another tab stored in the meantime. */
+  removeIfEquals(key: string, value: unknown): Promise<boolean> {
+    return this.run<boolean>('readwrite', (store, finish, guard) => {
+      const read = store.get(key);
+      read.onsuccess = guard(() => {
+        if (read.result !== value) {
+          finish(false);
+          return;
+        }
+        store.delete(key);
+        finish(true);
+      });
+    });
+  }
+
+  /**
+   * Records the migration, but only while the stored snapshot is still the copy that was verified. Resolves with the
+   * metadata (and so the version that goes with that snapshot), or null when another tab changed the snapshot first.
+   */
+  markMigrated(snapshot: string, migrated: NonNullable<WorkspaceMeta['migrated']>): Promise<WorkspaceMeta | null> {
+    return this.run<WorkspaceMeta | null>('readwrite', (store, finish, guard) => {
+      const stored = store.get(SNAPSHOT_KEY);
+      const read = store.get(META_KEY);
+      read.onsuccess = guard(() => {
+        if (stored.result !== snapshot) {
+          finish(null);
+          return;
+        }
+        const current = parseMeta(read.result);
+        const next: WorkspaceMeta = { ...current, version: current?.version ?? 1, migrated };
+        store.put(next, META_KEY);
+        finish(next);
+      });
     });
   }
 

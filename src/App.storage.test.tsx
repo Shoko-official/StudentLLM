@@ -2,10 +2,11 @@ import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { renderToString } from 'react-dom/server';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 import { openBrowserWorkspace, WORKSPACE_IDB_ACTIVE_KEY } from './lib/browser-workspace-store';
-import { META_KEY, openWorkspaceDb, SNAPSHOT_KEY, WorkspaceIdb } from './lib/workspace-idb';
+import { META_KEY, openWorkspaceDb, SNAPSHOT_KEY, WorkspaceIdb, WorkspaceIdbError } from './lib/workspace-idb';
 import type { SourceBlobStore } from './lib/source-storage';
 import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from './test/workspace-fixture';
@@ -47,6 +48,7 @@ describe('the app with its workspace in IndexedDB', () => {
     factory = new IDBFactory();
     setGlobalIndexedDb(factory);
     localStorage.clear();
+    sessionStorage.clear();
     localStorage.setItem(RECORDING_NOTICE_STORAGE_KEY, JSON.stringify({ version: 1, acknowledgedAt: new Date().toISOString() }));
   });
   afterEach(() => {
@@ -66,17 +68,17 @@ describe('the app with its workspace in IndexedDB', () => {
 
     await waitFor(async () => expect(JSON.parse(String(await idbValue(SNAPSHOT_KEY))).lessons.map((lesson: { title: string }) => lesson.title)).toContain('Stored in IndexedDB'));
     expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(fixtureRaw());
-    expect(localStorage.getItem(WORKSPACE_IDB_ACTIVE_KEY)).toBe('1');
+    expect(localStorage.getItem(WORKSPACE_IDB_ACTIVE_KEY)).toBeTruthy();
   });
 
   it('never shows an empty workspace, and writes nothing, while the stored one is loading', async () => {
     localStorage.setItem(WORKSPACE_STORAGE_KEY, fixtureRaw());
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    const realGet = WorkspaceIdb.prototype.get;
-    vi.spyOn(WorkspaceIdb.prototype, 'get').mockImplementation(async function (this: WorkspaceIdb, key: string) {
+    const realRead = WorkspaceIdb.prototype.getSnapshotAndMeta;
+    vi.spyOn(WorkspaceIdb.prototype, 'getSnapshotAndMeta').mockImplementation(async function (this: WorkspaceIdb) {
       await gate;
-      return realGet.call(this, key);
+      return realRead.call(this);
     });
     const setItem = vi.spyOn(Storage.prototype, 'setItem');
     const put = vi.spyOn(IDBObjectStore.prototype, 'put');
@@ -295,13 +297,124 @@ describe('the app with its workspace in IndexedDB', () => {
       await within(panel).findByText(/promised to keep your data/);
     });
 
-    it('asks the browser to keep the data once a course exists', async () => {
+    it('does not ask the browser on its own: only when the student presses the button, with an explanation', async () => {
       localStorage.setItem(WORKSPACE_STORAGE_KEY, fixtureRaw());
-      withEstimate(1, 1000);
+      Object.defineProperty(navigator, 'storage', {
+        configurable: true,
+        value: { estimate: async () => ({ usage: 1, quota: 1000 }), persisted: async () => false, persist: vi.fn(async () => true) },
+      });
+      const persist = (navigator.storage as unknown as { persist: ReturnType<typeof vi.fn> }).persist;
+      const user = userEvent.setup();
       render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
       await screen.findAllByText('Attention & Scaled Dot-Product');
-      await waitFor(() => expect((navigator.storage as unknown as { persist: ReturnType<typeof vi.fn> }).persist).toHaveBeenCalledTimes(1));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(persist).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole('button', { name: 'Settings' }));
+      const panel = await screen.findByRole('group', { name: 'Browser storage' });
+      expect(await within(panel).findByText(/some browsers \(Firefox, for instance\) then show their own prompt/)).toBeInTheDocument();
+      await user.click(within(panel).getByRole('button', { name: 'Ask the browser to keep my data' }));
+      await waitFor(() => expect(persist).toHaveBeenCalledTimes(1));
     });
+  });
+
+  describe('storage that is reset, slow, or full of the old copy', () => {
+    it('says so when IndexedDB was emptied after it held the workspace, and offers the older copy', async () => {
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, fixtureRaw());
+      localStorage.setItem(WORKSPACE_IDB_ACTIVE_KEY, '2026-03-04T10:00:00.000Z');
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+
+      const banner = await screen.findByRole('alert');
+      expect(banner).toHaveTextContent('Your workspace storage was reset');
+      expect(banner).toHaveTextContent('changes made after it are lost');
+      expect(within(banner).getByRole('button', { name: 'Download saved copy' })).toBeInTheDocument();
+      expect((await screen.findAllByText('Attention & Scaled Dot-Product')).length).toBeGreaterThan(0);
+    });
+
+    it('says so when everything was cleared, without offering a download', async () => {
+      localStorage.setItem(WORKSPACE_IDB_ACTIVE_KEY, '2026-03-04T10:00:00.000Z');
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+      const banner = await screen.findByRole('alert');
+      expect(banner).toHaveTextContent('no earlier copy was found');
+      expect(within(banner).queryByRole('button', { name: /Download/ })).not.toBeInTheDocument();
+      expect(within(banner).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+    });
+
+    it('shows the stale copy with saving paused when indexedDB is gone but the flag says it held the workspace', async () => {
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, fixtureRaw());
+      localStorage.setItem(WORKSPACE_IDB_ACTIVE_KEY, '2026-03-04T10:00:00.000Z');
+      setGlobalIndexedDb(undefined);
+      const user = userEvent.setup();
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} recordingChunkStore={chunkStore()} />);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Saving is paused');
+      await user.upload(screen.getByLabelText('Select course source'), new File(['Not kept.'], 'not-kept.md', { type: 'text/markdown' }));
+      await screen.findByText(/not-kept\.md added to course sources/);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(fixtureRaw());
+    });
+
+    it('does not stay on the loading screen forever: it falls back with a plain message, Reload and Export', async () => {
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, fixtureRaw());
+      setGlobalIndexedDb({ open: () => ({}) as IDBOpenDBRequest } as unknown as IDBFactory);
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        render(<App provider={null} sourceBlobStore={memoryBlobStore()} recordingChunkStore={chunkStore()} />);
+        expect(screen.getByText(/Opening your workspace/)).toBeInTheDocument();
+        await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+        // Slow: a hint and a Reload button appear on the loading screen.
+        expect(screen.getByText(/taking longer than usual/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+        await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      } finally {
+        vi.useRealTimers();
+      }
+      const banner = await screen.findByRole('alert');
+      expect(banner).toHaveTextContent('did not answer in time');
+      expect(within(banner).getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+      expect(within(banner).getByRole('button', { name: 'Export this course' })).toBeInTheDocument();
+      expect((await screen.findAllByText('Attention & Scaled Dot-Product')).length).toBeGreaterThan(0);
+    });
+
+    it('renders the loading screen with an empty live region, so that screen readers announce the text when it appears', () => {
+      const markup = renderToString(<App provider={null} />);
+      expect(markup).toContain('role="status"');
+      expect(markup).toContain('aria-live="polite"');
+      expect(markup).not.toContain('Opening your workspace');
+    });
+  });
+
+  describe('a save that failed', () => {
+    it('is retried when the page is hidden, once there is room again', async () => {
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, fixtureRaw());
+      const user = userEvent.setup();
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+      await screen.findAllByText('Attention & Scaled Dot-Product');
+      let full = true;
+      const realCas = WorkspaceIdb.prototype.compareAndSet;
+      vi.spyOn(WorkspaceIdb.prototype, 'compareAndSet').mockImplementation(async function (this: WorkspaceIdb, ...args: Parameters<WorkspaceIdb['compareAndSet']>) {
+        if (full) throw new WorkspaceIdbError('quota', 'full');
+        return realCas.apply(this, args);
+      });
+      await user.upload(screen.getByLabelText('Select course source'), new File(['Kept after the retry.'], 'retry.md', { type: 'text/markdown' }));
+      await screen.findByText(/Your changes are not being saved/);
+
+      full = false;
+      act(() => { window.dispatchEvent(new Event('pagehide')); });
+      await waitFor(async () => expect(JSON.stringify(JSON.parse(String(await idbValue(SNAPSHOT_KEY))))).toContain('Kept after the retry.'));
+    });
+
+    it('says when the workspace is over the size limit, not that the browser is full', async () => {
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, fixtureRaw());
+      const user = userEvent.setup();
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+      await screen.findAllByText('Attention & Scaled Dot-Product');
+      await user.upload(screen.getByLabelText('Select course source'), new File(['x'.repeat(9 * 1024 * 1024)], 'enormous.md', { type: 'text/markdown' }));
+
+      const banner = (await screen.findByText(/larger than the 16 MB limit/, undefined, { timeout: 15_000 })).closest('[role="alert"]') as HTMLElement;
+      expect(banner).toHaveTextContent('your browser still has room');
+      expect(within(banner).getByRole('button', { name: 'Export this course' })).toBeInTheDocument();
+    }, 30_000);
   });
 
   it('keeps the compact snapshot across a reload of the app', async () => {

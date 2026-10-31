@@ -126,4 +126,23 @@ describe('folder import creates each course when its file starts', () => {
     await screen.findByText('2 sources imported.');
     expect(savedTitles()).toHaveLength(2);
   });
+
+  it('puts the courses of a second folder at the top and shows its first course', async () => {
+    const user = userEvent.setup();
+    const store: SourceBlobStore = { durability: 'memory-only', save: vi.fn(async () => undefined), load: vi.fn(async () => null), remove: vi.fn(async () => undefined) };
+    render(<App provider={null} sourceBlobStore={store} />);
+    const folder = (name: string, files: string[]) => files.map((file) => {
+      const item = new File([`${file} text.`], `${file}.md`, { type: 'text/markdown' });
+      Object.defineProperty(item, 'webkitRelativePath', { value: `${name}/${file}.md` });
+      return item;
+    });
+    await user.upload(screen.getByLabelText('Select course folder'), folder('First', ['Alpha one', 'Alpha two']));
+    await screen.findByText('2 sources imported.');
+    await user.upload(screen.getByLabelText('Select course folder'), folder('Second', ['Beta one', 'Beta two']));
+    await waitFor(() => expect(savedTitles()).toHaveLength(4));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop after this file' })).not.toBeInTheDocument());
+
+    expect(savedTitles()).toEqual(['Beta one', 'Beta two', 'Alpha one', 'Alpha two']);
+    expect(screen.getByRole('heading', { name: 'Beta one', level: 1 })).toBeInTheDocument();
+  });
 });

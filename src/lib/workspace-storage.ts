@@ -333,13 +333,15 @@ export interface WorkspaceLoadIssue {
    * `unreadable`: damaged or truncated data. `newer-version`: written by a newer version of the app.
    * `partial`: some entries could not be read and were left out.
    */
-  kind: 'unreadable' | 'newer-version' | 'partial' | 'older-copy';
+  kind: 'unreadable' | 'newer-version' | 'partial' | 'older-copy' | 'storage-reset';
   /** Whether a copy of the stored value was kept before it can be replaced. */
   backedUp: boolean;
   /** Storage key holding that copy. */
   copyKey?: string;
   /** Where the copy lives when it is not in localStorage (the browser keeps the workspace and its copies in IndexedDB). */
   copyStore?: 'indexeddb';
+  /** For `storage-reset`: when IndexedDB first held the workspace, i.e. roughly the date of the copy that is shown. */
+  since?: string;
   /** The unreadable IndexedDB value was replaced for this session by the localStorage copy kept before the upgrade. */
   restoredFromLegacy?: boolean;
   /**
@@ -440,17 +442,24 @@ export function serializeWorkspaceSnapshot(snapshot: WorkspaceSnapshot): string 
   return JSON.stringify({ version: 1, ...compact });
 }
 
-export function saveWorkspace(snapshot: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): boolean {
-  if (!storage) return false;
+export type SaveResult = 'saved' | 'too-large' | 'failed';
+
+/** Like `saveWorkspace`, but says why a save did not happen: a workspace over the size limit is not a full browser store. */
+export function saveWorkspaceResult(snapshot: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): SaveResult {
+  if (!storage) return 'failed';
 
   try {
     const serialized = serializeWorkspaceSnapshot(snapshot);
-    if (serialized.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return false;
+    if (serialized.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return 'too-large';
     storage.setItem(WORKSPACE_STORAGE_KEY, serialized);
-    return true;
+    return 'saved';
   } catch {
-    return false;
+    return 'failed';
   }
+}
+
+export function saveWorkspace(snapshot: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): boolean {
+  return saveWorkspaceResult(snapshot, storage) === 'saved';
 }
 
 export async function loadWorkspaceAsync(

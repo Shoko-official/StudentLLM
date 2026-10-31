@@ -13,6 +13,7 @@ import {
 import { META_KEY, openWorkspaceDb, parseMeta, SNAPSHOT_KEY, WorkspaceIdb } from './workspace-idb';
 import { RECORDING_RECOVERY_STORAGE_KEY } from './recording-recovery';
 import { WORKSPACE_STORAGE_KEY, WORKSPACE_UNREADABLE_BACKUP_KEY, WORKSPACE_MIGRATION_BACKUP_KEY, type WorkspaceSnapshot } from './workspace-storage';
+import { WorkspaceIdbError } from './workspace-idb';
 
 const createFixtureWorkspace = (): WorkspaceSnapshot => {
   const { version: _version, ...snapshot } = createFixtureWithVersion();
@@ -42,6 +43,7 @@ const track = async (bootstrap: Promise<BrowserBootstrap>) => {
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   opened = [];
 });
 afterEach(() => {
@@ -66,7 +68,7 @@ describe('migration from localStorage to IndexedDB', () => {
     expect(await storedMeta(factory)).toMatchObject({ version: 1, migrated: { from: 'localStorage', bytes: raw.length, fingerprint: fingerprintWorkspace(raw) } });
     // The original is left exactly as it was, and the flag says IndexedDB is now the home of the workspace.
     expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(raw);
-    expect(localStorage.getItem(WORKSPACE_IDB_ACTIVE_KEY)).toBe('1');
+    expect(Date.parse(localStorage.getItem(WORKSPACE_IDB_ACTIVE_KEY)!)).not.toBeNaN();
   });
 
   it('never writes to or removes the localStorage workspace, during the migration or later saves', async () => {
@@ -167,7 +169,7 @@ describe('migration from localStorage to IndexedDB', () => {
     const factory = new IDBFactory();
     const raw = legacyRaw(createFixtureWorkspace());
     localStorage.setItem(WORKSPACE_STORAGE_KEY, raw);
-    const failing = vi.spyOn(WorkspaceIdb.prototype, 'updateMeta').mockRejectedValue(new Error('meta write failed'));
+    const failing = vi.spyOn(WorkspaceIdb.prototype, 'markMigrated').mockRejectedValue(new Error('meta write failed'));
 
     const first = await track(open(factory));
     expect(first.snapshot).toEqual(createFixtureWorkspace());
@@ -179,15 +181,15 @@ describe('migration from localStorage to IndexedDB', () => {
     expect(await storedMeta(factory)).toMatchObject({ migrated: { fingerprint: fingerprintWorkspace(raw) } });
   });
 
-  it('removes its own unverified copy and keeps working from localStorage when the read-back does not match', async () => {
+  it('removes its own unverified copy and keeps working from localStorage when the read-back never matches', async () => {
     const factory = new IDBFactory();
     const raw = legacyRaw(createFixtureWorkspace());
     localStorage.setItem(WORKSPACE_STORAGE_KEY, raw);
-    const realGet = WorkspaceIdb.prototype.get;
-    let reads = 0;
-    vi.spyOn(WorkspaceIdb.prototype, 'get').mockImplementation(async function (this: WorkspaceIdb, key: string) {
-      if (key === SNAPSHOT_KEY && (reads += 1) === 2) return 'something else';
-      return realGet.call(this, key);
+    // The copy reads back as something else, every time.
+    const realRead = WorkspaceIdb.prototype.getSnapshotAndMeta;
+    vi.spyOn(WorkspaceIdb.prototype, 'getSnapshotAndMeta').mockImplementation(async function (this: WorkspaceIdb) {
+      const state = await realRead.call(this);
+      return state.snapshot === raw ? { ...state, snapshot: 'something else' } : state;
     });
 
     const result = await track(open(factory));
@@ -199,6 +201,33 @@ describe('migration from localStorage to IndexedDB', () => {
     expect(await storedSnapshot(factory)).toBeUndefined();
     expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(raw);
     expect(localStorage.getItem(WORKSPACE_IDB_ACTIVE_KEY)).toBeNull();
+  });
+
+  it('a failed read-back never deletes what another tab saved in the meantime', async () => {
+    const factory = new IDBFactory();
+    const raw = legacyRaw(createFixtureWorkspace());
+    // Tab B is already open (first launch, nothing stored yet) when tab A starts migrating.
+    const other = await track(open(factory));
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, raw);
+    const newer = { ...createFixtureWorkspace(), activeLessonId: 'fixture-context' };
+
+    // Tab B saves right after tab A copied the workspace and before A reads its copy back.
+    const realPut = WorkspaceIdb.prototype.putIfAbsent;
+    let done = false;
+    vi.spyOn(WorkspaceIdb.prototype, 'putIfAbsent').mockImplementation(async function (this: WorkspaceIdb, key: string, value: unknown) {
+      const written = await realPut.call(this, key, value);
+      if (!done && key === SNAPSHOT_KEY && written) {
+        done = true;
+        await other.store.save(newer);
+      }
+      return written;
+    });
+    const a = await track(open(factory));
+
+    // A's copy was replaced by B's newer work: it must not be removed, and A must end up showing it.
+    expect(JSON.parse(String(await storedSnapshot(factory))).activeLessonId).toBe('fixture-context');
+    expect(a.snapshot.activeLessonId).toBe('fixture-context');
+    expect(a.store.backend).toBe('indexeddb');
   });
 
   it('two tabs migrating at once end with one copy of the same workspace', async () => {
@@ -224,14 +253,14 @@ describe('migration from localStorage to IndexedDB', () => {
     const newer = String(await storedSnapshot(factory));
 
     // The slow tab read "IndexedDB is empty" a moment before the first tab wrote. Its copy must not replace the newer data.
-    const realGet = WorkspaceIdb.prototype.get;
+    const realRead = WorkspaceIdb.prototype.getSnapshotAndMeta;
     let stale = true;
-    vi.spyOn(WorkspaceIdb.prototype, 'get').mockImplementation(async function (this: WorkspaceIdb, key: string) {
-      if (key === SNAPSHOT_KEY && stale) {
+    vi.spyOn(WorkspaceIdb.prototype, 'getSnapshotAndMeta').mockImplementation(async function (this: WorkspaceIdb) {
+      if (stale) {
         stale = false;
-        return undefined;
+        return { snapshot: undefined, meta: undefined };
       }
-      return realGet.call(this, key);
+      return realRead.call(this);
     });
     const slow = await track(open(factory));
 
@@ -398,7 +427,7 @@ describe('when IndexedDB cannot be used', () => {
     const result = await track(open(createFactory(), { openTimeoutMs: 20 }));
 
     expect(result.store.backend).toBe('localstorage');
-    expect(result.unavailable).toEqual({ reason: 'indexeddb-unavailable', protect: false });
+    expect(result.unavailable).toEqual({ reason: _name.startsWith('the open never') ? 'indexeddb-timeout' : 'indexeddb-unavailable', protect: false });
     expect(result.snapshot).toEqual(workspace);
     // Saving keeps working through localStorage, so the existing quota alert path applies.
     expect(await result.store.save({ ...result.snapshot, activeLessonId: 'fixture-context' })).toBe(true);
@@ -541,10 +570,10 @@ describe('saving to IndexedDB', () => {
     localStorage.setItem(WORKSPACE_STORAGE_KEY, raw);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    const realGet = WorkspaceIdb.prototype.get;
-    vi.spyOn(WorkspaceIdb.prototype, 'get').mockImplementation(async function (this: WorkspaceIdb, key: string) {
+    const realRead = WorkspaceIdb.prototype.getSnapshotAndMeta;
+    vi.spyOn(WorkspaceIdb.prototype, 'getSnapshotAndMeta').mockImplementation(async function (this: WorkspaceIdb) {
       await gate;
-      return realGet.call(this, key);
+      return realRead.call(this);
     });
     const setItem = vi.spyOn(Storage.prototype, 'setItem');
     const put = vi.spyOn(IDBObjectStore.prototype, 'put');
@@ -690,5 +719,284 @@ describe('the localStorage path', () => {
     expect(bootstrap.issue?.protect).toBe(true);
     expect(await bootstrap.store.save({ ...empty, activeLessonId: 'x' })).toBe(false);
     expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(JSON.stringify({ version: 2, lessons: [] }));
+  });
+});
+
+describe('reading the snapshot and its version', () => {
+  it('reads both in one transaction, so no other tab can save between them', async () => {
+    const factory = new IDBFactory();
+    const first = await track(open(factory));
+    await first.store.save(createFixtureWorkspace());
+    first.store.dispose();
+    const readKeys: Array<{ transaction: IDBTransaction; key: unknown }> = [];
+    const realGet = IDBObjectStore.prototype.get;
+    vi.spyOn(IDBObjectStore.prototype, 'get').mockImplementation(function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
+      readKeys.push({ transaction: this.transaction, key });
+      return realGet.call(this, key);
+    });
+
+    await track(open(factory));
+
+    const sharing = readKeys.filter((entry) => entry.key === SNAPSHOT_KEY).some((entry) => readKeys.some((other) => other.transaction === entry.transaction && other.key === META_KEY));
+    expect(sharing).toBe(true);
+  });
+
+  it('a tab that saves between the two reads cannot leave the loader with an old snapshot and a new version', async () => {
+    const factory = new IDBFactory();
+    const first = await track(open(factory));
+    await first.store.save(createFixtureWorkspace());
+    const other = await track(open(factory));
+    // As soon as the loader reads the snapshot, another tab commits a newer one.
+    let fired = false;
+    const realGet = IDBObjectStore.prototype.get;
+    vi.spyOn(IDBObjectStore.prototype, 'get').mockImplementation(function (this: IDBObjectStore, key: IDBValidKey | IDBKeyRange) {
+      const request = realGet.call(this, key);
+      if (!fired && key === SNAPSHOT_KEY && this.transaction.mode === 'readonly') {
+        fired = true;
+        void other.store.save({ ...createFixtureWorkspace(), activeLessonId: 'fixture-context' });
+      }
+      return request;
+    });
+    const loader = await track(open(factory));
+    vi.restoreAllMocks();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    // The loader's pair is consistent (old snapshot, old version), so its own save is refused instead of overwriting.
+    expect(await loader.store.save({ ...createFixtureWorkspace(), activeLessonId: 'fixture-linear-algebra' })).toBe(false);
+    expect(JSON.parse(String(await storedSnapshot(factory))).activeLessonId).toBe('fixture-context');
+  });
+
+  it('the first launch takes its version from the same read: a tab that saves first wins', async () => {
+    const factory = new IDBFactory();
+    const a = await track(open(factory));
+    const b = await track(open(factory));
+    expect(await a.store.save({ ...empty, activeLessonId: 'from-a' })).toBe(true);
+    expect(await b.store.save({ ...empty, activeLessonId: 'from-b' })).toBe(false);
+  });
+});
+
+describe('a load that never finishes', () => {
+  it('gives up after the load timeout and works from localStorage with a notice', async () => {
+    const factory = new IDBFactory();
+    const workspace = createFixtureWorkspace();
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, legacyRaw(workspace));
+    vi.spyOn(WorkspaceIdb.prototype, 'getSnapshotAndMeta').mockImplementation(() => new Promise(() => undefined));
+
+    const result = await track(open(factory, { loadTimeoutMs: 40 }));
+
+    expect(result.store.backend).toBe('localstorage');
+    expect(result.unavailable).toEqual({ reason: 'indexeddb-timeout', protect: false });
+    expect(result.snapshot).toEqual(workspace);
+  });
+
+  it('pauses saving on the stale copy when IndexedDB held the workspace', async () => {
+    const factory = new IDBFactory();
+    const stale = legacyRaw(createFixtureWorkspace());
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, stale);
+    localStorage.setItem(WORKSPACE_IDB_ACTIVE_KEY, '2026-01-01T00:00:00.000Z');
+    vi.spyOn(WorkspaceIdb.prototype, 'getSnapshotAndMeta').mockImplementation(() => new Promise(() => undefined));
+
+    const result = await track(open(factory, { loadTimeoutMs: 40 }));
+
+    expect(result.unavailable).toEqual({ reason: 'indexeddb-blocked', protect: true });
+    expect(await result.store.save({ ...result.snapshot, activeLessonId: 'fixture-context' })).toBe(false);
+    expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(stale);
+  });
+
+  it('a transaction that completes after the timeout writes nothing', async () => {
+    const factory = new IDBFactory();
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, legacyRaw(createFixtureWorkspace()));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const realRead = WorkspaceIdb.prototype.getSnapshotAndMeta;
+    vi.spyOn(WorkspaceIdb.prototype, 'getSnapshotAndMeta').mockImplementation(async function (this: WorkspaceIdb) {
+      await gate;
+      return realRead.call(this);
+    });
+    await track(open(factory, { loadTimeoutMs: 30 }));
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await storedSnapshot(factory)).toBeUndefined();
+  });
+});
+
+describe('IndexedDB was emptied after it held the workspace', () => {
+  const heldSince = '2026-03-04T10:00:00.000Z';
+
+  it('copies the older localStorage workspace but says so, with the date and a copy to download', async () => {
+    const factory = new IDBFactory();
+    const raw = legacyRaw(createFixtureWorkspace());
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, raw);
+    localStorage.setItem(WORKSPACE_IDB_ACTIVE_KEY, heldSince);
+
+    const result = await track(open(factory));
+
+    expect(result.snapshot).toEqual(createFixtureWorkspace());
+    expect(result.issue).toMatchObject({ kind: 'storage-reset', backedUp: true, protect: false, copyKey: WORKSPACE_STORAGE_KEY, since: heldSince });
+    expect(await result.store.readCopy(result.issue!)).toBe(raw);
+    expect(await storedSnapshot(factory)).toBe(raw);
+  });
+
+  it('says so when localStorage is empty too, instead of a silent first launch', async () => {
+    const factory = new IDBFactory();
+    localStorage.setItem(WORKSPACE_IDB_ACTIVE_KEY, heldSince);
+
+    const result = await track(open(factory));
+
+    expect(result.snapshot).toBe(empty);
+    expect(result.issue).toMatchObject({ kind: 'storage-reset', backedUp: false, protect: false });
+    expect(result.issue?.copyKey).toBeUndefined();
+  });
+
+  it('is silent on a real first launch', async () => {
+    const result = await track(open(new IDBFactory()));
+    expect(result.issue).toBeNull();
+  });
+
+  it('also notices through the sessionStorage mark when localStorage could not keep the flag', async () => {
+    sessionStorage.setItem(WORKSPACE_IDB_ACTIVE_KEY, heldSince);
+    const result = await track(open(new IDBFactory()));
+    expect(result.issue).toMatchObject({ kind: 'storage-reset', backedUp: false });
+  });
+});
+
+describe('remembering that IndexedDB holds the workspace', () => {
+  const broken = () => ({ open: () => { throw new DOMException('denied', 'SecurityError'); } }) as unknown as IDBFactory;
+
+  it('keeps a sessionStorage mark, retries and warns when localStorage refuses the flag', async () => {
+    const factory = new IDBFactory();
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, legacyRaw(createFixtureWorkspace()));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const realSet = Storage.prototype.setItem;
+    const attempts: string[] = [];
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (key === WORKSPACE_IDB_ACTIVE_KEY && this === localStorage) {
+        attempts.push(key);
+        throw new DOMException('full', 'QuotaExceededError');
+      }
+      return realSet.call(this, key, value);
+    });
+
+    const first = await track(open(factory));
+
+    expect(first.snapshot).toEqual(createFixtureWorkspace());
+    expect(attempts.length).toBeGreaterThanOrEqual(2);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Could not record'));
+    expect(sessionStorage.getItem(WORKSPACE_IDB_ACTIVE_KEY)).toBeTruthy();
+    // Even with no flag in localStorage, a later failure to open IndexedDB does not fall back to the stale copy.
+    vi.restoreAllMocks();
+    const later = await track(open(broken()));
+    expect(later.unavailable).toEqual({ reason: 'indexeddb-blocked', protect: true });
+  });
+
+  it('asks the browser which databases exist when no mark survived', async () => {
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, legacyRaw(createFixtureWorkspace()));
+    const withDatabase = { ...broken(), databases: async () => [{ name: 'studentllm-workspace', version: 1 }] } as unknown as IDBFactory;
+    const result = await track(open(withDatabase));
+    expect(result.unavailable).toEqual({ reason: 'indexeddb-blocked', protect: true });
+
+    const withoutDatabase = { ...broken(), databases: async () => [{ name: 'something-else' }] } as unknown as IDBFactory;
+    const fallback = await track(open(withoutDatabase));
+    expect(fallback.unavailable).toEqual({ reason: 'indexeddb-unavailable', protect: false });
+  });
+
+  it('protects the stale copy on the synchronous path too, when there is no indexedDB at all', async () => {
+    const stale = legacyRaw(createFixtureWorkspace());
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, stale);
+    localStorage.setItem(WORKSPACE_IDB_ACTIVE_KEY, '2026-01-01T00:00:00.000Z');
+
+    const result = openLocalStorageWorkspace(empty);
+
+    expect(result.unavailable).toEqual({ reason: 'indexeddb-blocked', protect: true });
+    expect(await result.store.save({ ...empty, activeLessonId: 'x' })).toBe(false);
+    expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(stale);
+  });
+});
+
+describe('why a save did not happen', () => {
+  const huge = () => ({ ...createFixtureWorkspace(), lessonWorkspaces: { x: { resources: [], transcript: [{ id: 't', timestamp: '0', speaker: 's', text: 'x'.repeat(17 * 1024 * 1024) }], chat: [], artifacts: [] } } });
+
+  it('tells a workspace over the size limit from a full store (IndexedDB)', async () => {
+    const result = await track(open(new IDBFactory()));
+    expect(await result.store.save(huge())).toBe(false);
+    expect(result.store.lastFailure).toBe('too-large');
+    expect(await result.store.save(createFixtureWorkspace())).toBe(true);
+    expect(result.store.lastFailure).toBeNull();
+  });
+
+  it('tells a workspace over the size limit from a full store (localStorage)', async () => {
+    const result = openLocalStorageWorkspace(empty);
+    expect(await result.store.save(huge())).toBe(false);
+    expect(result.store.lastFailure).toBe('too-large');
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('full', 'QuotaExceededError'); });
+    expect(await result.store.save(createFixtureWorkspace())).toBe(false);
+    expect(result.store.lastFailure).toBe('other');
+  });
+});
+
+describe('a connection that dies under the store', () => {
+  it('reopens once and retries when the connection is lost', async () => {
+    const factory = new IDBFactory();
+    const result = await track(open(factory));
+    const realCas = WorkspaceIdb.prototype.compareAndSet;
+    let calls = 0;
+    vi.spyOn(WorkspaceIdb.prototype, 'compareAndSet').mockImplementation(async function (this: WorkspaceIdb, ...args: Parameters<WorkspaceIdb['compareAndSet']>) {
+      calls += 1;
+      if (calls === 1) throw new WorkspaceIdbError('closed', 'Connection to Indexed Database server lost. Refresh the page to try again');
+      return realCas.apply(this, args);
+    });
+
+    expect(await result.store.save(createFixtureWorkspace())).toBe(true);
+    expect(calls).toBe(2);
+    expect(result.store.lastFailure).toBeNull();
+  });
+
+  it('gives up after one reopen: the tab is told to reload, and nothing is written', async () => {
+    const factory = new IDBFactory();
+    const result = await track(open(factory));
+    const heard = vi.fn();
+    result.store.onChangedElsewhere(heard);
+    vi.spyOn(WorkspaceIdb.prototype, 'compareAndSet').mockRejectedValue(new WorkspaceIdbError('closed', 'Connection to Indexed Database server lost.'));
+
+    expect(await result.store.save(createFixtureWorkspace())).toBe(false);
+    expect(result.store.lastFailure).toBe('closed');
+    expect(heard).toHaveBeenCalledWith('closed');
+  });
+});
+
+describe('copies kept aside in IndexedDB', () => {
+  it('are only reported as kept after they were read back; otherwise the original is protected', async () => {
+    const factory = new IDBFactory();
+    const damaged = '{"version":1,"activeLessonId":"a","lessons":[{"id":"a","subject":"Maths"';
+    await inspect(factory, (db) => db.putIfAbsent(SNAPSHOT_KEY, damaged));
+    const realGet = WorkspaceIdb.prototype.get;
+    // The copy is stored, but reads back as something else.
+    vi.spyOn(WorkspaceIdb.prototype, 'get').mockImplementation(async function (this: WorkspaceIdb, key: string) {
+      return key.startsWith(WORKSPACE_UNREADABLE_BACKUP_KEY) ? 'not the copy' : realGet.call(this, key);
+    });
+
+    const result = await track(open(factory));
+
+    expect(result.issue).toMatchObject({ kind: 'unreadable', backedUp: false, protect: true, raw: damaged });
+    expect(await result.store.save({ ...empty, activeLessonId: 'x' })).toBe(false);
+  });
+
+  it('stop growing past a cap for older copies', async () => {
+    const factory = new IDBFactory();
+    const migrated = createFixtureWorkspace();
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, legacyRaw(migrated));
+    const first = await track(open(factory));
+    await first.store.save({ ...first.snapshot, lessons: first.snapshot.lessons.slice(0, 2) });
+    first.store.dispose();
+    await inspect(factory, async (db) => {
+      for (let index = 0; index < 8; index += 1) await db.putAll(new Map([[index === 0 ? WORKSPACE_UNREADABLE_BACKUP_KEY : `${WORKSPACE_UNREADABLE_BACKUP_KEY}.${index}`, `copy ${index}`]]));
+    });
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, legacyRaw({ ...migrated, lessons: migrated.lessons.slice(0, 1) }));
+
+    const second = await track(open(factory));
+
+    expect(second.issue).toBeNull();
+    const keys = await inspect(factory, (db) => db.keysWithPrefix(WORKSPACE_UNREADABLE_BACKUP_KEY));
+    expect(keys).toHaveLength(8);
   });
 });

@@ -17,7 +17,7 @@ import {
   migrateWithBackup,
   parseWorkspaceDetailed,
   readWorkspaceCopy,
-  saveWorkspace,
+  saveWorkspaceResult,
   serializeWorkspaceSnapshot,
   WORKSPACE_MIGRATION_BACKUP_KEY,
   WORKSPACE_STORAGE_KEY,
@@ -27,19 +27,27 @@ import {
   type WorkspaceSnapshot,
 } from './workspace-storage';
 import { RECORDING_RECOVERY_STORAGE_KEY } from './recording-recovery';
-import { META_KEY, openWorkspaceDb, parseMeta, SNAPSHOT_KEY, WorkspaceIdbError, type CloseReason, type WorkspaceIdb } from './workspace-idb';
+import { openWorkspaceDb, SNAPSHOT_KEY, WORKSPACE_DB_NAME, WorkspaceIdbError, type CloseReason, type WorkspaceIdb } from './workspace-idb';
 
-/** Set in localStorage once the workspace lives in IndexedDB. If IndexedDB later fails to open, this says that the localStorage copy is stale. */
+/**
+ * Set once the workspace lives in IndexedDB (to the date it first did). If IndexedDB later fails to open, this says that
+ * the localStorage copy is stale. It is kept in localStorage and mirrored in sessionStorage, and `indexedDB.databases()`
+ * is asked as well, so that one refused write does not turn a stale copy into the workspace.
+ */
 export const WORKSPACE_IDB_ACTIVE_KEY = 'studentllm.workspace.v1.idb-active';
 export const WORKSPACE_BROADCAST_CHANNEL = 'studentllm.workspace.v1';
 
 export type WorkspaceBackend = 'indexeddb' | 'localstorage';
 export type ChangeReason = 'saved-elsewhere' | 'conflict' | 'version-change' | 'closed' | 'storage-event';
+/** Why the last save did not happen. `too-large`: the workspace is over the size limit, which is not a full store. */
+export type SaveFailure = 'too-large' | 'closed' | 'other';
 
 export interface BrowserWorkspaceStore {
   readonly backend: WorkspaceBackend;
   /** Resolves with whether the snapshot is now stored. Never throws. */
   save: (snapshot: WorkspaceSnapshot) => Promise<boolean>;
+  /** The reason the last save returned false; null after a save that worked. */
+  readonly lastFailure: SaveFailure | null;
   /** While protected nothing is written: the stored value was unreadable and must stay as it is. */
   setProtected: (protect: boolean) => void;
   /** Another tab or window wrote the workspace, or the storage was closed under this tab. The listener may fire once only. */
@@ -57,7 +65,7 @@ export interface BrowserBootstrap {
    * IndexedDB could not be used and the workspace came from localStorage. When `protect` is true IndexedDB held the
    * workspace before, so the localStorage copy is stale and saving stays paused.
    */
-  unavailable?: { reason: 'indexeddb-unavailable' | 'indexeddb-blocked'; protect: boolean };
+  unavailable?: { reason: 'indexeddb-unavailable' | 'indexeddb-blocked' | 'indexeddb-timeout'; protect: boolean };
 }
 
 export interface BrowserWorkspaceDeps {
@@ -68,6 +76,8 @@ export interface BrowserWorkspaceDeps {
   broadcastChannel?: typeof BroadcastChannel | null;
   /** How long to wait for another tab to release the database. */
   openTimeoutMs?: number;
+  /** How long the whole load may take once the database is open before the app gives up on IndexedDB. */
+  loadTimeoutMs?: number;
   now?: () => number;
 }
 
@@ -103,10 +113,72 @@ export function fingerprintWorkspace(raw: string): string {
   return `${raw.length}:${hash.toString(16)}`;
 }
 
+function getSessionStorage(): Storage | undefined {
+  try {
+    return typeof window === 'undefined' ? undefined : window.sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/** When IndexedDB first held this workspace (an ISO date, or `1` from an early build), or null if this profile does not remember it. */
+function readIdbActive(local: Storage | undefined): string | null {
+  return readRaw(local, WORKSPACE_IDB_ACTIVE_KEY) || readRaw(getSessionStorage(), WORKSPACE_IDB_ACTIVE_KEY) || null;
+}
+
+/** Records that IndexedDB holds the workspace. Returns whether the durable (localStorage) mark exists. */
+function markIdbActive(local: Storage | undefined, now: () => number = Date.now): boolean {
+  if (readRaw(local, WORKSPACE_IDB_ACTIVE_KEY)) return true;
+  const stamp = new Date(now()).toISOString();
+  let recorded = false;
+  for (let attempt = 0; attempt < 2 && !recorded; attempt += 1) {
+    try {
+      local?.setItem(WORKSPACE_IDB_ACTIVE_KEY, stamp);
+      recorded = Boolean(local);
+    } catch {
+      // A localStorage that is full refuses even this small key; try again, then rely on the other marks.
+    }
+  }
+  // The session mark protects this browsing session, and the IndexedDB database itself is looked up when it fails to open.
+  try {
+    getSessionStorage()?.setItem(WORKSPACE_IDB_ACTIVE_KEY, stamp);
+  } catch {
+    // Best effort.
+  }
+  if (!recorded) console.warn('[workspace-storage] Could not record in localStorage that the workspace lives in IndexedDB.');
+  return recorded;
+}
+
+function describeSince(value: string | null): string | undefined {
+  return value && !Number.isNaN(Date.parse(value)) ? value : undefined;
+}
+
+/** Whether IndexedDB held the workspace before: from the marks, or from the browser's list of databases. */
+async function idbHeldWorkspace(local: Storage | undefined, factory: IDBFactory | undefined, askBrowser: boolean): Promise<string | null> {
+  const marked = readIdbActive(local);
+  if (marked) return marked;
+  // Only when the database could not even be opened: after it was opened, its existence says nothing (this start may have created it).
+  if (!askBrowser) return null;
+  try {
+    const databases = (factory as (IDBFactory & { databases?: () => Promise<Array<{ name?: string }>> }) | undefined)?.databases;
+    if (typeof databases === 'function') {
+      const list = await Promise.race([
+        databases.call(factory),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 1000)),
+      ]);
+      if (list.some((entry) => entry.name === WORKSPACE_DB_NAME)) return '1';
+    }
+  } catch {
+    // Unsupported or failing: the marks were the only evidence.
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- localStorage backend
 
 class LocalStorageWorkspaceStore implements BrowserWorkspaceStore {
   readonly backend = 'localstorage' as const;
+  lastFailure: SaveFailure | null = null;
   private protectedFlag: boolean;
 
   constructor(private readonly storage: Storage | undefined, protect = false) {
@@ -115,7 +187,9 @@ class LocalStorageWorkspaceStore implements BrowserWorkspaceStore {
 
   save(snapshot: WorkspaceSnapshot) {
     // Written synchronously, as before: a change is in storage by the time the effect that made it has run.
-    return Promise.resolve(!this.protectedFlag && saveWorkspace(snapshot, this.storage));
+    const result = this.protectedFlag ? 'failed' : saveWorkspaceResult(snapshot, this.storage);
+    this.lastFailure = result === 'saved' ? null : result === 'too-large' ? 'too-large' : 'other';
+    return Promise.resolve(result === 'saved');
   }
 
   setProtected(protect: boolean) {
@@ -143,6 +217,8 @@ class LocalStorageWorkspaceStore implements BrowserWorkspaceStore {
 
 /** The synchronous path: the workspace is read from localStorage before the first render. */
 export function openLocalStorageWorkspace(fallback: WorkspaceSnapshot, storage: Storage | undefined = getLocalStorage()): BrowserBootstrap {
+  // IndexedDB held this workspace and is not available now (no `indexedDB` at all, for instance): this copy is stale.
+  if (readIdbActive(storage)) return openStaleLocalStorageCopy(fallback, storage);
   const { snapshot, issue } = loadWorkspaceWithStatus(fallback, storage);
   return { snapshot, issue, store: new LocalStorageWorkspaceStore(storage, Boolean(issue?.protect)) };
 }
@@ -254,74 +330,81 @@ function readRaw(storage: Storage | undefined, key: string): string | null {
   }
 }
 
-function markIdbActive(local: Storage | undefined) {
-  try {
-    if (local && local.getItem(WORKSPACE_IDB_ACTIVE_KEY) !== '1') local.setItem(WORKSPACE_IDB_ACTIVE_KEY, '1');
-  } catch {
-    // Without the flag a failed open later falls back to localStorage instead of pausing; the data itself is safe.
-  }
+async function readState(db: WorkspaceIdb) {
+  const { snapshot, meta } = await db.getSnapshotAndMeta();
+  return { stored: snapshot, meta };
 }
 
-async function readMetaVersion(db: WorkspaceIdb) {
-  try {
-    return parseMeta(await db.get(META_KEY))?.version ?? 0;
-  } catch {
-    return 0;
-  }
-}
-
-/** Copies the localStorage workspace into IndexedDB, reads the copy back, and only then records that it was migrated. */
-async function migrateFromLocalStorage(db: WorkspaceIdb, local: Storage | undefined, lsRaw: string, now: () => number): Promise<'migrated' | 'raced'> {
+/**
+ * Copies the localStorage workspace into IndexedDB, reads the copy back, and only then records that it was migrated.
+ * `raced` means another tab got there first (or the read-back was not our copy); the caller reads again. A copy is only
+ * ever removed if it still is exactly the one this call wrote.
+ */
+async function migrateFromLocalStorage(db: WorkspaceIdb, local: Storage | undefined, lsRaw: string, now: () => number): Promise<{ status: 'raced' } | { status: 'migrated'; version: number }> {
   // Written only if the key is still empty: another tab may have migrated and already saved newer work.
-  if (!await db.putIfAbsent(SNAPSHOT_KEY, lsRaw)) return 'raced';
+  if (!await db.putIfAbsent(SNAPSHOT_KEY, lsRaw)) return { status: 'raced' };
   let verified = false;
   try {
-    verified = await db.get(SNAPSHOT_KEY) === lsRaw;
+    verified = (await db.getSnapshotAndMeta()).snapshot === lsRaw;
   } finally {
-    if (!verified) {
-      // Our own, unverified copy: remove it so it can never be mistaken for the real workspace. localStorage is untouched.
-      await db.remove(SNAPSHOT_KEY).catch(() => undefined);
-    }
+    if (!verified) await db.removeIfEquals(SNAPSHOT_KEY, lsRaw).catch(() => undefined);
   }
-  if (!verified) throw new WorkspaceIdbError('failed', 'The copy of the workspace in IndexedDB does not match the original.');
+  if (!verified) return { status: 'raced' };
+  let meta = null;
   try {
-    await db.updateMeta((current) => ({
-      ...current,
-      version: current?.version ?? 1,
-      migrated: { from: 'localStorage', at: now(), bytes: lsRaw.length, fingerprint: fingerprintWorkspace(lsRaw) },
-    }));
+    meta = await db.markMigrated(lsRaw, { from: 'localStorage', at: now(), bytes: lsRaw.length, fingerprint: fingerprintWorkspace(lsRaw) });
   } catch {
     // The copy is verified; the marker is retried at the next start.
   }
-  markIdbActive(local);
-  return 'migrated';
+  if (!meta) {
+    // Either the marker could not be written or another tab replaced the copy: read the state again to know which.
+    const again = await readState(db);
+    if (again.stored !== lsRaw) return { status: 'raced' };
+    meta = again.meta ?? null;
+  }
+  markIdbActive(local, now);
+  return { status: 'migrated', version: meta?.version ?? 0 };
+}
+
+function resetIssue(since: string | null, copy: boolean): WorkspaceLoadIssue {
+  return {
+    kind: 'storage-reset',
+    backedUp: copy,
+    ...(copy ? { copyKey: WORKSPACE_STORAGE_KEY } : {}),
+    ...(describeSince(since) ? { since: describeSince(since) } : {}),
+    protect: false,
+  };
 }
 
 async function loadFromIdb(db: WorkspaceIdb, local: Storage | undefined, fallback: WorkspaceSnapshot, now: () => number): Promise<LoadedFromIdb> {
+  const wasHeld = readIdbActive(local);
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const stored = await db.get(SNAPSHOT_KEY);
+    // The snapshot and its version are read in one transaction: another tab cannot save between the two.
+    const { stored, meta } = await readState(db);
     const lsRaw = readRaw(local, WORKSPACE_STORAGE_KEY);
 
     if (stored === undefined) {
       if (lsRaw === null) {
-        // First launch: nothing stored anywhere.
-        return { ...await interpret(db, local, null, fallback), version: await readMetaVersion(db), clean: false };
+        // Nothing stored anywhere. After IndexedDB held a workspace that is not a first launch: the browser cleared it.
+        const first = await interpret(db, local, null, fallback);
+        return { ...first, issue: wasHeld ? resetIssue(wasHeld, false) : first.issue, version: meta?.version ?? 0, clean: false };
       }
-      if (parseWorkspaceDetailed(lsRaw, fallback).snapshot !== fallback) {
-        if (await migrateFromLocalStorage(db, local, lsRaw, now) === 'raced') continue;
-      } else {
+      if (parseWorkspaceDetailed(lsRaw, fallback).snapshot === fallback) {
         // Unreadable, newer-format or bootstrap data is not copied across: IndexedDB stays empty and the localStorage
         // value stays where it is. It is handled as usual (a copy aside, an alert, saving paused when needed).
-        return { ...await interpret(db, local, lsRaw, fallback), version: await readMetaVersion(db), clean: false };
+        return { ...await interpret(db, local, lsRaw, fallback), version: meta?.version ?? 0, clean: false };
       }
+      const migration = await migrateFromLocalStorage(db, local, lsRaw, now);
+      if (migration.status === 'raced') continue;
       const interpreted = await interpret(db, local, lsRaw, fallback);
-      return { ...interpreted, version: await readMetaVersion(db), clean: !interpreted.issue && !interpreted.migrated };
+      // IndexedDB had been emptied after it held the workspace: what is shown is the older copy, and changes since are gone.
+      const issue = interpreted.issue ?? (wasHeld ? resetIssue(wasHeld, true) : null);
+      return { ...interpreted, issue, version: migration.version, clean: !issue && !interpreted.migrated };
     }
 
     const raw = typeof stored === 'string' ? stored : describeNonString(stored);
-    const meta = parseMeta(await db.get(META_KEY));
     // IndexedDB holds the workspace, so a localStorage copy can only be older from here on.
-    markIdbActive(local);
+    markIdbActive(local, now);
     let interpreted = await interpret(db, local, raw, fallback);
 
     if (lsRaw !== null && lsRaw === raw && !meta?.migrated) {
@@ -365,6 +448,8 @@ function describeNonString(value: unknown): string {
 async function interpretOlderCopy(db: WorkspaceIdb, local: Storage | undefined, lsRaw: string, now: () => number): Promise<WorkspaceLoadIssue | null> {
   const shim = new AsideShim(local);
   await shim.load(db);
+  // The localStorage value itself is never touched, so it is not lost either way; the copies aside are capped.
+  if (shim.length >= MAX_ASIDE_COPIES) return null;
   const issue = createLoadIssue(lsRaw, 'older-copy', shim);
   if (!issue.backedUp || !await storeAndVerify(db, shim.pending)) return null;
   // Acknowledge this exact value so the notice appears once, not at every start.
@@ -376,10 +461,13 @@ async function interpretOlderCopy(db: WorkspaceIdb, local: Storage | undefined, 
   return { ...issue, copyStore: 'indexeddb' };
 }
 
+const MAX_ASIDE_COPIES = 8;
+
 type Listener = (reason: ChangeReason) => void;
 
 class IndexedDbWorkspaceStore implements BrowserWorkspaceStore {
   readonly backend = 'indexeddb' as const;
+  lastFailure: SaveFailure | null = null;
   private version: number;
   private stale: ChangeReason | null = null;
   private protectedFlag: boolean;
@@ -390,7 +478,8 @@ class IndexedDbWorkspaceStore implements BrowserWorkspaceStore {
   private writing = false;
 
   constructor(
-    private readonly db: WorkspaceIdb,
+    private db: WorkspaceIdb,
+    private readonly reopen: (() => Promise<WorkspaceIdb>) | undefined,
     private readonly local: Storage | undefined,
     private readonly writer: string,
     state: { version: number; protect: boolean; lastSerialized: string | null },
@@ -452,15 +541,19 @@ class IndexedDbWorkspaceStore implements BrowserWorkspaceStore {
     }
   }
 
-  private async write(snapshot: WorkspaceSnapshot): Promise<boolean> {
+  private async write(snapshot: WorkspaceSnapshot, reopened = false): Promise<boolean> {
     if (this.protectedFlag || this.stale) return false;
     let serialized: string;
     try {
       serialized = serializeWorkspaceSnapshot(snapshot);
     } catch {
+      this.lastFailure = 'other';
       return false;
     }
-    if (serialized.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return false;
+    if (serialized.length > MAX_WORKSPACE_SNAPSHOT_BYTES) {
+      this.lastFailure = 'too-large';
+      return false;
+    }
     // Opening a second tab saves the same state it just loaded. That must not look like a change to the first tab.
     if (serialized === this.lastSerialized) return true;
     try {
@@ -471,6 +564,7 @@ class IndexedDbWorkspaceStore implements BrowserWorkspaceStore {
       }
       this.version = result.version;
       this.lastSerialized = serialized;
+      this.lastFailure = null;
       markIdbActive(this.local);
       try {
         this.channel?.postMessage({ type: 'saved', writer: this.writer, version: result.version });
@@ -480,7 +574,22 @@ class IndexedDbWorkspaceStore implements BrowserWorkspaceStore {
       return true;
     } catch (error) {
       // A full store (QuotaExceededError) or a blocked one: the caller shows the "not being saved" alert and the Export button.
-      if (error instanceof WorkspaceIdbError && error.code === 'closed') this.markStale('closed');
+      if (error instanceof WorkspaceIdbError && error.code === 'closed') {
+        // The connection died under us (Safari drops it now and then). One reopen and one retry; the version check still guards the write.
+        if (!reopened && this.reopen && !this.stale) {
+          try {
+            this.db.close();
+            this.db = await this.reopen();
+            return await this.write(snapshot, true);
+          } catch {
+            // Could not reopen: treated as lost below.
+          }
+        }
+        this.lastFailure = 'closed';
+        this.markStale('closed');
+        return false;
+      }
+      this.lastFailure = 'other';
       return false;
     }
   }
@@ -545,16 +654,28 @@ function openStaleLocalStorageCopy(fallback: WorkspaceSnapshot, local: Storage |
   };
 }
 
-function openAfterIdbFailure(error: unknown, fallback: WorkspaceSnapshot, local: Storage | undefined): BrowserBootstrap {
+async function openAfterIdbFailure(error: unknown, fallback: WorkspaceSnapshot, local: Storage | undefined, factory: IDBFactory | undefined, opened: boolean): Promise<BrowserBootstrap> {
   console.warn(`[workspace-storage] IndexedDB unavailable: ${error instanceof Error ? error.message : String(error)}`);
-  if (readRaw(local, WORKSPACE_IDB_ACTIVE_KEY) === '1') return openStaleLocalStorageCopy(fallback, local);
+  if (await idbHeldWorkspace(local, factory, !opened)) return openStaleLocalStorageCopy(fallback, local);
   // IndexedDB never held this workspace, so localStorage is still the only copy: keep working there, with its existing alerts.
-  return { ...openLocalStorageWorkspace(fallback, local), unavailable: { reason: 'indexeddb-unavailable', protect: false } };
+  const waited = error instanceof WorkspaceIdbError && (error.code === 'blocked' || error.code === 'timeout');
+  return { ...openLocalStorageWorkspace(fallback, local), unavailable: { reason: waited ? 'indexeddb-timeout' : 'indexeddb-unavailable', protect: false } };
+}
+
+function withTimeout<T>(work: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      onTimeout();
+      reject(new WorkspaceIdbError('timeout', 'The workspace database did not answer in time.'));
+    }, ms);
+    work.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
+  });
 }
 
 /**
  * Opens the browser workspace. Resolves once the workspace is fully loaded, so the app can render it without a flash of
- * an empty one and without anything writing before the load finished. Never rejects.
+ * an empty one and without anything writing before the load finished. Never rejects, and never waits forever: if
+ * IndexedDB does not answer, it falls back as if it could not be opened.
  */
 export async function openBrowserWorkspace(fallback: WorkspaceSnapshot, deps: BrowserWorkspaceDeps = {}): Promise<BrowserBootstrap> {
   const local = deps.localStorage ?? getLocalStorage();
@@ -562,43 +683,52 @@ export async function openBrowserWorkspace(fallback: WorkspaceSnapshot, deps: Br
   const now = deps.now ?? Date.now;
   const writer = newWriterId();
   const early: { store?: IndexedDbWorkspaceStore; closed?: CloseReason } = {};
+  const openDb = () => openWorkspaceDb(factory, {
+    timeoutMs: deps.openTimeoutMs,
+    onClose: (reason) => {
+      if (early.store) early.store.markStale(reason);
+      else early.closed = reason;
+    },
+  });
 
   let db: WorkspaceIdb;
   try {
-    db = await openWorkspaceDb(factory, {
-      timeoutMs: deps.openTimeoutMs,
-      onClose: (reason) => {
-        if (early.store) early.store.markStale(reason);
-        else early.closed = reason;
-      },
+    db = await openDb();
+  } catch (error) {
+    return openAfterIdbFailure(error, fallback, local, factory, false);
+  }
+
+  let opened: IndexedDbWorkspaceStore | undefined;
+  try {
+    return await withTimeout((async (): Promise<BrowserBootstrap> => {
+      const loaded = await loadFromIdb(db, local, fallback, now);
+      const { snapshot, issue } = loaded;
+      const store = new IndexedDbWorkspaceStore(
+        db,
+        openDb,
+        local,
+        writer,
+        {
+          version: loaded.version,
+          protect: Boolean(issue?.protect),
+          lastSerialized: loaded.clean ? serializeWorkspaceSnapshot(snapshot) : null,
+        },
+        deps.broadcastChannel === null ? undefined : deps.broadcastChannel ?? (typeof BroadcastChannel === 'undefined' ? undefined : BroadcastChannel),
+      );
+      opened = store;
+      early.store = store;
+      if (early.closed) store.markStale(early.closed);
+      // The localStorage loader saves a cleaned-up (migrated) workspace right away; so does this one, unless the data is protected.
+      if (loaded.migrated && !issue?.protect) await store.save(snapshot);
+      return { snapshot, issue, store };
+    })(), deps.loadTimeoutMs ?? 20_000, () => {
+      // Whatever the load was waiting for may still finish later; it must find a closed database and stop.
+      if (opened) opened.dispose();
+      else db.close();
     });
   } catch (error) {
-    return openAfterIdbFailure(error, fallback, local);
+    if (opened) opened.dispose();
+    else db.close();
+    return openAfterIdbFailure(error, fallback, local, factory, true);
   }
-
-  let loaded: LoadedFromIdb;
-  try {
-    loaded = await loadFromIdb(db, local, fallback, now);
-  } catch (error) {
-    db.close();
-    return openAfterIdbFailure(error, fallback, local);
-  }
-
-  const { snapshot, issue } = loaded;
-  const store = new IndexedDbWorkspaceStore(
-    db,
-    local,
-    writer,
-    {
-      version: loaded.version,
-      protect: Boolean(issue?.protect),
-      lastSerialized: loaded.clean ? serializeWorkspaceSnapshot(snapshot) : null,
-    },
-    deps.broadcastChannel === null ? undefined : deps.broadcastChannel ?? (typeof BroadcastChannel === 'undefined' ? undefined : BroadcastChannel),
-  );
-  early.store = store;
-  if (early.closed) store.markStale(early.closed);
-  // The localStorage loader saves a cleaned-up (migrated) workspace right away; so does this one, unless the data is protected.
-  if (loaded.migrated && !issue?.protect) await store.save(snapshot);
-  return { snapshot, issue, store };
 }

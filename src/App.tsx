@@ -319,19 +319,28 @@ interface ResourcePreview {
 
 type StorageNotice =
   | { kind: 'load-issue'; issue: WorkspaceLoadIssue }
-  | { kind: 'save-failed' }
+  | { kind: 'save-failed'; tooLarge?: boolean }
   | { kind: 'changed-elsewhere' }
   /** The browser would not open IndexedDB; the workspace works from the smaller localStorage instead. */
   | { kind: 'indexeddb-unavailable' }
   /** IndexedDB holds the workspace but could not be opened now; saving is paused and nothing is overwritten. */
-  | { kind: 'indexeddb-blocked' };
+  | { kind: 'indexeddb-blocked' }
+  /** IndexedDB did not answer in time; the workspace came from the smaller localStorage. */
+  | { kind: 'indexeddb-timeout' };
 
 function storageNoticeText(notice: StorageNotice) {
+  if (notice.kind === 'indexeddb-timeout') return 'The storage for large courses did not answer in time, so StudentLLM is using the smaller fallback for now. Reload to try again. Export anything you want to keep first.';
   if (notice.kind === 'indexeddb-unavailable') return 'This browser does not let StudentLLM use the storage meant for large courses (a private window can do this), so it is using a smaller fallback. A large course may stop being saved; you would be warned. Use a normal window for long lectures.';
   if (notice.kind === 'indexeddb-blocked') return 'StudentLLM could not open the storage that holds your workspace, so it is showing the last copy kept before the upgrade. Saving is paused so nothing is overwritten. Close other StudentLLM tabs and reload; export anything you need first.';
+  if (notice.kind === 'save-failed' && notice.tooLarge) return 'Your changes are not being saved: this course workspace is larger than the 16 MB limit StudentLLM can store (your browser still has room). Use More \u2192 Export course to keep a copy of what is on screen, then split the material into smaller courses or delete old ones.';
   if (notice.kind === 'save-failed') return "Your changes are not being saved: this browser's storage is full or blocked. Use More \u2192 Export course to keep a copy of what is on screen, then free up space or clear old courses.";
   if (notice.kind === 'changed-elsewhere') return 'StudentLLM was changed in another tab or window. Reload this page to see the latest version. Changes made here are not saved until you reload, so export anything you want to keep first.';
   const { kind, backedUp, protect } = notice.issue;
+  if (kind === 'storage-reset') {
+    if (!notice.issue.backedUp) return 'Your workspace storage was cleared (the browser may have removed it to free space) and no earlier copy was found, so StudentLLM started empty. Courses you exported can be imported again.';
+    const when = notice.issue.since ? ` from ${new Date(notice.issue.since).toLocaleDateString()}` : '';
+    return `Your workspace storage was reset. StudentLLM is showing the older copy${when}; changes made after it are lost. Download the copy to keep it.`;
+  }
   if (kind === 'older-copy') return 'A different copy of your workspace, saved by an older version of StudentLLM or while this browser could not use its large-course storage, was found and kept. The workspace shown is the current one. Download the older copy if it holds work you need.';
   const what = kind === 'partial'
     ? 'Some entries in your saved workspace could not be read and were left out.'
@@ -409,7 +418,7 @@ function StorageUsagePanel() {
       <p className="empty-state">{estimate === undefined ? 'Checking...' : estimate ? describeStorageUsage(estimate) : 'This browser does not say how much storage is used.'}</p>
       {estimate?.nearLimit && <p className="action-error" role="alert">Browser storage is almost full. Export the courses you want to keep (More, then Export course), then delete old courses or free up space. When it is full, new work cannot be saved.</p>}
       {persistence === 'granted' && <p className="empty-state">The browser has promised to keep your data when it runs short of space.</p>}
-      {persistence === 'not-granted' && <p className="empty-state">The browser may clear this site's data when it runs short of space. <button type="button" className="text-action" onClick={() => void askToKeep()}>Ask the browser to keep my data</button></p>}
+      {persistence === 'not-granted' && <p className="empty-state">The browser may clear this site's data when it runs short of space. You can ask it to keep your data; some browsers (Firefox, for instance) then show their own prompt. <button type="button" className="text-action" onClick={() => void askToKeep()}>Ask the browser to keep my data</button></p>}
     </div>
   );
 }
@@ -443,10 +452,19 @@ function WorkspaceLoading() {
       window.removeEventListener('drop', keepFilesHere);
     };
   }, []);
+  // The live region is on screen before it has any text, so that screen readers announce the text once it is added.
+  const [message, setMessage] = useState('');
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setMessage('Opening your workspace...');
+    const timer = window.setTimeout(() => setSlow(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, []);
   return (
-    <div className="app-shell workspace-loading" role="status" aria-live="polite">
+    <div className="app-shell workspace-loading">
       <span className="brand-name"><span className="brand-mark" aria-hidden="true"><BrandGlyph size={24} /></span>StudentLLM</span>
-      <p className="empty-state">Opening your workspace...</p>
+      <p className="empty-state" role="status" aria-live="polite">{message}{slow ? ' This is taking longer than usual. Close other StudentLLM tabs, then reload.' : ''}</p>
+      {slow && <button type="button" className="text-action" onClick={() => window.location.reload()}>Reload</button>}
     </div>
   );
 }
@@ -458,7 +476,7 @@ function App(props: AppProps) {
   useEffect(() => {
     if (bootstrap) return undefined;
     let cancelled = false;
-    openingRef.current ??= openBrowserWorkspace(initialWorkspace);
+    openingRef.current ??= openBrowserWorkspace(initialWorkspace).catch(() => openLocalStorageWorkspace(initialWorkspace));
     void openingRef.current.then((opened) => {
       if (!cancelled) setBootstrap(opened);
     });
@@ -639,7 +657,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       saveFailedRef.current = !saved;
       setStorageNotice((current) => saved
         ? (current?.kind === 'save-failed' ? null : current)
-        : (current?.kind === 'changed-elsewhere' ? current : { kind: 'save-failed' }));
+        : (current?.kind === 'changed-elsewhere' ? current : { kind: 'save-failed', ...(!isNativeRuntime() && workspaceStore.lastFailure === 'too-large' ? { tooLarge: true } : {}) }));
       return saved;
     });
     lastSaveRef.current = saving;
@@ -1166,13 +1184,25 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     });
   }, [workspaceStore]);
 
-  // Ask the browser to keep the site's data once there is something worth keeping. Where the browser asks the student, it does so once.
+  // The last state is handed to the store when the page is hidden or closed: the write is asynchronous, so this closes the
+  // window between a change and its effect. It is a best effort; a state that was already stored is not written again.
+  const latestSnapshotRef = useRef<WorkspaceSnapshot>({ activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces });
+  latestSnapshotRef.current = { activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces };
+  const persistWorkspaceRef = useRef(persistWorkspace);
+  persistWorkspaceRef.current = persistWorkspace;
   useEffect(() => {
-    if (isNativeRuntime() || !lessons.length) return;
-    let storage: Storage | undefined;
-    try { storage = window.localStorage; } catch { storage = undefined; }
-    void requestPersistentStorage(undefined, { storage });
-  }, [lessons.length > 0]);
+    if (isNativeRuntime()) return undefined;
+    const flush = () => {
+      if (nativeStorageReady && !savingPausedRef.current) void persistWorkspaceRef.current(latestSnapshotRef.current);
+    };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [nativeStorageReady]);
 
   // Closing the tab during an import, a transcription or a recording is the one way to lose work in progress.
   // The same goes for changes that are not being saved: a stale tab, a full store, or a protected original.
@@ -2394,6 +2424,9 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   useEffect(() => {
     if (importRunningRef.current) return;
     if (!importQueue.length) {
+      // The next folder starts afresh: its courses go to the top and its first course is the one shown.
+      batchLessonIdsRef.current.clear();
+      activateNextBatchLessonRef.current = false;
       if (importTotals) {
         notify(`${importTotals.total} source${importTotals.total === 1 ? '' : 's'} imported.`);
         setImportTotals(null);
@@ -2654,6 +2687,12 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       setShowDeleteCourse(false);
       return;
     }
+    if (savingPausedRef.current) {
+      // Nothing done in this window is stored, so the course would be back after a reload. Do not pretend otherwise.
+      notify('Saving is paused in this window, so the course was not deleted. Reload the page, then delete it.');
+      setShowDeleteCourse(false);
+      return;
+    }
 
     flushPendingSourceRemoval();
     const lessonId = activeLesson.id;
@@ -2665,17 +2704,21 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     const nextLesson = nextLessons[0];
     const nextWorkspaces = Object.fromEntries(Object.entries(lessonWorkspacesRef.current).filter(([id]) => id !== lessonId));
     const nextActive = nextWorkspaces[nextLesson?.id ?? ''] ?? emptyLessonWorkspace;
-    setLessons(nextLessons);
-    setLessonWorkspaces(nextWorkspaces);
+    // Remembered before anything else happens: if the page dies from here on, the startup sweep (which checks references,
+    // so it keeps whatever the saved workspace still lists) finishes the job.
+    for (const resource of deletedResources) if (!isSourceUsedElsewhere(resource.id, lessonId)) eraseOperations.remember(resource);
+    // Functional updates: an import for another course that was queued a moment ago must not be undone.
+    setLessons((current) => current.filter((lesson) => lesson.id !== lessonId));
+    setLessonWorkspaces((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== lessonId)));
     setActiveLessonId(nextLesson?.id ?? '');
     setSelectedArtifactId(nextLesson ? lessonWorkspaces[nextLesson.id]?.artifacts[0]?.id ?? null : null);
     setView('course');
     setShowAllResources(false);
     setShowDeleteCourse(false);
     try {
-      // The deletion is stored first; only then are the originals erased. If saving is paused or failing, the saved
-      // workspace may still list this course, so its files stay (and are remembered for the startup sweep).
-      const stored = savingPausedRef.current ? false : await persistWorkspace({
+      // The deletion is stored first; only then are the originals erased. If saving fails, the saved workspace may still
+      // list this course, so its files stay.
+      const stored = await persistWorkspace({
         activeLessonId: nextLesson?.id ?? '', lessons: nextLessons, ...nextActive, lessonWorkspaces: nextWorkspaces,
       });
       const safety = { savingPaused: savingPausedRef.current, saveFailed: !stored };
@@ -2686,10 +2729,25 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           if (!removePendingRecording(pending.recordingId)) throw new Error('Unable to remove interrupted recording state.');
         }
       }
-      notify(isSafeToErase(safety) ? `${lessonTitle} deleted.` : `${lessonTitle} deleted. Its files are kept until your changes can be saved.`);
+      notify(isSafeToErase(safety) ? `${lessonTitle} deleted.` : `${lessonTitle} was removed here, but the change could not be saved, so it comes back after a reload. Its files are kept.`);
     } catch {
       notify(`${lessonTitle} was deleted, but some of its files could not be removed yet. They are removed the next time StudentLLM starts.`);
     }
+  };
+
+  // Interrupted recordings whose course is not in this workspace: they stay recoverable until the student removes them.
+  const [orphanTick, setOrphanTick] = useState(0);
+  const orphanRecordings = showSettingsPanel ? listPendingRecordings().filter((entry) => !lessons.some((lesson) => lesson.id === entry.lessonId)) : [];
+  void orphanTick;
+  const discardUnrecoveredRecording = async (entry: { recordingId: string; lessonTitle: string }) => {
+    if (!window.confirm(`Remove the unrecovered recording from "${entry.lessonTitle}"? Its audio will be erased and cannot be recovered.`)) return;
+    try {
+      await recordingChunkStore.clear(entry.recordingId);
+      removePendingRecording(entry.recordingId);
+    } catch {
+      notify('The recording could not be removed.');
+    }
+    setOrphanTick((tick) => tick + 1);
   };
 
   // The raw saved workspace is not a course export (it cannot be imported); it is a copy to keep and to restore from.
@@ -2947,10 +3005,10 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       </header>
 
       {storageNotice && <div className="action-error storage-banner" role="alert"><p>{storageNoticeText(storageNotice)}</p><span className="storage-banner-actions">
-        {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'indexeddb-blocked') && <button className="text-action" onClick={() => { skipUnloadWarningRef.current = true; window.location.reload(); }}>Reload</button>}
-        {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'save-failed' || storageNotice.kind === 'indexeddb-blocked') && hasCourse && <button className="text-action" onClick={() => void exportCourse()}>Export this course</button>}
-        {storageNotice.kind === 'load-issue' && <button className="text-action" onClick={() => void downloadSavedCopy(storageNotice.issue)}>{storageNotice.issue.kind === 'older-copy' ? 'Download older copy' : storageNotice.issue.protect ? 'Download saved data' : 'Download saved copy'}</button>}
-        {storageNotice.kind === 'indexeddb-unavailable' && <button className="text-action" onClick={() => setStorageNotice(null)}>Dismiss</button>}
+        {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'indexeddb-blocked' || storageNotice.kind === 'indexeddb-timeout') && <button className="text-action" onClick={() => { skipUnloadWarningRef.current = true; window.location.reload(); }}>Reload</button>}
+        {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'save-failed' || storageNotice.kind === 'indexeddb-blocked' || storageNotice.kind === 'indexeddb-timeout') && hasCourse && <button className="text-action" onClick={() => void exportCourse()}>Export this course</button>}
+        {storageNotice.kind === 'load-issue' && (storageNotice.issue.copyKey !== undefined || storageNotice.issue.raw !== undefined) && <button className="text-action" onClick={() => void downloadSavedCopy(storageNotice.issue)}>{storageNotice.issue.kind === 'older-copy' ? 'Download older copy' : storageNotice.issue.protect ? 'Download saved data' : 'Download saved copy'}</button>}
+        {(storageNotice.kind === 'indexeddb-unavailable' || storageNotice.kind === 'indexeddb-timeout') && <button className="text-action" onClick={() => setStorageNotice(null)}>Dismiss</button>}
         {storageNotice.kind === 'load-issue' && storageNotice.issue.protect && storageNotice.issue.kind !== 'newer-version' && <button className="text-action" onClick={startEmptyAnyway}>Start empty anyway</button>}
         {storageNotice.kind === 'load-issue' && !storageNotice.issue.protect && <button className="text-action" onClick={() => setStorageNotice(null)}>Dismiss</button>}
       </span></div>}
@@ -3105,7 +3163,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           <div className="connection-field"><label htmlFor="local-documents-url">Document service address</label><input id="local-documents-url" value={serviceDraft.documentsUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, documentsUrl: event.target.value }))} placeholder="http://127.0.0.1:8766" />{isNativeRuntime() && <small>{LOOPBACK_HINT}</small>}</div>
           <button className="primary-submit" disabled={isRecording || isFinalizingRecording || isStartingRecording || isCheckingSidecars} type="submit">Save connections</button>
           <p className="empty-state" role="status">{usesNim(serviceSettings) ? 'NVIDIA NIM' : 'LM Studio / Bionic'}: {isCheckingSidecars ? 'Checking...' : llmHealth}</p>{availableModels.length > 0 && <p className="detected-models">Detected local models: {availableModels.join(', ')}</p>}
-        </form>{!isNativeRuntime() && <StorageUsagePanel />}<div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>These optional helpers run on this computer. Recordings and imported files are always saved first; a helper that is not running only postpones transcription or text extraction.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>Speech service (transcription)</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document service (PDF, images, Office)</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Animated icons by <a href="https://lordicon.com/" target="_blank" rel="noreferrer">Lordicon</a>.</p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
+        </form>{!isNativeRuntime() && <StorageUsagePanel />}{orphanRecordings.length > 0 && <div className="storage-usage" role="group" aria-label="Unrecovered recordings"><strong>Unrecovered recordings</strong><p className="empty-state">These recordings were interrupted and their course is not in this workspace. The audio is kept in case the course comes back. Remove one only if you do not need it.</p>{orphanRecordings.map((entry) => <p className="empty-state" key={entry.recordingId}>{entry.lessonTitle || 'Untitled course'} <button type="button" className="text-action" onClick={() => void discardUnrecoveredRecording(entry)}>Remove recording</button></p>)}</div>}<div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>These optional helpers run on this computer. Recordings and imported files are always saved first; a helper that is not running only postpones transcription or text extraction.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>Speech service (transcription)</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document service (PDF, images, Office)</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Animated icons by <a href="https://lordicon.com/" target="_blank" rel="noreferrer">Lordicon</a>.</p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
       {isNativeRuntime() && <div className="managed-sidecar-tray" aria-label="Managed local services"><span>Managed services</span><span aria-live="polite">{managedSidecars.filter((sidecar) => sidecar.running).length}/2 running</span><button type="button" onClick={() => void startConfiguredSidecars()}>Start</button><button type="button" onClick={() => void stopConfiguredSidecars()}>Stop</button></div>}
       <div className="toast-stack">
         <div className="toast-slot" role="status" aria-atomic="true">{toast && <div className="toast">{toast}</div>}</div>
