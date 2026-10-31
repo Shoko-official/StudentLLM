@@ -4,7 +4,7 @@ import { placeholderProviderSets, type ProviderSetCatalog } from "./provider-set
 export interface AccountDeps {
   providerSets: ProviderSetCatalog;
   /** Called when an account deletion keeps failing to cancel the subscription (the operator alert). Name-only: no account data. */
-  alertOperator: (event: "deletion_cancel_failing") => void;
+  alertOperator: (event: "deletion_cancel_failing" | "deletion_needs_manual_review") => void;
 }
 
 export function createAccountDeps(_core: CoreDeps, overrides: Partial<AccountDeps> = {}): AccountDeps {

@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { expectFixtureConformance, loadFixture, validateAgainst } from "../../testing";
-import { bearer, makeAuthApp, type AuthHarness } from "../../testing/auth-app";
+import { bearer, makeAuthApp, pkcePair, type AuthHarness } from "../../testing/auth-app";
+import { dumpStores } from "../../testing/dump-stores";
 import type { TokenResponse } from "../../types";
 import type { BillingSeam, InferenceSeam } from "../seams";
-import { ALERT_AFTER_ATTEMPTS, backoffMs } from "./deletion";
+import { ALERT_AFTER_ATTEMPTS, DELETION_RETRY_PERIOD_MS, backoffMs } from "./deletion";
 
 const ADDRESS = "student@example.invalid";
 const code = async (res: Response) => (await res.json()).error.code as string;
@@ -163,6 +164,12 @@ describe("GET /v1/account", () => {
   });
 });
 
+async function googleAccount(t: AuthHarness) {
+  const res = await t.googleSignIn({ sub: "google-sub-1", email: ADDRESS });
+  expect(res.status).toBe(200);
+  return (await res.json()) as TokenResponse;
+}
+
 describe("DELETE /v1/account", () => {
   async function aliveBilling(state: "cancelled" | "pending" | "none" | "throw") {
     const calls: Array<{ accountId: string; when: string }> = [];
@@ -237,64 +244,154 @@ describe("DELETE /v1/account", () => {
     expect(await t.stores.accounts.getById(accountId)).toBeNull();
   });
 
-  it("keeps the tombstone while the cancel is pending, answers the same 202 on a repeat, and retries with backoff", async () => {
+  it("erases all personal data at once when the cancel is pending, and keeps only the Paddle ids", async () => {
     const seam = await aliveBilling("pending");
     const t = await makeAuthApp({ extraDeps: { billing: seam.billing as never } });
-    const { tokens, auth, accountId } = await signedIn(t);
+    // A Google account with a second device, a consent, a link ticket, a pending email code and a manage token.
+    const google = await googleAccount(t);
+    const accountId = google.account.account_id;
+    const ticket = await (await t.request("/v1/account/link", { method: "POST", headers: { ...bearer(google.access_token), "Content-Type": "application/json" }, body: JSON.stringify({ method: "email" }) })).json();
+    expect((await t.googleSignIn({ sub: "google-sub-1", email: ADDRESS }, { deviceLabel: "Second laptop" })).status).toBe(200);
     await t.stores.accounts.savePlan(
       { accountId, planId: "plus_monthly", status: "active", paidPeriods: [], cancelAtPeriodEnd: false, paddleCustomerId: "ctm_1", paddleSubscriptionId: "sub_1", lastEventAt: null },
       { expectedPlanVersion: 0 },
     );
-    const first = await t.del("/v1/account", auth);
-    expect(first.status).toBe(202);
-    const firstBody = await first.json();
-    // Only the Paddle ids remain, and the account is marked deleting.
-    expect((await t.stores.accounts.getById(accountId))!.status).toBe("deleting");
-    expect(await t.stores.accounts.getTombstone(accountId)).toMatchObject({ paddleCustomerId: "ctm_1", paddleSubscriptionId: "sub_1" });
+    await t.stores.consents.record({ consentId: "cns_a", accountId, providerSetId: "ps1", providerSetVersion: 1, features: ["chat"], textVersion: "t", granted: true }, t.clock.now());
+    await t.stores.ledger.ensureWindow(accountId, { start: t.clock.now(), end: t.clock.now() + 86_400_000, limit: 10 });
+    await t.stores.devices.mintManageToken({ tokenHash: "mgmt-hash", accountId, expiresAt: t.clock.now() + 300_000, codeId: "c1" }, t.clock.now());
+    const pkce = await pkcePair();
+    t.clock.advance(61_000);
+    await t.post("/auth/email/request", { email: ADDRESS, code_challenge: pkce.challenge, code_challenge_method: "S256", terms_version: t.deps.config.termsVersion, link_ticket: ticket.link_ticket });
 
-    // Naturally idempotent: the same 202 and the same id, no second email, no second cancel.
-    const second = await t.del("/v1/account", auth);
-    expect(second.status).toBe(202);
-    expect(await second.json()).toEqual(firstBody);
-    expect(t.email.ofKind("account_deletion_started")).toHaveLength(1);
+    const res = await t.del("/v1/account", bearer(google.access_token));
+    expect(res.status).toBe(202);
+    const firstBody = await res.json();
     expect(seam.calls).toHaveLength(1);
-    // Meanwhile the data-rights routes work and everything gated is closed.
-    expect((await t.get("/v1/account", auth)).status).toBe(200);
-    expect(await code(await t.get("/v1/provider-sets", auth))).toBe("session_revoked");
-    // The tokens still authenticate for the repeat call.
-    expect(tokens.access_token).toBeTruthy();
 
-    // The cron job honors the backoff.
+    // No personal data is left anywhere: not the address, the Google subject, a device label, a token or a ticket.
+    const dump = dumpStores(t.stores);
+    for (const needle of [ADDRESS, "google-sub-1", "Second laptop", google.refresh_token, google.access_token, "mgmt-hash", "cns_a", ticket.link_ticket]) {
+      expect(dump, needle).not.toContain(needle);
+    }
+    expect(await t.stores.accounts.getById(accountId)).toBeNull();
+    expect(await t.stores.accounts.getByEmail(ADDRESS)).toBeNull();
+    expect(await t.stores.accounts.getPlan(accountId)).toBeNull();
+    expect(await t.stores.devices.list(accountId)).toEqual([]);
+    expect(await t.stores.consents.listAll(accountId)).toEqual([]);
+    expect(await t.stores.ledger.listWindows(accountId)).toEqual([]);
+    expect(await t.stores.sessions.listActiveByAccount(accountId, t.clock.now())).toEqual([]);
+    // What stays is the tombstone: the account id and the Paddle ids.
+    expect(await t.stores.accounts.getTombstone(accountId)).toEqual({ accountId, paddleCustomerId: "ctm_1", paddleSubscriptionId: "sub_1", createdAt: t.clock.now() });
+
+    // A repeated DELETE answers session_revoked (the client treats that as done), and so does everything else.
+    const again = await t.del("/v1/account", bearer(google.access_token));
+    expect(again.status).toBe(401);
+    expect(await code(again)).toBe("session_revoked");
+    expect(await code(await t.get("/v1/account", bearer(google.access_token)))).toBe("session_revoked");
+    expect(await code(await t.post("/auth/refresh", { refresh_token: google.refresh_token, device_id: google.device_id }))).toBe("session_revoked");
+    expect(t.email.ofKind("account_deletion_started")).toHaveLength(1);
+    expect(firstBody.state).toBe("deleting");
+
+    // The address and the Google identity can start over at once, as a new account.
+    const fresh = await t.googleSignIn({ sub: "google-sub-1", email: ADDRESS });
+    expect(fresh.status).toBe(200);
+    expect(((await fresh.json()) as TokenResponse).account.account_id).not.toBe(accountId);
+  });
+
+  it("sends the final email before the address is erased", async () => {
+    const t = await makeAuthApp();
+    const { auth } = await signedIn(t);
+    const seen: string[] = [];
+    const original = t.deps.auth.email.send.bind(t.deps.auth.email);
+    t.deps.auth.email.send = async (message) => {
+      // At this moment the address must still be on the account.
+      seen.push(String(await t.stores.accounts.getByEmail(ADDRESS) !== null));
+      return original(message);
+    };
+    expect((await t.del("/v1/account", auth)).status).toBe(202);
+    expect(seen).toEqual(["true"]);
+    expect(t.email.ofKind("account_deletion_started")).toEqual([{ kind: "account_deletion_started", to: ADDRESS }]);
+  });
+
+  it("retries the cancel with backoff, finishes when it succeeds, and removes the tombstone", async () => {
+    const seam = await aliveBilling("pending");
+    const t = await makeAuthApp({ extraDeps: { billing: seam.billing as never } });
+    const { auth, accountId } = await signedIn(t);
+    await t.stores.accounts.savePlan(
+      { accountId, planId: "plus_monthly", status: "active", paidPeriods: [], cancelAtPeriodEnd: false, paddleCustomerId: "ctm_1", paddleSubscriptionId: "sub_1", lastEventAt: null },
+      { expectedPlanVersion: 0 },
+    );
+    expect((await t.del("/v1/account", auth)).status).toBe(202);
     const cron = () => t.app.scheduled({ scheduledTime: t.clock.now(), cron: "*/5 * * * *" });
     await cron();
-    expect(seam.calls).toHaveLength(1);
+    expect(seam.calls).toHaveLength(1); // the backoff is honored
     t.clock.advance(backoffMs(1));
     await cron();
     expect(seam.calls).toHaveLength(2);
-    expect((await t.stores.accounts.getById(accountId))!.status).toBe("deleting");
-    // When the cancel finally succeeds the account is purged.
+    expect(await t.stores.accounts.getTombstone(accountId)).not.toBeNull();
     seam.set("cancelled");
     t.clock.advance(backoffMs(2));
     await cron();
     expect(seam.calls).toHaveLength(3);
-    expect(await t.stores.accounts.getById(accountId)).toBeNull();
     expect(await t.stores.accounts.getTombstone(accountId)).toBeNull();
+    expect(await t.stores.accounts.findAccountIdByPaddleSubscription("sub_1")).toBeNull();
   });
 
-  it("alerts the operator once the cancel keeps failing, and never loses the tombstone", async () => {
+  it("repairs a deletion that stopped after the tombstone: the retry job erases what is left", async () => {
+    const seam = await aliveBilling("pending");
+    const t = await makeAuthApp({ extraDeps: { billing: seam.billing as never } });
+    const { accountId } = await signedIn(t);
+    await t.stores.accounts.markDeleting(accountId, t.clock.now()); // the process died right here
+    expect(await t.stores.devices.list(accountId)).toHaveLength(1);
+    await t.app.scheduled({ scheduledTime: t.clock.now(), cron: "*/5 * * * *" });
+    expect(await t.stores.devices.list(accountId)).toEqual([]);
+    expect(await t.stores.sessions.listActiveByAccount(accountId, t.clock.now())).toEqual([]);
+  });
+
+  it("alerts the operator when the cancel keeps failing, and goes to manual review after the retry period", async () => {
     const seam = await aliveBilling("throw");
     const alerts: string[] = [];
     const t = await makeAuthApp({ extraDeps: { billing: seam.billing as never }, accountDeps: { alertOperator: (e) => void alerts.push(e) } });
     const { auth, accountId } = await signedIn(t);
     expect((await t.del("/v1/account", auth)).status).toBe(202);
+    const cron = () => t.app.scheduled({ scheduledTime: t.clock.now(), cron: "*/5 * * * *" });
     for (let attempt = 1; attempt < ALERT_AFTER_ATTEMPTS + 2; attempt++) {
       t.clock.advance(backoffMs(attempt));
-      await t.app.scheduled({ scheduledTime: t.clock.now(), cron: "*/5 * * * *" });
+      await cron();
     }
     expect(alerts.length).toBeGreaterThan(0);
     expect(alerts.every((a) => a === "deletion_cancel_failing")).toBe(true);
     expect(await t.stores.accounts.getTombstone(accountId)).not.toBeNull();
     expect(backoffMs(30)).toBeLessThanOrEqual(6 * 60 * 60_000);
+
+    // Past the retry period (14 days) the deletion stops retrying and waits for an operator.
+    alerts.length = 0;
+    t.clock.advance(DELETION_RETRY_PERIOD_MS);
+    await cron();
+    expect(alerts).toEqual(["deletion_needs_manual_review"]);
+    const calls = seam.calls.length;
+    t.clock.advance(7 * 24 * 60 * 60_000);
+    await cron();
+    expect(seam.calls.length).toBe(calls); // no more automatic attempts
+    expect(await t.stores.accounts.getTombstone(accountId)).not.toBeNull(); // and the tombstone is kept
+  });
+
+  it("leaves no device or session behind when a sign-in races the deletion", async () => {
+    const t = await makeAuthApp();
+    const first = await t.signedIn(ADDRESS);
+    const accountId = first.account.account_id;
+    // The deletion lands between the session being created and the sign-in finishing.
+    const original = t.stores.sessions.create.bind(t.stores.sessions);
+    t.stores.sessions.create = async (session) => {
+      await original(session);
+      await t.stores.accounts.markDeleting(accountId, t.clock.now());
+      t.stores.sessions.create = original;
+    };
+    const res = await t.emailSignIn(ADDRESS, { deviceId: first.device_id });
+    expect(res.status).toBe(400);
+    expect(await t.stores.devices.list(accountId)).toEqual([]);
+    expect(await t.stores.sessions.listActiveByAccount(accountId, t.clock.now())).toEqual([]);
+    expect(dumpStores(t.stores)).not.toContain(first.device_id);
   });
 
   it("does not let a failing email provider fail the deletion", async () => {

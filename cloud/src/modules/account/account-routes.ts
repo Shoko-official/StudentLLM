@@ -8,7 +8,7 @@ import type { ConsentRow, PlanRecord } from "../../storage";
 import type { Account, AccountExport, ConsentRecord, Credits, DeletionResponse, TermsAcceptance } from "../../types";
 import { planObject, toIso } from "../auth/plan";
 import { parseShape } from "../auth/validate";
-import { attemptDeletion, deletionId } from "./deletion";
+import { attemptDeletion, deletionId, erasePendingSignIn } from "./deletion";
 import { inferenceSeam } from "./seams";
 
 export function consentRecord(row: ConsentRow): ConsentRecord {
@@ -64,18 +64,20 @@ export function deleteAccountHandler(deps: Deps): Handler {
   return async (ctx) => {
     const { account } = loaded(ctx);
     const now = deps.clock.now();
-    const first = account.status !== "deleting";
+    // The final notification goes out BEFORE the address is erased. A provider failure never blocks the deletion.
+    try {
+      await deps.auth.email.send({ kind: "account_deletion_started", to: account.email });
+    } catch {
+      console.error("email send failed");
+    }
+    await erasePendingSignIn(deps, account.email);
+    // From here the account holds no personal data: only the tombstone with the Paddle ids remains.
     const tombstone = await deps.stores.accounts.markDeleting(account.accountId, now);
     if (!tombstone) throw new ApiError("session_revoked");
-    // Naturally idempotent: a repeated call returns the same 202 (same deletion id) and does not mail again.
-    if (first) {
-      ctx.waitUntil(
-        deps.auth.email.send({ kind: "account_deletion_started", to: account.email }).catch(() => console.error("email send failed")),
-      );
-    }
+    // A repeated DELETE never gets here: the sessions died with the account, so it answers `session_revoked`.
     const body: DeletionResponse = { deletion_id: await deletionId(deps, account.accountId, tombstone.createdAt), state: "deleting" };
-    // Cancel the subscription and, when that succeeded, purge. If it did not, the retry job takes over.
-    if (first) await attemptDeletion(deps, account.accountId);
+    // Erase the rest and cancel the subscription; if the cancel is not done the retry job takes over.
+    await attemptDeletion(deps, account.accountId, tombstone.createdAt);
     return jsonResponse(body, ctx.requestId, { status: 202 });
   };
 }

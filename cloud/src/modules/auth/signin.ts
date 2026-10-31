@@ -78,6 +78,13 @@ export async function completeSignIn(
   if (!registered.created) await sessions.revokeByDevice(accountId, deviceId, now);
   const { session, refreshToken } = await createSession(deps, { accountId, deviceId });
   await devices.incrementNewSessions(accountId, new Date(now).toISOString().slice(0, 10));
+  // A deletion that started while this sign-in was running must not leave a device or a session behind.
+  if (!(await accounts.getById(accountId))) {
+    await sessions.revokeFamily(session.familyId, now);
+    await sessions.purgeAccount(accountId);
+    await devices.purgeAccount(accountId);
+    throw new ApiError("invalid_code");
+  }
   await accounts.update(accountId, { lastSignInAt: now });
   // A manage token only exists to get a sign-in through the device limit; it has done its job.
   await devices.revokeManageTokens(accountId);

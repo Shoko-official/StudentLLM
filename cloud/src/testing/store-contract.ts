@@ -189,12 +189,15 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
       expect(await stores.accounts.findAccountIdByPaddleSubscription("nope")).toBeNull();
     });
 
-    it("keeps only the Paddle ids in a deleting tombstone and purges everything", async () => {
+    it("erases the account at once, keeps only the Paddle ids in the tombstone, and purges everything", async () => {
       const { stores } = await accountWith();
       await stores.accounts.savePlan(basePlan({ paidPeriods: [] }), { expectedPlanVersion: 0 });
       const t = await stores.accounts.markDeleting("acc_1", T0);
       expect(t).toEqual({ accountId: "acc_1", paddleCustomerId: "ctm_1", paddleSubscriptionId: "sub_p1", createdAt: T0 });
-      expect((await stores.accounts.getById("acc_1"))!.status).toBe("deleting");
+      expect(await stores.accounts.getById("acc_1")).toBeNull(); // erased at tombstone creation
+      expect(await stores.accounts.getByEmail("a@example.invalid")).toBeNull();
+      expect(await stores.accounts.getPlan("acc_1")).toBeNull();
+      expect(await stores.accounts.findAccountIdByPaddleSubscription("sub_p1")).toBe("acc_1"); // webhooks still resolve to the tombstone
       expect(await stores.accounts.markDeleting("acc_1", T0 + 5)).toEqual(t); // naturally idempotent
       await stores.accounts.purgeAccount("acc_1");
       expect(await stores.accounts.getById("acc_1")).toBeNull();
