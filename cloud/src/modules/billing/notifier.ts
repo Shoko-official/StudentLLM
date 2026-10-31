@@ -6,6 +6,11 @@
 export type OperatorAlert =
   | { kind: "webhook_quarantined"; eventId: string; reason: string; subscriptionId?: string; customerId?: string }
   | { kind: "cancel_failing"; accountId: string; attempts: number; subscriptionId: string }
+  /**
+   * A subscription event was quarantined and the subscription was NOT canceled by the gateway (unknown account, a
+   * customer or price that does not match, a malformed period): the customer may be billed for nothing. Act on it.
+   */
+  | { kind: "subscription_needs_review"; eventId: string; reason: string; subscriptionId: string; customerId: string | null }
   /** The account had no Paddle customer id and took the first event's (checkout normally creates it first). */
   | { kind: "customer_adopted"; accountId: string; customerId: string }
   | { kind: "purchase_while_deleting"; accountId: string }

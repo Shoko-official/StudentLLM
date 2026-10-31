@@ -327,7 +327,10 @@ describe("webhook: mapping to an account", () => {
     const record = await app.stores.webhookEvents.get((ev as any).event_id);
     expect(record).toMatchObject({ state: "quarantined" });
     expect(record!.fields).toEqual({ subscription_id: "sub_1", customer_id: "ctm_unknown", price_id: PRICE_MONTHLY, status: "active", currency: "EUR", period_start: T, period_end: addMonthsUTC(T, 1) });
-    expect(app.notifier.alerts).toEqual([{ kind: "webhook_quarantined", eventId: (ev as any).event_id, reason: "unknown_account", subscriptionId: "sub_1", customerId: "ctm_unknown" }]);
+    expect(app.notifier.alerts).toEqual([
+      { kind: "webhook_quarantined", eventId: (ev as any).event_id, reason: "unknown_account", subscriptionId: "sub_1", customerId: "ctm_unknown" },
+      { kind: "subscription_needs_review", eventId: (ev as any).event_id, reason: "unknown_account", subscriptionId: "sub_1", customerId: "ctm_unknown" },
+    ]);
     expect(await app.stores.accounts.getById("acc_does_not_exist")).toBeNull();
     expect(await app.stores.accounts.findAccountIdByPaddleSubscription("sub_1")).toBeNull();
   });

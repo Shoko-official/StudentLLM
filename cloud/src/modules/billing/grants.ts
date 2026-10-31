@@ -85,6 +85,8 @@ export type GrantOutcome =
   /** A window of this account already uses that exact start (a revoked one): try again a moment later. */
   | { ok: false; reason: "start_taken" }
   | { ok: false; reason: "limit_exceeded"; limit: "grant_max_credits_per_window" | "grant_max_total_credits" }
+  /** The grant was revoked (or shortened to nothing): its id is spent, a new grant needs a new id. */
+  | { ok: false; reason: "grant_revoked" }
   /** The account does not exist, is suspended or is being deleted. */
   | { ok: false; reason: "account_not_active" };
 
@@ -102,10 +104,13 @@ export async function createGrantWindows(env: BillingEnv, accountId: string, req
   if (credits > standard) return { ok: false, reason: "limit_exceeded", limit: "grant_max_credits_per_window" };
 
   // A replay: the grant's windows are already there. Nothing is recomputed, created or reset.
-  const existing = (await ledger.listWindows(accountId)).filter((w) => w.source === "admin_grant" && w.grantId === request.grantId && w.revokedAt === null);
+  const history = (await ledger.listWindows(accountId)).filter((w) => w.source === "admin_grant" && w.grantId === request.grantId);
+  const existing = history.filter((w) => w.revokedAt === null);
   if (existing.length > 0) {
     return { ok: true, startsAt: existing[0]!.start, endsAt: Math.max(...existing.map((w) => w.end)), windows: existing, existed: true };
   }
+  // The grant existed and was revoked: a replay must not quietly recreate it under the same id.
+  if (history.length > 0) return { ok: false, reason: "grant_revoked" };
 
   const now = env.clock.now();
   let start = request.startsAt ?? now;

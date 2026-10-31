@@ -250,6 +250,59 @@ describe("review 3: a duplicate subscription is canceled, not just quarantined",
   });
 });
 
+describe("post-rebase low items", () => {
+  it("replays a quarantined adjustment only when it names a transaction the account holds", async () => {
+    const app = await setup({}, null);
+    const nameless = adjustmentEvent({ occurredAt: T + DAY, transactionId: null, action: "chargeback", customerId: "ctm_1" });
+    await app.webhook(nameless); // no account holds ctm_1 yet: quarantined, with no transaction id
+    expect((await app.stores.webhookEvents.listQuarantined()).map((e) => e.eventId)).toEqual([(nameless as any).event_id]);
+    await app.webhook(pass("txn_p", T)); // the account adopts ctm_1
+    // The transaction-less chargeback is NOT applied to the account that happened to adopt that customer.
+    expect(await app.stores.ledger.getCurrentWindow("acc_test", T + 2 * DAY)).not.toBeNull();
+    expect((await app.stores.webhookEvents.get((nameless as any).event_id))!.state).toBe("quarantined");
+  });
+
+  it("finds the quarantined events of a transaction through the index, not by reading every quarantined event", async () => {
+    const app = await setup({}, null);
+    await app.webhook(adjustmentEvent({ occurredAt: T + DAY, transactionId: "txn_x", action: "chargeback", customerId: "ctm_1" }));
+    for (let i = 0; i < 5; i++) await app.webhook(adjustmentEvent({ occurredAt: T + DAY, transactionId: `txn_other_${i}`, action: "chargeback", customerId: "ctm_1" }));
+    const events = app.stores.webhookEvents;
+    let scans = 0;
+    const list = events.listQuarantined.bind(events);
+    events.listQuarantined = async () => (scans++, list());
+    await app.webhook(pass("txn_x", T));
+    expect(scans).toBe(0);
+    expect((await events.listQuarantined()).length).toBe(5); // only the one that names txn_x was replayed
+  });
+
+  it("raises a clearly worded alert with the ids for a quarantined subscription it did not cancel, and not for one it canceled", async () => {
+    const app = await setup();
+    const wrongProduct = monthly(T, "sub_1", { priceId: "pri_something_else" });
+    await app.webhook(wrongProduct);
+    expect(app.notifier.alerts).toContainEqual({ kind: "subscription_needs_review", eventId: (wrongProduct as any).event_id, reason: "unexpected_price", subscriptionId: "sub_1", customerId: "ctm_1" });
+    const dup = await setup();
+    await dup.webhook(monthly(T));
+    await dup.webhook(monthly(T + DAY, "sub_dup"));
+    expect(dup.notifier.alerts.map((a) => a.kind)).not.toContain("subscription_needs_review"); // canceled instead
+    const unknown = await setup();
+    await unknown.webhook(monthly(T, "sub_9", { accountId: "acc_nobody", customerId: "ctm_nobody" }));
+    expect(unknown.notifier.alerts.map((a) => a.kind)).toContain("subscription_needs_review");
+  });
+
+  it("refuses to recreate a revoked grant under its id, with or without startsAt", async () => {
+    const app = await setup();
+    const env = envFromDeps(app.t.deps);
+    await createGrantWindows(env, "acc_test", { grantId: "g", days: 10, startPolicy: "now" });
+    const { revokeGrantWindows } = await import("./grants");
+    await revokeGrantWindows(env, "acc_test", "g");
+    app.clock.set(T + 20 * DAY);
+    expect(await createGrantWindows(env, "acc_test", { grantId: "g", days: 10, startPolicy: "now" })).toEqual({ ok: false, reason: "grant_revoked" });
+    expect(await createGrantWindows(env, "acc_test", { grantId: "g", days: 10, startPolicy: "now", startsAt: T + 20 * DAY })).toEqual({ ok: false, reason: "grant_revoked" });
+    expect((await liveWindows(app)).filter((w) => w.grantId === "g")).toEqual([]);
+    expect(await createGrantWindows(env, "acc_test", { grantId: "g2", days: 10, startPolicy: "now" })).toMatchObject({ ok: true });
+  });
+});
+
 describe("review 4 and 5: grants are atomic, idempotent, and cut by grant", () => {
   async function grantApp(options: Parameters<typeof makeBillingTestApp>[0] = {}) {
     const app = await setup(options);
@@ -344,7 +397,9 @@ describe("review 6: the Paddle customer is created on the server", () => {
     const ev = monthly(T, "sub_1", { customerId: "ctm_other" });
     await app.webhook(ev);
     expect((await app.stores.webhookEvents.get((ev as any).event_id))!.state).toBe("quarantined");
-    expect(app.notifier.alerts).toEqual([{ kind: "webhook_quarantined", eventId: (ev as any).event_id, reason: "customer_mismatch", subscriptionId: "sub_1", customerId: "ctm_other" }]);
+    expect(app.notifier.alerts).toContainEqual({ kind: "webhook_quarantined", eventId: (ev as any).event_id, reason: "customer_mismatch", subscriptionId: "sub_1", customerId: "ctm_other" });
+    // Nothing canceled that subscription, so the operator is told plainly that it may keep billing.
+    expect(app.notifier.alerts).toContainEqual({ kind: "subscription_needs_review", eventId: (ev as any).event_id, reason: "customer_mismatch", subscriptionId: "sub_1", customerId: "ctm_other" });
     expect(await liveWindows(app)).toEqual([]);
     const passEv = pass("txn_p", T, { customerId: "ctm_other" });
     await app.webhook(passEv);

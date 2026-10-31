@@ -187,6 +187,35 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
     });
   });
 
+  describe(`${label}: billing, quarantine lookup by transaction`, () => {
+    it("finds quarantined events by the transaction they name, and forgets them once replayed or pruned", async () => {
+      const { webhookEvents } = factory();
+      const quarantine = async (eventId: string, fields: Record<string, string>, at = T0) => {
+        const c = await webhookEvents.claim({ eventId, eventType: "adjustment.updated", occurredAt: at }, at, 60_000);
+        await webhookEvents.complete(eventId, c.record.attempt, "quarantined", fields, at + 1);
+      };
+      await quarantine("evt_a", { transaction_id: "txn_1", action: "chargeback" });
+      await quarantine("evt_b", { transaction_id: "txn_2" });
+      await quarantine("evt_c", { transaction_id: "txn_1" });
+      await quarantine("evt_d", { customer_id: "ctm_1" }); // names no transaction: never found by one
+      expect((await webhookEvents.findQuarantinedByTransaction(["txn_1"])).map((e) => e.eventId).sort()).toEqual(["evt_a", "evt_c"]);
+      expect((await webhookEvents.findQuarantinedByTransaction(["txn_1", "txn_2", "txn_1"])).map((e) => e.eventId).sort()).toEqual(["evt_a", "evt_b", "evt_c"]);
+      expect(await webhookEvents.findQuarantinedByTransaction(["txn_none"])).toEqual([]);
+      expect(await webhookEvents.findQuarantinedByTransaction([])).toEqual([]);
+      await webhookEvents.markReplayed("evt_a", T0 + 5);
+      expect((await webhookEvents.findQuarantinedByTransaction(["txn_1"])).map((e) => e.eventId)).toEqual(["evt_c"]);
+      await webhookEvents.deleteOlderThan(T0 + 100);
+      expect(await webhookEvents.findQuarantinedByTransaction(["txn_1", "txn_2"])).toEqual([]);
+    });
+
+    it("does not offer a processed event", async () => {
+      const { webhookEvents } = factory();
+      const c = await webhookEvents.claim({ eventId: "evt_p", eventType: "adjustment.updated", occurredAt: T0 }, T0, 60_000);
+      await webhookEvents.complete("evt_p", c.record.attempt, "processed", { transaction_id: "txn_9" }, T0);
+      expect(await webhookEvents.findQuarantinedByTransaction(["txn_9"])).toEqual([]);
+    });
+  });
+
   describe(`${label}: billing, plan version touch`, () => {
     it("bumps the plan version without changing the plan or its event ordering", async () => {
       const stores = await accountWith();

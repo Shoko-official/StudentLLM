@@ -96,22 +96,27 @@ function ownerReviews(env: BillingEnv, ev: NormalizedEvent, accountId: string | 
   return [() => env.notifier.requestOwnerReview({ kind: "chargeback", accountId: accountId ?? "unknown", transactionId: ev.transactionId })];
 }
 
-async function quarantine(env: BillingEnv, ev: NormalizedEvent, reason: string, accountId: string | null): Promise<Outcome> {
-  return {
-    state: "quarantined",
-    fields: ledgerFields(ev),
-    after: [
-      () =>
-        env.notifier.alertOperator({
-          kind: "webhook_quarantined",
-          eventId: ev.eventId,
-          reason,
-          ...(ev.subscriptionId ? { subscriptionId: ev.subscriptionId } : {}),
-          ...(ev.customerId ? { customerId: ev.customerId } : {}),
-        }),
-      ...ownerReviews(env, ev, accountId),
-    ],
-  };
+async function quarantine(env: BillingEnv, ev: NormalizedEvent, reason: string, accountId: string | null, canceled = false): Promise<Outcome> {
+  const after: Array<() => Promise<void>> = [
+    () =>
+      env.notifier.alertOperator({
+        kind: "webhook_quarantined",
+        eventId: ev.eventId,
+        reason,
+        ...(ev.subscriptionId ? { subscriptionId: ev.subscriptionId } : {}),
+        ...(ev.customerId ? { customerId: ev.customerId } : {}),
+      }),
+    ...ownerReviews(env, ev, accountId),
+  ];
+  // A live subscription we quarantined and did NOT cancel (an unknown account, a customer or price that does not match,
+  // a malformed period) may keep billing a customer who gets nothing: say so plainly, with the ids to act on.
+  const live = ev.subscriptionId !== null && ev.kind !== "adjustment" && ev.status !== "canceled" && ev.status !== "paused";
+  if (live && !canceled) {
+    after.push(() =>
+      env.notifier.alertOperator({ kind: "subscription_needs_review", eventId: ev.eventId, reason, subscriptionId: ev.subscriptionId!, customerId: ev.customerId }),
+    );
+  }
+  return { state: "quarantined", fields: ledgerFields(ev), after };
 }
 
 /**
@@ -121,8 +126,8 @@ async function quarantine(env: BillingEnv, ev: NormalizedEvent, reason: string, 
  * nothing to cancel.
  */
 async function quarantineConflict(env: BillingEnv, ev: NormalizedEvent, reason: ConflictReason, accountId: string): Promise<Outcome> {
-  const outcome = await quarantine(env, ev, reason, accountId);
   const cancels = (reason === "duplicate_subscription" || reason === "plan_conflict") && ev.subscriptionId !== null && ev.kind !== "adjustment";
+  const outcome = await quarantine(env, ev, reason, accountId, cancels);
   if (cancels) {
     const subscriptionId = ev.subscriptionId!;
     const now = env.clock.now();
@@ -138,23 +143,20 @@ async function quarantineConflict(env: BillingEnv, ev: NormalizedEvent, reason: 
 }
 
 /**
- * Quarantined refunds and chargebacks are replayable: one that arrived before the purchase it refunds (or before the
- * account had any id to find it by) is applied as soon as a period carrying that payment, or the account's customer
- * or subscription, exists. Each replayed event is marked processed so it is not applied twice.
+ * Quarantined refunds and chargebacks are replayable: one that arrived before the purchase it refunds is applied as soon
+ * as a period carrying that payment exists. Only an adjustment that NAMES a transaction is replayed, and only against
+ * the account that holds that transaction: a transaction-less adjustment is never replayed against an account that
+ * later adopts a customer id. The lookup is by transaction id through the store's index. Each replayed event is marked
+ * processed so it is not applied twice.
  */
 async function replayQuarantinedAdjustments(env: BillingEnv, accountId: string, plan: PlanRecord): Promise<PlanRecord> {
-  const quarantined = await env.stores.webhookEvents.listQuarantined();
-  if (quarantined.length === 0) return plan;
-  const purchases = new Set(plan.paidPeriods.map((p) => p.purchaseId).filter((id): id is string => id !== undefined));
+  const purchases = [...new Set(plan.paidPeriods.map((p) => p.purchaseId).filter((id): id is string => id !== undefined))];
+  if (purchases.length === 0) return plan;
+  const candidates = await env.stores.webhookEvents.findQuarantinedByTransaction(purchases);
   let current = plan;
-  for (const record of quarantined) {
+  for (const record of candidates) {
     const ev = eventFromRecord(record);
-    if (!ev) continue;
-    const belongs =
-      ev.transactionId !== null
-        ? purchases.has(ev.transactionId)
-        : (ev.subscriptionId !== null && ev.subscriptionId === current.paddleSubscriptionId) || (ev.customerId !== null && ev.customerId === current.paddleCustomerId);
-    if (!belongs) continue;
+    if (!ev || ev.transactionId === null) continue;
     const merged = await applyAdditive(env, accountId, ev);
     if (merged.plan) current = merged.plan;
     await env.stores.webhookEvents.markReplayed(record.eventId, env.clock.now());
@@ -183,8 +185,8 @@ async function processEvent(env: BillingEnv, ev: NormalizedEvent): Promise<Outco
       // A subscription paid for during the deletion would keep billing a deleted account: it is appended to the
       // tombstone and canceled now (with the tombstone's retry). The event itself is quarantined for the operator,
       // who refunds the customer; the alert names the subscription and customer ids.
-      const outcome = await quarantine(env, ev, "account_deleted", accountId);
       const live = ev.subscriptionId !== null && ev.kind !== "adjustment" && ev.status !== "canceled";
+      const outcome = await quarantine(env, ev, "account_deleted", accountId, live);
       if (live) {
         const subscriptionId = ev.subscriptionId!;
         const customerId = ev.customerId;

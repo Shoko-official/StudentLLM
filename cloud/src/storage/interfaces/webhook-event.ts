@@ -66,6 +66,11 @@ export interface WebhookEventStore {
   get(eventId: string): Promise<WebhookEventRecord | null>;
   listQuarantined(): Promise<WebhookEventRecord[]>;
   /**
+   * The quarantined events whose `transaction_id` field is one of `transactionIds` (an index lookup, not a scan of
+   * every quarantined event). Used to replay a refund or chargeback that arrived before its purchase.
+   */
+  findQuarantinedByTransaction(transactionIds: readonly string[]): Promise<WebhookEventRecord[]>;
+  /**
    * A quarantined event was applied after all (for example a chargeback that arrived before its purchase): moves it
    * to `processed` so it is not replayed twice. False when the event is not quarantined.
    */

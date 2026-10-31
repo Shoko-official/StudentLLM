@@ -254,7 +254,9 @@ How it fits the rest:
   event of a purchase is bound to its account by `custom_data.account_id`; later events are mapped by the payment they name
   (adjustments), the subscription id, then the customer id; the ids an account ever used keep resolving. Unknown accounts are
   quarantined (200) and the operator is alerted; a refund or chargeback that arrived before its purchase is replayed when the
-  purchase is applied.
+  purchase is applied (only an adjustment that names a transaction is replayed, found through an index). A deleted
+  account has no plan row: `cancelSubscription` cancels every id of its tombstone (billing keeps its retry state there), a
+  webhook for it only confirms a cancel, and a subscription paid during the deletion is appended to the tombstone and canceled.
 - **Refunds.** A full refund or a chargeback withdraws the windows the refunded payment bought (and cancels the subscription
   now, with a retry record); a partial refund changes nothing and alerts the operator; a chargeback also raises an owner review.
 - **Duplicates.** A second subscription is quarantined and canceled at Paddle now (`PlanRecord.extraCancels`, retried by the
