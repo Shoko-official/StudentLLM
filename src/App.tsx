@@ -2118,6 +2118,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setActiveLessonId(imported.lesson.id);
       setSelectedArtifactId(imported.workspace.artifacts[0]?.id ?? null);
       setView('course');
+      setActionError('');
       setShowAllResources(false);
       notify(`${imported.lesson.title} imported.`);
     } catch {
