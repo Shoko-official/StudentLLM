@@ -8,7 +8,8 @@ import { ApiError } from "../../http/envelope";
 import type { PipelineHooks } from "../../http/pipeline";
 import { rotatingKeyedHash } from "../../crypto/keyed-hash";
 import { tokenHash } from "./codes";
-import { CONNECTION_REQUESTS_PER_MINUTE, MINUTE_MS } from "./constants";
+import { connectionAddress, isKnownConnection } from "./connection";
+import { CONNECTION_REQUESTS_PER_MINUTE, MINUTE_MS, UNKNOWN_CONNECTION_REQUESTS_PER_MINUTE } from "./constants";
 import { verifyAccessToken } from "./tokens";
 
 /**
@@ -68,11 +69,6 @@ export function authenticateStep(deps: Deps): Step {
   };
 }
 
-/** The connection address as the platform reports it. Only ever hashed; never stored or logged. */
-export function connectionAddress(request: Request): string {
-  return request.headers.get("CF-Connecting-IP")?.trim() || "unknown";
-}
-
 /** A purpose-separated, rotating-salt hash of the connection address. */
 export async function connectionKey(deps: Deps, request: Request, purpose: string, now: number) {
   const salt = deps.config.secret("RATE_LIMIT_SALT_KEY").reveal();
@@ -91,7 +87,12 @@ export function checkAuthRateLimitStep(deps: Deps): Step {
     const now = deps.clock.now();
     // One window per route and connection, so a noisy refresh loop cannot starve a sign-in.
     const key = await connectionKey(deps, ctx.request, `conn-${ctx.meta.operationId.toLowerCase()}`, now);
-    const result = await deps.stores.rateLimits.hit(key, CONNECTION_REQUESTS_PER_MINUTE, MINUTE_MS, now);
+    const result = await deps.stores.rateLimits.hit(
+      key,
+      isKnownConnection(ctx.request) ? CONNECTION_REQUESTS_PER_MINUTE : UNKNOWN_CONNECTION_REQUESTS_PER_MINUTE,
+      MINUTE_MS,
+      now,
+    );
     if (!result.allowed) throw new ApiError("rate_limited", { retryAfterSeconds: result.retryAfterSeconds ?? 1 });
     ctx.responseHeaders.set("RateLimit-Limit", String(result.limit));
     ctx.responseHeaders.set("RateLimit-Remaining", String(result.remaining));

@@ -38,6 +38,16 @@ export const REFRESH_ABSOLUTE_MS = 180 * DAY;
 /** The general window of every unauthenticated route, per hashed connection address and route. */
 export const CONNECTION_REQUESTS_PER_MINUTE = 60;
 
+/**
+ * A request that arrives without `CF-Connecting-IP` (or with one we cannot read) cannot be told apart from any other
+ * such request, so they all share one bucket with these much stricter limits. The header is always present behind
+ * Cloudflare; the absence means a misrouted or forged request, and must never earn more allowance than a known one.
+ */
+export const UNKNOWN_CONNECTION_REQUESTS_PER_MINUTE = 10;
+export const UNKNOWN_EMAIL_REQUESTS_PER_CONNECTION_PER_HOUR = 5;
+export const UNKNOWN_FAILED_VERIFY_PER_CONNECTION_PER_HOUR = 10;
+export const UNKNOWN_FAILED_VERIFY_PER_ADDRESS_AND_CONNECTION_PER_HOUR = 10;
+
 export const HOUR_MS = HOUR;
 export const MINUTE_MS = MINUTE;
 export const DAY_MS = DAY;

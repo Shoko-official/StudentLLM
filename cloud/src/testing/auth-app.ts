@@ -86,16 +86,24 @@ export async function makeAuthApp(options: AuthHarnessOptions = {}): Promise<Aut
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
+  // Behind Cloudflare every request carries CF-Connecting-IP; a request without it gets the strict shared bucket.
+  // The harness adds a documentation address unless the test sets its own (tests of the missing header use `t.app.handle`).
+  const send = (path: string, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers);
+    if (!headers.has("CF-Connecting-IP")) headers.set("CF-Connecting-IP", "198.51.100.1");
+    return t.request(path, { ...init, headers });
+  };
   const h: AuthHarness = {
     ...t,
+    request: send,
     email,
     google,
     env,
     signing,
     core,
-    post: (path, body, headers) => t.request(path, json(body, headers)),
-    get: (path, headers) => t.request(path, { headers }),
-    del: (path, headers) => t.request(path, { method: "DELETE", headers }),
+    post: (path, body, headers) => send(path, json(body, headers)),
+    get: (path, headers) => send(path, { headers }),
+    del: (path, headers) => send(path, { method: "DELETE", headers }),
     async emailSignIn(address, opts = {}) {
       // Stay clear of the 60-second minimum between two code requests for one address.
       t.clock.advance(61_000);

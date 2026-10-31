@@ -24,11 +24,15 @@ import {
   EMAIL_REQUESTS_PER_CONNECTION_PER_HOUR,
   EMAIL_RESEND_AFTER_SECONDS,
   FAILED_VERIFY_PER_ADDRESS_AND_CONNECTION_PER_HOUR,
+  UNKNOWN_EMAIL_REQUESTS_PER_CONNECTION_PER_HOUR,
+  UNKNOWN_FAILED_VERIFY_PER_ADDRESS_AND_CONNECTION_PER_HOUR,
+  UNKNOWN_FAILED_VERIFY_PER_CONNECTION_PER_HOUR,
   FAILED_VERIFY_PER_CONNECTION_PER_HOUR,
   HOUR_MS,
   MANAGE_TOKEN_TTL_MS,
 } from "./constants";
-import { connectionAddress, connectionKey, valueKey } from "./hooks";
+import { connectionAddress, isKnownConnection } from "./connection";
+import { connectionKey, valueKey } from "./hooks";
 import { completeSignIn } from "./signin";
 import { BASE64URL_43_128, PKCE_VERIFIER, invalid, parseShape } from "./validate";
 
@@ -94,7 +98,7 @@ export function emailRequestHandler(deps: Deps): Handler {
     if (!perAddress.allowed) throw new ApiError("rate_limited", { retryAfterSeconds: perAddress.retryAfterSeconds ?? 1 });
     const perConnection = await stores.rateLimits.hit(
       await connectionKey(deps, ctx.request, "conn-email-req", now),
-      EMAIL_REQUESTS_PER_CONNECTION_PER_HOUR,
+      isKnownConnection(ctx.request) ? EMAIL_REQUESTS_PER_CONNECTION_PER_HOUR : UNKNOWN_EMAIL_REQUESTS_PER_CONNECTION_PER_HOUR,
       HOUR_MS,
       now,
     );
@@ -143,11 +147,14 @@ export function emailVerifyHandler(deps: Deps): Handler {
     // The lockout is keyed by address AND connection: someone who only knows an address can lock out their own
     // connection, never the address owner's. (A separate cap per connection stops one connection from scanning
     // many addresses; the 5 attempts of one code and the 5 requests an hour per address bound the rest.)
+    const known = isKnownConnection(ctx.request);
     const failAddress = await valueKey(deps, "email-fail-pair", `${email}|${connectionAddress(ctx.request)}`, now);
     const failConnection = await connectionKey(deps, ctx.request, "conn-email-fail", now);
     if (
-      (await stores.authChallenges.getCounter(failAddress, now)) >= FAILED_VERIFY_PER_ADDRESS_AND_CONNECTION_PER_HOUR ||
-      (await stores.authChallenges.getCounter(failConnection, now)) >= FAILED_VERIFY_PER_CONNECTION_PER_HOUR
+      (await stores.authChallenges.getCounter(failAddress, now)) >=
+        (known ? FAILED_VERIFY_PER_ADDRESS_AND_CONNECTION_PER_HOUR : UNKNOWN_FAILED_VERIFY_PER_ADDRESS_AND_CONNECTION_PER_HOUR) ||
+      (await stores.authChallenges.getCounter(failConnection, now)) >=
+        (known ? FAILED_VERIFY_PER_CONNECTION_PER_HOUR : UNKNOWN_FAILED_VERIFY_PER_CONNECTION_PER_HOUR)
     ) {
       throw new ApiError("rate_limited", { retryAfterSeconds: 3600 });
     }
