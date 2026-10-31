@@ -17,6 +17,7 @@ import { ApiError, jsonResponse } from "../../http/envelope";
 import type { ProviderSetList } from "../../types";
 import { parseShape } from "../auth/validate";
 import { consentRecord } from "./account-routes";
+import { providerSetCatalog } from "./provider-sets";
 import { assertGateOpen } from "./hooks";
 
 const CONSENT_SHAPE = {
@@ -31,7 +32,7 @@ export function listProviderSetsHandler(deps: Deps): Handler {
   return (ctx) => {
     requirePrincipal(ctx);
     const body: ProviderSetList = {
-      provider_sets: deps.account.providerSets.list().map((s) => ({
+      provider_sets: providerSetCatalog(deps).list().map((s) => ({
         id: s.id,
         version: s.version,
         providers: [...s.providers],
@@ -50,7 +51,7 @@ export function recordConsentHandler(deps: Deps): Handler {
     const account = ctx.account;
     if (!account) throw new Error("the account was not loaded");
     const body = parseShape(await ctx.body.json(), CONSENT_SHAPE);
-    const set = deps.account.providerSets.list().find((s) => s.id === body.provider_set);
+    const set = providerSetCatalog(deps).list().find((s) => s.id === body.provider_set);
     const { consents } = deps.stores;
     const now = deps.clock.now();
 
