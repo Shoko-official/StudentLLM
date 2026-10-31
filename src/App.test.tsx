@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 import { buildCourseNote } from './lib/course-notes';
 import { listPendingRecordings, RECORDING_RECOVERY_STORAGE_KEY, savePendingRecording } from './lib/recording-recovery';
+import { SOURCE_REMOVAL_UNDO_MS } from './lib/source-removal';
 import type { SourceBlobStore } from './lib/source-storage';
 import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from './test/workspace-fixture';
@@ -23,6 +24,12 @@ async function openCourseActions(user: User) {
 }
 
 const openSources = (user: User) => user.click(screen.getByRole('tab', { name: /^Sources/ }));
+// Runs the pending undo-window timer now instead of waiting the real 8 seconds.
+const expireUndoWindow = (timers: { mock: { calls: unknown[][] } }) => {
+  const call = timers.mock.calls.find((args) => args[1] === SOURCE_REMOVAL_UNDO_MS);
+  expect(call).toBeDefined();
+  act(() => { (call![0] as () => void)(); });
+};
 const savedWorkspace = () => JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY)!);
 const RECORDING_NOTICE_STORAGE_KEY = 'studentllm.recording-notice.v1';
 
@@ -1409,10 +1416,95 @@ describe('StudentLLM workspace', () => {
     await openSources(user);
     expect(await screen.findByText('remove-recording.webm')).toBeInTheDocument();
 
+    const timers = vi.spyOn(window, 'setTimeout');
     await user.click(screen.getByRole('button', { name: 'Remove source remove-recording.webm' }));
 
     expect(screen.queryByText('remove-recording.webm')).not.toBeInTheDocument();
-    expect(clear).toHaveBeenCalledWith(expect.any(String));
+    expect(clear).not.toHaveBeenCalled();
+    expireUndoWindow(timers);
+    await waitFor(() => expect(clear).toHaveBeenCalledWith(expect.any(String)));
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+  });
+
+  it('offers an undo that restores a removed source and its transcript without erasing the stored original', async () => {
+    const user = userEvent.setup();
+    const transcribe = vi.fn(async () => ({
+      model: 'faster-whisper-small',
+      segments: [{ id: 'undo-asr-1', timestamp: '00:00:02', speaker: 'Speaker', text: 'Undoable lecture audio.', status: 'review' as const }],
+    }));
+    const sourceBlobStore: SourceBlobStore = {
+      durability: 'memory-only',
+      save: vi.fn(async () => undefined),
+      load: vi.fn(async () => null),
+      remove: vi.fn(async () => undefined),
+    };
+    render(<App speechEngine={{ transcribe }} sourceBlobStore={sourceBlobStore} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(['audio bytes'], 'undo-me.webm', { type: 'audio/webm' }));
+    await openTranscript(user);
+    expect(await transcriptPreview().findByText('Undoable lecture audio.')).toBeInTheDocument();
+    await openSources(user);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove source undo-me.webm' })).toBeEnabled());
+
+    await user.click(screen.getByRole('button', { name: 'Remove source undo-me.webm' }));
+    expect(screen.queryByRole('button', { name: 'Remove source undo-me.webm' })).not.toBeInTheDocument();
+    const undo = screen.getByRole('button', { name: 'Undo' });
+    expect(undo.closest('[role="status"]')).toHaveTextContent('undo-me.webm removed from this course.');
+    expect(sourceBlobStore.remove).not.toHaveBeenCalled();
+
+    await user.click(undo);
+
+    expect(screen.getByRole('button', { name: 'Remove source undo-me.webm' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+    await openTranscript(user);
+    expect(transcriptPreview().getByText('Undoable lecture audio.')).toBeInTheDocument();
+    expect(sourceBlobStore.remove).not.toHaveBeenCalled();
+  });
+
+  it('erases the stored original once the undo window closes', async () => {
+    const user = userEvent.setup();
+    const sourceBlobStore: SourceBlobStore = {
+      durability: 'memory-only',
+      save: vi.fn(async () => undefined),
+      load: vi.fn(async () => null),
+      remove: vi.fn(async () => undefined),
+    };
+    render(<App sourceBlobStore={sourceBlobStore} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(['notes'], 'expire-me.md', { type: 'text/markdown' }));
+    await openSources(user);
+    expect(await screen.findByText('expire-me.md')).toBeInTheDocument();
+
+    const timers = vi.spyOn(window, 'setTimeout');
+    await user.click(screen.getByRole('button', { name: 'Remove source expire-me.md' }));
+    expect(sourceBlobStore.remove).not.toHaveBeenCalled();
+    expireUndoWindow(timers);
+
+    await waitFor(() => expect(sourceBlobStore.remove).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+  });
+
+  it('finalizes the earlier removal when another source is removed', async () => {
+    const user = userEvent.setup();
+    const sourceBlobStore: SourceBlobStore = {
+      durability: 'memory-only',
+      save: vi.fn(async () => undefined),
+      load: vi.fn(async () => null),
+      remove: vi.fn(async () => undefined),
+    };
+    render(<App sourceBlobStore={sourceBlobStore} />);
+
+    await user.upload(screen.getByLabelText('Select course source'), new File(['one'], 'first.md', { type: 'text/markdown' }));
+    await user.upload(screen.getByLabelText('Select course source'), new File(['two'], 'second.md', { type: 'text/markdown' }));
+    await openSources(user);
+    expect(await screen.findByText('second.md')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove source first.md' }));
+    await user.click(screen.getByRole('button', { name: 'Remove source second.md' }));
+
+    await waitFor(() => expect(sourceBlobStore.remove).toHaveBeenCalledTimes(1));
+    expect(screen.getAllByRole('button', { name: 'Undo' })).toHaveLength(1);
+    expect(screen.getByText('second.md removed from this course.')).toBeInTheDocument();
   });
 
   it('opens the locally stored original source in a preview', async () => {

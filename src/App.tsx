@@ -71,6 +71,7 @@ import { analyzeQuickStart } from './lib/quick-start';
 import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-routing';
 import type { QuickStartProposal } from './lib/quick-start';
 import { Artifact, ArtifactKind, ChatMessage, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from './types';
+import { restoreAtPositions, SOURCE_REMOVAL_UNDO_MS, takeWithPositions, type RemovedEntry } from './lib/source-removal';
 
 const PdfPreview = lazy(() => import('./lib/pdf-preview').then(({ PdfPreview: Preview }) => ({ default: Preview })));
 
@@ -143,6 +144,7 @@ const emptyLessonWorkspace: LessonWorkspace = {
 const LARGE_BATCH_IMPORT = 60;
 const sourceAccept = 'audio/*,image/*,.pdf,.txt,.md,.html,.htm,.rtf,.docx,.pptx';
 const PREFERENCES_STORAGE_KEY = 'studentllm.preferences.v1';
+type PendingSourceRemoval = { lessonId: string; resource: Resource; resourceEntry: RemovedEntry<Resource>; segmentEntries: RemovedEntry<TranscriptSegment>[]; timer: number };
 const RECORDING_NOTICE_STORAGE_KEY = 'studentllm.recording-notice.v1';
 const RECORDING_NOTICE_VERSION = 1;
 const SERVICES_STORAGE_KEY = 'studentllm.services.v1';
@@ -307,6 +309,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [isStartingRecording, setIsStartingRecording] = useState(false);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(workspace.lessonWorkspaces?.[workspace.activeLessonId]?.artifacts[0]?.id ?? workspace.artifacts[0]?.id ?? null);
   const [toast, setToast] = useState('');
+  const [pendingSourceRemoval, setPendingSourceRemoval] = useState<PendingSourceRemoval | null>(null);
+  const pendingSourceRemovalRef = useRef<PendingSourceRemoval | null>(null);
   const [showNewCourse, setShowNewCourse] = useState(false);
   const [showDeleteCourse, setShowDeleteCourse] = useState(false);
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
@@ -1992,21 +1996,62 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     sourceInputRef.current.click();
   };
 
-  const removeSource = async (resource: Resource) => {
+  const commitSourceRemoval = async (pending: PendingSourceRemoval) => {
     try {
-      await sourceBlobStore.remove(resource.id);
-      if (resource.kind === 'audio') await recordingChunkStore.clear(resource.id);
-      updateActiveWorkspace((current) => ({
-        ...current,
-        resources: current.resources.filter((item) => item.id !== resource.id),
-        transcript: current.transcript.filter((segment) => segment.sourceId !== resource.id && !segment.id.startsWith(`${resource.id}:`)),
-      }));
-      // The note was rebuilt without the removed source; let a reachable provider rewrite it again.
-      formatExistingCourseNote(activeLessonId, transcript.filter((segment) => segment.sourceId !== resource.id && !segment.id.startsWith(`${resource.id}:`)));
-      notify(`${resource.name} removed from this course.`);
+      await sourceBlobStore.remove(pending.resource.id);
+      if (pending.resource.kind === 'audio') await recordingChunkStore.clear(pending.resource.id);
     } catch {
-      notify(`${resource.name} could not be removed.`);
+      notify(`${pending.resource.name} could not be fully removed.`);
     }
+  };
+
+  // Finalizes the removal that is still waiting in the undo window, if any.
+  const flushPendingSourceRemoval = () => {
+    const pending = pendingSourceRemovalRef.current;
+    if (!pending) return;
+    pendingSourceRemovalRef.current = null;
+    window.clearTimeout(pending.timer);
+    setPendingSourceRemoval(null);
+    void commitSourceRemoval(pending);
+  };
+
+  const undoSourceRemoval = () => {
+    const pending = pendingSourceRemovalRef.current;
+    if (!pending) return;
+    pendingSourceRemovalRef.current = null;
+    window.clearTimeout(pending.timer);
+    setPendingSourceRemoval(null);
+    updateLessonWorkspace(pending.lessonId, (current) => ({
+      ...current,
+      resources: restoreAtPositions(current.resources, [pending.resourceEntry]),
+      transcript: restoreAtPositions(current.transcript, pending.segmentEntries),
+    }));
+    notify(`${pending.resource.name} restored.`);
+  };
+
+  // The source leaves the course right away, but its stored original is only erased once the undo window closes.
+  const removeSource = (resource: Resource) => {
+    flushPendingSourceRemoval();
+    const belongsToSource = (segment: TranscriptSegment) => segment.sourceId === resource.id || segment.id.startsWith(`${resource.id}:`);
+    const resourceSplit = takeWithPositions(resources, (item) => item.id === resource.id);
+    const segmentSplit = takeWithPositions(transcript, belongsToSource);
+    const lessonId = activeLessonId;
+    updateActiveWorkspace((current) => ({
+      ...current,
+      resources: current.resources.filter((item) => item.id !== resource.id),
+      transcript: current.transcript.filter((segment) => !belongsToSource(segment)),
+    }));
+    // The note was rebuilt without the removed source; let a reachable provider rewrite it again.
+    formatExistingCourseNote(lessonId, segmentSplit.kept);
+    const pending: PendingSourceRemoval = {
+      lessonId,
+      resource,
+      resourceEntry: resourceSplit.removed[0] ?? { index: 0, item: resource },
+      segmentEntries: segmentSplit.removed,
+      timer: window.setTimeout(flushPendingSourceRemoval, SOURCE_REMOVAL_UNDO_MS),
+    };
+    pendingSourceRemovalRef.current = pending;
+    setPendingSourceRemoval(pending);
   };
 
   const deleteActiveCourse = async () => {
@@ -2016,6 +2061,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       return;
     }
 
+    flushPendingSourceRemoval();
     const lessonId = activeLesson.id;
     const lessonTitle = activeLesson.title;
     try {
@@ -2411,7 +2457,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}>
                 <button className="resource-open" onClick={() => void openResource(resource)}>{resourceIcon(resource.kind)}<span><strong>{resource.name}</strong><small>{transcribingResourceIds.has(resource.id) ? 'Transcribing...' : resource.meta}</small></span><ChevronRight size={16} /></button>
                 {resource.kind === 'audio' && <button className="text-action" aria-label={`Transcribe ${resource.name}`} disabled={transcribingResourceIds.has(resource.id)} onClick={() => void transcribeSource(resource)}>{transcribingResourceIds.has(resource.id) ? 'Transcribing...' : 'Transcribe'}</button>}
-                <button className="icon-button" aria-label={`Remove source ${resource.name}`} disabled={transcribingResourceIds.has(resource.id)} onClick={() => void removeSource(resource)}><X size={16} /></button>
+                <button className="icon-button" aria-label={`Remove source ${resource.name}`} disabled={transcribingResourceIds.has(resource.id)} onClick={() => removeSource(resource)}><X size={16} /></button>
               </div>)}</div>
               {resources.length > 3 && <button className="text-action" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`}</button>}
             </section>}
@@ -2453,6 +2499,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         </form><div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>Audio and document sidecars are checked without interrupting any running local model.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>ASR sidecar</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document sidecar</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Animated icons by <a href="https://lordicon.com/" target="_blank" rel="noreferrer">Lordicon</a>.</p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
       {isNativeRuntime() && <div className="managed-sidecar-tray" aria-label="Managed local services"><span>Managed services</span><span aria-live="polite">{managedSidecars.filter((sidecar) => sidecar.running).length}/2 running</span><button type="button" onClick={() => void startConfiguredSidecars()}>Start</button><button type="button" onClick={() => void stopConfiguredSidecars()}>Stop</button></div>}
       {toast && <div className="toast" role="status">{toast}</div>}
+      {pendingSourceRemoval && <div className="toast toast-undo" role="status"><span>{pendingSourceRemoval.resource.name} removed from this course.</span><button type="button" className="text-action" onClick={undoSourceRemoval}>Undo</button></div>}
     </div>
   );
 }
