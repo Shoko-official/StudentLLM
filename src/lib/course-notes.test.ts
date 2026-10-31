@@ -24,6 +24,53 @@ describe('course notes', () => {
     expect(schemaOf('Heat causes expansion of the metal bar in the long run today.')).toBeDefined();
   });
 
+  it('keeps accented capitals and recognises French relation verbs in the concept schema', () => {
+    const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
+    expect(schemaOf('Énergie leads to travail')).toMatchObject({ nodes: ['Énergie', 'travail'], edges: [{ from: 'Énergie', to: 'travail' }] });
+    expect(schemaOf('La chaleur entraîne la dilatation')).toMatchObject({ edges: [{ from: 'La chaleur', to: 'la dilatation' }] });
+    expect(schemaOf('Le gel provoque des fissures')).toMatchObject({ edges: [{ from: 'Le gel', to: 'des fissures' }] });
+    expect(schemaOf('Le prix dépend de la demande')).toMatchObject({ edges: [{ from: 'Le prix', to: 'la demande' }] });
+    // Decomposed (NFD) input is normalised first.
+    expect(schemaOf('Énergie entraîne chaleur')).toMatchObject({ edges: [{ from: 'Énergie', to: 'chaleur' }] });
+  });
+
+  it('handles an accented capital at the start of a sentence and of a line', () => {
+    const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
+    expect(schemaOf('Élasticité -> Œdème\nÇa entraîne Équilibre')).toMatchObject({
+      edges: [{ from: 'Élasticité', to: 'Œdème' }, { from: 'Ça', to: 'Équilibre' }],
+    });
+    expect(schemaOf('Écart provoque Ténacité.')).toMatchObject({ edges: [{ from: 'Écart', to: 'Ténacité' }] });
+  });
+
+  it('mixes English and French relations in one text', () => {
+    const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
+    expect(schemaOf('Force causes Accélération\nÉnergie entraîne travail')).toMatchObject({
+      nodes: ['Force', 'Accélération', 'Énergie', 'travail'],
+      edges: [{ from: 'Force', to: 'Accélération' }, { from: 'Énergie', to: 'travail' }],
+    });
+  });
+
+  it('does not invent relations from common French words', () => {
+    const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
+    expect(schemaOf('Il est parti à cause de la pluie hier soir')).toBeUndefined();
+    expect(schemaOf('La cause principale reste inconnue pour le moment')).toBeUndefined();
+    expect(schemaOf('Le conduit à gaz est fermé pour le moment')).toBeUndefined();
+    expect(schemaOf('Un entraînement régulier améliore la forme')).toBeUndefined();
+    expect(schemaOf('Elle dépendait de lui et provoquer est un verbe')).toBeUndefined();
+  });
+
+  it('stays fast on pathological schema input', () => {
+    const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
+    const started = performance.now();
+    schemaOf('É'.repeat(50_000));
+    schemaOf('Énergie '.repeat(10_000));
+    schemaOf('entraîne '.repeat(10_000));
+    schemaOf(`${'Énergie entraîne '.repeat(5_000)}\u0000`);
+    schemaOf(`${'à '.repeat(30_000)}mène`);
+    // Generous on purpose for shared CI runners; this only guards against runaway backtracking.
+    expect(performance.now() - started).toBeLessThan(5000);
+  });
+
   it('produces no schema for reaction equations', () => {
     const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
     expect(schemaOf('Key equation: 6CO2 + 6H2O -> C6H12O6 + 6O2.')).toBeUndefined();
