@@ -34,9 +34,9 @@ Close and reopen the terminal so new processes inherit the variable. The smoke s
 Defaults:
 
 - endpoint: `https://integrate.api.nvidia.com/v1`;
-- model: `openai/gpt-oss-20b`, override with `NVIDIA_MODEL`.
+- model: `nvidia/nemotron-3.5-lightning-30b-a3b`, override with `NVIDIA_MODEL`.
 
-The NVIDIA catalog may contain models that are unavailable for generation. The smoke script checks the exposed catalog and a real completion independently.
+The NVIDIA catalog may contain models that are unavailable for generation. The smoke script requires the exact requested model to be listed and to return a final answer to an eight-token synthetic probe, within one 15-second deadline for both requests. A missing, retired or non-answering default fails the smoke check; it never silently selects another catalog entry or counts reasoning-only output as an answer. LM Studio keeps its separate local-model selection and longer generation budget.
 
 ### NVIDIA NIM in the development app
 
@@ -57,7 +57,13 @@ Set the key, open a new terminal so it inherits the variable, then start the dev
 npm run dev
 ```
 
-Restart the dev server after setting or rotating the key. If the key is missing, Settings reports it and the route answers HTTP 503 with an `x-studentllm-proxy-error: missing_key` header. Retrieval uses lexical ranking with NVIDIA NIM because the route has no embeddings endpoint. The model defaults to `openai/gpt-oss-20b`; the app keeps the chosen model instead of switching to the first catalog entry, because some catalog models cannot generate. Packaged desktop builds do not offer NVIDIA NIM yet.
+Restart the dev server after setting or rotating the key. If the key is missing, Settings reports it and the route answers HTTP 503 with an `x-studentllm-proxy-error: missing_key` header. Retrieval uses lexical ranking with NVIDIA NIM because the route has no embeddings endpoint. Packaged desktop builds do not offer NVIDIA NIM yet.
+
+**Readiness and model selection.** The app and smoke script share the default and recommended model in `src/lib/nvidia-nim-models.json`: `nvidia/nemotron-3.5-lightning-30b-a3b`, with thinking disabled. Other model IDs can still be entered. Settings sends only a short synthetic phrase, with at most eight output tokens and 15 seconds per probe; it says Connected only after a nonempty final answer. A working custom selection is kept. A retired model (HTTP 404/410) or timeout permits one probe of the recommended model; only a successful response changes and saves the selection, with a visible explanation. Thus a failed selection plus fallback can take up to 30 seconds, in addition to the local helper checks. Missing/rejected credentials, quota errors, and reasoning-only output do not switch models. A newer connection check cancels the older probe and discards late results.
+
+**Evidence and sources (2026-10-31).** A same-origin browser probe through the dev proxy found all three IDs in the 85-entry catalog. Lightning returned a final answer with eight tokens and thinking disabled (205 ms); `openai/gpt-oss-20b` expired at 15 seconds. `mistralai/mistral-large-4-1t-a52b` returned reasoning-only output at eight tokens (699 ms), which does not establish whether it would answer with a larger budget. These are availability observations, not quality benchmarks or latency guarantees. NVIDIA's [Lightning endpoint example](https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b) documents the thinking parameter; its [model card](https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b/modelcard) records the August 11 release, OpenMDW v1.1 model licence and separate NVIDIA API Trial Terms for the hosted service. This integration remains a development/trial path.
+
+A separate browser run used the repository's synthetic attention-course fixture: the readiness probe, actual course chat and JSON-schema Study guide generation all returned HTTP 200 with a final answer, and the guide was saved by the app. Their output limits were 8, 2048 and 4096 tokens respectively, with thinking disabled. No private student material was used. This verifies the tested workflow, not the accuracy of generated study material.
 
 ## LM Studio
 

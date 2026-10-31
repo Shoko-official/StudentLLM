@@ -2,6 +2,7 @@ import { afterEach, beforeEach, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
+import { DEFAULT_NIM_MODEL } from './lib/nvidia-nim';
 import { buildCourseNote } from './lib/course-notes';
 import { listPendingRecordings, RECORDING_RECOVERY_STORAGE_KEY, savePendingRecording } from './lib/recording-recovery';
 import { PENDING_SOURCE_ERASE_STORAGE_KEY } from './lib/pending-source-erase';
@@ -260,8 +261,8 @@ describe('StudentLLM workspace', () => {
 
     await user.click(within(settingsDialog).getByRole('button', { name: 'Save connections' }));
     await waitFor(() => expect(within(settingsDialog).getByRole('status')).toHaveTextContent('NVIDIA NIM: Unavailable. NVIDIA_API_KEY is not set'));
-    expect(fetchMock.mock.calls.some(([input]) => String(input) === '/nvidia-nim/v1/models')).toBe(true);
-    expect(JSON.parse(localStorage.getItem('studentllm.services.v1') ?? '{}')).toMatchObject({ llmProvider: 'nvidia-nim', nimModel: 'openai/gpt-oss-20b' });
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === '/nvidia-nim/v1/chat/completions')).toBe(true);
+    expect(JSON.parse(localStorage.getItem('studentllm.services.v1') ?? '{}')).toMatchObject({ llmProvider: 'nvidia-nim', nimModel: DEFAULT_NIM_MODEL });
   });
 
   it('does not treat an NVIDIA outage as a missing key', async () => {
@@ -294,14 +295,14 @@ describe('StudentLLM workspace', () => {
   it('keeps the chosen NVIDIA model instead of switching to the first catalog entry', async () => {
     const user = userEvent.setup();
     localStorage.setItem('studentllm.services.v1', JSON.stringify({ llmProvider: 'nvidia-nim', nimModel: 'meta/llama-3.3-70b-instruct' }));
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => new Response(JSON.stringify({
-      data: String(input).startsWith('/nvidia-nim/v1') ? [{ id: 'embed/only-model' }, { id: 'meta/llama-3.3-70b-instruct' }] : [],
-    }), { status: 200 }));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => new Response(JSON.stringify(String(input).endsWith('/chat/completions')
+      ? { choices: [{ message: { content: 'OK' } }] }
+      : { data: [{ id: 'embed/only-model' }, { id: 'meta/llama-3.3-70b-instruct' }] }), { status: 200 }));
     render(<App />);
 
     await user.click(screen.getByRole('button', { name: /Settings/ }));
     const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
-    await waitFor(() => expect(within(settingsDialog).getByRole('status')).toHaveTextContent('meta/llama-3.3-70b-instruct is available in the NVIDIA catalog (2 models)'));
+    await waitFor(() => expect(within(settingsDialog).getByRole('status')).toHaveTextContent('meta/llama-3.3-70b-instruct answered the connection test'));
     expect(within(settingsDialog).getByLabelText('NVIDIA model')).toHaveValue('meta/llama-3.3-70b-instruct');
     expect(within(settingsDialog).queryByText(/Detected local models/)).not.toBeInTheDocument();
   });

@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { AI_TIMEOUT_MESSAGE, AI_UNREACHABLE_MESSAGE, CLOUD_AI_UNREACHABLE_MESSAGE, describeAiFailure, describeDocumentFailure, describeServiceUnreachable, describeSpeechFailure, isNetworkFailure } from './service-errors';
 
 describe('service error messages', () => {
+  it('tells a cloud user to change models when NIM does not answer', () => {
+    for (const message of ['Provider request failed (504): NVIDIA NIM did not respond in time.', 'Provider request timed out.']) {
+      expect(describeAiFailure(new Error(message), undefined, { cloud: true })).toBe('The NVIDIA model is not answering right now. Try another model in Settings.');
+    }
+  });
+
+  it('explains retired NIM models without repeating arbitrary provider errors', () => {
+    expect(describeAiFailure(new Error('Provider request failed (410): raw upstream error'), undefined, { cloud: true })).toBe('This NVIDIA model is no longer available. Choose another model in Settings.');
+  });
   it('explains an unreachable model without the HTTP status', () => {
     expect(describeAiFailure(new Error('Provider request failed (502)'))).toBe(AI_UNREACHABLE_MESSAGE);
     expect(describeAiFailure(new Error('Provider request failed (503)'))).toBe(AI_UNREACHABLE_MESSAGE);

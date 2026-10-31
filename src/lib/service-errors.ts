@@ -19,6 +19,8 @@ export function describeAiFailure(error: unknown, fallback = 'The AI model could
   if (!(error instanceof Error)) return fallback;
   const message = error.message.trim();
   if (!message) return fallback;
+  if (options.cloud && (/timed out/i.test(message) || /^Provider request failed \(504\)/.test(message))) return 'The NVIDIA model is not answering right now. Try another model in Settings.';
+  if (options.cloud && /^Provider request failed \((?:404|410)\)/.test(message)) return 'This NVIDIA model is no longer available. Choose another model in Settings.';
   const unreachable = options.cloud ? CLOUD_AI_UNREACHABLE_MESSAGE : AI_UNREACHABLE_MESSAGE;
   if (isNetworkFailure(error)) return unreachable;
   const gateway = GATEWAY_FAILURE.exec(message);

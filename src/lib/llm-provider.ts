@@ -34,6 +34,7 @@ export interface OpenAICompatibleProviderOptions {
   model: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  chatTemplateKwargs?: { enable_thinking: boolean };
 }
 
 function providerUrl(baseUrl: string) {
@@ -56,12 +57,14 @@ export class OpenAICompatibleProvider implements LLMProvider {
   private readonly model: string;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly chatTemplateKwargs: OpenAICompatibleProviderOptions['chatTemplateKwargs'];
 
   constructor(options: OpenAICompatibleProviderOptions) {
     this.baseUrl = normalizeServiceBaseUrl(options.baseUrl);
     this.model = options.model;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? 60_000;
+    this.chatTemplateKwargs = options.chatTemplateKwargs;
   }
 
   async generate(messages: ProviderMessage[], options?: ProviderGenerateOptions): Promise<ProviderResponse> {
@@ -84,6 +87,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       temperature: 0,
       max_tokens: maxTokens,
       stream: false,
+      ...(this.chatTemplateKwargs ? { chat_template_kwargs: this.chatTemplateKwargs } : {}),
       ...(withReasoningSwitch ? { reasoning_effort: 'none' } : {}),
       ...(options?.responseFormat ? { response_format: options.responseFormat } : {}),
     });
@@ -167,7 +171,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
   }
 }
 
-export function createLocalLLMProvider(env: Record<string, string | undefined> = import.meta.env) {
+export function createLocalLLMProvider(env: Record<string, string | undefined> = import.meta.env, options: Pick<OpenAICompatibleProviderOptions, 'chatTemplateKwargs'> = {}) {
   if (env.VITE_LM_STUDIO_AUTO_CONNECT?.trim().toLowerCase() === 'false') return null;
   const baseUrl = env.VITE_LM_STUDIO_BASE_URL?.trim() || (env.MODE === 'development' ? '/lm-studio/v1' : undefined);
   if (!baseUrl) return null;
@@ -175,6 +179,7 @@ export function createLocalLLMProvider(env: Record<string, string | undefined> =
     return new OpenAICompatibleProvider({
       baseUrl,
       model: env.VITE_LM_STUDIO_MODEL?.trim() || 'openai/gpt-oss-20b',
+      chatTemplateKwargs: options.chatTemplateKwargs,
     });
   } catch {
     return null;
