@@ -6,7 +6,8 @@ mod workspace;
 
 use std::time::Duration;
 
-use tauri::Manager;
+use tauri::webview::NewWindowResponse;
+use tauri::{Emitter, Manager};
 
 /// Creates the windows declared in `tauri.conf.json` (and in the `--config` overrides merged into
 /// it). Each has `"create": false`, so Tauri does not build them itself: only a window builder can
@@ -17,11 +18,44 @@ use tauri::Manager;
 /// can deadlock on Windows.
 fn create_windows(app: &tauri::AppHandle) -> tauri::Result<()> {
     for config in &app.config().app.windows {
+        let notifier = app.clone();
         tauri::WebviewWindowBuilder::from_config(app, config)?
-            .on_new_window(|url, _features| navigation::new_window_response(&url))
+            .on_new_window(move |url, _features| {
+                let response: NewWindowResponse<tauri::Wry> =
+                    navigation::new_window_response(&url);
+                if matches!(response, NewWindowResponse::Deny) {
+                    announce_blocked_new_window(&notifier, &url);
+                }
+                response
+            })
             .build()?;
     }
     Ok(())
+}
+
+/// Event emitted to the webviews when a new-window request was refused. Its payload is the scheme
+/// and host of the refused address only. Nothing in the app listens to it; the packaged WebDriver
+/// test does, because a refused request leaves no other trace that a test can observe (the
+/// WebDriver session does not list windows that the engine opens by itself).
+const NEW_WINDOW_BLOCKED_EVENT: &str = "new-window-blocked";
+
+#[derive(Clone, serde::Serialize)]
+struct NewWindowBlocked {
+    scheme: String,
+    host: String,
+}
+
+/// Emits [`NEW_WINDOW_BLOCKED_EVENT`] from the async runtime, so that the webview's own event loop
+/// callback does not wait on the emit.
+fn announce_blocked_new_window(app: &tauri::AppHandle, url: &tauri::Url) {
+    let app = app.clone();
+    let payload = NewWindowBlocked {
+        scheme: url.scheme().to_string(),
+        host: url.host_str().unwrap_or("").to_string(),
+    };
+    tauri::async_runtime::spawn(async move {
+        let _ = app.emit(NEW_WINDOW_BLOCKED_EVENT, payload);
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

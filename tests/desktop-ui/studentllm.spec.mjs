@@ -173,15 +173,34 @@ describe('StudentLLM packaged desktop workflow', () => {
     expect(await browser.getWindowHandles()).toHaveLength(1);
     const handleBefore = await browser.getWindowHandle();
 
-    // The window is built in code with an on_new_window hook that refuses every request; a window created from the configuration file would have no hook.
+    // The window is built in code with an on_new_window hook that refuses every request, and the shell emits "new-window-blocked" when it does.
+    // That event is the evidence that the hook is attached: the WebDriver session does not list a window the engine opens by itself, so the
+    // handle count alone would also pass for a window created from the configuration file, which has no hook.
+    const listening = await browser.executeAsync((done) => {
+      window.__newWindowBlocked = [];
+      window.__TAURI__.event
+        .listen('new-window-blocked', (event) => { window.__newWindowBlocked.push(event.payload); })
+        .then(() => done(true), (error) => done(String(error)));
+    });
+    expect(listening).toBe(true);
+    const blockedCount = () => browser.execute(() => window.__newWindowBlocked.length);
+
     await browser.execute(() => {
       window.open('https://example.com/');
       window.open('https://example.com/', '_blank', 'popup,width=320,height=240');
-      window.open('about:blank', 'named-popup');
     });
-    await browser.pause(3_000);
+    await browser.waitUntil(async () => (await blockedCount()) >= 1, { timeout: 15_000, timeoutMsg: 'window.open did not reach the new-window hook' });
+    await browser.pause(2_000);
+    // Engines differ in what they report for a script-opened window (the requested address, or about:blank first), so only the shape is checked.
+    const events = await browser.execute(() => window.__newWindowBlocked);
+    console.log(`Refused new-window requests after window.open: ${JSON.stringify(events)}`);
+    for (const event of events) {
+      expect(typeof event.scheme).toBe('string');
+      expect(typeof event.host).toBe('string');
+    }
     expect(await browser.getWindowHandles()).toHaveLength(1);
     expect(await browser.getUrl()).toMatch(appOrigin);
+    const blockedAfterScript = await blockedCount();
 
     // A real click on a link that asks for a new window, the way the recording notice's links behaved before the desktop app stopped rendering them as links.
     await browser.execute(() => {
@@ -194,7 +213,8 @@ describe('StudentLLM packaged desktop workflow', () => {
       document.body.append(link);
     });
     await (await visible('#new-window-guard-link')).click();
-    await browser.pause(3_000);
+    await browser.waitUntil(async () => (await blockedCount()) > blockedAfterScript, { timeout: 15_000, timeoutMsg: 'The link click did not reach the new-window hook' });
+    await browser.pause(2_000);
     expect(await browser.getWindowHandles()).toHaveLength(1);
     expect(await browser.getWindowHandle()).toBe(handleBefore);
     expect(await browser.getUrl()).toMatch(appOrigin);
