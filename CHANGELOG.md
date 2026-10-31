@@ -23,7 +23,7 @@
 - The selected tab, open course and needs-review segments stay visible in Windows High Contrast (forced colors).
 - A PDF or Word file the document service refuses is reported as a problem with the file (damaged or password-protected) instead of a service to restart.
 - PPTX extraction returned no text for real files because it looked for the DrawingML `txBody` instead of the PresentationML one that holds shape text, and fused the paragraphs of a shape; each paragraph is now its own line.
-- The desktop app now runs as a single instance: starting it a second time brings the existing window to the front instead of opening a second process on the same workspace, where the last writer overwrote the other window's work (#399).
+- The desktop app now normally runs as a single instance: starting it a second time brings the existing window to the front instead of opening a second process on the same workspace, where the last writer overwrote the other window's work (#399). Limits: on Linux without a D-Bus session bus the app starts without this protection; the Windows lock is per sign-in session (Remote Desktop and the console can each run a copy); on macOS the lock is a socket in `/tmp` that another local user can occupy.
 
 ### Added
 

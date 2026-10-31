@@ -13,6 +13,7 @@ const recoveryCyclesArgument = process.argv.find((argument) => argument.startsWi
 const recoveryCycles = recoveryCyclesArgument ? Number(recoveryCyclesArgument.slice('--recovery-cycles='.length)) : 1;
 const smokeDurationMs = 15_000;
 const shutdownGraceMs = 5_000;
+const lockReleaseSettleMs = 500;
 
 if (!requestedBinaryPath) {
   console.error('Usage: node scripts/desktop-runtime-smoke.mjs <binary-path> [--crash-recovery] [--recovery-cycles=N] [--sidecar-supervision] [--frontend-ipc] [--single-instance]');
@@ -64,6 +65,10 @@ function runSmoke(environment, { forceKill = false, durationMs = smokeDurationMs
       clearTimeout(forceTimer);
       callback(value);
     };
+    // Every run in this script starts the next instance right after the previous one stopped, and the single-instance lock is released
+    // by the operating system when the process dies (on Linux the session bus has to notice that the connection closed). The same short
+    // settle applies after every run, whichever mode it belongs to, so that no mode depends on winning that race.
+    const finishAfterLockRelease = (value) => setTimeout(() => finish(resolve, value), lockReleaseSettleMs);
 
     shutdownTimer = setTimeout(() => {
       timedOut = true;
@@ -82,7 +87,7 @@ function runSmoke(environment, { forceKill = false, durationMs = smokeDurationMs
     child.once('exit', (code, signal) => {
       if (!timedOut) {
         if (allowEarlyExit && code === 0 && !signal) {
-          finish(resolve, { code, signal, ...getOutput() });
+          finishAfterLockRelease({ code, signal, ...getOutput() });
           return;
         }
         const { stdout, stderr } = getOutput();
@@ -100,7 +105,7 @@ function runSmoke(environment, { forceKill = false, durationMs = smokeDurationMs
         return;
       }
 
-      finish(resolve, { code, signal, ...getOutput() });
+      finishAfterLockRelease({ code, signal, ...getOutput() });
     });
   });
 }
@@ -457,7 +462,7 @@ async function runSingleInstance() {
     primary.child.kill('SIGKILL');
     await waitForChildExit(primary.child, 10_000);
     // The operating system releases the lock when the process dies; the session bus may need a moment to notice on Linux.
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, lockReleaseSettleMs));
     await rm(markerFile, { force: true });
     const relaunched = start(environment);
     await waitUntilFrontendIsUp(relaunched, 'The instance started after a forced stop');
