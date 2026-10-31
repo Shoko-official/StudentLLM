@@ -7,8 +7,11 @@ import {
   hexEncode,
   hmacSha256Hex,
   keyedHashAtEpoch,
+  CODE_ALPHABET,
   randomBytes,
+  randomCode,
   randomToken,
+  stableKeyedHash,
   rotatingKeyedHash,
   rotatingKeyedHashes,
   saltEpoch,
@@ -37,6 +40,12 @@ describe("base64url", () => {
     expect(() => base64urlDecode("ab==")).toThrow(RangeError);
     expect(() => base64urlDecode("a+b/")).toThrow(RangeError);
     expect(() => base64urlDecode("abcde")).toThrow(RangeError);
+  });
+
+  it("requires the canonical form: non-zero trailing bits are refused", () => {
+    expect(Array.from(base64urlDecode("AA"))).toEqual([0]);
+    expect(() => base64urlDecode("AB")).toThrow(RangeError); // decodes to the same byte as "AA"
+    expect(() => base64urlDecode("AAB")).toThrow(RangeError);
   });
 });
 
@@ -124,8 +133,53 @@ describe("keyed hash with a rotating salt", () => {
     expect(after.current.hash).not.toBe(before.hash);
   });
 
+  it("refuses unsafe integers instead of hashing a degenerate epoch", async () => {
+    await expect(rotatingKeyedHash("m", "conn", "x", Number.MAX_SAFE_INTEGER + 2)).rejects.toThrow(RangeError);
+    await expect(rotatingKeyedHash("m", "conn", "x", Number.NaN)).rejects.toThrow(RangeError);
+    await expect(keyedHashAtEpoch("m", "conn", "x", Infinity)).rejects.toThrow(RangeError);
+    expect(() => saltEpoch(10, 0)).toThrow(RangeError);
+  });
+
+  it("has a stable variant that does not rotate and is separate from the salted one", async () => {
+    const a = await stableKeyedHash("k", "email", "a@example.invalid");
+    expect(await stableKeyedHash("k", "email", "a@example.invalid")).toBe(a);
+    expect(await stableKeyedHash("k2", "email", "a@example.invalid")).not.toBe(a);
+    expect(await keyedHashAtEpoch("k", "email", "a@example.invalid", 0)).not.toBe(a);
+  });
+
   it("supports a custom rotation period and rejects odd purposes", async () => {
     expect(saltEpoch(1000, 100)).toBe(10);
     await expect(keyedHashAtEpoch("m", "Bad Purpose", "x", 0)).rejects.toThrow(RangeError);
+  });
+});
+
+describe("randomCode", () => {
+  it("draws only from the alphabet with the requested length", () => {
+    for (let i = 0; i < 50; i++) {
+      const code = randomCode(CODE_ALPHABET, 8);
+      expect(code).toMatch(/^[A-HJ-NP-Z2-9]{8}$/);
+    }
+  });
+
+  it("is unbiased for an alphabet that does not divide 256 (rejection sampling)", () => {
+    const alphabet = "abcdefghij"; // 10 does not divide 256: a plain modulo would favor a..f
+    const counts = new Map<string, number>();
+    let total = 0;
+    for (let i = 0; i < 400; i++) {
+      for (const ch of randomCode(alphabet, 128)) {
+        counts.set(ch, (counts.get(ch) ?? 0) + 1);
+        total++;
+      }
+    }
+    // Expected share 10%; allow a wide band (about 6 sigma) so the test is not flaky.
+    for (const ch of alphabet) expect((counts.get(ch) ?? 0) / total).toBeGreaterThan(0.08);
+    for (const ch of alphabet) expect((counts.get(ch) ?? 0) / total).toBeLessThan(0.12);
+  });
+
+  it("rejects a bad alphabet or length", () => {
+    expect(() => randomCode("a", 4)).toThrow(RangeError);
+    expect(() => randomCode("aab", 4)).toThrow(RangeError);
+    expect(() => randomCode("abc", 0)).toThrow(RangeError);
+    expect(CODE_ALPHABET).toHaveLength(32);
   });
 });

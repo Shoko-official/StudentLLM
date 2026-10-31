@@ -28,7 +28,10 @@ export function base64urlEncode(input: BytesLike): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** Strict base64url decode (no padding, URL-safe alphabet only). Throws RangeError on bad input. */
+/**
+ * Strict, canonical base64url decode: no padding, URL-safe alphabet only, and the text must be exactly what
+ * `base64urlEncode` would produce (non-zero trailing bits are refused). Throws RangeError on bad input.
+ */
 export function base64urlDecode(text: string): Uint8Array {
   if (!/^[A-Za-z0-9_-]*$/.test(text) || text.length % 4 === 1) {
     throw new RangeError("invalid base64url");
@@ -37,6 +40,7 @@ export function base64urlDecode(text: string): Uint8Array {
   const binary = atob(padded);
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  if (base64urlEncode(out) !== text) throw new RangeError("non-canonical base64url");
   return out;
 }
 
