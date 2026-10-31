@@ -218,8 +218,10 @@ describe('StudentLLM workspace', () => {
     await user.click(settingsButton);
     const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
     const closeButton = within(settingsDialog).getByRole('button', { name: 'Close settings' });
-    expect(closeButton).toHaveFocus();
+    expect(settingsDialog).toContainElement(document.activeElement as HTMLElement);
+    expect(closeButton).not.toHaveFocus();
 
+    closeButton.focus();
     await user.keyboard('{Shift>}{Tab}{/Shift}');
     expect(within(settingsDialog).getByRole('button', { name: 'Done' })).toHaveFocus();
     await user.keyboard('{Escape}');
