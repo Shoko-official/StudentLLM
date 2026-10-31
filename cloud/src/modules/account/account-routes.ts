@@ -103,6 +103,7 @@ export function exportAccountHandler(deps: Deps): Handler {
         email: account.email,
         status: account.status,
         google_linked: account.googleSubject !== null,
+        google_subject_id: account.googleSubject,
         created_at: toIso(account.createdAt),
         last_sign_in_at: account.lastSignInAt === null ? null : toIso(account.lastSignInAt),
         last_request_day: account.lastRequestAt === null ? null : toIso(account.lastRequestAt).slice(0, 10),
@@ -135,6 +136,8 @@ function exportPlan(plan: PlanRecord | null, planVersion: number): Record<string
     plan_version: planVersion,
     paid_periods: plan.paidPeriods.map((p) => ({ start: toIso(p.start), end: toIso(p.end) })),
     cancel_at_period_end: plan.cancelAtPeriodEnd,
+    paddle_customer_id: plan.paddleCustomerId,
+    paddle_subscription_id: plan.paddleSubscriptionId,
     last_event_at: plan.lastEventAt === null ? null : toIso(plan.lastEventAt),
   };
 }

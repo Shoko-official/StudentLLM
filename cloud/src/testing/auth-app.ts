@@ -6,7 +6,7 @@ import { base64urlEncode } from "../crypto/encoding";
 import { sha256Base64Url } from "../crypto/hash";
 import { randomBytes } from "../crypto/random";
 import { loadConfig, type Env } from "../config";
-import { silentLogger, type CoreDeps } from "../deps";
+import { silentLogger, type CoreDeps, type ModuleDeps } from "../deps";
 import { createAccountDeps } from "../modules/account";
 import type { AccountDeps } from "../modules/account/deps";
 import { createAuthDeps } from "../modules/auth";
@@ -54,6 +54,8 @@ export interface AuthHarness extends TestApp {
 export interface AuthHarnessOptions extends Omit<TestAppOptions, "deps" | "fetch"> {
   authDeps?: Partial<AuthDeps>;
   accountDeps?: Partial<AccountDeps>;
+  /** Other modules' deps (a fake billing or inference seam). */
+  extraDeps?: Partial<ModuleDeps>;
 }
 
 export async function makeAuthApp(options: AuthHarnessOptions = {}): Promise<AuthHarness> {
@@ -73,6 +75,7 @@ export async function makeAuthApp(options: AuthHarnessOptions = {}): Promise<Aut
     fetch: google.fetch,
     allowMissingHooks: options.allowMissingHooks ?? true,
     deps: {
+      ...options.extraDeps,
       auth: createAuthDeps(core, { email, ...options.authDeps }),
       account: createAccountDeps(core, options.accountDeps),
     },
