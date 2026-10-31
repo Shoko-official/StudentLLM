@@ -959,6 +959,31 @@ describe('StudentLLM workspace', () => {
     expect(JSON.parse(localStorage.getItem('studentllm.services.v1') ?? '{}')).not.toHaveProperty('asrUrl', 'https://speech.example.test');
   });
 
+  it('opens external links in a new tab in the browser', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: /Settings/ }));
+    const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
+    const guide = within(settingsDialog).getByRole('link', { name: 'Read the user guide' });
+    expect(guide).toHaveAttribute('href', 'https://github.com/Shoko-official/StudentLLM/blob/main/docs/user-guide.md');
+    expect(guide).toHaveAttribute('target', '_blank');
+    expect(guide).toHaveAttribute('rel', 'noreferrer');
+  });
+
+  it('shows external addresses as text in the packaged app, which opens no windows', async () => {
+    const user = userEvent.setup();
+    const invoke = vi.fn(async (command: string) => command === 'load_workspace' ? null : []);
+    Object.defineProperty(window, '__TAURI__', { configurable: true, value: { core: { invoke } } });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: /Settings/ }));
+    const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
+    expect(within(settingsDialog).queryByRole('link')).not.toBeInTheDocument();
+    expect(within(settingsDialog).getByText('https://github.com/Shoko-official/StudentLLM/blob/main/docs/user-guide.md')).toBeInTheDocument();
+  });
+
   it('restores a created course after remounting the workspace', async () => {
     const user = userEvent.setup();
     const firstRender = render(<App />);

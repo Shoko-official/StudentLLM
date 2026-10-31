@@ -1,4 +1,8 @@
+import { spawn } from 'node:child_process';
+import path from 'node:path';
 import { $, $$, browser, expect } from '@wdio/globals';
+
+const binaryPath = path.join(process.cwd(), 'src-tauri', 'target', 'debug', process.platform === 'win32' ? 'studentllm.exe' : 'studentllm');
 
 async function visible(selector) {
   const element = await $(selector);
@@ -161,5 +165,102 @@ describe('StudentLLM packaged desktop workflow', () => {
     console.log(`Blob frame under the navigation guard: ${JSON.stringify(frameState)}`);
     if (frameState.readable) expect(frameState.text).toBe('blob preview');
     else expect(frameState.loaded).toBe(true);
+  });
+
+  it('opens no window for window.open or a target="_blank" link', async () => {
+    const appOrigin = /^(?:tauri:\/\/localhost|https?:\/\/tauri\.localhost)(?:[/?#]|$)/;
+    await expect(await visible('.topbar')).toBeDisplayed();
+    expect(await browser.getWindowHandles()).toHaveLength(1);
+    const handleBefore = await browser.getWindowHandle();
+
+    // The window is built in code with an on_new_window hook that refuses every request, and the shell emits "new-window-blocked" when it does.
+    // That event is the evidence that the hook is attached: the WebDriver session does not list a window the engine opens by itself, so the
+    // handle count alone would also pass for a window created from the configuration file, which has no hook.
+    const listening = await browser.executeAsync((done) => {
+      window.__newWindowBlocked = [];
+      window.__TAURI__.event
+        .listen('new-window-blocked', (event) => { window.__newWindowBlocked.push(event.payload); })
+        .then(() => done(true), (error) => done(String(error)));
+    });
+    expect(listening).toBe(true);
+    const blockedCount = () => browser.execute(() => window.__newWindowBlocked.length);
+
+    // A script that opens a window without any user gesture. WebKitGTK refuses these itself, before the shell is asked, so no event is required here.
+    await browser.execute(() => { window.open('https://example.com/'); });
+    await browser.pause(3_000);
+    console.log(`Refused new-window requests after a script-only window.open: ${await blockedCount()}`);
+    expect(await browser.getWindowHandles()).toHaveLength(1);
+    expect(await browser.getUrl()).toMatch(appOrigin);
+
+    // The same two requests from a real click, which every engine passes on to the shell: a button whose handler calls window.open, and a link with
+    // target="_blank" (the way the recording notice's links behaved before the packaged app stopped rendering them as links).
+    await browser.execute(() => {
+      const style = 'position:fixed;left:8px;z-index:2147483647;padding:8px;background:#fff;color:#000;';
+      const button = document.createElement('button');
+      button.id = 'new-window-guard-button';
+      button.type = 'button';
+      button.textContent = 'window.open';
+      button.style.cssText = `${style}top:8px;`;
+      button.addEventListener('click', () => { window.open('https://example.com/', '_blank', 'popup,width=320,height=240'); });
+      const link = document.createElement('a');
+      link.id = 'new-window-guard-link';
+      link.href = 'https://example.com/';
+      link.target = '_blank';
+      link.textContent = 'Open example.com';
+      link.style.cssText = `${style}top:64px;`;
+      document.body.append(button, link);
+    });
+    for (const id of ['new-window-guard-button', 'new-window-guard-link']) {
+      const before = await blockedCount();
+      await (await visible(`#${id}`)).click();
+      await browser.waitUntil(async () => (await blockedCount()) > before, { timeout: 15_000, timeoutMsg: `The click on #${id} did not reach the new-window hook` });
+      await browser.pause(2_000);
+      expect(await browser.getWindowHandles()).toHaveLength(1);
+      expect(await browser.getWindowHandle()).toBe(handleBefore);
+      expect(await browser.getUrl()).toMatch(appOrigin);
+    }
+
+    // Engines differ in what they report for a script-opened window (the requested address, or about:blank first), so only the shape is checked.
+    const events = await browser.execute(() => window.__newWindowBlocked);
+    console.log(`Refused new-window requests: ${JSON.stringify(events)}`);
+    for (const event of events) {
+      expect(typeof event.scheme).toBe('string');
+      expect(typeof event.host).toBe('string');
+    }
+    await browser.execute(() => {
+      document.getElementById('new-window-guard-button')?.remove();
+      document.getElementById('new-window-guard-link')?.remove();
+    });
+    await expect(await visible('.topbar')).toBeDisplayed();
+  });
+
+  it('hands a second launch of the app over to the running window instead of opening another', async () => {
+    await expect(await visible('.topbar')).toBeDisplayed();
+    expect(await browser.getWindowHandles()).toHaveLength(1);
+
+    // The second process shares the first one's environment, as a launch from the shortcut would. The lock is held per user session.
+    const outcome = await new Promise((resolve) => {
+      const child = spawn(binaryPath, [], { stdio: 'ignore', env: process.env });
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        resolve({ timedOut: true, code: null, signal: null });
+      }, 30_000);
+      child.once('error', (error) => {
+        clearTimeout(timer);
+        resolve({ timedOut: false, code: null, signal: null, error: error.message });
+      });
+      child.once('exit', (code, signal) => {
+        clearTimeout(timer);
+        resolve({ timedOut: false, code, signal });
+      });
+    });
+    console.log(`Second launch: ${JSON.stringify(outcome)}`);
+    expect(outcome.timedOut).toBe(false);
+    expect(outcome.code).toBe(0);
+
+    // A second window would take a moment to appear; the first one must still be the only one and still work.
+    await browser.pause(3_000);
+    expect(await browser.getWindowHandles()).toHaveLength(1);
+    await expect(await visible('.topbar')).toBeDisplayed();
   });
 });

@@ -46,7 +46,7 @@ jobs:
         run: npm run desktop:package
       - name: Run recovery soak
         if: runner.os == 'Linux'
-        run: dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x920x24' node scripts/desktop-runtime-smoke.mjs src-tauri/target/debug/studentllm --crash-recovery --recovery-cycles=${{ inputs.recovery_cycles }} --sidecar-supervision --frontend-ipc
+        run: dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x920x24' node scripts/desktop-runtime-smoke.mjs src-tauri/target/debug/studentllm --crash-recovery --recovery-cycles=${{ inputs.recovery_cycles }} --sidecar-supervision --frontend-ipc --single-instance
       - name: Run recovery soak
         if: runner.os != 'Linux'
-        run: node scripts/desktop-runtime-smoke.mjs src-tauri/target/debug/studentllm --crash-recovery --recovery-cycles=${{ inputs.recovery_cycles }} --sidecar-supervision --frontend-ipc
+        run: node scripts/desktop-runtime-smoke.mjs src-tauri/target/debug/studentllm --crash-recovery --recovery-cycles=${{ inputs.recovery_cycles }} --sidecar-supervision --frontend-ipc --single-instance
