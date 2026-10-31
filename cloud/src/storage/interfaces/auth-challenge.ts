@@ -1,0 +1,94 @@
+// AuthChallengeStore. Plan rows: "Pending sign-in", "Link ticket", "Sign-in counters".
+
+import type { SaltedHash, StableHash } from "../../crypto/keyed-hash";
+import type { LoginMethod } from "./common";
+
+export interface PendingSignIn {
+  id: string;
+  kind: "google" | "email";
+  /** Google: hash of the OAuth state. */
+  stateHash: string | null;
+  /**
+   * Email: keyed hash of the normalized address under the NON-rotating `CODE_HMAC_KEY` (`stableKeyedHash`),
+   * the lookup key. It must not be a rotating-salt hash: the record lives 10 minutes and a rotation in
+   * between would make it unfindable. The plan table gained this column (no clear email is stored here).
+   */
+  emailHash: StableHash | null;
+  codeChallenge: string;
+  redirectType: "loopback" | "deep_link" | null;
+  termsVersion: string;
+  linkTicketId: string | null;
+  /** Keyed HMAC of the one-time email code, or of the single-use authorization code issued after the Google callback. */
+  codeHash: string | null;
+  /** Set when the Google callback resolved an account; needed to mint tokens at /auth/token (new plan column). */
+  accountId: string | null;
+  attempts: number;
+  resends: number;
+  createdAt: number;
+  expiresAt: number;
+}
+
+export interface LinkTicket {
+  /** Hash of the ticket. */
+  ticketHash: string;
+  accountId: string;
+  method: LoginMethod;
+  createdAt: number;
+  expiresAt: number;
+  used: boolean;
+}
+
+export type VerifyEmailCodeResult =
+  | { outcome: "ok"; pending: PendingSignIn }
+  | { outcome: "wrong"; attempts: number }
+  /** The cap was reached (this or an earlier call); the code is dead even if the right one is sent now. */
+  | { outcome: "locked" }
+  /** No live pending sign-in for this address. */
+  | { outcome: "gone" };
+
+export interface AuthChallengeStore {
+  put(pending: PendingSignIn): Promise<void>;
+  /** Stores the pending email sign-in and invalidates every earlier one for the same address. */
+  replaceForEmail(pending: PendingSignIn): Promise<void>;
+  getByStateHash(stateHash: string, now: number): Promise<PendingSignIn | null>;
+  getByEmailHash(emailHash: StableHash, now: number): Promise<PendingSignIn | null>;
+  /**
+   * For the Google single-use authorization code ONLY. Never check an email code with this: a read followed
+   * by a separate counter update is racy, and parallel guesses would exceed the attempt cap. Use
+   * `verifyEmailCode`.
+   */
+  getByCodeHash(codeHash: string, now: number): Promise<PendingSignIn | null>;
+
+  /**
+   * The email code check as ONE atomic operation, with the comparison inside the store.
+   * - no live pending sign-in for `emailHash` -> `gone`;
+   * - `attempts >= maxAttempts` already -> `locked` (the right code no longer works);
+   * - a wrong candidate ALWAYS counts as an attempt (also when `countAttempt` is false) -> `wrong(attempts)`;
+   * - a right candidate -> `ok`. With `countAttempt: true` (normal sign-in) the pending sign-in is consumed
+   *   (single use). With `countAttempt: false` it is left in place, unconsumed and uncounted: this is the
+   *   device-limit case ("a successful code check at the limit does not count as an attempt and the code
+   *   stays unconsumed").
+   * Candidates are compared in constant time.
+   */
+  verifyEmailCode(input: {
+    emailHash: StableHash;
+    candidateCodeHash: string;
+    maxAttempts: number;
+    countAttempt: boolean;
+    now: number;
+  }): Promise<VerifyEmailCodeResult>;
+
+  delete(id: string): Promise<void>;
+  /** Atomic get-and-delete of a live record: single use. */
+  consume(id: string, now: number): Promise<PendingSignIn | null>;
+
+  putLinkTicket(ticket: LinkTicket): Promise<void>;
+  /** Atomic single use: returns the ticket once, and null afterwards or when expired. */
+  consumeLinkTicket(ticketHash: string, now: number): Promise<LinkTicket | null>;
+
+  /** Request and failed-attempt counters keyed by a ROTATING salted hash (`SaltedHash`). Entries expire. */
+  incrementCounter(key: SaltedHash, now: number, ttlMs: number): Promise<number>;
+  getCounter(key: SaltedHash, now: number): Promise<number>;
+  deleteExpired(now: number): Promise<number>;
+  purgeAccount(accountId: string): Promise<void>;
+}

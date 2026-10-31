@@ -189,7 +189,6 @@ paths:
                   - { $ref: "#/components/schemas/TokenResponse" }
                   - { $ref: "#/components/schemas/LinkResult" }
         "400": { $ref: "#/components/responses/InvalidCode" }
-        "403": { $ref: "#/components/responses/Forbidden" }
         "409":
           description: device_limit_reached (DeviceLimitResponse) or identity_conflict (Error).
           content:
@@ -678,6 +677,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Status" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
         "426": { $ref: "#/components/responses/ClientOutdated" }
 components:
   securitySchemes:
@@ -713,19 +713,20 @@ components:
         provider_unavailable settles on the tokens actually emitted, with the full reservation only as a fallback.
         A retry after `settled` returns idempotency_conflict with details.state=settled.
         There is no body-fingerprint check; use a fresh key for each logical request.
+        A missing or malformed key (not a UUID) is `invalid_request` (400).
       schema: { type: string, format: uuid }
     ConsentHeader:
       name: X-StudentLLM-Consent
       in: header
       required: true
-      description: Id of the active consent record for the provider set of the routed model. Only on the POST content routes.
+      description: Id of the active consent record for the provider set of the routed model. Only on the POST content routes. A missing, malformed or unknown value is `consent_outdated` (409).
       schema: { type: string }
     ClientHeader:
       name: X-StudentLLM-Client
       in: header
       required: true
-      description: Client name and version, for example `studentllm-desktop/0.2.0`. Required on the content routes and on status only; the minimum-client check applies there.
-      schema: { type: string, pattern: "^studentllm-desktop/[0-9]+\\.[0-9]+\\.[0-9]+.*$" }
+      description: Client name and strict semantic version (no leading zeros), for example `studentllm-desktop/0.2.0`. Required on the content routes and on status only; the minimum-client check applies there. A missing or malformed value is `invalid_request` (400).
+      schema: { type: string, pattern: "^studentllm-desktop/(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$" }
   headers:
     CreditsRemaining:
       description: Credits left in the current window after this request's reservation.
@@ -934,7 +935,7 @@ components:
             code: { type: string, const: device_limit_reached }
             message: { type: string }
             request_id: { type: string }
-        manage_token: { type: string, pattern: "^mt_", description: Opaque random token starting with mt_, 5 minutes, devices routes only }
+        manage_token: { type: string, pattern: "^mt_", description: "Opaque random token starting with mt_, 5 minutes, devices routes only" }
         manage_token_expires_in: { type: integer, const: 300 }
     TokenRequest:
       type: object
@@ -1085,7 +1086,7 @@ components:
         consent_records: { type: array, items: { $ref: "#/components/schemas/ConsentRecord" } }
         terms_acceptance: { type: object, additionalProperties: true }
         plan: { type: object, additionalProperties: true }
-        sessions: { type: array, items: { type: object, additionalProperties: true }, description: Device labels and dates only, no tokens }
+        sessions: { type: array, items: { type: object, additionalProperties: true }, description: "Device labels and dates only, no tokens" }
         usage_totals: { type: array, items: { type: object, additionalProperties: true } }
     TermsAcceptance:
       type: object

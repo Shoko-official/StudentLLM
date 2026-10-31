@@ -23,9 +23,9 @@ No list endpoint is paginated today because every list is small and bounded: `GE
 | Header | Where | Meaning |
 | --- | --- | --- |
 | `Authorization: Bearer <access token>` | Every route except the `security: []` ones in the YAML | Short-lived access token |
-| `X-StudentLLM-Client: studentllm-desktop/<semver>` | Content routes (chat, transcription, OCR) and `GET /v1/status` only | Client name and version, for the minimum-client handshake |
-| `X-StudentLLM-Consent: <consent id>` | **Only the POST content routes** (chat, transcription, OCR) | The active consent record id for the provider set of the routed model |
-| `Idempotency-Key: <uuid>` | **Only the POST content routes** | Client-chosen key, scoped per account and route |
+| `X-StudentLLM-Client: studentllm-desktop/<semver>` | Content routes (chat, transcription, OCR) and `GET /v1/status` only | Client name and strict semantic version (no leading zeros), for the minimum-client handshake. A missing or malformed value is `invalid_request` (400) |
+| `X-StudentLLM-Consent: <consent id>` | **Only the POST content routes** (chat, transcription, OCR) | The active consent record id for the provider set of the routed model. A missing or invalid value is `consent_outdated` (409) |
+| `Idempotency-Key: <uuid>` | **Only the POST content routes** | Client-chosen key, scoped per account and route. A missing or invalid value (not a UUID) is `invalid_request` (400) |
 | `X-Request-Id` (response) | All | Server-generated id, same as `error.request_id` |
 | `X-StudentLLM-Min-Client` (response) | Status and `client_outdated` | Minimum supported client version. The app has no updater |
 | `X-StudentLLM-Credits-Remaining`, `-Limit`, `-Reset`, `-Charged` (response) | Inference routes (`Charged` for non-streaming) | Credit meter. The charge is rounded up to a whole credit per request |
@@ -89,6 +89,12 @@ Schemas live in the YAML; this table is a map.
 | Ops | `GET /v1/status` | none | Only after sign-in or an explicit click |
 
 ## Errors
+
+Beyond the codes each route lists in the YAML, these hold for every route:
+
+- An unknown path, or a known path with an unsupported method, returns 404 `not_found` (there is no 405).
+- `/auth/*` and `/webhooks/paddle` read a JSON body, so besides the codes listed in the YAML they can also return `invalid_request` (400, malformed or unknown fields), `unsupported_media_type` (415, wrong `Content-Type`) and `payload_too_large` (413, the body exceeds the route's cap, enforced while it streams in).
+- `/auth/refresh` and `/auth/logout` are not subject to `terms_required` or `account_suspended`, as listed under [Gating exceptions](#gating-exceptions-and-fresh-sign-in).
 
 Every non-2xx response, and every mid-stream error, uses one envelope (`Error` in the YAML): `error.code`, `error.message`, `error.request_id`, optional `error.retry_after_seconds` (with a `Retry-After` header) and optional `error.details`. Messages are English, short, and never contain content, secrets or provider text; provider errors are mapped to a code.
 
