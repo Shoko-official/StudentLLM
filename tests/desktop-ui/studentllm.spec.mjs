@@ -134,20 +134,32 @@ describe('StudentLLM packaged desktop workflow', () => {
     await browser.execute(() => { window.location.hash = ''; });
 
     // App-created blob documents (the source previews) must keep loading under the guard, whichever origin the engine writes into the blob URL.
-    await browser.execute(() => {
+    // An engine that gives the blob an opaque origin makes the frame unreadable from here; a navigation the guard had cancelled would instead
+    // leave a readable, empty about:blank document, so "unreadable" also proves the frame navigated.
+    const frameState = await browser.executeAsync((done) => {
       const url = URL.createObjectURL(new Blob(['<p>blob preview</p>'], { type: 'text/html' }));
       const frame = document.createElement('iframe');
       frame.id = 'navigation-guard-blob-frame';
+      let loaded = false;
+      frame.addEventListener('load', () => { loaded = true; });
       frame.src = url;
       document.body.append(frame);
+      setTimeout(() => {
+        let readable = true;
+        let text = null;
+        try {
+          const doc = frame.contentDocument;
+          if (doc === null) readable = false;
+          else text = doc.body ? doc.body.textContent : null;
+        } catch {
+          readable = false;
+        }
+        frame.remove();
+        done({ blobUrlPrefix: url.slice(0, 24), loaded, readable, text });
+      }, 5_000);
     });
-    await browser.waitUntil(async () => browser.execute(() => {
-      try {
-        return document.getElementById('navigation-guard-blob-frame')?.contentDocument?.body?.textContent === 'blob preview';
-      } catch {
-        return false;
-      }
-    }), { timeout: 15_000, timeoutMsg: 'The blob document did not load in the frame.' });
-    await browser.execute(() => { document.getElementById('navigation-guard-blob-frame')?.remove(); });
+    console.log(`Blob frame under the navigation guard: ${JSON.stringify(frameState)}`);
+    if (frameState.readable) expect(frameState.text).toBe('blob preview');
+    else expect(frameState.loaded).toBe(true);
   });
 });
