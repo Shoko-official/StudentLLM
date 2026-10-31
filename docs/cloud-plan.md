@@ -1,6 +1,6 @@
 # StudentLLM Cloud plan
 
-Status: planned, not implemented. This document is a decided product and engineering plan for an optional paid cloud tier. It is a draft for human review: every price, provider term and legal point marked "verify" must be rechecked against official sources before launch. No cloud code exists in this repository yet.
+Status: planned, not implemented. This document is a decided product and engineering plan for an optional paid cloud tier. It is a draft for human review: every price, provider term and legal point marked "verify" must be rechecked against official sources before launch. The app contains no cloud code; the gateway scaffold lives in [cloud/](../cloud/README.md) (see [Rollout status](#rollout-status)).
 
 Related documents:
 
@@ -44,7 +44,7 @@ Decided points:
 
 ## Architecture
 
-A small separate service, the **gateway**, sits between the desktop app and one or more inference providers. It lives outside the app bundle. It will be documented first under a new top-level `cloud/` directory (design notes only, no code) and implemented from phase 2. Cloudflare Workers is the suggested host because it fits a small service with per-user counters, but the design is provider-agnostic: the app speaks an OpenAI-compatible API to the gateway and the gateway speaks OpenAI-compatible APIs upstream. The HTTP contract is in [cloud-api.md](./cloud-api.md).
+A small separate service, the **gateway**, sits between the desktop app and one or more inference providers. It lives outside the app bundle. It lives in the top-level `cloud/` directory, a separate npm project that is implemented from phase 2 (see [Rollout status](#rollout-status)). Cloudflare Workers is the suggested host because it fits a small service with per-user counters, but the design is provider-agnostic: the app speaks an OpenAI-compatible API to the gateway and the gateway speaks OpenAI-compatible APIs upstream. The HTTP contract is in [cloud-api.md](./cloud-api.md).
 
 ```mermaid
 flowchart LR
@@ -417,6 +417,10 @@ Each phase has an exit criterion. A phase does not start the next one until its 
 | 4. Desktop UI | Prerequisite: the `csp: null` gap closed. Then: Rust-side cloud client, account screen, consent screen, usage meter, local fallback, "never cloud" per course; README, SECURITY.md and provider docs updated | A user can sign in, consent, use a cloud answer, see the meter, hit the budget, and fall back to the local model; the three zero-traffic tests pass (never signed in; signed-out cloud panel; signed in with all features off); the Rust client refuses never-cloud courses and re-previews when the course set changes; the webview cannot read a token; accessibility checks pass |
 | 5. Public launch | Open sign-up, public pricing page, support route, status page | Phase 4 criteria hold in production; terms and privacy policy published and linked in the app; monitoring and spend alarms active; a rollback and kill-switch drill completed |
 | 6. Encrypted backup (after launch) | Backup design finalized and reviewed; endpoints added to the API contract; client and server implementation; separate consent | Restore tested on a clean device with cloud off after restore; a key-loss test behaves as documented; the 100 MB cap and per-account tenancy are tested; the privacy policy and terms updated and re-consented |
+
+### Rollout status
+
+Phase 2 started: scaffold. The `cloud/` directory holds a separate npm project (TypeScript, a Cloudflare Worker with placeholder configuration) with the router, the error envelope, the client-version handshake, body-size and `Content-Type` enforcement, the storage interfaces with in-memory implementations, the crypto helpers and the fixture-conformance test helpers. Every route of the contract is registered and answers a 501 stub; auth, quota and inference, and billing are built on top of it next, and the Durable Object and D1 adapters are not written yet. Phase 1 (legal review) and the blocking open items below are still open, so nothing is deployed and no user can reach the gateway.
 
 ## Open items
 
