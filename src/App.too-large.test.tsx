@@ -22,6 +22,8 @@ const memoryBlobStore = (): SourceBlobStore => ({
 describe('a workspace over the size limit (IndexedDB)', () => {
   beforeEach(() => {
     vi.stubEnv('VITE_LM_STUDIO_AUTO_CONNECT', 'false');
+    // Other workers use unrelated fake databases; this cap test does not exercise cross-tab notifications.
+    vi.stubGlobal('BroadcastChannel', undefined);
     Object.defineProperty(globalThis, 'indexedDB', { value: new IDBFactory(), configurable: true, writable: true });
     localStorage.clear();
     sessionStorage.clear();
@@ -31,6 +33,7 @@ describe('a workspace over the size limit (IndexedDB)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it('is reported as over the limit, not as a full browser, with Export', async () => {
