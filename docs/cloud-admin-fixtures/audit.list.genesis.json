@@ -1,0 +1,79 @@
+{
+  "name": "audit.list.genesis",
+  "operation": "listAuditLog",
+  "description": "The start of a chain. The first row's previous hashes are derived from a version-and-environment tag, so chains of different environments or versions cannot be spliced.",
+  "request": {
+    "method": "GET",
+    "path": "/admin/v1/audit?limit=2&from=2026-11-01T00:00:00Z",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "data": [
+        {
+          "audit_id": "aud_01EXAMPLE0002",
+          "seq": 2,
+          "chain_version": 1,
+          "chain_key_id": "ck1",
+          "occurred_at": "2026-11-01T08:05:00Z",
+          "actor_kind": "admin",
+          "actor_admin_id": "adm_01EXAMPLEOWNER",
+          "actor_role": "owner",
+          "action": "admin.session_start",
+          "target_account_id": null,
+          "target_admin_id": null,
+          "reason_commitment": null,
+          "reason_text": null,
+          "reason_state": "none",
+          "request_id": "req_01EXAMPLE0000000000000002",
+          "session_ref": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+          "credential_id": null,
+          "country": null,
+          "result": "success",
+          "result_code": null,
+          "params": {},
+          "prev_content_sha256": "c2d43a86b284ee3551c566dd2dda6cf152d1f03f9959b79ca8bc12c7c8aa7946",
+          "prev_hash": "d9b54363417fd178e5f6f4b5f46048359faeb215dc66d694c5816386bb46e000",
+          "content_sha256": "541e7e77661afa351c965bca9165e5b89b6a6809fcf904248fa185368dd92013",
+          "row_hash": "292e8679712ceada834d69b8e847fdcdf70c2378b7d618001062b35233e85ee1"
+        },
+        {
+          "audit_id": "aud_01EXAMPLE0001",
+          "seq": 1,
+          "chain_version": 1,
+          "chain_key_id": "ck1",
+          "occurred_at": "2026-11-01T08:00:00Z",
+          "actor_kind": "system",
+          "actor_admin_id": null,
+          "actor_role": null,
+          "action": "admin.bootstrap",
+          "target_account_id": null,
+          "target_admin_id": "adm_01EXAMPLEOWNER",
+          "reason_commitment": null,
+          "reason_text": null,
+          "reason_state": "none",
+          "request_id": "req_01EXAMPLEBOOTSTRAP",
+          "session_ref": null,
+          "credential_id": null,
+          "country": null,
+          "result": "success",
+          "result_code": null,
+          "params": {},
+          "prev_content_sha256": "52e93c4f07973cb1922b6abb2de7253a30fb7eb81df363dc40c91bfaec7f6b3a",
+          "prev_hash": "cb806cd6eacc5cdb94e154eda025a36bae206cf28eda83e9f79a548b590e0421",
+          "content_sha256": "c2d43a86b284ee3551c566dd2dda6cf152d1f03f9959b79ca8bc12c7c8aa7946",
+          "row_hash": "d9b54363417fd178e5f6f4b5f46048359faeb215dc66d694c5816386bb46e000"
+        }
+      ],
+      "next_cursor": null
+    }
+  },
+  "response_schema": "AuditList"
+}

@@ -1,0 +1,57 @@
+{
+  "name": "grant.create.success",
+  "operation": "createGrant",
+  "description": "A complimentary period of 30 days at 100 percent of the standard window (W), source admin_grant, no payment. The window limit is W; the example uses W = 12,500 credits, which is an example value only. The commitment is checked against every affected month in one atomic counter.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/accounts/acc_01EXAMPLE/grants",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+    },
+    "body": {
+      "days": 30,
+      "budget_percent": 100,
+      "start_policy": "now",
+      "reason": "Private beta tester.",
+      "reason_category": "beta_tester",
+      "notify_user": true
+    }
+  },
+  "response": {
+    "status": 201,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "grant_id": "grt_01EXAMPLE",
+      "account_id": "acc_01EXAMPLE",
+      "state": "active",
+      "reason_category": "beta_tester",
+      "days": 30,
+      "starts_at": "2026-11-02T10:00:00Z",
+      "ends_at": "2026-12-02T10:00:00Z",
+      "original_ends_at": "2026-12-02T10:00:00Z",
+      "budget_percent": 100,
+      "credits_per_window": 12500,
+      "credits_cap_total": 12500,
+      "credits_used": 0,
+      "windows": [
+        {
+          "window_start": "2026-11-02T10:00:00Z",
+          "window_end": "2026-12-02T10:00:00Z",
+          "limit": 12500,
+          "used": 0
+        }
+      ],
+      "created_by_admin_id": "adm_01EXAMPLEOWNER",
+      "created_at": "2026-11-02T10:00:00Z",
+      "audit_id": "aud_01EXAMPLE0042",
+      "operation_id": "opr_01EXAMPLEGRANT",
+      "note": null
+    }
+  },
+  "response_schema": "Grant"
+}

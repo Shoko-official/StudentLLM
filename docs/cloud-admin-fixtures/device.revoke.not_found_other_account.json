@@ -1,0 +1,34 @@
+{
+  "name": "device.revoke.not_found_other_account",
+  "operation": "revokeAccountDevice",
+  "description": "Ownership check (IDOR test): the device exists, but it belongs to another account than the one in the path. The answer is the same not_found as for an unknown device, and nothing is revoked.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/accounts/acc_01EXAMPLE/devices/dev_01OTHERACCOUNT/revoke",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21",
+      "X-StudentLLM-Admin-StepUp": "chl_01EXAMPLE.EXAMPLE_NOT_A_REAL_ASSERTION_BASE64URL"
+    },
+    "body": {
+      "reason": "Support request: user lost a laptop.",
+      "notify_user": true
+    }
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "not_found",
+        "message": "Unknown resource.",
+        "request_id": "req_01EXAMPLE0000000000000001"
+      }
+    }
+  },
+  "response_schema": "Error"
+}

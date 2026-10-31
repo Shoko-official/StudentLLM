@@ -1,0 +1,49 @@
+{
+  "name": "system.freeze.success",
+  "operation": "freezeAdminWrites",
+  "description": "Freeze records a durable local journal entry first and back-fills the audit row, so it works even if the audit writer is down. It also pauses every execution step of an admin-originated operation.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/system/freeze",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+    },
+    "body": {
+      "reason": "Suspected compromise of an admin session."
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "writes_frozen": true,
+      "frozen_at": "2026-11-02T09:55:00Z",
+      "frozen_by_admin_id": "adm_01EXAMPLEOWNER",
+      "audit_writer_available": false,
+      "limits": {
+        "standard_window_credits": 12500,
+        "grant_max_days": 90,
+        "grant_default_percent": 100,
+        "grant_max_percent": 100,
+        "grant_max_total_percent": 300,
+        "grant_max_days_per_account_per_year": 180,
+        "grant_max_per_admin_per_day": 20,
+        "grant_monthly_cap_windows": 50,
+        "deletion_min_cooling_off_hours_non_owner": 24,
+        "deletion_max_cooling_off_hours": 72,
+        "suspension_max_days": 365,
+        "search_distinct_accounts_per_day": 200,
+        "user_emails_per_admin_per_hour": 30,
+        "stepup_ttl_seconds": 300
+      },
+      "audit_head_seq": 42,
+      "audit_head_hash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+    }
+  },
+  "response_schema": "SystemState"
+}

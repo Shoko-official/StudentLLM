@@ -1,0 +1,44 @@
+{
+  "name": "operation.complete_manually.success",
+  "operation": "completeOperationManually",
+  "description": "The escape for a deletion whose Paddle cancel keeps failing: the owner cancelled the subscription in the Paddle dashboard and attests it. The service re-fetched the subscription (Paddle was reachable) and found it canceled, then purged the tombstone.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/operations/opr_01EXAMPLEDELETE/complete-manually",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21",
+      "X-StudentLLM-Admin-StepUp": "chl_01EXAMPLE.EXAMPLE_NOT_A_REAL_ASSERTION_BASE64URL"
+    },
+    "body": {
+      "reason": "Paddle API failed for days; cancelled in the dashboard.",
+      "confirm_cancelled_in_paddle": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "operation_id": "opr_01EXAMPLEDELETE",
+      "kind": "account_deletion",
+      "account_id": "acc_01EXAMPLE",
+      "state": "completed",
+      "effective_from": null,
+      "executes_at": "2026-11-03T10:30:00Z",
+      "overdue": false,
+      "hold_reason": null,
+      "attempts": 9,
+      "last_error_code": "paddle_unavailable",
+      "next_retry_at": null,
+      "requested_by_admin_id": "adm_01EXAMPLEOWNER",
+      "created_at": "2026-11-02T10:30:00Z",
+      "updated_at": "2026-11-17T08:00:00Z",
+      "audit_id": "aud_01EXAMPLE0043"
+    }
+  },
+  "response_schema": "Operation"
+}
