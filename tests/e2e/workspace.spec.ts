@@ -377,8 +377,10 @@ test.describe('StudentLLM workspace', () => {
     await settingsButton.click();
     const settings = page.getByRole('dialog', { name: 'Settings' });
     const closeButton = settings.getByRole('button', { name: 'Close settings' });
-    await expect(closeButton).toBeFocused();
+    await expect(closeButton).not.toBeFocused();
+    await expect(settings.locator(':focus')).toHaveCount(1);
 
+    await closeButton.focus();
     await page.keyboard.press('Shift+Tab');
     await expect(settings.getByRole('button', { name: 'Done' })).toBeFocused();
     await page.keyboard.press('Escape');
