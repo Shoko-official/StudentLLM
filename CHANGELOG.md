@@ -19,6 +19,7 @@
 - The selected tab, open course and needs-review segments stay visible in Windows High Contrast (forced colors).
 - A PDF or Word file the document service refuses is reported as a problem with the file (damaged or password-protected) instead of a service to restart.
 - PPTX extraction returned no text for real files because it looked for the DrawingML `txBody` instead of the PresentationML one that holds shape text, and fused the paragraphs of a shape; each paragraph is now its own line.
+- The desktop app now runs as a single instance: starting it a second time brings the existing window to the front instead of opening a second process on the same workspace, where the last writer overwrote the other window's work (#399).
 
 ### Added
 
@@ -26,7 +27,7 @@
 
 ### Security
 
-- The packaged desktop app now enforces a Content Security Policy instead of running with none (`csp: null`): scripts only from the app itself (no `eval`, no inline code), no plugins, no framing, no form posts, and requests only to the app, Tauri IPC and loopback services (`127.0.0.1` and `localhost`). Inline style attributes are the one allowance, for KaTeX. A navigation guard in the Rust shell keeps the webview on the app's own origins, because a Content Security Policy does not cover top-level navigation; new-window requests (`window.open`, `target="_blank"`) are not blocked yet. A browser test serves the production build with this exact policy and fails on any violation. Because of it, the packaged app no longer connects to remote or LAN model and service addresses, and Settings refuses to save such an address and says why instead of reporting a missing server. See [docs/desktop.md](docs/desktop.md#content-security-policy).
+- The packaged desktop app now enforces a Content Security Policy instead of running with none (`csp: null`): scripts only from the app itself (no `eval`, no inline code), no plugins, no framing, no form posts, and requests only to the app, Tauri IPC and loopback services (`127.0.0.1` and `localhost`). Inline style attributes are the one allowance, for KaTeX. A navigation guard in the Rust shell keeps the webview on the app's own origins, because a Content Security Policy does not cover top-level navigation; a new-window guard refuses `window.open` and `target="_blank"` links (the few links the app had are shown as text to copy in the packaged app). A browser test serves the production build with this exact policy and fails on any violation. Because of it, the packaged app no longer connects to remote or LAN model and service addresses, and Settings refuses to save such an address and says why instead of reporting a missing server. See [docs/desktop.md](docs/desktop.md#content-security-policy).
 
 ## 0.1.0 - 2026-10-31
 
