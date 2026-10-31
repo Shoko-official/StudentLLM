@@ -1,4 +1,8 @@
-# Copy to `.dev.vars` (untracked) for local runs. Values stay empty here.
+# Copy to `.dev.vars` (untracked) for local runs. Secret values stay empty here.
+
+# Required, and not set in wrangler.toml: a missing value makes the gateway fail closed.
+ENVIRONMENT=development
+
 # Secret names come from docs/cloud-plan.md ("Security requirements" > Secrets).
 # Use separate values per environment (staging, production, Paddle sandbox and live).
 

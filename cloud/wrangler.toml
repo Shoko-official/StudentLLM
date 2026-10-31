@@ -17,8 +17,13 @@ enabled = false
 # TODO(owner: ops): bind the account Durable Object, D1 and the EU jurisdiction here when the
 # storage adapters land. They are intentionally absent from the scaffold.
 
+# ENVIRONMENT is deliberately NOT set in this file. It comes from the deploy environment (a Worker variable set
+# per environment by the deploy pipeline, or `ENVIRONMENT=development` in the untracked .dev.vars). A missing
+# value makes the gateway refuse every request, so a deploy cannot silently run with the wrong environment.
+# The values below are templates: staging and production reject `.invalid` hosts, `PLACEHOLDER` values and an
+# empty GOOGLE_CLIENT_ID, so they must be replaced per environment before a deploy can start.
+
 [vars]
-ENVIRONMENT = "development"
 PADDLE_ENVIRONMENT = "sandbox"
 GATEWAY_ISSUER = "https://api.example.invalid"
 MIN_CLIENT_VERSION = "0.1.0"
@@ -31,7 +36,6 @@ name = "studentllm-gateway-staging"
 # routes = [{ pattern = "[PLACEHOLDER: staging api domain]/*", zone_name = "[PLACEHOLDER: zone]" }]
 
 [env.staging.vars]
-ENVIRONMENT = "staging"
 PADDLE_ENVIRONMENT = "sandbox"
 GATEWAY_ISSUER = "https://api.example.invalid"
 MIN_CLIENT_VERSION = "0.1.0"
@@ -43,7 +47,6 @@ name = "studentllm-gateway-production"
 # routes = [{ pattern = "[PLACEHOLDER: api domain]/*", zone_name = "[PLACEHOLDER: zone]" }]
 
 [env.production.vars]
-ENVIRONMENT = "production"
 PADDLE_ENVIRONMENT = "sandbox"
 GATEWAY_ISSUER = "https://api.example.invalid"
 MIN_CLIENT_VERSION = "0.1.0"
