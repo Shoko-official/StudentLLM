@@ -36,7 +36,7 @@ Fresh local evidence for this baseline:
 | NVIDIA NIM | Real `openai/gpt-oss-20b` completion passed; 82 models exposed; 8,910 ms observed latency |
 | LM Studio | Real `openai/gpt-oss-20b` completion passed; 15 models exposed; 1,263 ms observed latency |
 | Local ASR sidecar | `small` faster-whisper service healthy on `127.0.0.1:8765` |
-| Local document sidecar | `pymupdf+rapidocr` healthy on `127.0.0.1:8766`, with PDF, image OCR, Markdown, HTML, RTF, DOCX, and PPTX capabilities advertised |
+| Local document sidecar | `pymupdf+rapidocr` healthy on `127.0.0.1:8766` at the time of this baseline (the engine has since been replaced by `pdfminer+rapidocr`, see [licensing.md](./licensing.md)), with PDF, image OCR, Markdown, HTML, RTF, DOCX, and PPTX capabilities advertised |
 | Document extraction request | Real Markdown and generated PDF POST requests returned typed, page-linked blocks |
 
 These checks establish a verified development baseline, not a claim that every quality target or every external benchmark is complete. The public benchmark table below remains the source of truth for measured, unmet, and open targets.

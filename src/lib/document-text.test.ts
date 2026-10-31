@@ -20,6 +20,11 @@ describe('document text normalization', () => {
     expect(normalized).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
   });
 
+  it('drops pdfminer glyph placeholders and expands presentation ligatures', () => {
+    expect(normalizeExtractedDocumentText('Ef(cid:12)cient (cid:55)(cid:82)(cid:81) oﬃce ﬁle ﬂow')).toBe('Efcient office file flow');
+    expect(normalizeExtractedDocumentText('(cid:1)(cid:2)(cid:3)')).toBe('');
+  });
+
   it('repairs common UTF-8 mojibake operators at the extraction boundary', () => {
     expect(normalizeExtractedDocumentText('Gradient âˆ‡f â†’ âˆ‚f')).toBe('Gradient ∇f → ∂f');
   });
