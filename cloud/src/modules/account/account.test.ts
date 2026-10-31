@@ -114,6 +114,48 @@ describe("checkTermsAndStatus", () => {
   });
 });
 
+describe("the rate-limit window of the account routes", () => {
+  it("is chosen explicitly: no account route runs the per-account chat window", async () => {
+    const t = await makeAuthApp();
+    const accountRoutes = t.app.router.routes().filter((r) => /^\/v1\/(account|devices|provider-sets|consent)/.test(r.pattern));
+    expect(accountRoutes.length).toBe(10);
+    for (const route of accountRoutes) expect(route.meta.rateLimit, `${route.method} ${route.pattern}`).toBe("none");
+  });
+
+  it("is not throttled by an exhausted chat window: delete, export, devices and consent still work", async () => {
+    const t = await makeAuthApp();
+    const { auth, accountId } = await signedIn(t);
+    // The window that chat requests spend (the inference module's per-account key) is full.
+    for (let i = 0; i < 100; i++) await t.stores.rateLimits.hit(`acct:${accountId}`, 20, 60_000, t.clock.now());
+    expect((await t.stores.rateLimits.hit(`acct:${accountId}`, 20, 60_000, t.clock.now())).allowed).toBe(false);
+    expect((await t.get("/v1/devices", auth)).status).toBe(200);
+    expect((await t.get("/v1/account/export", auth)).status).toBe(200);
+    const withdraw = await t.request("/v1/consent", {
+      method: "POST",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ provider_set: "ps1", provider_set_version: 1, features: ["chat"], text_version: "2026-11-01", granted: false }),
+    });
+    expect(withdraw.status).toBe(200);
+    expect((await t.del("/v1/account", auth)).status).toBe(202);
+  });
+
+  it("has its own generous window that stops a loop, per account", async () => {
+    const t = await makeAuthApp();
+    const { auth } = await signedIn(t);
+    const other = await t.signedIn("other@example.invalid");
+    const statuses: number[] = [];
+    for (let i = 0; i < 62; i++) statuses.push((await t.get("/v1/devices", auth)).status);
+    expect(statuses.slice(0, 60)).toEqual(Array(60).fill(200));
+    expect(statuses.slice(60)).toEqual([429, 429]);
+    const denied = await t.get("/v1/devices", auth);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect(await code(denied)).toBe("rate_limited");
+    expect((await t.get("/v1/devices", bearer(other.access_token))).status).toBe(200); // another account
+    t.clock.advance(61_000);
+    expect((await t.get("/v1/devices", auth)).status).toBe(200);
+  });
+});
+
 describe("GET /v1/account", () => {
   it("answers the fixture's shape, with the plan version header and no plan for a free account", async () => {
     const t = await makeAuthApp();

@@ -2,6 +2,7 @@
 // a variable or a limit. Names mirror docs/cloud-plan.md > Security requirements > Secrets.
 
 import type { SecretSpec, VarSpec } from "../../config-spec";
+import { base64urlDecode } from "../../crypto/encoding";
 
 export const secrets = [
   /** Ed25519 private key (PKCS8, base64) that signs access tokens; rotated through `kid` and the JWKS. */
@@ -22,7 +23,23 @@ export const vars = [
    * Optional, public: base64url Ed25519 public keys (`x`) of the PREVIOUS signing keys, comma separated. They stay in the
    * JWKS and keep verifying older access tokens during a key rotation (see tokens.ts).
    */
-  { name: "TOKEN_PREVIOUS_PUBLIC_KEYS", required: false },
+  {
+    name: "TOKEN_PREVIOUS_PUBLIC_KEYS",
+    required: false,
+    // Checked when the config loads, so a typo fails the deploy instead of the first request: every entry must be the
+    // canonical base64url of 32 bytes.
+    valid: (value: string) =>
+      value
+        .split(/[\s,]+/)
+        .filter((entry) => entry !== "")
+        .every((entry) => {
+          try {
+            return base64urlDecode(entry).length === 32;
+          } catch {
+            return false;
+          }
+        }),
+  },
 ] as const satisfies readonly VarSpec[];
 
 export const limits = {

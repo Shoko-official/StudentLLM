@@ -363,6 +363,24 @@ describe("POST /auth/email/verify", () => {
     expect(await code(blocked)).toBe("account_suspended");
   });
 
+  it("answers the generic invalid_code when the email method was removed after the code was requested", async () => {
+    const t = await makeAuthApp();
+    // A Google account that also has the email method; the code is requested while the method is still linked.
+    const tokens = await t.signedIn(ADDRESS);
+    const account = (await t.stores.accounts.getByEmail(ADDRESS))!;
+    await t.stores.accounts.addLoginMethod(account.accountId, "google", "g-5");
+    const { pkce } = await request(t);
+    const typed = t.email.lastCode(ADDRESS)!;
+    await t.stores.accounts.removeLoginMethod(account.accountId, "email");
+    const sessionsBefore = await t.stores.sessions.listActiveByAccount(account.accountId, t.clock.now());
+    const res = await verify(t, { email: ADDRESS, code: typed, code_verifier: pkce.verifier });
+    expect(res.status).toBe(400);
+    expect(await code(res)).toBe("invalid_code");
+    expect(await t.stores.sessions.listActiveByAccount(account.accountId, t.clock.now())).toHaveLength(sessionsBefore.length);
+    expect(await t.stores.devices.list(account.accountId)).toHaveLength(1);
+    void tokens;
+  });
+
   it("answers the generic invalid_code when the account no longer has the email method", async () => {
     const t = await makeAuthApp();
     const g = await t.googleSignIn({ sub: "g-9", email: "dual@example.invalid" });

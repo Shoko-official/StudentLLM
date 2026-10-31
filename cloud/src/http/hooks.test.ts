@@ -307,7 +307,7 @@ describe("hook split: account rate limit and connection rate limit", () => {
       },
     });
     await t.request("/auth/start");
-    await t.request("/v1/account");
+    await t.request("/v1/usage"); // an inference route: the account routes choose their own window
     await t.request("/webhooks/paddle", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     expect(trace).toEqual(["connection", "account"]); // the webhook route has no rate limit
   });

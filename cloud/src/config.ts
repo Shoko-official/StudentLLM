@@ -159,6 +159,13 @@ export function loadConfig(env: Env, overrides: { limits?: Limits } = {}): Confi
     }
   }
 
+  for (const spec of ALL_VARS) {
+    const value = env[spec.name as VarName];
+    if (spec.valid && typeof value === "string" && value.trim() !== "" && !spec.valid(value.trim())) {
+      throw new ConfigError(`variable ${spec.name} is malformed`);
+    }
+  }
+
   const paddleEnvironment = requiredVar(env, "PADDLE_ENVIRONMENT");
   if (paddleEnvironment !== "sandbox" && paddleEnvironment !== "live") {
     throw new ConfigError("PADDLE_ENVIRONMENT must be sandbox or live");

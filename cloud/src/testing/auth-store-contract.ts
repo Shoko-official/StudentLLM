@@ -46,6 +46,21 @@ export function runAuthStoreContract(label: string, factory: StoreFactory): void
       expect(await devices.mintManageToken(mk(4), T0)).toBe(false);
     });
 
+    it("forgets the per-code manage token counter once the code is dead, and not before", async () => {
+      const { devices } = factory();
+      const mk = (n: number) => ({ tokenHash: `pt${n}`, accountId: "a", expiresAt: T0 + 300_000, codeId: "code_p" });
+      for (const n of [1, 2, 3]) expect(await devices.mintManageToken(mk(n), T0)).toBe(true);
+      // The tokens expired, the code (10 minutes) may still be alive: the cap holds.
+      await devices.deleteExpiredManageTokens(T0 + 400_000);
+      expect(await devices.mintManageToken(mk(4), T0 + 400_000)).toBe(false);
+      // Long after, the counter is pruned and does not pile up.
+      await devices.deleteExpiredManageTokens(T0 + 300_000 + 10 * 60_000);
+      expect(await devices.mintManageToken(mk(5), T0 + 900_000)).toBe(true);
+      // An account purge drops its counters too.
+      await devices.purgeAccount("a");
+      for (const n of [6, 7, 8]) expect(await devices.mintManageToken({ ...mk(n), expiresAt: T0 + 1_300_000 }, T0 + 1_000_000)).toBe(true);
+    });
+
     it("tracks the deletion retry schedule on the tombstone", async () => {
       const { accounts } = factory();
       await accounts.create({ accountId: "a", email: "a@example.invalid", googleSubject: null, loginMethods: ["email"], termsVersion: "v1", now: T0 });
@@ -56,7 +71,11 @@ export function runAuthStoreContract(label: string, factory: StoreFactory): void
       expect(await accounts.listDueDeletions(T0 + 59_999, 10)).toEqual([]);
       expect((await accounts.listDueDeletions(T0 + 60_000, 10)).map((j) => j.tombstone.accountId)).toEqual(["a"]);
       await accounts.markDeleting("a", T0 + 5); // idempotent: the counters stay
-      expect((await accounts.listDueDeletions(T0 + 60_000, 10))[0]).toMatchObject({ cancelAttempts: 1 });
+      expect((await accounts.listDueDeletions(T0 + 60_000, 10))[0]).toMatchObject({ cancelAttempts: 1, manualReview: false });
+      // Manual review stops the automatic retries.
+      expect(await accounts.markDeletionManual("a")).toMatchObject({ manualReview: true });
+      expect(await accounts.listDueDeletions(T0 + 1e9, 10)).toEqual([]);
+      expect(await accounts.getTombstone("a")).not.toBeNull();
       await accounts.purgeAccount("a");
       expect(await accounts.recordCancelAttempt("a", T0)).toBeNull();
       expect(await accounts.listDueDeletions(T0 + 1e9, 10)).toEqual([]);

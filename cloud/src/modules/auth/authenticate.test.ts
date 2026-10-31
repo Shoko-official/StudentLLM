@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { base64urlEncode, utf8Encode } from "../../crypto/encoding";
 import { hmacSha256 } from "../../crypto/hash";
 import { bearer, generateSigningKeyPkcs8, makeAuthApp, type AuthHarness } from "../../testing/auth-app";
-import { ManualClock, expectFixtureConformance, loadFixture } from "../../testing";
+import { ConfigError, loadConfig } from "../../config";
+import { ManualClock, expectFixtureConformance, loadFixture, testEnv } from "../../testing";
 import type { TokenResponse } from "../../types";
 import { accessTokenClaims, loadTokenKeys, signAccessToken, verifyAccessToken, type AccessTokenClaims } from "./tokens";
 
@@ -197,10 +198,22 @@ describe("signing key rotation", () => {
     expect((await c.get("/v1/account", bearer(refreshed.access_token))).status).toBe(200);
   });
 
-  it("rejects a bad previous key at first use instead of publishing it", async () => {
-    const t = await makeAuthApp({ env: { TOKEN_PREVIOUS_PUBLIC_KEYS: "not-a-key" } });
-    const res = await t.get("/.well-known/jwks.json");
-    expect(res.status).toBe(500);
+  it("refuses a malformed TOKEN_PREVIOUS_PUBLIC_KEYS when the config loads, naming the variable and not the value", async () => {
+    const good = (await generateSigningKeyPkcs8()).publicX;
+    for (const bad of ["not-a-key", `${good}x`, `${good}, junk`, good.slice(0, 40), "A".repeat(44), "+".repeat(43)]) {
+      let message = "";
+      try {
+        loadConfig(testEnv({ TOKEN_PREVIOUS_PUBLIC_KEYS: bad }));
+      } catch (error) {
+        expect(error).toBeInstanceOf(ConfigError);
+        message = (error as Error).message;
+      }
+      expect(message, bad).toMatch(/TOKEN_PREVIOUS_PUBLIC_KEYS/);
+      expect(message).not.toContain(bad);
+    }
+    expect(() => loadConfig(testEnv({ TOKEN_PREVIOUS_PUBLIC_KEYS: `${good}, ${good}` }))).not.toThrow();
+    expect(() => loadConfig(testEnv({ TOKEN_PREVIOUS_PUBLIC_KEYS: "" }))).not.toThrow();
+    expect(() => loadConfig(testEnv({ ENVIRONMENT: "staging", TOKEN_PREVIOUS_PUBLIC_KEYS: "bad" }))).toThrow(/TOKEN_PREVIOUS_PUBLIC_KEYS/);
   });
 });
 
@@ -232,6 +245,36 @@ describe("session checks on every request", () => {
     const tokens = await t.signedIn(ADDRESS);
     await t.stores.accounts.purgeAccount(tokens.account.account_id);
     expect(await code(await t.get("/v1/account", bearer(tokens.access_token)))).toBe("session_revoked");
+  });
+});
+
+describe("the token must match its session", () => {
+  async function twoDevices() {
+    const t = await makeAuthApp();
+    const a1 = await t.signedIn(ADDRESS, { deviceLabel: "A1" });
+    const a2 = await t.signedIn(ADDRESS, { deviceLabel: "A2" });
+    const b = await t.signedIn("other@example.invalid");
+    const keys = await t.deps.auth.keys();
+    const sign = async (claims: AccessTokenClaims) => craft({ alg: "EdDSA", typ: "JWT", kid: keys.kid }, claims, (input) => keys.sign(input));
+    return { t, a1, a2, b, sign };
+  }
+
+  it("refuses a validly signed token whose device belongs to the account but not to the session", async () => {
+    const { t, a1, a2, sign } = await twoDevices();
+    const forged = await sign(await claimsFor(t, a1, { did: a2.device_id }));
+    const res = await t.get("/v1/account", bearer(forged));
+    expect(res.status).toBe(401);
+    expect(await code(res)).toBe("session_revoked");
+    expect((await t.get("/v1/account", bearer(await sign(await claimsFor(t, a1))))).status).toBe(200); // the unmodified claims are fine
+  });
+
+  it("refuses a validly signed token that names one account's session under another account", async () => {
+    const { t, a1, b, sign } = await twoDevices();
+    for (const over of [{ sub: b.account.account_id }, { sub: b.account.account_id, did: b.device_id }]) {
+      const res = await t.get("/v1/account", bearer(await sign(await claimsFor(t, a1, over))));
+      expect(res.status).toBe(401);
+      expect(await code(res)).toBe("session_revoked");
+    }
   });
 });
 

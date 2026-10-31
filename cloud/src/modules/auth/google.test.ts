@@ -72,6 +72,22 @@ describe("redirect URIs", () => {
       "evil://auth/callback",
       "javascript:alert(1)",
       "",
+      // Only the canonical spelling is accepted: anything the URL parser would rewrite is refused.
+      "HTTP://127.0.0.1:50321/callback",
+      "http://127.0.0.1:050321/callback",
+      "http://127.0.0.1:50321/callback?",
+      "http://127.0.0.1:50321/callback#",
+      "http://127.0.0.1:50321/%63allback",
+      "http://127.0.0.1:50321/./callback",
+      "http://127.0.0.1:50321/x/../callback",
+      " http://127.0.0.1:50321/callback",
+      "http://127.0.0.1:50321/callback ",
+      "http://127.0.0.1:50321//callback",
+      "http://0x7f.0.0.1:50321/callback",
+      "http://127.1:50321/callback",
+      "http://2130706433:50321/callback",
+      "studentllm://auth/callback/",
+      "STUDENTLLM://auth/callback",
     ]) {
       expect(classifyRedirectUri(bad), bad).toBeNull();
     }

@@ -71,6 +71,9 @@ export function classifyRedirectUri(uri: string): "loopback" | "deep_link" | nul
     url.pathname !== LOOPBACK_REDIRECT_PATH ||
     url.search !== "" ||
     url.hash !== "" ||
+    // An empty query or fragment ("...?" or "...#") parses to "" and survives toString: refuse the characters themselves.
+    uri.includes("?") ||
+    uri.includes("#") ||
     url.username !== "" ||
     url.password !== ""
   ) {
