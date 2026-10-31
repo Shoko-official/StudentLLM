@@ -16,6 +16,15 @@ export interface PendingSignIn {
   emailHash: StableHash | null;
   codeChallenge: string;
   redirectType: "loopback" | "deep_link" | null;
+  /**
+   * Google: the app's redirect URI exactly as sent to /auth/start (a loopback port changes on every run, so
+   * the type alone is not enough) and the app's own `state`, echoed back on the redirect. Neither is secret.
+   * New columns of the pending sign-in row (docs/cloud-plan.md).
+   */
+  redirectUri: string | null;
+  appState: string | null;
+  /** The device label from the request, held for at most the 10 minutes of the pending sign-in. */
+  deviceLabel: string | null;
   termsVersion: string;
   linkTicketId: string | null;
   /** Keyed HMAC of the one-time email code, or of the single-use authorization code issued after the Google callback. */
@@ -63,18 +72,25 @@ export interface AuthChallengeStore {
    * The email code check as ONE atomic operation, with the comparison inside the store.
    * - no live pending sign-in for `emailHash` -> `gone`;
    * - `attempts >= maxAttempts` already -> `locked` (the right code no longer works);
-   * - a wrong candidate ALWAYS counts as an attempt (also when `countAttempt` is false) -> `wrong(attempts)`;
-   * - a right candidate -> `ok`. With `countAttempt: true` (normal sign-in) the pending sign-in is consumed
-   *   (single use). With `countAttempt: false` it is left in place, unconsumed and uncounted: this is the
-   *   device-limit case ("a successful code check at the limit does not count as an attempt and the code
-   *   stays unconsumed").
+   * - a wrong candidate ALWAYS counts as an attempt (also when `consume` is false) -> `wrong(attempts)`;
+   * - a right candidate -> `ok`. With `consume: true` the pending sign-in is consumed (single use). With
+   *   `consume: false` it is left in place, unconsumed and uncounted: this is the device-limit case ("a
+   *   successful code check at the limit does not count as an attempt and the code stays unconsumed").
    * Candidates are compared in constant time.
+   *
+   * REQUIRED FOLLOW-UP FLOW when the redemption has a side effect that can fail or race (a sign-in that
+   * registers a device): call with `consume: false`, then (1) register the device (`DeviceStore.register`,
+   * the atomic limit check), (2) consume the code with `consume(pending.id, now)`, (3) if that returns null
+   * another redemption won: roll the device back (revoke it when `created` was true) and answer
+   * `invalid_code`. Registering before consuming is what stops two parallel redemptions of one code from
+   * both ending up with a device; the single-use guarantee comes from step (2), not from step (1).
+   * `consume: true` is for a redemption with no such side effect.
    */
   verifyEmailCode(input: {
     emailHash: StableHash;
     candidateCodeHash: string;
     maxAttempts: number;
-    countAttempt: boolean;
+    consume: boolean;
     now: number;
   }): Promise<VerifyEmailCodeResult>;
 

@@ -44,6 +44,12 @@ export interface SessionStore {
   revokeAllForAccount(accountId: string, now: number): Promise<number>;
   /** Sessions that are neither revoked nor expired. */
   listActiveByAccount(accountId: string, now: number): Promise<SessionRecord[]>;
+  /**
+   * Erases the encrypted successor of every session whose previous token was rotated at least `graceMs` ago
+   * ("erased after the grace window"). Returns how many were cleared. A session is also cleared lazily when
+   * its successor is first used or its grace window is found over.
+   */
+  clearExpiredGrace(now: number, graceMs: number): Promise<number>;
   /** Deletes expired and revoked sessions ("until expiry or revocation, then deleted"). */
   deleteExpired(now: number): Promise<number>;
   purgeAccount(accountId: string): Promise<void>;

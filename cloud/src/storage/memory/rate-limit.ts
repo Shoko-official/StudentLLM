@@ -1,9 +1,9 @@
-import type { RateLimitResult, RateLimitStore } from "../interfaces";
+import type { RateLimitKey, RateLimitResult, RateLimitStore } from "../interfaces";
 
 export class InMemoryRateLimitStore implements RateLimitStore {
   private readonly hits = new Map<string, { windowMs: number; times: number[] }>();
 
-  async hit(key: string, limit: number, windowMs: number, now: number): Promise<RateLimitResult> {
+  async hit(key: RateLimitKey, limit: number, windowMs: number, now: number): Promise<RateLimitResult> {
     if (!Number.isInteger(limit) || limit < 1) throw new RangeError("limit must be a positive integer");
     if (!Number.isInteger(windowMs) || windowMs < 1) throw new RangeError("window must be a positive integer");
     const entry = this.hits.get(key) ?? { windowMs, times: [] };

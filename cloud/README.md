@@ -43,7 +43,7 @@ src/app.ts            createApp(deps) -> { handle(request, executionCtx), schedu
 src/deps.ts           Deps = core services + one deps object per module; createDeps()
 src/config.ts         aggregates the modules' config.ts; fails closed; secrets are redacted wrappers
 src/config-spec.ts    the shapes a module's config.ts exports
-src/platform.ts       local types for ExecutionContext and friends
+src/platform.ts       local types for ExecutionContext and friends (owner: ops; other modules only import from it)
 src/durable-objects.ts  reserved AccountObject class (the per-account object, adapters come later)
 src/scheduled.ts      ScheduledTask for the cron handler
 src/lazy.ts           lazy() for deps that need await to build

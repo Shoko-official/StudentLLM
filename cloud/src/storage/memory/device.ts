@@ -96,6 +96,18 @@ export class InMemoryDeviceStore implements DeviceStore {
     if (t) t.uses += 1;
   }
 
+  async revokeManageTokens(accountId: string) {
+    let n = 0;
+    for (const [hash, t] of [...this.manageTokens]) {
+      // The per-code mint counter is kept: a revoked token must not make room for a fourth one.
+      if (t.accountId === accountId) {
+        this.manageTokens.delete(hash);
+        n++;
+      }
+    }
+    return n;
+  }
+
   async deleteExpiredManageTokens(now: number) {
     let n = 0;
     for (const [hash, t] of [...this.manageTokens]) {

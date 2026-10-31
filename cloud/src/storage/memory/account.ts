@@ -3,6 +3,7 @@ import type {
   AccountRecord,
   AccountStore,
   ApplyPlanEventResult,
+  DeletionJob,
   DeletionTombstone,
   LoginMethod,
   NewAccount,
@@ -24,6 +25,7 @@ export class InMemoryAccountStore implements AccountStore {
   private readonly bySubscription = new Map<string, string>();
   private readonly byCustomer = new Map<string, string>();
   private readonly tombstones = new Map<string, DeletionTombstone>();
+  private readonly retries = new Map<string, { cancelAttempts: number; nextAttemptAt: number }>();
 
   async create(input: NewAccount) {
     const email = input.email.toLowerCase();
@@ -175,12 +177,35 @@ export class InMemoryAccountStore implements AccountStore {
       createdAt: now,
     };
     this.tombstones.set(accountId, tombstone);
+    this.retries.set(accountId, { cancelAttempts: 0, nextAttemptAt: now });
     return copy(tombstone);
   }
 
   async getTombstone(accountId: string) {
     const t = this.tombstones.get(accountId);
     return t ? copy(t) : null;
+  }
+
+  private job(accountId: string): DeletionJob | null {
+    const tombstone = this.tombstones.get(accountId);
+    const retry = this.retries.get(accountId);
+    return tombstone && retry ? copy({ tombstone, ...retry }) : null;
+  }
+
+  async listDueDeletions(now: number, limit: number) {
+    return [...this.tombstones.keys()]
+      .map((id) => this.job(id)!)
+      .filter((j) => j.nextAttemptAt <= now)
+      .sort((a, b) => a.tombstone.createdAt - b.tombstone.createdAt)
+      .slice(0, limit);
+  }
+
+  async recordCancelAttempt(accountId: string, nextAttemptAt: number) {
+    const retry = this.retries.get(accountId);
+    if (!retry) return null;
+    retry.cancelAttempts += 1;
+    retry.nextAttemptAt = nextAttemptAt;
+    return this.job(accountId);
   }
 
   async purgeAccount(accountId: string) {
@@ -195,5 +220,6 @@ export class InMemoryAccountStore implements AccountStore {
     this.accounts.delete(accountId);
     this.plans.delete(accountId);
     this.tombstones.delete(accountId);
+    this.retries.delete(accountId);
   }
 }

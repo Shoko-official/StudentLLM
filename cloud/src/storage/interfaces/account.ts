@@ -62,6 +62,18 @@ export interface DeletionTombstone {
   createdAt: number;
 }
 
+/**
+ * Retry bookkeeping of a deletion, kept beside the tombstone (not in it: the tombstone holds only the Paddle ids).
+ * Not account data; it goes away with the tombstone.
+ */
+export interface DeletionJob {
+  tombstone: DeletionTombstone;
+  /** How many times the subscription cancel was tried and did not finish (retry with backoff, operator alert). */
+  cancelAttempts: number;
+  /** Earliest time of the next cancel attempt (backoff). */
+  nextAttemptAt: number;
+}
+
 export type AccountPatch = Partial<Pick<AccountRecord, "status" | "lastSignInAt">>;
 
 /** Pure and synchronous: it runs inside the store's atomic step, so it must not await or do I/O. */
@@ -120,6 +132,10 @@ export interface AccountStore {
   /** Sets status `deleting` and keeps only the Paddle ids in a tombstone. Idempotent. */
   markDeleting(accountId: string, now: number): Promise<DeletionTombstone | null>;
   getTombstone(accountId: string): Promise<DeletionTombstone | null>;
+  /** Deletions whose `nextAttemptAt` has passed, oldest first, at most `limit` (the deletion retry job). */
+  listDueDeletions(now: number, limit: number): Promise<DeletionJob[]>;
+  /** Counts a cancel attempt that did not finish and schedules the next one. Returns the job, or null. */
+  recordCancelAttempt(accountId: string, nextAttemptAt: number): Promise<DeletionJob | null>;
   /** Removes the account, its plan and its tombstone. */
   purgeAccount(accountId: string): Promise<void>;
 }
