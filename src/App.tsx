@@ -20,7 +20,6 @@ import {
   Network,
   Plus,
   Search,
-  Send,
   Settings2,
   Shuffle,
   Sparkles,
@@ -72,6 +71,7 @@ import { buildCourseExport, describeCourseImportFailure, exportSizeWarning, read
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocumentsHybrid } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
+import { CourseChat } from './lib/course-chat';
 import { VisualBlockView } from './lib/visual-blocks-view';
 import { parseStudyArtifactResponse, studyArtifactResponseFormat } from './lib/study-artifacts';
 import { buildCourseNote, courseNoteMarkdown, DOCUMENT_NOTE_LAYOUT_VERSION, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider } from './lib/course-notes';
@@ -2047,7 +2047,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           content: result.content,
           citations: [
             ...(courseSpecificQuestion ? retrievedCitations : []),
-            `LM Studio · ${result.model}`,
+            `${usesNim(serviceSettings) ? 'NVIDIA NIM' : 'LM Studio'} · ${result.model}`,
           ],
           citationTargets: courseSpecificQuestion ? retrievalHits.slice(0, 2).map((hit) => hit.document.id) : [],
         }],
@@ -3078,7 +3078,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           </aside>
         </>}
 
-        <main className="main-panel" inert={drawerOpen}>
+        <main className={`main-panel${view === 'chat' && hasCourse ? ' chat-main-panel' : ''}`} inert={drawerOpen}>
           {importTotals && <div className="import-progress">
             <span className="import-progress-label" role="status">Importing {Math.min(importTotals.done + 1, importTotals.total)} of {importTotals.total}{importQueue[0] ? ` · ${importQueue[0].file.name}` : ''}</span>
             <span className="import-progress-track" aria-hidden="true"><span style={{ width: `${(importTotals.done / importTotals.total) * 100}%` }} /></span>
@@ -3154,13 +3154,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
               </div>)}</div>
               {resources.length > 3 && <button className="text-action" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`}</button>}
             </section>}
-            {view === 'chat' && <section className="chat-view" id="view-panel-chat" role="tabpanel" aria-labelledby="view-tab-chat">
-              <div className="chat-intro">{!chat.length && <EmptyStateIcon name="magnifier" />}<h2>Ask about this course</h2><p>{localProvider ? 'Answers use your notes and sources. LM Studio must be running with a loaded model.' : 'Connect LM Studio in Settings to generate answers. You can still search and open your sources.'}</p></div>
-              {!resources.length && !transcript.length && <p className="empty-state">Import material or record a lecture before asking a question.</p>}
-               <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list" aria-label="Response sources">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button type="button" className="citation-chip" title="Open original source" key={citation} onClick={() => openCitation(message.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className={citation.startsWith('LM Studio') ? 'citation-model' : 'citation-context'} key={citation}>{citation}</span>)}</div>}</article>)}</div>
-              {isSending && <div className="chat-typing" aria-hidden="true"><span /><span /><span /></div>}
-              {chatError && chatError.lessonId === activeLessonId && <div className="action-error chat-error" role="alert"><p>{chatError.message}</p><button type="button" className="text-action" onClick={() => setShowSettingsPanel(true)}>Open Settings</button></div>}<form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => { setComposerValue(event.target.value); if (chatError) setChatError(null); }} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
-            </section>}
+            {view === 'chat' && <CourseChat key={activeLessonId} messages={chat} sourceCount={resources.length} hasMaterial={Boolean(resources.length || transcript.length)} providerName={localProvider ? (usesNim(serviceSettings) ? 'NVIDIA NIM' : 'Local AI') : null} draft={composerValue} isSending={isSending} error={chatError?.lessonId === activeLessonId ? chatError.message : null} onDraftChange={(value) => { setComposerValue(value); if (chatError) setChatError(null); }} onSubmit={submitComposer} onOpenSources={() => setView('sources')} onOpenSettings={() => setShowSettingsPanel(true)} onOpenCitation={openCitation} />}
             {view === 'study' && <section className="study-view" id="view-panel-study" role="tabpanel" aria-labelledby="view-tab-study">
               <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>
               {!hasStudyMaterial && <p className="study-empty-hint"><AnimatedIcon name="star" size={22} intro className="hint-icon" />Import notes or finish a transcription to enable study material generation.</p>}
