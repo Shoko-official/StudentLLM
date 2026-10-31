@@ -146,6 +146,28 @@ test.describe('two tabs', () => {
     expect(titles(await savedWorkspace(page))).not.toContain('Written in the stale tab');
   });
 
+  test('a stale tab never offers to erase the recording that is running in the other tab', async ({ page, context }) => {
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: 'A place for your courses.' })).toBeVisible();
+    const other = await context.newPage();
+    await other.goto('/');
+    await expect(other.getByRole('heading', { name: 'A place for your courses.' })).toBeVisible();
+
+    // The first tab creates a course and, in it, a recording manifest with an old start time: only the rules of the second
+    // tab can protect it.
+    await createCourse(page, 'Live course');
+    await expect.poll(async () => titles(await savedWorkspace(page))).toContain('Live course');
+    const lessonId = (await savedWorkspace(page)).lessons[0].id;
+    await page.evaluate((id) => localStorage.setItem('studentllm.recording-recovery.v1', JSON.stringify({ version: 1, recordings: [{ recordingId: 'live-1', lessonId: id, lessonTitle: 'Live course', startedAt: 1 }] })), lessonId);
+
+    await expect(other.getByRole('alert')).toContainText('changed in another tab or window');
+    await other.getByRole('button', { name: 'Settings' }).click();
+    await expect(other.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+    await expect(other.getByRole('group', { name: 'Browser storage' })).toBeVisible();
+    await expect(other.getByRole('group', { name: 'Unrecovered recordings' })).toHaveCount(0);
+    expect(await other.evaluate(() => localStorage.getItem('studentllm.recording-recovery.v1'))).toContain('live-1');
+  });
+
   test('opening a second tab does not disturb the first one', async ({ page, context }) => {
     await seed(context);
     await page.goto('/');
@@ -241,6 +263,7 @@ test.describe('real browser storage behaviour', () => {
   });
 
   test('a reload in the middle of a save leaves the old or the new workspace, never a torn one', async ({ page }) => {
+    test.setTimeout(90_000); // five rounds of reloads; a loaded machine needs the room
     await seedWorkspaceValue(page, serializeWorkspaceSnapshot(createFixtureWorkspace()));
     const big = createSyntheticWorkspaceOfSize(3 * 1024 * 1024);
     const complete = serializeWorkspaceSnapshot(big);

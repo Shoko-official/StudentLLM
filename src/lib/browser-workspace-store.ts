@@ -36,6 +36,8 @@ import { openWorkspaceDb, SNAPSHOT_KEY, WORKSPACE_DB_NAME, WorkspaceIdbError, ty
  */
 export const WORKSPACE_IDB_ACTIVE_KEY = 'studentllm.workspace.v1.idb-active';
 export const WORKSPACE_BROADCAST_CHANNEL = 'studentllm.workspace.v1';
+/** How long a load may take once the database is open before the app gives up on IndexedDB. */
+export const DEFAULT_LOAD_TIMEOUT_MS = 20_000;
 
 export type WorkspaceBackend = 'indexeddb' | 'localstorage';
 export type ChangeReason = 'saved-elsewhere' | 'conflict' | 'version-change' | 'closed' | 'storage-event';
@@ -723,7 +725,7 @@ export async function openBrowserWorkspace(fallback: WorkspaceSnapshot, deps: Br
       // The localStorage loader saves a cleaned-up (migrated) workspace right away; so does this one, unless the data is protected.
       if (loaded.migrated && !issue?.protect) await store.save(snapshot);
       return { snapshot, issue, store };
-    })(), deps.loadTimeoutMs ?? 20_000, () => {
+    })(), deps.loadTimeoutMs ?? DEFAULT_LOAD_TIMEOUT_MS, () => {
       // Whatever the load was waiting for may still finish later; it must find a closed database and stop.
       if (opened) opened.dispose();
       else db.close();
