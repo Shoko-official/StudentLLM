@@ -916,6 +916,25 @@ describe('StudentLLM workspace', () => {
     expect(removeItem).not.toHaveBeenCalledWith(RECORDING_RECOVERY_STORAGE_KEY);
   });
 
+  it('refuses to save a remote service address in the packaged app', async () => {
+    const user = userEvent.setup();
+    const invoke = vi.fn(async (command: string) => command === 'load_workspace' ? null : []);
+    Object.defineProperty(window, '__TAURI__', { configurable: true, value: { core: { invoke } } });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    render(<App />);
+
+    await user.click(await screen.findByRole('button', { name: /Settings/ }));
+    const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
+    expect(within(settingsDialog).getAllByText(/only connects to localhost or 127\.0\.0\.1/).length).toBeGreaterThan(0);
+    const speech = within(settingsDialog).getByLabelText('Speech service address');
+    await user.clear(speech);
+    await user.type(speech, 'https://speech.example.test');
+    await user.click(within(settingsDialog).getByRole('button', { name: 'Save connections' }));
+
+    expect(await screen.findByText(/Not saved\. Speech service address: The desktop app only connects/)).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('studentllm.services.v1') ?? '{}')).not.toHaveProperty('asrUrl', 'https://speech.example.test');
+  });
+
   it('restores a created course after remounting the workspace', async () => {
     const user = userEvent.setup();
     const firstRender = render(<App />);
