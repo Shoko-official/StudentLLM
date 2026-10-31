@@ -10,9 +10,10 @@ info:
 
     Gating exceptions: `terms_required` and `account_suspended` never block, and are never returned by,
     `GET /v1/account`, `GET /v1/account/export`, `DELETE /v1/account`, `POST /auth/refresh`,
-    `POST /auth/logout`, `GET /v1/devices`, `DELETE /v1/devices/{device_id}`, `GET /v1/billing/portal` and
-    `POST /v1/account/terms`, so data-rights routes always work for a suspended account or one that has not
-    accepted the latest terms. Sign-in routes (`/auth/start`, `/auth/callback`, `/auth/token`, `/auth/email/request`, `/auth/email/verify`) succeed for suspended accounts: the account gets an access token that is usable only on the exempt routes, and every other route returns `account_suspended`.
+    `POST /auth/logout`, `GET /v1/devices`, `DELETE /v1/devices/{device_id}`, `GET /v1/billing/portal`,
+    `POST /v1/account/terms` and `POST /v1/consent`, so data-rights routes always work for a suspended account
+    or one that has not accepted the latest terms, and so does withdrawing consent. `POST /v1/consent` is
+    exempt only for a withdrawal: a grant is gated like any gated route. Sign-in routes (`/auth/start`, `/auth/callback`, `/auth/token`, `/auth/email/request`, `/auth/email/verify`) succeed for suspended accounts: the account gets an access token that is usable only on the exempt routes, and every other route returns `account_suspended`.
 
     Fresh sign-in routes: account export, linking a login method, unlinking a login method and deleting the
     account all require `auth_time` within 5 minutes and otherwise return `reauth_required`.
@@ -422,10 +423,18 @@ paths:
         Appends a record. There is one active record per provider set. Posting an identical grant while it
         is active returns the existing record (idempotent by construction, no Idempotency-Key). Withdrawing
         makes the previous record inactive; requests then get `consent_outdated`. Every text feature
-        (chat, note formatting, study material) is the `chat` feature. A `text_version` that does not equal
-        the server's current `consent_text_version` for the set returns 409 `consent_outdated` with
-        `details.consent_text_version`. Bumping the consent text strands builds that bundle the old text:
-        they cannot collect consent, fall back to local and show an "update required" message. That is accepted.
+        (chat, note formatting, study material) is the `chat` feature. A grant whose `text_version` does not
+        equal the server's current `consent_text_version` for the set, or whose `provider_set_version` is not
+        the set's current version, returns 409 `consent_outdated` with `details.consent_text_version`.
+        Bumping the consent text strands builds that bundle the old text: they cannot collect consent, fall
+        back to local and show an "update required" message. That is accepted. A malformed request, an
+        unknown provider set, a feature the set does not offer or a grant without features is 400
+        `invalid_request` (checked before the 409). A withdrawal (`granted: false`) is never refused for its
+        versions: `text_version`, `provider_set_version` and `features` are ignored, it works for a retired
+        provider set when the account has a record for it, and it is exempt from the terms and suspension
+        gating (a grant is not). The appended record carries the server's current versions of the set (for a
+        retired set, those of the withdrawn record) and the withdrawn record's features. Repeating a
+        withdrawal returns the existing record.
       requestBody:
         required: true
         content:
