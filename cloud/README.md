@@ -235,9 +235,20 @@ under "Contract questions"; none changes the contract):
 - `terms_version` is required on every `/auth/start` (the account is not known yet). A sign-in that carries the current
   version records the acceptance for an existing account with an older one.
 - Suspension is checked before terms.
-- Deleting an account erases all personal data at once (the tombstone keeps only the Paddle ids and the retry
-  bookkeeping), so a repeated `DELETE /v1/account` answers `session_revoked`. The cancel is retried for 14 days
-  (a placeholder in `modules/account/deletion.ts`), then waits in manual review.
+- **User deletion is implemented as a single pass.** `DELETE /v1/account` claims the deletion (one of several
+  parallel calls wins; the others answer `session_revoked`), sends the final email first (bounded by a timeout, a
+  failure is logged by name only and does not block), then writes the tombstone atomically with the removal of the
+  account row (`AccountStore.markDeleting`: the email and Google indexes and the plan go with it; the tombstone keeps
+  the account id, the Paddle ids and the retry bookkeeping), then runs the erase steps (sessions, devices, consents,
+  pending records, ledger, idempotency, leases, the per-account rate-limit windows), each idempotent and repeated by
+  the `account-deletion-retry` job until the cancel succeeds. A repeated `DELETE /v1/account` answers
+  `session_revoked`. There is **no deletion ledger, no outbox, no recorded completion and no retried final email**
+  yet (the admin design in docs/cloud-admin.md specifies them, including three attempts for the email within 15
+  minutes, which is NOT implemented: one bounded attempt only). Those land with the ops and admin work, and the
+  ledger is required before any restore of a database snapshot is accepted, because without it a restore would bring
+  an erased account back. The billing seam must read the Paddle ids from `accounts.getTombstone` (the plan row is
+  already erased when it runs). The cancel is retried for 14 days (a placeholder in `modules/account/deletion.ts`),
+  then waits in manual review.
 - A consent withdrawal is accepted whatever versions the client holds, records the server's versions, works for a
   retired provider set and is exempt from the gating; a grant needs the current versions and an open gate
   (`POST /v1/consent` is on the exempt route list for that reason; its handler gates a grant itself).
