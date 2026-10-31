@@ -1046,6 +1046,14 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeVisible();
 
     await page.reload();
+    // The pagehide flush is best effort. A fresh ledger entry survives the startup sweep (another tab may still undo it),
+    // so age whatever is left and start again: that later start must erase it.
+    await page.evaluate(() => {
+      const key = 'studentllm.pending-source-erase.v1';
+      const entries = JSON.parse(localStorage.getItem(key) ?? '[]') as Array<{ at?: number }>;
+      localStorage.setItem(key, JSON.stringify(entries.map((entry) => ({ ...entry, at: Date.now() - 10 * 60_000 }))));
+    });
+    await page.reload();
 
     const storedSourceCount = () => page.evaluate(() => new Promise<number>((resolve, reject) => {
       const request = indexedDB.open('studentllm-sources', 1);
