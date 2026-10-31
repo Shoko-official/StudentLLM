@@ -4,7 +4,8 @@ import { jsonResponse } from "../../http/envelope";
 import { requirePrincipal, type Handler } from "../../http/context";
 import { formatTime, setCreditHeaders } from "./attempt";
 import { liveTargets, spendCapReached } from "./availability";
-import type { ModelRoute } from "./routing";
+import type { Feature } from "../../storage";
+import type { ModelRoute, RoutingTable } from "./routing";
 import { planWindow } from "./window";
 
 /** Credits per 1000 tokens as the contract shows them (a number); the table stores integers per million. */
@@ -48,13 +49,37 @@ export const listModels: Handler = async (ctx) => {
   return jsonResponse({ object: "list", data }, ctx.requestId);
 };
 
-export const listProviderSets: Handler = (ctx) => {
-  requirePrincipal(ctx);
-  const { routing } = ctx.deps.inference;
-  const provider_sets = routing.providerSets().map((set) => ({
+/**
+ * A provider set as the consent screen and `POST /v1/consent` need it (names, regions, versions). Same shape as the
+ * account module's `ProviderSetInfo`, so that module can read its catalog from the routing table:
+ * `providerSetViews(deps.inference.routing)`.
+ */
+export interface ProviderSetView {
+  id: string;
+  version: number;
+  providers: readonly string[];
+  regions: readonly string[];
+  consentTextVersion: string;
+  features: readonly Feature[];
+}
+
+export function providerSetViews(routing: RoutingTable): ProviderSetView[] {
+  return routing.providerSets().map((set) => ({
     id: set.id,
     version: set.version,
     providers: set.providerIds.map((id) => routing.provider(id)!.displayName),
+    regions: [...set.regions],
+    consentTextVersion: set.consentTextVersion,
+    features: [...set.features],
+  }));
+}
+
+export const listProviderSets: Handler = (ctx) => {
+  requirePrincipal(ctx);
+  const provider_sets = providerSetViews(ctx.deps.inference.routing).map((set) => ({
+    id: set.id,
+    version: set.version,
+    providers: [...set.providers],
     regions: [...set.regions],
     consent_text_version: set.consentTextVersion,
     features: [...set.features],
