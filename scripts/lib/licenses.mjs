@@ -84,7 +84,8 @@ export function classifyId(id) {
 export function classifyExpression(expression) {
   const source = String(expression ?? '').trim();
   if (!source) return { class: 'unknown', choice: '' };
-  const tokens = source.replace(/\(/g, ' ( ').replace(/\)/g, ' ) ').split(/\s+/).filter(Boolean);
+  // Legacy Cargo/npm metadata writes "MIT/Apache-2.0", "Apache-2.0 / MIT" or "Unlicense/MIT" for a dual licence.
+  const tokens = source.replace(/\s*\/\s*/g, ' OR ').replace(/\(/g, ' ( ').replace(/\)/g, ' ) ').split(/\s+/).filter(Boolean);
   let position = 0;
 
   const peek = () => tokens[position];
@@ -133,29 +134,53 @@ export function classifyExpression(expression) {
   return result;
 }
 
-/** Find the policy exception for a package, if any. `scope` narrows by requirements file. */
+/** The licence identifiers of a selected branch such as "MPL-2.0 AND MIT" or "GPL-3.0-or-later WITH GCC-exception-3.1". */
+function branchIds(choice) {
+  return String(choice ?? '').split(/\s+AND\s+/i).map((part) => part.trim()).filter(Boolean);
+}
+
+/** True when every weak-copyleft part of the chosen branch is one the policy allows without an exception. */
+function weakCopyleftAllowed(policy, choice) {
+  const allowed = new Set((policy.allowedWeakCopyleft ?? []).map((id) => id.toLowerCase()));
+  return branchIds(choice).every((part) => {
+    const id = part.split(/\s+WITH\s+/i)[0];
+    const kind = classifyExpression(part).class;
+    return kind !== 'weak-copyleft' || allowed.has(id.toLowerCase());
+  });
+}
+
+/** Find the policy exception for a package, if any. `scope` narrows by lockfile or requirements file. */
 export function findException(policy, ecosystem, name, scope) {
   return (policy.exceptions ?? []).find((entry) => {
-    if (entry.ecosystem !== ecosystem || entry.name.toLowerCase() !== name.toLowerCase()) return false;
+    if (entry.ecosystem !== ecosystem) return false;
+    const matchesName = entry.namePattern
+      ? new RegExp(`^(?:${entry.namePattern})$`, 'i').test(name)
+      : entry.name?.toLowerCase() === name.toLowerCase();
+    if (!matchesName) return false;
     return !entry.scope || !scope || entry.scope.includes(scope);
   });
 }
 
-export function findOverride(policy, ecosystem, name) {
-  return (policy.overrides ?? []).find((entry) => entry.ecosystem === ecosystem && entry.name.toLowerCase() === name.toLowerCase());
+/** Corrected metadata. An override with a `version` applies to that exact version only, so a new release is re-checked. */
+export function findOverride(policy, ecosystem, name, version) {
+  return (policy.overrides ?? []).find((entry) => (
+    entry.ecosystem === ecosystem && entry.name.toLowerCase() === name.toLowerCase()
+    && (!entry.version || entry.version === version)
+  ));
 }
 
 /**
- * Evaluate one package. Returns null when it passes, otherwise a violation object.
- * `declared` is the licence expression read from the ecosystem's metadata.
+ * Evaluate one package. `declared` is the licence expression read from the ecosystem's metadata.
+ * Returns the row with status "ok", "excepted" or "violation".
  */
 export function evaluatePackage(policy, { ecosystem, name, version, declared, scope }) {
-  const override = findOverride(policy, ecosystem, name);
+  const override = findOverride(policy, ecosystem, name, version);
   const expression = override ? override.license : declared;
   const { class: kind, choice } = classifyExpression(expression);
   const row = { ecosystem, name, version, declared: declared || '(none)', license: expression || '(none)', class: kind, choice, scope, override: Boolean(override) };
   if (kind === 'permissive') return { ...row, status: 'ok' };
-  if (kind === 'weak-copyleft' && policy.allowWeakCopyleft !== false) return { ...row, status: 'ok' };
+  // Only the weak-copyleft licences listed in `allowedWeakCopyleft` (MPL-2.0) pass without an exception; LGPL needs one.
+  if (kind === 'weak-copyleft' && weakCopyleftAllowed(policy, choice)) return { ...row, status: 'ok' };
   const exception = findException(policy, ecosystem, name, scope);
   if (exception) return { ...row, status: 'excepted', reason: exception.reason };
   return { ...row, status: 'violation' };

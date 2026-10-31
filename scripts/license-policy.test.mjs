@@ -36,12 +36,40 @@ test('a dual licence passes when one option is permissive', () => {
   assert.equal(evaluate('GPL-3.0-or-later OR AGPL-3.0-or-later').status, 'violation');
 });
 
-test('weak copyleft is allowed but reported as such', () => {
+test('MPL-2.0 is allowed and reported as weak copyleft', () => {
   const row = evaluate('MPL-2.0');
   assert.equal(row.status, 'ok');
   assert.equal(row.class, 'weak-copyleft');
-  assert.equal(evaluate('LGPL-2.1-or-later').class, 'weak-copyleft');
-  assert.equal(evaluatePackage({ ...policy, allowWeakCopyleft: false }, { ecosystem: 'npm', name: 'x', version: '1', declared: 'MPL-2.0' }).status, 'violation');
+  assert.equal(evaluate('MPL-2.0 AND MIT').status, 'ok');
+  assert.equal(evaluate('MIT OR LGPL-2.1-or-later').status, 'ok'); // the permissive option is chosen
+});
+
+test('LGPL in the npm or Cargo production trees needs a justified exception', () => {
+  // The reviewer's fake package: an LGPL dependency in a lockfile.
+  const lock = { packages: { '': {}, 'node_modules/fake-lgpl': { version: '1.0.0', license: 'LGPL-3.0-or-later' } } };
+  const [fake] = npmProductionPackages(lock);
+  assert.equal(evaluatePackage(policy, { ecosystem: 'npm', scope: 'package-lock.json', ...fake }).status, 'violation');
+  for (const id of ['LGPL-2.1-only', 'LGPL-2.1-or-later', 'LGPL-3.0-only', 'EPL-2.0', 'MPL-1.1']) {
+    assert.equal(evaluate(id).status, 'violation', id);
+    assert.equal(evaluate(id, { ecosystem: 'cargo', scope: 'src-tauri/Cargo.lock' }).status, 'violation', `cargo ${id}`);
+  }
+  assert.equal(evaluate('LGPL-2.1-or-later AND MIT').status, 'violation');
+  const withException = { ...policy, exceptions: [{ ecosystem: 'npm', name: 'example', reason: 'Dynamically linked, replaceable, reviewed in docs/licensing.md.' }] };
+  assert.equal(evaluatePackage(withException, { ecosystem: 'npm', name: 'example', version: '1', declared: 'LGPL-2.1-or-later', scope: 'package-lock.json' }).status, 'excepted');
+});
+
+test('the shipped policy only lets MPL-2.0 through without an exception', () => {
+  assert.deepEqual(policy.allowedWeakCopyleft, ['MPL-2.0']);
+});
+
+test('legacy slash-separated dual licences are read as OR', () => {
+  for (const id of ['MIT/Apache-2.0', 'Apache-2.0/MIT', 'Apache-2.0 / MIT', 'Unlicense/MIT', 'BSD-3-Clause/MIT', 'MIT / Apache-2.0 / Zlib', 'Apache-2.0 / LGPL-2.1-or-later']) {
+    assert.equal(evaluate(id).status, 'ok', id);
+  }
+  assert.equal(classifyExpression('MIT/Apache-2.0').choice, 'MIT');
+  assert.equal(evaluate('GPL-3.0-only/AGPL-3.0-only').status, 'violation');
+  assert.equal(evaluate('MIT/GPL-3.0-only').status, 'ok'); // one permissive option is enough
+  assert.equal(evaluate('GPL-3.0-only/Proprietary').status, 'violation');
 });
 
 test('the GCC runtime exception makes GPL usable from proprietary code', () => {
@@ -57,13 +85,40 @@ test('an exception needs a matching ecosystem, name and scope', () => {
 });
 
 test('an override replaces missing metadata', () => {
-  assert.equal(evaluatePackage(policy, { ecosystem: 'python', name: 'qwen-agent', version: '1', declared: '', scope: 'requirements-bfcl.txt' }).status, 'ok');
+  assert.equal(evaluatePackage(policy, { ecosystem: 'python', name: 'qwen-agent', version: '0.0.34', declared: '', scope: 'requirements-bfcl.txt' }).status, 'ok');
   assert.equal(evaluatePackage(policy, { ecosystem: 'python', name: 'unknown-thing', version: '1', declared: '', scope: 'requirements-bfcl.txt' }).status, 'violation');
+});
+
+test('an override with a version applies to that exact version only', () => {
+  const pdfium = { ecosystem: 'python', name: 'pypdfium2', declared: 'BSD-3-Clause, Apache-2.0, dependency licenses', scope: 'requirements-local-documents.txt' };
+  assert.equal(evaluatePackage(policy, { ...pdfium, version: '5.14.0' }).status, 'ok');
+  assert.equal(evaluatePackage(policy, { ...pdfium, version: '5.15.0' }).status, 'violation');
+});
+
+test('the NVIDIA CUDA wheels are excepted for the two torch requirement files only', () => {
+  const cuda = (name, scope, declared = 'LicenseRef-NVIDIA-Proprietary') => evaluatePackage(policy, { ecosystem: 'python', name, version: '1', declared, scope });
+  for (const scope of ['requirements-bfcl.txt', 'requirements-embeddings.txt']) {
+    assert.equal(cuda('nvidia-cudnn-cu13', scope).status, 'excepted', scope);
+    assert.equal(cuda('nvidia-cusparselt-cu13', scope, 'NVIDIA Proprietary Software').status, 'excepted', scope);
+    assert.equal(cuda('cuda-toolkit', scope, '').status, 'excepted', scope);
+  }
+  for (const scope of ['requirements-local-documents.txt', 'requirements-speech-translation.txt', 'requirements-evalplus.txt']) {
+    assert.equal(cuda('nvidia-cublas', scope).status, 'violation', scope);
+  }
+  assert.equal(cuda('nvidiafoo', 'requirements-bfcl.txt').status, 'violation');
+});
+
+test('chardet (LGPL) is excepted for the lm-eval requirement files only', () => {
+  const chardet = (scope) => evaluatePackage(policy, { ecosystem: 'python', name: 'chardet', version: '6.0.0.post1', declared: 'LGPL-2.1-or-later', scope });
+  assert.equal(chardet('requirements-humaneval.txt').status, 'excepted');
+  assert.equal(chardet('requirements-ifeval.txt').status, 'excepted');
+  assert.equal(chardet('requirements-local-documents.txt').status, 'violation');
 });
 
 test('every override and exception documents its evidence', () => {
   for (const entry of policy.overrides) assert.match(entry.evidence, /https?:\/\//, entry.name);
-  for (const entry of policy.exceptions) assert.ok(entry.reason.length > 40, entry.name);
+  for (const entry of policy.exceptions) assert.ok(entry.reason.length > 40, entry.name ?? entry.namePattern);
+  for (const entry of policy.overrides) assert.ok(entry.version, `${entry.name} override is not pinned to a version`);
 });
 
 test('only non-dev lockfile entries are production packages', () => {

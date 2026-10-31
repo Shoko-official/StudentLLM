@@ -1,40 +1,48 @@
 {
-  "$comment": "Licence policy for scripts/check-licenses.mjs. See docs/licensing.md. A package fails the check when its declared licence expression is strong copyleft (GPL, AGPL, CC-BY-SA...), non-commercial or unknown, unless it has an exception here. Weak copyleft (LGPL, MPL) is allowed but listed. `overrides` correct package metadata that is missing or wrong; every override cites the page it was verified on. `exceptions` accept a risk and must say why it does not reach users.",
-  "allowWeakCopyleft": true,
+  "$comment": "Licence policy for scripts/check-licenses.mjs. See docs/licensing.md. A package fails the check when its declared licence expression is strong copyleft (GPL, AGPL, CC-BY-SA...), non-commercial, unknown, or weak copyleft other than the licences in allowedWeakCopyleft (so LGPL needs an exception), unless it has an exception here. `overrides` correct package metadata that is missing or wrong; every override cites the page it was verified on, and an override with a `version` applies to that exact version only so a new release is re-checked. `exceptions` accept a risk and must say why it does not reach users; they can be limited to lockfiles or requirements files with `scope`.",
+  "allowedWeakCopyleft": [
+    "MPL-2.0"
+  ],
   "overrides": [
     {
       "ecosystem": "python",
       "name": "dotenv",
+      "version": "0.9.9",
       "license": "MIT",
       "evidence": "https://pypi.org/pypi/dotenv/0.9.9/json (a shim that only depends on python-dotenv; repository pedroburon/dotenv carries an MIT LICENSE). PyPI metadata says UNKNOWN."
     },
     {
       "ecosystem": "python",
       "name": "qwen-agent",
+      "version": "0.0.34",
       "license": "Apache-2.0",
       "evidence": "https://github.com/QwenLM/Qwen-Agent/blob/main/LICENSE (Apache-2.0 text). PyPI metadata is empty."
     },
     {
       "ecosystem": "python",
       "name": "mistralai",
+      "version": "1.7.0",
       "license": "Apache-2.0",
       "evidence": "https://github.com/mistralai/client-python (Apache-2.0). PyPI metadata is empty."
     },
     {
       "ecosystem": "python",
       "name": "stop-sequencer",
+      "version": "1.2.3",
       "license": "Apache-2.0",
       "evidence": "https://github.com/hyunwoongko/stop-sequencer README states Apache-2.0; the repository has no LICENSE file and the sdist has no licence metadata, so this is UNVERIFIED as a formal grant. Benchmark-only, not shipped."
     },
     {
       "ecosystem": "python",
       "name": "pypdfium2",
+      "version": "5.14.0",
       "license": "Apache-2.0 OR BSD-3-Clause",
       "evidence": "https://github.com/pypdfium2-team/pypdfium2 (README, Licensing: Apache-2.0 or BSD-3-Clause, with the PDFium binary and its BUILD_LICENSES). PyPI metadata lists 'BSD-3-Clause, Apache-2.0, dependency licenses', which is not a valid expression."
     },
     {
       "ecosystem": "python",
       "name": "langdetect",
+      "version": "1.0.9",
       "license": "Apache-2.0",
       "evidence": "https://raw.githubusercontent.com/Mimino666/langdetect/master/NOTICE and LICENSE are Apache-2.0; setup.py says MIT, the classifier says Apache."
     }
@@ -43,8 +51,28 @@
     {
       "ecosystem": "python",
       "name": "html2text",
-      "scope": ["requirements-bfcl.txt"],
+      "scope": [
+        "requirements-bfcl.txt"
+      ],
       "reason": "GPL-3.0-or-later (https://pypi.org/pypi/html2text/2025.4.15/json). Pulled in by bfcl-eval for the Berkeley Function Calling Leaderboard run. Benchmark tooling that runs on a developer machine; it is never imported by, bundled with or distributed alongside the application or its sidecars."
+    },
+    {
+      "ecosystem": "python",
+      "name": "chardet",
+      "scope": [
+        "requirements-humaneval.txt",
+        "requirements-ifeval.txt"
+      ],
+      "reason": "chardet 6.0.0.post1 is LGPL-2.1-or-later (https://pypi.org/pypi/chardet/6.0.0.post1/json). It is pulled in by lm-eval through pytablewriter and mbstrdecoder (which pins chardet<7). Benchmark tooling that runs on a developer machine; never imported by, bundled with or distributed alongside the application or its sidecars."
+    },
+    {
+      "ecosystem": "python",
+      "namePattern": "nvidia-[a-z0-9-]+|cuda-[a-z0-9-]+",
+      "scope": [
+        "requirements-bfcl.txt",
+        "requirements-embeddings.txt"
+      ],
+      "reason": "NVIDIA CUDA runtime wheels (LicenseRef-NVIDIA-Proprietary, or no licence field for the cuda-toolkit meta package) that pip resolves for torch on Linux when sentence-transformers or bfcl-eval is installed. Benchmark and embedding-evaluation tooling that runs on a developer machine; these wheels are never imported by, bundled with or distributed alongside the application or its sidecars, and are not in any other requirements file."
     }
   ]
 }
