@@ -1,0 +1,23 @@
+{
+  "description": "Shared conformance fixtures for the gateway and the client. Each file has an operation, a request, a response and the schema (in docs/cloud-api.openapi.yaml) that the response body must match. All values are examples, not real tokens or addresses.",
+  "fixtures": [
+    "auth-email-request.success.json",
+    "auth-email-verify.success.json",
+    "auth-email-verify.invalid_code.json",
+    "auth-email-verify.device_limit_reached.json",
+    "chat-completions.success.json",
+    "chat-completions.stream.success.json",
+    "chat-completions.stream.mid_stream_error.json",
+    "chat-completions.consent_outdated.json",
+    "chat-completions.idempotency_conflict.in_progress.json",
+    "chat-completions.idempotency_conflict.settled.json",
+    "chat-completions.budget_exhausted.json",
+    "account.get.success.json",
+    "usage.get.success.json",
+    "models.list.success.json",
+    "provider-sets.list.success.json",
+    "consent.record.success.json",
+    "billing-checkout.already_subscribed.json",
+    "status.get.success.json"
+  ]
+}

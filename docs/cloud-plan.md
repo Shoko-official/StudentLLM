@@ -4,7 +4,8 @@ Status: planned, not implemented. This document is a decided product and enginee
 
 Related documents:
 
-- [cloud-api.md](./cloud-api.md): the HTTP contract the implementers code against.
+- [cloud-api.openapi.yaml](./cloud-api.openapi.yaml): the machine-readable HTTP contract (OpenAPI 3.1), the source of truth for the API.
+- [cloud-api.md](./cloud-api.md): explains the contract and its behaviors; [cloud-api-fixtures/](./cloud-api-fixtures/) holds shared conformance examples.
 - [terms-of-service.draft.md](./legal/terms-of-service.draft.md) and [privacy-policy.draft.md](./legal/privacy-policy.draft.md): legal drafts that need review by a qualified lawyer before any use.
 
 ## Principles
@@ -37,9 +38,9 @@ Decided points:
 - The free tier is the full local app, with no ads and no feature removal. Bring-your-own-key stays free because the key and the cost belong to the user.
 - There is no 2 EUR tier and there are no ads. The unit economics below explain why a tier that low does not work with a hard cost cap.
 - A student discount is planned. Its price floor comes from the break-even computed in [Unit economics](#unit-economics); the verification method is an open item.
-- The semester pass is a one-time payment for a fixed 5-month period that does not renew by itself (to confirm with the lawyer). Buying a second pass while one is active extends the end date by 5 months; it does not stack budgets.
+- The semester pass is a one-time payment for a fixed 5-month period that does not renew by itself (to confirm with the lawyer). Buying a second pass while one is active starts its windows when the active one ends; budgets never stack. A subscription cannot be bought again while one is active.
 - Backup ships after the first cloud launch because it is the least specified part. The launch scope is cloud models, cloud transcription and OCR, accounts, quota and billing. See [Backup design (later)](#backup-design-later).
-- Budgets are monthly and do not roll over. When the budget is spent, the app falls back to the local model (see [Quota design](#quota-design)). Nothing is billed beyond the plan price.
+- Budgets are per paid period (one window per billing period, five windows for a semester pass) and do not roll over. When the budget is spent, the app falls back to the local model (see [Quota design](#quota-design)). Nothing is billed beyond the plan price.
 
 ## Architecture
 
@@ -70,7 +71,7 @@ Components:
 
 - **Desktop app.** Keeps its local-first behavior. A new "cloud" provider is one more OpenAI-compatible provider, but all gateway calls and all token handling happen in the Rust side of the Tauri app (see [Desktop client requirements](#desktop-client-requirements)). The webview never sees a token. Cloud is desktop-only in the first release; the browser build does not offer it, because it has no safe place to hold a refresh token.
 - **Gateway.** Verifies the access token, checks consent, plan and budget, applies rate limits, validates and rewrites the request, forwards it to the routed model, streams the answer back, and settles usage. It has no endpoint that returns stored content, because it stores none.
-- **Account state.** D1 (or an equivalent SQL store) is the authority for accounts, plans, consent and the webhook ledger. One Durable Object per account holds the live credit counters and reservations and is reconciled with D1 periodically. The final storage choice is an open item.
+- **Account state.** D1 (or an equivalent SQL store) is the authority for accounts, plans, consent and the webhook ledger. One Durable Object per account holds the live credit counters and reservations and is reconciled with D1 periodically. Durable Objects and storage are pinned to an EU region (see [Data flow and what is stored](#data-flow-and-what-is-stored)). The final storage choice is an open item.
 - **Auth module.** Part of the gateway. Verifies Google ID tokens, issues and verifies one-time email codes, and mints session tokens.
 - **Billing.** The gateway creates Paddle checkouts server-side and receives Paddle webhooks. The app never decides its own plan.
 - **Model routing table.** A configuration file mapping a logical model name to a provider, upstream model id, required provider set, credit weights and limits. Changing a model or provider inside a consented provider set is a config change and a deploy, not an app release.
@@ -80,8 +81,8 @@ Components:
 Chat or note-formatting request with Plus enabled:
 
 1. The app checks that consent exists for this feature and provider set and that the user is signed in. If not, it does nothing and uses the local model.
-2. The Rust side refreshes the access token if needed (lazily, just before the request), then sends the minimal context it would send to a local model (retrieved passages and the question) to the gateway over HTTPS with the access token, the consent version and an idempotency key.
-3. The gateway verifies the token, checks that the account's recorded consent covers the provider set of the routed model, applies the rate limit, validates the body against the allowlist, reserves credits, and forwards the request to the fixed upstream endpoint with the server-held provider key. It sends a per-account pseudonym as the upstream `user` field, never the email or the account id.
+2. The Rust side refreshes the access token if needed (lazily, just before the request), then sends the minimal context it would send to a local model (retrieved passages and the question) to the gateway over HTTPS with the access token. On the POST content routes only, it adds the active consent record id and an idempotency key.
+3. The gateway checks, in this order: client version, token and session, terms acceptance, plan, consent, rate limit, then budget. It validates the body against the allowlist, reserves credits, and forwards the request to the fixed upstream endpoint with the server-held provider key. It sends a per-account pseudonym as the upstream `user` field, never the email or the account id.
 4. The answer streams back through the gateway to the app. The gateway settles the usage reported by the provider.
 5. The request and answer exist only in memory for the duration of the call.
 
@@ -89,31 +90,39 @@ Chat or note-formatting request with Plus enabled:
 
 | Record | Fields | Purpose | Retention |
 | --- | --- | --- | --- |
-| Account | internal account id (random, opaque, the key for everything), sign-in email (normalized to lower case, stored in clear because the service must send mail to it), email verified flag, Google subject id if linked, status, created at, last sign-in at, last request at | Run the account | Until closure, plus platform snapshot retention |
-| Pending sign-in | hash of the OAuth state, `code_challenge`, redirect type, optional link ticket id, one-time code hash (keyed HMAC), attempt and resend counters, created at, expires at | Complete one sign-in | Deleted on use or expiry (10 minutes) |
-| Sign-in counters | failed-attempt and request counters keyed by a salted hash of the email and of the connection address; the salt rotates, entries expire after 24 hours | Brute-force and abuse limits | 24 hours; no raw IP address is stored |
-| Sessions | refresh family id, hash of the current refresh token, device id, device label (platform name, editable by the user), created at, last used at, revoked at | Refresh, revocation, device list | Until expiry or revocation, then deleted |
-| Consent | consent id, provider set, features, consent text version, granted or withdrawn, time | Prove and enforce consent | Account lifetime plus a proof period |
-| Plan | plan id, status, period start and end, budget anchor date, cancel-at-period-end flag, Paddle customer id and subscription id, time of the last applied event | Entitlement | Until closure plus accounting obligations |
-| Webhook ledger | Paddle event id, event type, `occurred_at`, processing state, and an allowlist of fields (ids, status, period, price id); events for an unknown account id are kept in quarantine without creating an account | Idempotency, audit | [PLACEHOLDER: period, for example 90 days] |
-| Usage | credits used and reserved per budget window and per feature, request counts, reservations (request id, credits, state, expiry), settled request ledger (request id, feature, logical model id, credits, time) | Enforce the budget; show the meter; idempotent settlement | Ledger rows 24 hours for idempotency, then folded into window totals; totals for [PLACEHOLDER: period] |
+| Account | internal account id (random, opaque, the key for everything); the single verified sign-in email, normalized to lower case and stored in clear because the service must send mail to it; Google subject id if linked; status (`active`, `suspended`, `deleting`); `terms_version` and time of acceptance; plan version counter; created at, last sign-in at, last request at | Run the account | Until closure, plus platform snapshot retention |
+| Pending sign-in | hash of the OAuth state, `code_challenge`, redirect type, accepted `terms_version`, optional link ticket id, one-time code hash (keyed HMAC), attempt and resend counters, created at, expires at. A new code request replaces earlier codes | Complete one sign-in | Deleted on use or expiry (10 minutes) |
+| Link ticket | ticket hash, account id, method, created at, expires at, used flag | Link a second login method after a fresh sign-in | Deleted on use or expiry (5 minutes) |
+| Sign-in counters | request and failed-attempt counters keyed separately by a salted hash of the email and by a salted hash of the connection address; the salt rotates, entries expire after 24 hours | Brute-force and abuse limits | 24 hours; no raw IP address is stored |
+| Device counters | number of active devices and sessions per account, and new-session counts per day | Enforce the limit of 3 devices; anomaly detection | While the sessions exist; daily counts 30 days |
+| Sessions | refresh family id; hash of the current refresh token; `prev_hash` and `rotated_at` of the previous token; during the grace window only, the successor token encrypted under a key derived from the previous token; `auth_time`; device id and device label (platform name, editable); created at, last used at; idle expiry (30 days) and absolute expiry (180 days); revoked at | Refresh, retry grace window, revocation, device list | Until expiry or revocation, then deleted; the encrypted successor is erased after the grace window or when the new token is first used |
+| Idempotency record | key hash scoped to account id and route, request id, state (`in_flight`, `failed_before_forward`, `settled`), credits charged, created at. **No content and nothing derived from content** (no body hash or fingerprint) | Safe retries without double charging | 24 hours |
+| Consent | append-only records: consent id, provider set id and version, features, consent text version, granted or withdrawn, time; one active record per provider set | Prove and enforce consent | Account lifetime plus a proof period |
+| Plan | plan id, status, paid periods (start and end), budget windows (one per paid period, with limit), cancel-at-period-end flag, Paddle customer id and subscription id, time of the last applied event, plan version counter | Entitlement | Until closure plus accounting obligations |
+| Webhook ledger | Paddle event id, event type, `occurred_at`, processing state, and an allowlist of fields (ids, status, period, price id). All other webhook fields are discarded. Events for an unknown subscription or account are kept in quarantine without creating an account | Idempotency, audit | [PLACEHOLDER: period, for example 90 days] |
+| Deletion tombstone | account id marked `deleting` and only the Paddle customer and subscription ids, kept until the subscription cancellation succeeds | Make deletion safe to retry | Until the cancel succeeds, then purged |
+| Usage | credits used and reserved per budget window and per feature, request counts, reservations (request id, credits, state, expiry), settled request ledger (request id, feature, logical model id, credits, time), double-settlement counters | Enforce the budget; show the meter; idempotent settlement | Ledger rows 24 hours, then folded into window totals; totals for [PLACEHOLDER: period] |
 | Operational logs | request id, account id, route, status code, credits charged, latency, time | Operate and debug | [PLACEHOLDER: period, for example 30 days] |
 | Backup ciphertext | not stored at launch; see the later phase | | |
 
-What the service never stores: course content, transcripts, documents, audio, images, prompts, model answers, IP addresses, geolocation, request or response bodies, access tokens, plaintext refresh tokens or one-time codes, card data, billing addresses. Provider keys and signing keys are server secrets, not account data.
+What the service never stores: course content, transcripts, documents, audio, images, prompts, model answers, IP addresses, geolocation, request or response bodies, body hashes or fingerprints, access tokens, plaintext refresh tokens or one-time codes, card data, billing addresses, names or tax identifiers from payment events. Provider keys and signing keys are server secrets, not account data.
 
 Two honest notes. The sign-in email is stored in clear, because sending a code requires it. The network and hosting provider necessarily see IP addresses and connection metadata while delivering requests; the service itself does not store them and the privacy policy says so.
+
+**Hosting region and snapshots.** Durable Objects and storage are pinned to an EU region or jurisdiction (verify the exact options the platform offers as of 2026-10-31). The gateway code itself may run at edge locations outside the EU while a request is in transit, unless the platform's regional controls are used; whether to pay for them is an open item. The D1 snapshot retention (point-in-time recovery) is platform-defined; choose the shortest the platform allows and record the real value (verify) in the privacy policy, because deleted data can persist in snapshots for that period.
 
 ## Zero ambient traffic
 
 SECURITY.md says local mode does not make an implicit network request. The cloud mode keeps that promise for everyone who has not triggered a cloud action:
 
-- The app makes no gateway request unless the user triggers a cloud action (sign in, a cloud request, a billing action) or opens the cloud panel. Being signed in does not change this.
+- A signed-out cloud panel is static: it explains cloud, shows the bundled terms and privacy notice and a **Sign in** button, and makes no request when it opens.
+- The app makes no gateway request unless the user triggers a cloud action (sign in, a cloud request, a billing action) or opens the cloud panel while signed in. Being signed in does not change this for users who never open the panel or use a cloud feature.
+- The service status (`GET /v1/status`) is fetched only after sign-in, when the signed-in panel opens, or after an explicit "check service status" click. Never from the signed-out panel and never in the background.
 - Token refresh is lazy: it happens just before a cloud request, never on a timer or at launch.
-- There is no polling. The usage meter is updated from the credit headers on every response and from one fetch when the cloud panel opens.
-- The app has no updater, and cloud adds none. Version compatibility is handled by the minimum-client-version handshake: `GET /v1/status` is called when the cloud panel opens, and every response carries a `min client` header. No version check runs for users who never touch cloud.
+- There is no polling. The usage meter is updated from the credit headers on every response and from one fetch when the signed-in panel opens. A changed `X-StudentLLM-Plan-Version` header on a response triggers one refetch of the account.
+- The app has no updater, and cloud adds none. Version compatibility is handled by the minimum-client-version handshake: the status call and an `X-StudentLLM-Min-Client` header on responses. No version check runs for users who never touch cloud.
 - No telemetry or analytics is sent to the service, with cloud on or off.
-- Required test: with the user signed in and every cloud feature off, an app session (launch, recording, import, chat with a local model, idle time) produces zero requests to the gateway host. The test runs in CI against a request-recording network stub, and also asserts zero requests for a user who never signed in.
+- Required tests, run in CI against a request-recording network stub: (1) a user who never signed in, through a full app session, produces zero requests to the gateway host; (2) the signed-out cloud panel opens with zero requests; (3) a signed-in user with every cloud feature off, through launch, recording, import, chat with a local model and idle time, produces zero requests.
 
 ## Authentication
 
@@ -121,78 +130,107 @@ Sign-in methods: Sign in with Google (OpenID Connect) and a typed one-time code 
 
 The account key is the internal account id. An email address or a Google subject id is a login identifier attached to an account, never the key.
 
+**Terms before sign-in.** The app shows the bundled terms of service and privacy notice, with their version, and requires an explicit accept before it calls `/auth/start` or `/auth/email/request`. The accepted `terms_version` is sent with that call. The gateway stores `terms_version` and the time at account creation; a missing or outdated version gives `terms_required` and no account is created. For an existing account, a newer terms version gives `terms_required` on the next cloud call; the app shows the new terms and posts the acceptance to `/v1/account/terms`.
+
 **Google path** (system browser, PKCE, no embedded web view):
 
-1. The user clicks **Sign in with Google**. The Rust side generates a PKCE `code_verifier` and `code_challenge`, a random `state`, and starts a loopback listener on `127.0.0.1` on an ephemeral port (a deep link is the fallback where loopback is not possible).
-2. The app opens the system browser on the gateway's `/auth/start` with the `code_challenge`, `state` and redirect URI. The gateway runs the OIDC authorization code flow with Google, requesting only the `openid` and `email` scopes and no offline access, so Google issues no refresh token.
+1. After the terms accept, the user clicks **Sign in with Google**. The Rust side generates a PKCE `code_verifier` and `code_challenge`, a random `state`, and starts a loopback listener on `127.0.0.1` on an ephemeral port (a deep link is the fallback where loopback is not possible).
+2. The app opens the system browser on the gateway's `/auth/start`. The gateway runs the OIDC authorization code flow with Google, requesting only the `openid` and `email` scopes and no offline access, so Google issues no refresh token.
 3. The gateway verifies the ID token (signature, issuer, audience, expiry, nonce) and requires `email_verified=true`. Any other value is a failed sign-in. After verification the gateway discards every Google token; nothing from Google is kept except the subject id and the verified email.
 4. The gateway redirects to the loopback or deep-link URI with a short-lived, single-use authorization code (about 60 seconds) and the app's `state`. The app checks `state` and exchanges the code plus the `code_verifier` at `/auth/token`.
 
 **Email path** (no browser, no loopback):
 
-1. The user types an email address. The Rust side generates a PKCE pair and calls `/auth/email/request` with the email and the `code_challenge`. The response is identical whether or not the address is known.
-2. The email carries an 8-character one-time code (an alphabet without look-alike characters, about 40 bits). The code is valid for 10 minutes, single use, stored only as a keyed HMAC, and bound to the `code_challenge` of the request that asked for it.
+1. After the terms accept, the user types an email address. The Rust side generates a PKCE pair and calls `/auth/email/request` with the email, the `code_challenge` and the `terms_version`. The response is identical whether or not the address is known.
+2. The email carries an 8-character one-time code (an alphabet without look-alike characters, about 40 bits) and no link. It tells the user to enter the code only in StudentLLM, on the device where it was requested, and that nobody will ever ask for it. The code is valid for 10 minutes, single use, stored only as a keyed HMAC, and bound to the `code_challenge` of the request that asked for it. **A new request invalidates all earlier codes for the address.**
 3. The user types the code in the app. The Rust side calls `/auth/email/verify` with the email, the code and the `code_verifier`. Only the device that requested the code can complete the sign-in.
-4. Attempt limits: at most 5 wrong attempts per code, after which the code is invalidated; a cap on code requests per address and per connection hash per hour; a minimum interval between resends; generic error messages. A dictionary of disposable domains may be added later.
+4. Limits: at most 5 wrong attempts per code, after which it is invalidated; 5 code requests per hour per address; a separate, larger cap per hashed connection address (the two counters are independent); a minimum interval between resends; generic error messages.
+
+**Loopback listener.** The listener stays open until a request carrying the right `state` arrives or a timeout (for example 5 minutes). A request with a missing or wrong `state` is answered with an error page and ignored; it does not close the listener, so a stray local request cannot cancel the sign-in. It then closes.
 
 **Email normalization.** Addresses are lower-cased (and the domain converted to its ASCII form). The `+` tag and dots are not collapsed: `a.b@x.com` and `ab+c@x.com` are different addresses.
 
-**Account linking.** A Google identity and an email address are linked to the same account only after a fresh proof of control of both: the signed-in session must have authenticated within the last 5 minutes (or re-authenticate), the gateway issues a single-use link ticket, and the second method must then complete its own sign-in carrying that ticket. Matching email alone never links or merges accounts, including a Google email equal to an existing email account.
+**Identity rules.**
+
+- One verified email per account. A sign-in whose email already belongs to a different account, or a link attempt whose email differs from the account's email, returns `identity_conflict`; matching email alone never links or merges accounts. The user signs in with the existing method and links the other method from the account screen.
+- Lookup order at sign-in: by Google subject id first, then by email. If the Google subject id is known, the account is that one, even if Google's email has since changed.
+- **When Google's email changes:** the account is kept (it is keyed by the subject id) and the stored email is **not** updated automatically; the account screen shows the stored email. A change of the stored email is not supported in v1 (open item).
+- **Linking** needs a fresh proof of control of both methods: a fresh sign-in of the signed-in account (`auth_time` within 5 minutes), a single-use link ticket, then the second method's own sign-in carrying the ticket.
+- **Unlinking:** `DELETE /v1/account/login-methods/{method}` removes a method, never the last one, and needs a fresh sign-in.
+- A notification email is sent to the account address when a method is linked or unlinked and when the account is deleted.
+
+**Re-authentication** means a fresh sign-in. It sets a new `auth_time` in the session; a refresh copies `auth_time` unchanged, so a stolen refresh token cannot refresh its way into a fresh-auth action (account deletion, linking, unlinking, export).
 
 **Sessions and tokens.**
 
-- Access token: a signed JWT valid for about 15 minutes, algorithm pinned (EdDSA; `alg` from the token is never trusted), fixed `iss` and `aud`, `kid` resolved from a published JWKS. Claims are listed in [cloud-api.md](./cloud-api.md#access-token). The plan is not in the token; it is read from account state.
-- Refresh token: opaque, rotated on every refresh, hashed at rest, bound to a device record. Reuse of a rotated token outside a short grace window revokes the whole session family. The grace window (about 30 seconds) lets a client retry a refresh whose response was lost.
-- Revocation: effective at the next request (the session state is checked where the credit counter is checked), with a target of about 60 seconds and a hard bound of the access-token lifetime. Sign-out and device revocation are available from the account screen.
+- Access token: a signed JWT valid for about 15 minutes, algorithm pinned (EdDSA; `alg` from the token is never trusted), fixed `iss` and `aud`, `kid` resolved from a published JWKS. Claims are in the OpenAPI file (`AccessTokenClaims`). The plan is not in the token; it is read from account state.
+- Refresh token: opaque, rotated on every refresh, hashed at rest, bound to a device record. **Lifetime:** 30 days idle, 180 days absolute; after either, `session_revoked`.
+- **Rotation and retry grace.** On rotation the gateway keeps the previous token's hash and `rotated_at`, and stores the successor token encrypted under a key derived from the previous token (there is no deterministic derivation of tokens from a server key). Presenting the previous token again within about 30 seconds, before the successor was used, decrypts and returns the same successor, so a client that lost the response can retry. The encrypted successor is erased when the grace window ends or the successor is first used. Any other reuse of a rotated token revokes the whole session family (`refresh_reuse`).
+- **Residual risk (accepted):** during the grace window, anyone who holds the previous token can obtain the successor. The window is short, TLS protects the transport, the previous token lives only in the OS credential store of the same device, and the first use of the successor erases the stored copy.
+- **Devices.** A client-supplied `device_id` is honored only if it belongs to the authenticated account; otherwise a new device id is created. At most 3 devices per account: a sign-in on a fourth returns `device_limit_reached`, leaves the code unconsumed, and returns a short-lived `manage_token` valid only for listing and revoking devices.
+- **Revocation** is written to the account's Durable Object, the same object that holds the credit counters, so it is immediate on the inference path. Sign-out and device revocation are available from the account screen. `auth_time` is unchanged by refresh.
 - Refresh tokens live in the operating system credential store, held by the Rust side. Access tokens are held in memory only.
 
-**Loopback redirect rules.** The gateway matches the redirect URI by scheme, host `127.0.0.1` and exact path, and ignores the port, as RFC 8252 prescribes for loopback clients. A listener accepts one request and closes. Deep-link redirects are a fallback only: on Windows and Linux, any local application can register the same custom scheme, so the OS gives no ownership guarantee. The mitigations are the PKCE verifier (an intercepted code is useless without it), `state` checking, a 60-second single-use code, and preferring loopback.
+**Loopback redirect rules.** The gateway matches the redirect URI by scheme, host `127.0.0.1` and exact path, and ignores the port, as RFC 8252 prescribes for loopback clients. Deep-link redirects are a fallback only: on Windows and Linux, any local application can register the same custom scheme, so the OS gives no ownership guarantee. The mitigations are the PKCE verifier (an intercepted code is useless without it), `state` checking, a 60-second single-use code, and preferring loopback.
 
 ## Quota design
 
-- **Credits.** The budget is a single pool of credits normalized to provider cost: one credit equals a fixed small amount of money (for example 0.0001 EUR) at the routing-table price of the model, with a safety margin. Chat, note formatting, transcription and OCR all draw from the same pool, and a pricier model draws more credits per token. The cost ceiling in [Unit economics](#unit-economics) is real only because credits are cost-normalized: if the budget were counted in raw tokens, a switch to a pricier model or a heavy use of audio would break the ceiling.
-- **Budget window.** Each Plus account has a monthly budget window anchored on the day Plus first became active for it (clamped to the month length). Windows are computed from the stored anchor and period dates, never from the arrival of a webhook. Resubscribing after a lapse does not reset the budget: the used credits of the current window stay. A semester pass covers five consecutive windows. A second pass bought while one is active extends the end date and does not add budget.
+- **Credits.** The budget is a single pool of credits normalized to provider cost: one credit equals a fixed small amount of money (for example 0.0001 EUR) at the routing-table price of the model, with a safety margin. Chat, note formatting, study material, transcription and OCR all draw from the same pool, and a pricier model draws more credits per token. The cost per request is **rounded up to a whole credit per request**. The cost ceiling in [Unit economics](#unit-economics) is real only because credits are cost-normalized: if the budget were counted in raw tokens, a switch to a pricier model or a heavy use of audio would break the ceiling.
+- **Budget windows.** There is one budget window per paid period.
+  - A monthly subscription gets one window per billing period, with the dates of the paid period reported by Paddle.
+  - A semester pass gets five consecutive windows of one month each, from its start.
+  - A new purchase starts a new anchor: if no plan is active it starts at the purchase; if a pass is bought while one is active, its windows start when the active one ends (the end date is extended and budgets are never stacked inside one window).
+  - Windows are keyed by their start date. Receiving or replaying a webhook can create a missing window but never resets the used credits of an existing one. Budgets reset on the period boundary, never on webhook receipt.
+  - Refunds and chargebacks revoke the current window and all future windows.
+  - Because a subscription cannot be bought again while active (`already_subscribed`, including one set to cancel at period end), cancelling and resubscribing cannot be used to reset a budget early.
 - **Reserve then settle.** Before forwarding, the gateway reserves an estimate: input tokens counted server-side plus the clamped maximum output tokens. After the response it settles real usage and releases the difference.
-  - A reservation has a time-to-live of 2 minutes. A reconciler (a scheduled job and an on-access sweep) handles expired reservations: one that never reached the provider is released; one that was forwarded and never settled is settled at the full reservation, so a crash cannot create free usage.
+  - **Reservation TTL:** the routing-table maximum duration for the route plus a 60-second margin, extended by a heartbeat while a stream is making progress. A reconciler (a scheduled job and an on-access sweep) handles expired reservations: one that never reached the provider is released; one that was forwarded and never settled is settled at the full reservation, so a crash cannot create free usage.
+  - **Double settlement:** the first settlement wins. Later settlements for the same request id are ignored and counted (a counter, never content).
   - A stream that ends without a usage chunk is settled at the full reservation. The gateway forces the provider to include usage in streamed responses.
   - Reasoning tokens count as output tokens.
-  - Audio and image sizes are estimated on the server from the bytes received (container duration, pixel dimensions), never from client-declared values.
-  - Settlement is idempotent per request id. A retry with the same idempotency key reuses the reservation or is refused with the earlier outcome; it never charges twice.
+  - Audio and image sizes are estimated on the server from the bytes received, never from client-declared values alone. **Transcription** is reserved at `max(declared duration, a bound derived from the byte size)` and settled on the duration the provider reports. Recordings longer than the per-request duration cap are chunked by the client, each chunk with its own idempotency key and timestamp offsets applied when the segments are merged.
+- **Idempotency.** Keys are scoped per account and route and exist only on the POST content routes. A record is in one of three states: `in_flight`, `failed_before_forward`, `settled`.
+  - A retry while the record is `in_flight` returns `idempotency_conflict` with `details.state = "in_progress"`; the client waits and does not resend.
+  - Only a `failed_before_forward` attempt may reuse its reservation.
+  - A forwarded attempt is always settled, at actual usage or at the full reservation, so a retry never gets a second free answer.
+  - A retry after `settled` returns `idempotency_conflict` with the original request id and credits charged; since no content is stored the answer cannot be replayed, and the client uses a new key to regenerate.
+  - There is **no body-fingerprint check**, because nothing derived from content is stored. A key identifies an attempt, and clients use a fresh key for each logical request.
 - **Requests that would exceed the remaining budget** are refused before forwarding with `budget_exhausted`.
 - **Limits per request.** Maximum input size, clamped output tokens, maximum request duration, image count and size, and audio duration and size, all from the routing table.
 - **Rate limit.** A short sliding window per account (for example 20 requests per minute and 2 concurrent requests) plus limits on the unauthenticated endpoints keyed by a hashed connection identifier. Values are config.
-- **Where state lives.** D1 is the authority for plan state (plan, period, anchor). The per-account Durable Object holds the live counters and reservations, so parallel requests cannot overspend, and writes window totals back to D1 periodically. If an object is lost, the counters are rebuilt from the last D1 snapshot with open reservations counted at their full amount.
+- **Where state lives.** D1 is the authority for plan state (plan, paid periods, windows). The per-account Durable Object holds the live counters, reservations and revocations, so parallel requests cannot overspend, and writes window totals back to D1 periodically. If an object is lost, the counters are rebuilt from the last D1 snapshot with open reservations counted at their full amount.
+- **Plan changes reach the client** through the `X-StudentLLM-Plan-Version` response header and the `plan_version` field of the account object. The client refetches the account only when the header differs from its cached value; there is no polling.
 - **Meter.** Credit headers on every response and `GET /v1/usage` return the remaining credits. The app shows a usage meter whenever cloud is on and warns at 80% and 100%.
-- **Fallback.** When the budget is spent, the consent is outdated, a kill switch is active, or the gateway is unreachable, the app switches automatically to the configured local model and tells the user plainly, once per episode. If no local model is available it says so and does not retry against the cloud. There is no overage charge and no way to buy extra credits in the first version.
+- **Fallback.** When the budget is spent, the consent is outdated, the account is suspended, a kill switch is active, or the gateway is unreachable, the app switches automatically to the configured local model and tells the user plainly, once per episode. If no local model is available it says so and does not retry against the cloud. There is no overage charge and no way to buy extra credits in the first version.
 - **Plan lapse.** If the plan ends the account becomes a free account: the cloud features stop and the local app is unchanged.
 
 ## Provider strategy
 
 Rule: production traffic must use an inference provider whose contract allows commercial use. Prices and model availability change often; they must be rechecked on each provider's official pricing, models and terms pages before launch and again at every routing change. Anything below about prices or model status is unverified (as of 2026-10-31, verify).
 
-- **NVIDIA NIM.** The free API catalog at `integrate.api.nvidia.com` is a trial offer and is not for production use. Several keys must not be combined or rotated to multiply rate limits; doing so would circumvent the terms and is excluded explicitly. NIM stays limited to development (the opt-in dev provider described in [providers.md](./providers.md)) and to users who bring their own key. It is never put behind the paid gateway.
+- **NVIDIA NIM.** The free API catalog at `integrate.api.nvidia.com` is a trial offer and is not for production use (per NVIDIA's API trial terms as of 2026-10-31; verify the current wording). Several keys must not be combined or rotated to multiply rate limits; doing so would circumvent the terms and is excluded explicitly. NIM stays limited to development (the opt-in dev provider described in [providers.md](./providers.md)) and to users who bring their own key. It is never put behind the paid gateway.
 - **First production model: `gpt-oss-120b` on Groq**, listed there as a production model (as of 2026-10-31, verify at launch). Third-party trackers list gpt-oss-120b at around $0.15 per million input tokens and $0.60 per million output tokens on several providers; this is unverified and used only for sizing.
 - **Qwen.** Qwen is the preferred model family, but the only Qwen model listed on Groq is a preview model (reported as Qwen 3.8 27B, verify the exact name and status). Preview models can be discontinued at short notice, so it cannot be the production base. Plan: add a Qwen option on a provider that lists a Qwen model as a production model, after reading that provider's current commercial terms, retention and training policy. Until then Qwen stays available through local models.
 - **Provider checklist** before a provider enters the routing table: commercial use allowed; no training on customer data; documented retention (zero or minimal) for API requests; data processing agreement available; processing region and transfer mechanism known; OpenAI-compatible API; stable production model status; published rate limits compatible with the expected load; acceptable uptime history.
 - **Provider sets and consent.** Consent is recorded per provider set: a named, versioned list of providers (for example `ps1 = {Groq}`) shown to the user by name. Each logical model in the routing table belongs to exactly one provider set.
 - **Routing is configuration.** A table maps logical model names (for example `studentllm-large`, `studentllm-fast`) to provider, upstream model id, provider set, credit weights, limits and an ordered fallback list.
-- **Failover only inside the consented set.** The app sends its consent version with each request. The gateway routes only to providers inside the provider set the account has consented to. If the model needs a provider set that is not consented, the gateway returns `consent_outdated` and the app asks for consent again or falls back to the local model. There is no silent cross-provider failover outside the consented set: adding a provider to the routing table for failover means adding it to a new provider set version and obtaining consent again. If every provider inside the set fails, the gateway returns `provider_unavailable` and the app falls back to the local model.
+- **Failover only inside the consented set.** On the POST content routes the app sends the active consent record id for the provider set of the routed model. The gateway routes only to providers inside the provider set the account has consented to. If the model needs a provider set that is not consented, the gateway returns `consent_outdated` and the app asks for consent again or falls back to the local model. There is no silent cross-provider failover outside the consented set: adding a provider to the routing table for failover means adding it to a new provider set version and obtaining consent again. If every provider inside the set fails, the gateway returns `provider_unavailable` and the app falls back to the local model.
 - **Upstream pseudonym.** The gateway sends `user` upstream as an HMAC of the account id under a server-held key, so a provider can rate limit or investigate abuse per user without receiving the account id or email. The privacy policy lists this.
-- **Cloud transcription and OCR.** Same rules. The provider and model are chosen in phase 2; audio and images are forwarded in transit only. Candidate models and prices are not decided here.
+- **Cloud transcription and OCR.** Same rules. The provider and model are decided before phase 4 (see [Open items](#open-items)); audio and images are forwarded in transit only. Candidate models and prices are not decided here.
 
 ## Payments
 
-**Paddle as merchant of record.** Paddle is the seller of record toward the customer: it collects payment, computes and remits EU VAT and other sales tax, issues invoices, and handles refunds as the seller. This is the main reason it was chosen for a solo founder. Paddle's fee is reported as about 5% plus $0.50 per transaction (as of 2026-10-31, verify the current schedule and what the percentage applies to).
+**Paddle as merchant of record.** Paddle is the seller of record toward the customer: it collects payment, computes and remits EU VAT and other sales tax, and issues invoices. Refunds are made by Paddle as the seller; we arrange a refund through Paddle on request. This is the main reason it was chosen for a solo founder. Paddle's fee is reported as about 5% plus $0.50 per transaction (as of 2026-10-31, verify the current schedule and what the percentage applies to).
 
-Why not the alternatives: Lemon Squeezy is moving under Stripe, which makes its future terms and product shape uncertain, and Polar's pricing is unclear. The choice is revisited if the fees hurt (see [Risks](#risks)).
+Why not the alternatives (as of 2026-10-31, verify): Lemon Squeezy is reported to be moving under Stripe, which makes its future terms and product shape uncertain, and Polar's pricing was not clear. The choice is revisited if the fees hurt (see [Risks](#risks)).
 
 Flow:
 
-1. The signed-in user chooses a plan in the app. The app calls `POST /v1/billing/checkout`; the gateway creates the Paddle transaction server-side with the opaque account id in `custom_data` and returns the checkout URL, which the app opens in the system browser. The client never supplies price ids or custom data. No payment details pass through the app or the gateway.
+1. The signed-in user chooses a plan in the app. The app calls `POST /v1/billing/checkout`; the gateway creates the Paddle transaction server-side with the opaque account id in `custom_data` and returns the checkout URL, which the app opens in the system browser. The client never supplies price ids or custom data. If the account already has an active subscription, including one set to cancel at the end of its period, the answer is `already_subscribed` (409) and the app points to the customer portal. No payment details pass through the app or the gateway.
 2. Paddle sends signed webhooks. The gateway handles them as specified below and updates the plan in D1. Webhook handling is idempotent and order-safe.
-3. The app learns the plan from the gateway on demand (the cloud panel, or a response header after the plan changes).
+3. The app learns about plan changes from the `X-StudentLLM-Plan-Version` header and the `plan_version` field of the account object.
 4. Cancellation and invoices are handled through Paddle's customer portal (`GET /v1/billing/portal`). A cancellation takes effect at the end of the paid period.
-5. On account deletion the gateway cancels the subscription at Paddle before deleting the account, and tells the user what refund rules apply.
+5. **Account deletion.** The account is first set to a `deleting` tombstone that retains only the Paddle customer and subscription ids. The gateway then cancels the subscription at Paddle, retrying with backoff and alerting the operator on repeated failure, and only when the cancel succeeds does it purge the tombstone and the remaining records. The user is told what refund rules apply.
 6. The service starts in Paddle's sandbox; live mode is switched on only after the end-to-end test in phase 3. Sandbox and live use separate secrets and separate deployments.
 
 **Webhook specification.**
@@ -200,12 +238,13 @@ Flow:
 - Verify the HMAC over the raw request bytes (never a re-serialized body), using the timestamp in Paddle's signature header, with a short timestamp tolerance and a constant-time comparison. A request that fails verification is rejected before any parsing.
 - Two webhook secrets are accepted at once during rotation. Sandbox and live secrets are never mixed.
 - Claim the event id atomically (a unique-key insert in D1) before any side effect. A duplicate returns 2xx without effects. A claim left in `processing` for too long can be taken over; a failed processing releases the claim so Paddle's retry works.
+- **Mapping to an account.** The `custom_data` account id binds the first event of a subscription. After that, later billing events are mapped by the stored subscription id or customer id, never by `custom_data`, so a crafted or missing `custom_data` cannot move a subscription to another account.
 - Apply events by `occurred_at`: an event older than the last applied event for the same subscription is recorded and ignored. For state-changing subscription events the gateway may instead re-fetch the subscription from Paddle's API and apply that state, which is the safer default.
 - Respond 2xx fast. Do the signature check and the claim, then process quickly; slow work (emails, cleanups) runs after the response.
-- Unknown account id in `custom_data`: respond 2xx, quarantine the event with its allowlisted fields, alert the operator, and never create an account from a webhook.
-- Persist and log only an allowlist of fields (ids, status, period, price id, currency). No customer name, address, tax id or card detail is persisted or logged.
-- Refunds and chargebacks revoke the plan according to Paddle's adjustment events (event names to verify against Paddle's current documentation).
-- Budgets are not touched by webhooks except through the plan period; receiving a webhook never resets credits.
+- Unknown subscription or account: respond 2xx, quarantine the event with its allowlisted fields, alert the operator, and never create an account from a webhook.
+- Persist and log only an allowlist of fields (ids, status, period, price id, currency). Everything else in the payload is discarded: no customer name, address, tax id or card detail is persisted or logged.
+- Refunds and chargebacks revoke the current and future budget windows and the plan according to Paddle's adjustment events (event names to verify against Paddle's current documentation).
+- Budgets are not touched by webhooks except through paid periods; receiving a webhook never resets credits.
 
 ## Security requirements
 
@@ -232,13 +271,13 @@ These are release criteria for the gateway.
 **Abuse, fraud and spend limits**
 - Per-account credit budget (hard), short-window rate limit, concurrency limit, per-request caps.
 - Sign-in endpoints: limits keyed by hashed email and hashed connection identifier, generic responses, code attempt limits, cooldowns.
-- Limits on the number of devices and active sessions per account. Anomaly detection uses the device count and session patterns (many new sessions, repeated refresh reuse, budget exhaustion at the start of every window). It does not use geography or stored IP addresses.
+- A limit of 3 devices per account and a cap on active sessions. Anomaly detection uses the device count and session patterns (many new sessions, repeated refresh reuse, budget exhaustion at the start of every window). It does not use geography or stored IP addresses.
 - A **global spend cap**: the gateway keeps a running total of estimated provider cost per day and per month across all accounts; when a configured threshold is crossed it alerts the operator, and at the hard cap it refuses new cloud requests with `kill_switch` (the app falls back to local) until raised.
 - A **kill switch** per provider, per feature and global, in config, usable without a deploy and effective within seconds.
 - Chargeback and refund events revoke the plan automatically. Account sharing is addressed in the terms and by the device limit.
 
 **Token handling**
-- Short-lived access tokens, rotating refresh tokens with reuse detection and a short grace window, revocation checked on every request, device-bound sessions.
+- Short-lived access tokens, rotating refresh tokens with reuse detection and a short grace window, revocation checked on every request (revocations are written to the account's Durable Object, so they are immediate on the inference path), device-bound sessions, 30-day idle and 180-day absolute refresh lifetimes.
 - All endpoints require TLS; HSTS on the gateway domain; no cookies for the API; CORS is not enabled for the API, since the only first-party client is the native Rust side.
 
 **Other**
@@ -250,35 +289,43 @@ These are release criteria for the gateway.
 
 - All gateway calls and all token handling happen in the Rust side of the Tauri app. The webview calls Tauri commands and receives streamed text through events. The webview never sees the refresh token or the access token.
 - The refresh token is held in the operating system credential store; the access token in memory only.
+- The webview passes the Rust client a payload tagged with the courses that contributed to it. The Rust client refuses to send when any contributing course is flagged never-cloud (using its own copy of the flags) and re-shows the "What will be sent" preview whenever the set of contributing courses changes. The tags stay on the device.
 - **Prerequisite for the desktop cloud phase:** the Tauri configuration currently sets `"csp": null` (see `src-tauri/tauri.conf.json`). That gap must be closed with a restrictive Content Security Policy before any cloud code ships, because untrusted content (imported documents, model output rendered as rich text) reaches the webview and the webview must not be able to reach the gateway or exfiltrate through arbitrary hosts. The allowed `connect-src` is the local sidecars only; gateway traffic is not made from the webview at all.
 - The user-set base URL for the gateway is ignored in release builds (mirroring the pinned dev NVIDIA route in [providers.md](./providers.md)).
 - Cloud is off by default, with a persistent indicator and the usage meter when on.
 
 ## Privacy and consent UX
 
-Cloud is off by default. The first time a user turns it on, or tries a cloud feature, a consent screen appears before any request leaves the machine. It is not a cookie-banner pattern and has no pre-ticked box.
+Cloud is off by default. Before any sign-in, the app shows the bundled terms and privacy notice with an explicit accept (see [Authentication](#authentication)). The first time a user turns a cloud feature on, or tries one, a consent screen appears before any request carrying content leaves the machine. It is not a cookie-banner pattern and has no pre-ticked box.
 
 **Legal basis and consent, stated consistently.** The processing the user asks for (sending the content of a request to a provider to get the answer) is performed under the contract (GDPR art. 6(1)(b)). The explicit consent screen is a separate, stricter safeguard that StudentLLM adds on top: no cloud request is sent without it, it is per feature and per provider set, and the user can withdraw it at any time. Withdrawal stops cloud processing immediately and returns the app to local behavior; it does not change what has already been delivered. The privacy policy and the screen use the same wording. Whether consent should also be the legal basis is a question for the lawyer ([LAWYER] note in the privacy policy).
 
 The screen states in plain language:
 
-- what is sent for each feature: chat (the question and the retrieved passages from the course), note formatting (the transcript or document text being formatted), study material (the same), cloud transcription (the audio), OCR (the page or image);
-- who receives it: the StudentLLM gateway, then the named providers of the provider set, with their region once known;
+- what is sent for each feature: text features (chat, note formatting, study material: the question and the retrieved passages, or the transcript or document text being formatted), cloud transcription (the audio), OCR (the page or image);
+- who receives it: the StudentLLM gateway, then the named providers of the provider set, with their regions, as returned by `GET /v1/provider-sets`;
 - what the service keeps (account, plan, usage counters, timestamps; the full list is linked) and what it does not keep (the content, the prompts and the answers);
 - that the provider receives the content in transit to produce the answer, and under which retention terms;
 - that cloud use is optional, can be turned off at any time, and that the app then goes back to purely local behavior;
 - links to the terms and the privacy policy.
 
-Controls and behavior:
+**Consent model.**
 
-- Consent is recorded per provider set and per feature (chat and notes, transcription and OCR), with the consent text version. A course can be marked "never cloud" at any time; such a course is excluded from every cloud request.
-- The app sends the consent version with each request. If the routed model needs a provider set that is not consented, the gateway answers `consent_outdated`, the app does not send, and it asks for consent or uses the local model. A new provider, a new category of data or a material policy change requires consent again.
-- A **What will be sent** preview shows the exact payload (the passages and the question) before the first request, and an inspector is available later for each answer.
-- While cloud is in use the interface shows a persistent cloud indicator and the usage meter. Each answer states whether it came from a cloud or a local model, and generated content is labeled as AI-generated.
+- Consent is recorded per provider set (a named, versioned list of providers) and per feature. There are three features: `chat` (which covers every text feature), `transcription` and `ocr`.
+- The consent text is bundled in the app per `text_version`. The app compares the bundled version with the `consent_text_version` the server returns for the set; if they differ it does not collect consent (it asks the user to use a build that matches, and falls back to local).
+- Consent records are append-only, with one active record per provider set. A new grant replaces the active record, and a withdrawal ends it. Withdrawn means `consent_outdated`.
+- On the POST content routes (chat, transcription, OCR) the app sends the active consent record id for the provider set of the routed model. Other routes carry no consent or idempotency headers. A new provider, a new category of data or a material policy change produces a new provider set version and requires consent again.
 - Consent is stored locally (never part of a backup) and recorded with the account through `POST /v1/consent`.
+
+**Controls and behavior.**
+
+- A course can be marked "never cloud" at any time.
+- **Course-tagged payloads.** The webview hands the Rust client a payload tagged with the courses that contributed to it. The Rust client refuses to send if any contributing course is flagged never-cloud, using its own copy of the flags, not the webview's. The "What will be sent" preview is shown before the first request and again whenever the set of contributing courses changes from the one last previewed. The tags are not sent to the gateway.
+- An inspector shows the exact payload of each past cloud answer.
+- While cloud is in use the interface shows a persistent cloud indicator and the usage meter. Each answer states whether it came from a cloud or a local model, and generated content is labeled as AI-generated.
 - Turning cloud off, signing out, or deleting the account is available from the account screen. Withdrawal is as easy as consent.
 - Fallback notices are explicit: "Your monthly cloud budget is used up. Using your local model until <date>." The app never silently switches a free user's content to a cloud model.
-- A user who never clicks Sign in, and a signed-in user with all features off, make no request to the service.
+- A user who never clicks Sign in, a signed-out cloud panel, and a signed-in user with all features off make no request to the service.
 
 ## Unit economics
 
@@ -355,10 +402,10 @@ Each phase has an exit criterion. A phase does not start the next one until its 
 | Phase | Scope | Exit criterion |
 | --- | --- | --- |
 | 0. Local 0.1.0 | Ship the local, free app (in progress; see [status.md](./status.md)) | `v0.1.0` tagged with the draft release published and the local app verified; no cloud code in the app |
-| 1. Design and legal review | This plan and [cloud-api.md](./cloud-api.md) finalized; terms and privacy policy reviewed by a lawyer; provider contracts read; company details filled; DPIA decision made | Reviewed legal documents with all placeholders resolved; provider checklist passed for the first production model; written decision on the blocking open items |
-| 2. Gateway and private beta | Build the gateway with auth (Google and email code), consent enforcement, credit quotas, rate limits, the body allowlist, the routing table, a staging environment and a minimal non-shipped test client; no billing; a few invited users on a manual allowlist | Security requirements met and tested (logging test, SSRF and allowlist tests, token refresh and reuse tests, reservation and reconciler tests); cost per user measured against the ceiling for four weeks; budget fallback verified; no content in any log confirmed by audit |
-| 3. Billing | Paddle in sandbox, then live: server-side checkout, webhooks per the specification, plan changes, cancellation, refunds | Sandbox end-to-end passes (purchase, renewal, cancel, refund, chargeback, failed payment, out-of-order and duplicate webhooks, unknown account id, account deletion with cancellation); first live transaction processed and reconciled; unit economics recomputed with real fees and costs |
-| 4. Desktop UI | Prerequisite: the `csp: null` gap closed. Then: Rust-side cloud client, account screen, consent screen, usage meter, local fallback, "never cloud" per course; README, SECURITY.md and provider docs updated | A user can sign in, consent, use a cloud answer, see the meter, hit the budget, and fall back to the local model; the "signed in, all features off, zero requests" test and the "never signed in, zero requests" test pass; the webview cannot read a token; accessibility checks pass |
+| 1. Design and legal review | This plan, [cloud-api.md](./cloud-api.md) and [cloud-api.openapi.yaml](./cloud-api.openapi.yaml) finalized, with the fixtures validated against the schemas; terms and privacy policy reviewed by a lawyer; provider contracts read; company details filled; DPIA decision made | Reviewed legal documents with all placeholders resolved; provider checklist passed for the first production model; written decision on the blocking open items |
+| 2. Gateway and private beta | Build the gateway with auth (Google and email code, terms acceptance, device limit), consent enforcement, credit quotas with idempotency states and the reconciler, chat only (transcription and OCR routes follow once their providers are decided, before phase 4), rate limits, the body allowlist, the routing table, a staging environment and a minimal non-shipped test client; no billing; a few invited users on a manual allowlist | Security requirements met and tested (logging test, SSRF and allowlist tests, token refresh and reuse tests, reservation, reconciler and double-settlement tests; the fixtures pass against the gateway); cost per user measured against the ceiling for four weeks; budget fallback verified; no content in any log confirmed by audit |
+| 3. Billing | Paddle in sandbox, then live: server-side checkout, webhooks per the specification, plan changes, cancellation, refunds | Sandbox end-to-end passes (purchase, renewal, cancel, refund, chargeback, failed payment, out-of-order and duplicate webhooks, unknown account id, account deletion with the tombstone and cancel retry, `already_subscribed`, mapping by stored subscription id); first live transaction processed and reconciled; unit economics recomputed with real fees and costs |
+| 4. Desktop UI | Prerequisite: the `csp: null` gap closed. Then: Rust-side cloud client, account screen, consent screen, usage meter, local fallback, "never cloud" per course; README, SECURITY.md and provider docs updated | A user can sign in, consent, use a cloud answer, see the meter, hit the budget, and fall back to the local model; the three zero-traffic tests pass (never signed in; signed-out cloud panel; signed in with all features off); the Rust client refuses never-cloud courses and re-previews when the course set changes; the webview cannot read a token; accessibility checks pass |
 | 5. Public launch | Open sign-up, public pricing page, support route, status page | Phase 4 criteria hold in production; terms and privacy policy published and linked in the app; monitoring and spend alarms active; a rollback and kill-switch drill completed |
 | 6. Encrypted backup (after launch) | Backup design finalized and reviewed; endpoints added to the API contract; client and server implementation; separate consent | Restore tested on a clean device with cloud off after restore; a key-loss test behaves as documented; the 100 MB cap and per-account tenancy are tested; the privacy policy and terms updated and re-consented |
 
@@ -368,7 +415,7 @@ Blocking before phase 2:
 - Choose the legal entity details, hosting region and email provider; fill every placeholder in the legal drafts.
 - Lawyer review of the terms and the privacy policy, including the right of withdrawal, the semester pass renewal, tacit renewal and cancellation, the minimum age, the DPIA question, the legal basis for content in transit, and the AI Act transparency wording.
 - Confirm the first production provider's commercial terms, retention, training policy, DPA and processing region; confirm `gpt-oss-120b` is still listed as a production model.
-- Decide the account state store and the platform snapshot retention (and its effect on deletion).
+- Decide the account state store, the EU region options, whether to pay for regional controls on the edge, and the shortest available D1 snapshot retention (verify; it affects deletion wording).
 - Complete Google OAuth client configuration and check its verification and data-use requirements.
 
 Before phase 3:
@@ -377,9 +424,11 @@ Before phase 3:
 - Confirm whether the semester pass renews automatically (current plan: it does not).
 
 Before phase 4:
-- Choose cloud transcription and OCR providers and price them in credits.
+- Decide the cloud transcription and OCR providers (before phase 4; also needed to finish the consent text and the provider set) and price them in credits.
 - Choose a Qwen production option and its provider after reading current terms.
 - Decide retention periods for logs, ledgers and usage totals.
+- Decide how a user changes the stored sign-in email (not supported in v1) and how a lost email and Google access is recovered.
+- Decide the support route for a `device_limit_reached` user who cannot complete the `manage_token` flow.
 - Decide how bring-your-own-key keys are stored in the packaged app (the OS credential store) and which providers are offered in the packaged build.
 - Close the `csp: null` gap and add the zero-traffic tests.
 - Update README, SECURITY.md and [providers.md](./providers.md) to describe the cloud mode.

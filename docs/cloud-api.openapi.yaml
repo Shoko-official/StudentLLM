@@ -1,0 +1,1287 @@
+openapi: 3.1.0
+info:
+  title: StudentLLM Cloud API
+  version: 1.0.0-draft
+  summary: Planned HTTP contract of the optional StudentLLM cloud gateway (not implemented).
+  description: |
+    Machine-readable source of truth for the gateway API. `docs/cloud-api.md` explains it and
+    `docs/cloud-plan.md` holds the decisions behind it. Draft for review: endpoint and field names are
+    proposals until phase 1 closes. Conformance fixtures live in `docs/cloud-api-fixtures/`.
+
+    Versioning: the `/v1` prefix is stable. Additive changes (new optional fields, new endpoints, new
+    error codes, new enum values clients must tolerate) are allowed within `/v1`. A breaking change
+    (removing or renaming a field, changing a type or a meaning, making an optional field required)
+    bumps the prefix to `/v2`, and `/v1` stays available for a documented period.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: https://api.example.invalid
+    description: "[PLACEHOLDER: production API domain]"
+security:
+  - bearerAuth: []
+tags:
+  - name: auth
+  - name: account
+  - name: billing
+  - name: inference
+  - name: ops
+paths:
+  /auth/start:
+    get:
+      tags: [auth]
+      operationId: authStart
+      summary: Start Google sign-in in the system browser
+      description: |
+        Redirects to Google. The app must have shown the terms and privacy notice and obtained an
+        explicit acceptance before calling this route, and passes the accepted `terms_version`.
+        Invalid parameters render a plain error page and never redirect to an unverified URI.
+      security: []
+      parameters:
+        - { name: client_id, in: query, required: true, schema: { type: string, const: studentllm-desktop } }
+        - name: redirect_uri
+          in: query
+          required: true
+          description: Loopback (scheme http, host 127.0.0.1, exact path, port ignored) or a deep link fallback.
+          schema: { type: string }
+        - { name: response_type, in: query, required: true, schema: { type: string, const: code } }
+        - { name: state, in: query, required: true, schema: { type: string, minLength: 16, maxLength: 128 } }
+        - { name: code_challenge, in: query, required: true, schema: { type: string, minLength: 43, maxLength: 128 } }
+        - { name: code_challenge_method, in: query, required: true, schema: { type: string, const: S256 } }
+        - { name: provider, in: query, required: true, schema: { type: string, const: google } }
+        - name: terms_version
+          in: query
+          required: false
+          description: Required when the sign-in may create an account or the stored acceptance is older. Missing or outdated gives terms_required.
+          schema: { type: string }
+        - name: link_ticket
+          in: query
+          required: false
+          description: Single-use ticket from POST /v1/account/link, to link Google to a signed-in account.
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to Google (scope `openid email`, no offline access).
+          headers:
+            Location: { schema: { type: string } }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "403": { $ref: "#/components/responses/TermsRequired" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /auth/callback:
+    get:
+      tags: [auth]
+      operationId: authCallback
+      summary: Google redirect target
+      description: |
+        Verifies state, exchanges Google's code, verifies the ID token (signature, iss, aud, exp, nonce),
+        requires `email_verified=true`, then discards every Google token. Redirects to the app with a
+        single-use code (about 60 seconds) or `error` (`access_denied`, `server_error`,
+        `identity_conflict`, `terms_required`) and the app's `state`, with no further detail.
+      security: []
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: error, in: query, schema: { type: string } }
+      responses:
+        "302":
+          description: Redirect to the app redirect_uri.
+          headers:
+            Location: { schema: { type: string } }
+  /auth/token:
+    post:
+      tags: [auth]
+      operationId: authToken
+      summary: Exchange the Google authorization code (PKCE)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TokenRequest" }
+      responses:
+        "200":
+          description: Tokens.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "400": { $ref: "#/components/responses/InvalidCode" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /auth/email/request:
+    post:
+      tags: [auth]
+      operationId: authEmailRequest
+      summary: Request a one-time sign-in code by email
+      description: |
+        Always answers the same way whether or not the address is known. A new request invalidates all
+        earlier codes for the address. The email carries an 8-character code and no link, and says to
+        enter it only in StudentLLM on the device where it was requested.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmailRequest" }
+      responses:
+        "202":
+          description: Accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmailRequestResponse" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "403": { $ref: "#/components/responses/TermsRequired" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /auth/email/verify:
+    post:
+      tags: [auth]
+      operationId: authEmailVerify
+      summary: Verify the one-time code and obtain tokens
+      description: |
+        Returns tokens directly; PKCE binds the code to the requesting device. Wrong, expired, used or
+        over-attempted codes all return the same `invalid_code`. `identity_conflict` is returned when the
+        email belongs to an account that cannot be used for this sign-in. `device_limit_reached` leaves
+        the code unconsumed and returns a short-lived `manage_token` in `error.details` that is valid only
+        for the device list and device revocation routes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmailVerify" }
+      responses:
+        "200":
+          description: Tokens.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "400": { $ref: "#/components/responses/InvalidCode" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /auth/refresh:
+    post:
+      tags: [auth]
+      operationId: authRefresh
+      summary: Rotate the refresh token and get a new access token
+      description: |
+        Called lazily by the Rust client just before a cloud request. The previous token presented again
+        within about 30 seconds of rotation, before its successor was used, returns the same successor
+        (retry grace window). Any other reuse revokes the session family (`refresh_reuse`). `auth_time` is
+        copied unchanged from the session. Idle lifetime 30 days, absolute lifetime 180 days;
+        expiry returns `session_revoked`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: Tokens.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: authLogout
+      summary: Revoke this session family
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LogoutRequest" }
+      responses:
+        "204": { description: Revoked (idempotent). }
+  /.well-known/jwks.json:
+    get:
+      tags: [auth]
+      operationId: jwks
+      summary: Public signing keys
+      security: []
+      responses:
+        "200":
+          description: JWKS with the current and previous Ed25519 keys.
+          headers:
+            Cache-Control: { schema: { type: string, examples: ["public, max-age=300"] } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Jwks" }
+  /v1/devices:
+    get:
+      tags: [account]
+      operationId: listDevices
+      summary: List devices (at most 3)
+      description: Also accepts a `manage_token` (scope devices) obtained from a `device_limit_reached` error.
+      responses:
+        "200":
+          description: Devices.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/devices/{device_id}:
+    delete:
+      tags: [account]
+      operationId: revokeDevice
+      summary: Revoke a device
+      description: Revokes the session family and writes the revocation to the account's Durable Object, so it takes effect immediately on the inference path.
+      parameters:
+        - { name: device_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/account:
+    get:
+      tags: [account]
+      operationId: getAccount
+      summary: Get the account
+      responses:
+        "200":
+          description: Account.
+          headers:
+            X-StudentLLM-Plan-Version: { $ref: "#/components/headers/PlanVersion" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [account]
+      operationId: deleteAccount
+      summary: Delete the account
+      description: |
+        Requires a fresh sign-in (`auth_time` within 5 minutes, otherwise `reauth_required`). Sets the
+        account to a `deleting` tombstone that keeps only the Paddle ids, cancels the subscription (retry
+        with backoff and an operator alert on failure), and purges everything once the cancel succeeded.
+        Sends a notification email to the account address. Naturally idempotent: repeating the call while
+        deleting returns the same 202.
+      responses:
+        "202":
+          description: Deletion started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeletionResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/account/export:
+    get:
+      tags: [account]
+      operationId: exportAccount
+      summary: Export everything the service holds about the account
+      description: Never contains course content because none is stored. Rate limited to a few per day.
+      responses:
+        "200":
+          description: JSON attachment.
+          headers:
+            Content-Disposition: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountExport" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/account/terms:
+    post:
+      tags: [account]
+      operationId: acceptTerms
+      summary: Accept a newer version of the terms
+      description: Used after `terms_required` for an existing account. The app shows the bundled terms and privacy notice first.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TermsAcceptance" }
+      responses:
+        "200":
+          description: Recorded.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TermsAcceptance" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/account/link:
+    post:
+      tags: [account]
+      operationId: linkLoginMethod
+      summary: Get a single-use ticket to link a second login method
+      description: |
+        Requires `auth_time` within 5 minutes (a fresh sign-in; otherwise `reauth_required`). The second
+        method must then complete its own sign-in carrying the ticket. The second method's verified
+        email must equal the account's email (one verified email per account); a different email, or an
+        email that belongs to another account, gives `identity_conflict`. Sends a notification email to
+        the account address on completion.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LinkRequest" }
+      responses:
+        "200":
+          description: Ticket.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LinkTicket" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /v1/account/login-methods/{method}:
+    delete:
+      tags: [account]
+      operationId: unlinkLoginMethod
+      summary: Unlink a login method
+      description: Never leaves the account with zero methods. Sends a notification email to the account address. Requires a fresh sign-in.
+      parameters:
+        - { name: method, in: path, required: true, schema: { type: string, enum: [google, email] } }
+      responses:
+        "204": { description: Unlinked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /v1/provider-sets:
+    get:
+      tags: [account]
+      operationId: listProviderSets
+      summary: Current provider sets and consent text versions
+      description: |
+        The consent text is bundled in the app per `consent_text_version`. The app must compare its bundled
+        version with the server's; on a mismatch it must not collect consent and falls back to local.
+        The list is small and bounded; it is not paginated.
+      responses:
+        "200":
+          description: Provider sets.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProviderSetList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/consent:
+    post:
+      tags: [account]
+      operationId: recordConsent
+      summary: Record or withdraw consent (append-only)
+      description: |
+        Appends a record. There is one active record per provider set. Posting an identical grant while it
+        is active returns the existing record (idempotent by construction, no Idempotency-Key). Withdrawing
+        makes the previous record inactive; requests then get `consent_outdated`. Every text feature
+        (chat, note formatting, study material) is the `chat` feature.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConsentRequest" }
+      responses:
+        "200":
+          description: The active (or withdrawn) record.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConsentRecord" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /v1/billing/checkout:
+    post:
+      tags: [billing]
+      operationId: createCheckout
+      summary: Create a Paddle checkout server-side
+      description: |
+        The gateway creates the Paddle transaction with the account id in `custom_data` (used only to bind
+        the first event). The client never supplies a price id. `already_subscribed` (409) is returned
+        when an active subscription exists, including one set to cancel at period end; the user manages it
+        in the customer portal.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CheckoutRequest" }
+      responses:
+        "200":
+          description: Checkout.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CheckoutResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /v1/billing/portal:
+    get:
+      tags: [billing]
+      operationId: getPortal
+      summary: Short-lived Paddle customer portal link
+      responses:
+        "200":
+          description: Portal link.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PortalResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /webhooks/paddle:
+    post:
+      tags: [billing]
+      operationId: paddleWebhook
+      summary: Paddle webhook receiver
+      description: |
+        Public. Verify the HMAC over the raw bytes first, then claim the event id atomically, apply, respond.
+        After the first event, events are mapped by the stored subscription or customer id, not by
+        `custom_data`. Unknown subscriptions or accounts are quarantined with a 200. Only allowlisted fields
+        are persisted or logged; all other fields are discarded. Signature header name, format and event
+        names must be verified against Paddle's current documentation.
+      security: []
+      parameters:
+        - { name: Paddle-Signature, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PaddleEvent" }
+      responses:
+        "200":
+          description: Accepted, duplicate or quarantined.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: false }
+        "401": { description: Bad signature (no detail). }
+        "503": { description: Temporary failure; Paddle retries. }
+  /v1/models:
+    get:
+      tags: [inference]
+      operationId: listModels
+      summary: Logical models
+      description: The list is small and bounded; it is not paginated.
+      responses:
+        "200":
+          description: Models.
+          headers:
+            X-StudentLLM-Plan-Version: { $ref: "#/components/headers/PlanVersion" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ModelList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/usage:
+    get:
+      tags: [inference]
+      operationId: getUsage
+      summary: Credits in the current window
+      description: Fetched once when the cloud panel opens (signed in); otherwise the app reads the credit headers.
+      responses:
+        "200":
+          description: Usage.
+          headers:
+            X-StudentLLM-Credits-Remaining: { $ref: "#/components/headers/CreditsRemaining" }
+            X-StudentLLM-Credits-Limit: { $ref: "#/components/headers/CreditsLimit" }
+            X-StudentLLM-Credits-Reset: { $ref: "#/components/headers/CreditsReset" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Usage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/chat/completions:
+    post:
+      tags: [inference]
+      operationId: chatCompletions
+      summary: Chat completion (streaming or not), covers every text feature
+      description: |
+        Check order: client version, token and session, terms, plan, consent, rate limit, then budget.
+        The request is validated against an allowlist (unknown fields, `tools`, `n` above 1, `logit_bias`,
+        `user`, `stream_options` are rejected; images only as data URLs; `max_tokens` clamped; `model`
+        rewritten from the routing table). With `stream: true` the response is `text/event-stream`:
+        unnamed OpenAI chunks, then `event: usage`, then `data: [DONE]`; a failure after the first byte is
+        one `event: error` carrying the error envelope, then the stream closes without `[DONE]`.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/ConsentHeader" }
+        - { $ref: "#/components/parameters/ClientHeader" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatRequest" }
+      responses:
+        "200":
+          description: Completion or SSE stream.
+          headers:
+            X-StudentLLM-Credits-Remaining: { $ref: "#/components/headers/CreditsRemaining" }
+            X-StudentLLM-Credits-Limit: { $ref: "#/components/headers/CreditsLimit" }
+            X-StudentLLM-Credits-Reset: { $ref: "#/components/headers/CreditsReset" }
+            X-StudentLLM-Credits-Charged: { $ref: "#/components/headers/CreditsCharged" }
+            X-StudentLLM-Plan-Version: { $ref: "#/components/headers/PlanVersion" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatResponse" }
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE. See the `UsageEvent` and `Error` schemas for the named events.
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "426": { $ref: "#/components/responses/ClientOutdated" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /v1/audio/transcriptions:
+    post:
+      tags: [inference]
+      operationId: transcribeAudio
+      summary: Transcribe audio (one chunk)
+      description: |
+        Same check order and headers as chat. Reservation is `max(declared duration, bytes-based bound)`
+        and settlement uses the provider-reported duration (full reservation if none). The duration cap
+        applies per request: the client splits long recordings into chunks, each with its own
+        Idempotency-Key, and applies timestamp offsets when merging segments.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/ConsentHeader" }
+        - { $ref: "#/components/parameters/ClientHeader" }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/TranscriptionRequest" }
+      responses:
+        "200":
+          description: Transcript.
+          headers:
+            X-StudentLLM-Credits-Remaining: { $ref: "#/components/headers/CreditsRemaining" }
+            X-StudentLLM-Credits-Charged: { $ref: "#/components/headers/CreditsCharged" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TranscriptionResponse" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/InvalidRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /v1/ocr:
+    post:
+      tags: [inference]
+      operationId: ocrImage
+      summary: Recognize text in an image (response schema provisional)
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/ConsentHeader" }
+        - { $ref: "#/components/parameters/ClientHeader" }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/OcrRequest" }
+      responses:
+        "200":
+          description: Text.
+          headers:
+            X-StudentLLM-Credits-Remaining: { $ref: "#/components/headers/CreditsRemaining" }
+            X-StudentLLM-Credits-Charged: { $ref: "#/components/headers/CreditsCharged" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OcrResponse" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /v1/status:
+    get:
+      tags: [ops]
+      operationId: getStatus
+      summary: Service status and minimum client version
+      description: |
+        Called only after sign-in or after an explicit "check service status" click; never from a
+        signed-out panel and never in the background. Reads `X-StudentLLM-Client`.
+      security: []
+      parameters:
+        - { $ref: "#/components/parameters/ClientHeader" }
+      responses:
+        "200":
+          description: Status.
+          headers:
+            X-StudentLLM-Min-Client: { $ref: "#/components/headers/MinClient" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        "426": { $ref: "#/components/responses/ClientOutdated" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: EdDSA-signed access token, about 15 minutes. Claims are in `AccessTokenClaims`.
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Client UUID, valid 24 hours, scoped per account and route. Only on the POST content routes. States:
+        in_flight, failed_before_forward, settled. A retry while in_flight returns idempotency_conflict with
+        details.state=in_progress. Only failed_before_forward may reuse the reservation. A forwarded
+        attempt is always settled at actual usage or the full reservation. There is no body-fingerprint
+        check; use a fresh key for each logical request.
+      schema: { type: string, format: uuid }
+    ConsentHeader:
+      name: X-StudentLLM-Consent
+      in: header
+      required: true
+      description: Id of the active consent record for the provider set of the routed model. Only on the POST content routes.
+      schema: { type: string }
+    ClientHeader:
+      name: X-StudentLLM-Client
+      in: header
+      required: true
+      description: Client name and version, for example `studentllm-desktop/0.2.0`.
+      schema: { type: string, pattern: "^[a-z0-9-]+/[0-9]+\\.[0-9]+\\.[0-9]+.*$" }
+  headers:
+    CreditsRemaining:
+      description: Credits left in the current window after this request's reservation.
+      schema: { type: integer, minimum: 0 }
+    CreditsLimit:
+      description: Credits in the current window.
+      schema: { type: integer, minimum: 0 }
+    CreditsReset:
+      description: When the window ends (RFC 3339).
+      schema: { type: string, format: date-time }
+    CreditsCharged:
+      description: Credits settled for this request (non-streaming; streams use the usage event). Rounded up per request.
+      schema: { type: integer, minimum: 0 }
+    PlanVersion:
+      description: Monotonic integer that changes whenever plan state changes. The client refetches GET /v1/account when it differs from its cached value.
+      schema: { type: integer, minimum: 0 }
+    MinClient:
+      description: Minimum supported client version. The app has no updater.
+      schema: { type: string }
+    RequestId:
+      description: Server-generated request id.
+      schema: { type: string }
+  responses:
+    InvalidRequest:
+      description: Invalid request, unknown field, or unsupported media type.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InvalidCode:
+      description: invalid_code or invalid_request.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: invalid_token, session_revoked, refresh_reuse or reauth_required.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: plan_required, account_suspended or terms_required.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TermsRequired:
+      description: terms_required.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: not_found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: consent_outdated, idempotency_conflict, identity_conflict, device_limit_reached or already_subscribed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PayloadTooLarge:
+      description: payload_too_large.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ClientOutdated:
+      description: client_outdated.
+      headers:
+        X-StudentLLM-Min-Client: { $ref: "#/components/headers/MinClient" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: rate_limited, concurrency_limit or budget_exhausted.
+      headers:
+        Retry-After: { schema: { type: integer, minimum: 0 } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unavailable:
+      description: provider_unavailable or kill_switch.
+      headers:
+        Retry-After: { schema: { type: integer, minimum: 0 } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    ErrorCode:
+      type: string
+      enum:
+        - budget_exhausted
+        - rate_limited
+        - concurrency_limit
+        - payload_too_large
+        - plan_required
+        - consent_outdated
+        - session_revoked
+        - refresh_reuse
+        - provider_unavailable
+        - kill_switch
+        - identity_conflict
+        - device_limit_reached
+        - account_suspended
+        - already_subscribed
+        - terms_required
+        - invalid_request
+        - invalid_token
+        - invalid_code
+        - reauth_required
+        - not_found
+        - idempotency_conflict
+        - client_outdated
+        - unsupported_media_type
+        - internal_error
+    Error:
+      type: object
+      description: The one error envelope, also the payload of the SSE `error` event. Never contains content, secrets or provider text.
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          additionalProperties: false
+          properties:
+            code: { $ref: "#/components/schemas/ErrorCode" }
+            message: { type: string }
+            request_id: { type: string }
+            retry_after_seconds: { type: integer, minimum: 0 }
+            details:
+              type: object
+              description: Small structured hints. Known keys include resets_at, state (in_progress or settled), request_id, credits_charged, terms_version, consent_text_version, manage_token, min_client_version.
+              additionalProperties: true
+    UsageEvent:
+      type: object
+      description: Payload of the SSE `usage` event, sent once before `[DONE]` on success.
+      required: [credits_charged, credits_remaining, resets_at]
+      additionalProperties: false
+      properties:
+        credits_charged: { type: integer, minimum: 0 }
+        credits_remaining: { type: integer, minimum: 0 }
+        resets_at: { type: string, format: date-time }
+    AccessTokenClaims:
+      type: object
+      description: JWT claims. `alg` is pinned to EdDSA. No email, plan or budget is in the token.
+      required: [iss, aud, sub, sid, did, auth_time, iat, exp, jti]
+      additionalProperties: false
+      properties:
+        iss: { type: string }
+        aud: { type: string, const: studentllm-gateway }
+        sub: { type: string, description: Internal account id }
+        sid: { type: string, description: Session family id }
+        did: { type: string, description: Device id }
+        auth_time: { type: integer, description: Time of the last fresh sign-in; unchanged by refresh }
+        iat: { type: integer }
+        exp: { type: integer }
+        jti: { type: string }
+        scope: { type: string, enum: [devices], description: Present only on a manage_token }
+    Jwks:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            required: [kty, crv, kid, x]
+            properties:
+              kty: { type: string, const: OKP }
+              crv: { type: string, const: Ed25519 }
+              kid: { type: string }
+              x: { type: string }
+              alg: { type: string, const: EdDSA }
+              use: { type: string, const: sig }
+    TokenRequest:
+      type: object
+      required: [grant_type, code, code_verifier, redirect_uri, client_id]
+      additionalProperties: false
+      properties:
+        grant_type: { type: string, const: authorization_code }
+        code: { type: string }
+        code_verifier: { type: string, minLength: 43, maxLength: 128 }
+        redirect_uri: { type: string }
+        client_id: { type: string, const: studentllm-desktop }
+        device_id: { type: string, description: Honored only if it belongs to the authenticated account; otherwise a new device id is created }
+        device_label: { type: string, maxLength: 64 }
+    EmailRequest:
+      type: object
+      required: [email, code_challenge, code_challenge_method, terms_version]
+      additionalProperties: false
+      properties:
+        email: { type: string, maxLength: 254, description: Normalized to lower case server-side; plus tags and dots are kept }
+        code_challenge: { type: string, minLength: 43, maxLength: 128 }
+        code_challenge_method: { type: string, const: S256 }
+        terms_version: { type: string, description: Version of the terms and privacy notice the user explicitly accepted before this request }
+        device_label: { type: string, maxLength: 64 }
+        link_ticket: { type: string }
+    EmailRequestResponse:
+      type: object
+      required: [expires_in, resend_after, code_length]
+      additionalProperties: false
+      properties:
+        expires_in: { type: integer, const: 600 }
+        resend_after: { type: integer, minimum: 0 }
+        code_length: { type: integer, const: 8 }
+    EmailVerify:
+      type: object
+      required: [email, code, code_verifier]
+      additionalProperties: false
+      properties:
+        email: { type: string, maxLength: 254 }
+        code: { type: string, pattern: "^[A-Za-z0-9]{8}$" }
+        code_verifier: { type: string, minLength: 43, maxLength: 128 }
+        device_id: { type: string }
+        device_label: { type: string, maxLength: 64 }
+    TokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, refresh_token, device_id, account]
+      additionalProperties: false
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, const: Bearer }
+        expires_in: { type: integer }
+        refresh_token: { type: string }
+        device_id: { type: string }
+        account:
+          type: object
+          required: [account_id, email, plan]
+          additionalProperties: false
+          properties:
+            account_id: { type: string }
+            email: { type: string }
+            plan: { type: string, enum: [free, plus] }
+    RefreshRequest:
+      type: object
+      required: [refresh_token, device_id]
+      additionalProperties: false
+      properties:
+        refresh_token: { type: string }
+        device_id: { type: string }
+    LogoutRequest:
+      type: object
+      required: [refresh_token]
+      additionalProperties: false
+      properties:
+        refresh_token: { type: string }
+    Device:
+      type: object
+      required: [device_id, label, created_at, last_used_at, current]
+      additionalProperties: false
+      properties:
+        device_id: { type: string }
+        label: { type: string }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time }
+        current: { type: boolean }
+    DeviceList:
+      type: object
+      required: [devices]
+      additionalProperties: false
+      properties:
+        devices:
+          type: array
+          maxItems: 3
+          items: { $ref: "#/components/schemas/Device" }
+    Plan:
+      type: object
+      required: [id, status, period_start, period_end, cancel_at_period_end]
+      additionalProperties: false
+      properties:
+        id: { type: string, enum: [free, plus_monthly, plus_semester] }
+        status: { type: string, enum: [none, active, past_due, canceled, revoked] }
+        period_start: { type: [string, "null"], format: date-time }
+        period_end: { type: [string, "null"], format: date-time }
+        cancel_at_period_end: { type: boolean }
+    Credits:
+      type: object
+      required: [limit, used, reserved, remaining, resets_at]
+      additionalProperties: false
+      properties:
+        limit: { type: integer, minimum: 0 }
+        used: { type: integer, minimum: 0 }
+        reserved: { type: integer, minimum: 0 }
+        remaining: { type: integer, minimum: 0 }
+        resets_at: { type: [string, "null"], format: date-time }
+    Account:
+      type: object
+      required: [account_id, email, login_methods, plan, plan_version, credits, consents, terms_version, created_at]
+      additionalProperties: false
+      properties:
+        account_id: { type: string }
+        email: { type: string, description: The stored sign-in email; never updated automatically when Google's email changes }
+        login_methods:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [google, email] }
+        plan: { $ref: "#/components/schemas/Plan" }
+        plan_version: { type: integer, minimum: 0 }
+        credits: { $ref: "#/components/schemas/Credits" }
+        consents:
+          type: array
+          description: The active consent records, at most one per provider set.
+          items: { $ref: "#/components/schemas/ConsentRecord" }
+        terms_version: { type: string }
+        created_at: { type: string, format: date-time }
+    DeletionResponse:
+      type: object
+      required: [deletion_id, state]
+      additionalProperties: false
+      properties:
+        deletion_id: { type: string }
+        state: { type: string, const: deleting }
+    AccountExport:
+      type: object
+      required: [account, login_methods, consent_records, terms_acceptance, plan, sessions, usage_totals]
+      additionalProperties: false
+      properties:
+        account: { type: object, additionalProperties: true }
+        login_methods: { type: array, items: { type: string } }
+        consent_records: { type: array, items: { $ref: "#/components/schemas/ConsentRecord" } }
+        terms_acceptance: { type: object, additionalProperties: true }
+        plan: { type: object, additionalProperties: true }
+        sessions: { type: array, items: { type: object, additionalProperties: true }, description: Device labels and dates only, no tokens }
+        usage_totals: { type: array, items: { type: object, additionalProperties: true } }
+    TermsAcceptance:
+      type: object
+      required: [terms_version]
+      additionalProperties: false
+      properties:
+        terms_version: { type: string }
+        accepted_at: { type: string, format: date-time, readOnly: true }
+    LinkRequest:
+      type: object
+      required: [method]
+      additionalProperties: false
+      properties:
+        method: { type: string, enum: [google, email] }
+    LinkTicket:
+      type: object
+      required: [link_ticket, expires_in]
+      additionalProperties: false
+      properties:
+        link_ticket: { type: string }
+        expires_in: { type: integer, const: 300 }
+    ProviderSet:
+      type: object
+      required: [id, version, providers, regions, consent_text_version, features]
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        version: { type: integer, minimum: 1 }
+        providers:
+          type: array
+          items: { type: string }
+        regions:
+          type: array
+          items: { type: string }
+        consent_text_version: { type: string }
+        features:
+          type: array
+          items: { $ref: "#/components/schemas/ConsentFeature" }
+    ProviderSetList:
+      type: object
+      required: [provider_sets]
+      additionalProperties: false
+      properties:
+        provider_sets:
+          type: array
+          items: { $ref: "#/components/schemas/ProviderSet" }
+    ConsentFeature:
+      type: string
+      enum: [chat, transcription, ocr]
+      description: "`chat` covers every text feature (chat, note formatting, study material)."
+    ConsentRequest:
+      type: object
+      required: [provider_set, provider_set_version, features, text_version, granted]
+      additionalProperties: false
+      properties:
+        provider_set: { type: string }
+        provider_set_version: { type: integer, minimum: 1 }
+        features:
+          type: array
+          items: { $ref: "#/components/schemas/ConsentFeature" }
+          uniqueItems: true
+        text_version: { type: string, description: Must equal the server's current consent_text_version for the set }
+        granted: { type: boolean }
+    ConsentRecord:
+      type: object
+      required: [consent_id, provider_set, provider_set_version, features, text_version, granted, recorded_at]
+      additionalProperties: false
+      properties:
+        consent_id: { type: string, description: Sent in X-StudentLLM-Consent }
+        provider_set: { type: string }
+        provider_set_version: { type: integer }
+        features:
+          type: array
+          items: { $ref: "#/components/schemas/ConsentFeature" }
+        text_version: { type: string }
+        granted: { type: boolean }
+        recorded_at: { type: string, format: date-time }
+    CheckoutRequest:
+      type: object
+      required: [plan]
+      additionalProperties: false
+      properties:
+        plan: { type: string, enum: [plus_monthly, plus_semester] }
+    CheckoutResponse:
+      type: object
+      required: [checkout_url, expires_at]
+      additionalProperties: false
+      properties:
+        checkout_url: { type: string }
+        expires_at: { type: string, format: date-time }
+    PortalResponse:
+      type: object
+      required: [url, expires_at]
+      additionalProperties: false
+      properties:
+        url: { type: string }
+        expires_at: { type: string, format: date-time }
+    PaddleEvent:
+      type: object
+      description: Loose on purpose. Only allowlisted fields are read, persisted or logged; everything else is discarded.
+      required: [event_id, event_type, occurred_at]
+      additionalProperties: true
+      properties:
+        event_id: { type: string }
+        event_type: { type: string }
+        occurred_at: { type: string, format: date-time }
+        data: { type: object, additionalProperties: true }
+    Model:
+      type: object
+      required: [id, object, features, context_window, max_output_tokens, provider_set, requires_plan, available]
+      additionalProperties: false
+      properties:
+        id: { type: string }
+        object: { type: string, const: model }
+        features:
+          type: array
+          items: { $ref: "#/components/schemas/ConsentFeature" }
+        context_window: { type: integer }
+        max_output_tokens: { type: integer }
+        credits_per_1k_input: { type: number }
+        credits_per_1k_output: { type: number }
+        provider_set: { type: string }
+        provider_set_version: { type: integer }
+        requires_plan: { type: string, const: plus }
+        available: { type: boolean }
+    ModelList:
+      type: object
+      required: [object, data]
+      additionalProperties: false
+      properties:
+        object: { type: string, const: list }
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/Model" }
+    Usage:
+      type: object
+      required: [window, credits, by_feature, requests]
+      additionalProperties: false
+      properties:
+        window:
+          type: object
+          required: [start, end]
+          additionalProperties: false
+          properties:
+            start: { type: string, format: date-time }
+            end: { type: string, format: date-time }
+        credits: { $ref: "#/components/schemas/Credits" }
+        by_feature:
+          type: object
+          additionalProperties: false
+          properties:
+            chat: { type: integer, minimum: 0 }
+            transcription: { type: integer, minimum: 0 }
+            ocr: { type: integer, minimum: 0 }
+        requests: { type: integer, minimum: 0 }
+    ChatContentPart:
+      oneOf:
+        - type: object
+          required: [type, text]
+          additionalProperties: false
+          properties:
+            type: { type: string, const: text }
+            text: { type: string }
+        - type: object
+          required: [type, image_url]
+          additionalProperties: false
+          properties:
+            type: { type: string, const: image_url }
+            image_url:
+              type: object
+              required: [url]
+              additionalProperties: false
+              properties:
+                url: { type: string, pattern: "^data:image/(png|jpeg|webp);base64," }
+    ChatMessage:
+      type: object
+      required: [role, content]
+      additionalProperties: false
+      properties:
+        role: { type: string, enum: [system, user, assistant] }
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              minItems: 1
+              items: { $ref: "#/components/schemas/ChatContentPart" }
+    ChatRequest:
+      type: object
+      description: Allowlist. Anything else, including tools, tool_choice, functions, n above 1, logit_bias, user and stream_options, is rejected with invalid_request.
+      required: [model, messages]
+      additionalProperties: false
+      properties:
+        model: { type: string, description: Logical model id from GET /v1/models }
+        messages:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/ChatMessage" }
+        stream: { type: boolean, default: false }
+        max_tokens: { type: integer, minimum: 1, description: Clamped to the model's max_output_tokens }
+        temperature: { type: number, minimum: 0, maximum: 2 }
+        top_p: { type: number, minimum: 0, maximum: 1 }
+        stop:
+          oneOf:
+            - type: string
+            - type: array
+              maxItems: 4
+              items: { type: string }
+        response_format:
+          type: object
+          required: [type]
+          additionalProperties: true
+          properties:
+            type: { type: string, enum: [json_object, json_schema] }
+        reasoning_effort: { type: string, enum: [low, medium, high] }
+    ChatResponse:
+      type: object
+      required: [id, object, created, model, choices, usage]
+      additionalProperties: true
+      properties:
+        id: { type: string }
+        object: { type: string, const: chat.completion }
+        created: { type: integer }
+        model: { type: string, description: The logical model id }
+        choices:
+          type: array
+          items:
+            type: object
+            required: [index, message, finish_reason]
+            additionalProperties: true
+            properties:
+              index: { type: integer }
+              message:
+                type: object
+                required: [role, content]
+                additionalProperties: true
+                properties:
+                  role: { type: string, const: assistant }
+                  content: { type: [string, "null"] }
+              finish_reason: { type: [string, "null"] }
+        usage:
+          type: object
+          required: [prompt_tokens, completion_tokens, total_tokens]
+          additionalProperties: true
+          properties:
+            prompt_tokens: { type: integer }
+            completion_tokens: { type: integer }
+            total_tokens: { type: integer }
+    TranscriptionRequest:
+      type: object
+      required: [file, model]
+      additionalProperties: false
+      properties:
+        file:
+          type: string
+          contentMediaType: audio/*
+          contentEncoding: binary
+          description: "audio/mpeg, audio/mp4, audio/wav, audio/webm, audio/ogg or audio/flac. Size and duration caps are enforced while the body streams in and from the container on the server."
+        model: { type: string }
+        language: { type: string, pattern: "^[a-z]{2}$" }
+        response_format: { type: string, enum: [json, verbose_json], default: verbose_json }
+        duration_hint_seconds:
+          type: number
+          minimum: 0
+          description: Optional client-declared duration. The reservation is max(declared, bytes-based bound).
+    TranscriptionResponse:
+      type: object
+      required: [text, language, duration_seconds, segments]
+      additionalProperties: false
+      properties:
+        text: { type: string }
+        language: { type: string }
+        duration_seconds: { type: number, description: Provider-reported duration used for settlement }
+        segments:
+          type: array
+          items:
+            type: object
+            required: [start, end, text]
+            additionalProperties: false
+            properties:
+              start: { type: number }
+              end: { type: number }
+              text: { type: string }
+    OcrRequest:
+      type: object
+      required: [file, model]
+      additionalProperties: false
+      properties:
+        file:
+          type: string
+          contentMediaType: image/*
+          contentEncoding: binary
+        model: { type: string }
+        language: { type: string }
+    OcrResponse:
+      type: object
+      required: [text, blocks]
+      additionalProperties: false
+      properties:
+        text: { type: string }
+        blocks:
+          type: array
+          items:
+            type: object
+            required: [text, bbox]
+            additionalProperties: false
+            properties:
+              text: { type: string }
+              bbox:
+                oneOf:
+                  - type: "null"
+                  - type: array
+                    minItems: 4
+                    maxItems: 4
+                    items: { type: number }
+    Status:
+      type: object
+      required: [status, min_client_version, features, server_time]
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [ok, degraded, maintenance] }
+        min_client_version: { type: string }
+        features:
+          type: object
+          required: [chat, transcription, ocr]
+          additionalProperties: false
+          properties:
+            chat: { type: boolean }
+            transcription: { type: boolean }
+            ocr: { type: boolean }
+        server_time: { type: string, format: date-time }

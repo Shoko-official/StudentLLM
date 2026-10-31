@@ -1,0 +1,59 @@
+{
+  "name": "account.get.success",
+  "operation": "getAccount",
+  "description": "Account with plan version and active consent records.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/account",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001",
+      "X-StudentLLM-Plan-Version": "7"
+    },
+    "body": {
+      "account_id": "acc_01EXAMPLE",
+      "email": "student@example.invalid",
+      "login_methods": [
+        "email",
+        "google"
+      ],
+      "plan": {
+        "id": "plus_monthly",
+        "status": "active",
+        "period_start": "2026-11-01T00:00:00Z",
+        "period_end": "2026-12-01T00:00:00Z",
+        "cancel_at_period_end": false
+      },
+      "plan_version": 7,
+      "credits": {
+        "limit": 12500,
+        "used": 4377,
+        "reserved": 0,
+        "remaining": 8123,
+        "resets_at": "2026-12-01T00:00:00Z"
+      },
+      "consents": [
+        {
+          "consent_id": "cns_01EXAMPLE",
+          "provider_set": "ps1",
+          "provider_set_version": 1,
+          "features": [
+            "chat"
+          ],
+          "text_version": "2026-11-01",
+          "granted": true,
+          "recorded_at": "2026-11-01T09:30:00Z"
+        }
+      ],
+      "terms_version": "2026-11-01",
+      "created_at": "2026-11-01T09:00:00Z"
+    }
+  },
+  "response_schema": "Account"
+}

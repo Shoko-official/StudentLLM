@@ -1,0 +1,36 @@
+{
+  "name": "auth-email-verify.device_limit_reached",
+  "operation": "authEmailVerify",
+  "description": "Fourth device. The code is not consumed; manage_token is valid only for the device routes.",
+  "request": {
+    "method": "POST",
+    "path": "/auth/email/verify",
+    "headers": {
+      "Content-Type": "application/json",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    },
+    "body": {
+      "email": "student@example.invalid",
+      "code": "K7M2QX9D",
+      "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "device_limit_reached",
+        "message": "This account already has 3 devices. Revoke one to continue.",
+        "request_id": "req_01EXAMPLE0000000000000001",
+        "details": {
+          "max_devices": 3,
+          "manage_token": "mt_EXAMPLE_NOT_A_REAL_TOKEN"
+        }
+      }
+    }
+  },
+  "response_schema": "Error"
+}

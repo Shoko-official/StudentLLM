@@ -13,7 +13,7 @@ This policy describes how personal data is processed when you use the optional S
 
 It does not cover the local StudentLLM application. In local mode the application makes no implicit network request, keeps your course data on your device, and does not send it to us. Using the application with your own provider key is a direct relationship between you and that provider, which has its own policy.
 
-The Service is off by default. The application makes no request to the Service unless you sign in, open the cloud panel, or trigger a cloud action, and it sends course content only after you have seen the consent screen and agreed to the providers and features listed on it.
+The Service is off by default. The application makes no request to the Service unless you sign in or trigger a cloud action. The signed-out cloud panel is static and makes no request; the service status is checked only after you sign in or when you click to check it. The application sends course content only after you have seen the consent screen and agreed to the providers and features listed on it.
 
 ## 2. Controller
 
@@ -27,25 +27,30 @@ Data protection officer: [PLACEHOLDER: name and contact of the DPO, or a stateme
 
 ### 3.1 What we hold
 
-This is the complete list of what the Service stores about you.
+This is the complete list of what the Service stores about you. It is derived from the data table in the cloud plan.
 
 | Data | Details | Purpose |
 | --- | --- | --- |
-| Account | An internal account identifier (random, meaningless outside the Service); your sign-in email address, converted to lower case and **stored in clear** because we must send email to it; whether it is verified; your Google account subject identifier if you link Google; account status; creation, last sign-in and last request times | Run your account |
-| Pending sign-in records | A hash of the sign-in state, a PKCE challenge, the type of redirect, a hash of the one-time email code, attempt and resend counters, times. Deleted when used or after 10 minutes | Complete one sign-in |
-| Sign-in counters | Failed-attempt and request counters keyed by a salted hash of your email address and of your connection address. **We do not store IP addresses.** The salt rotates and the entries expire after 24 hours | Limit brute force and abuse |
-| Sessions and devices | A session identifier, a hash of your current refresh token, a device identifier, a device label (by default the platform name, which you can edit), creation, last use and revocation times | Keep you signed in, let you revoke a device |
-| Consent records | Which provider set and which features you agreed to, the version of the consent text, whether you granted or withdrew, and the time | Prove and enforce your consent |
-| Plan | Your plan, status and period, the anchor date of your usage window, whether it cancels at the end of the period, and the customer and subscription identifiers assigned by Paddle | Know what you are entitled to |
-| Payment event records | Paddle event identifier, type, time, and a short list of non-sensitive fields (ids, status, period, price identifier). Events we cannot match to an account are kept in quarantine without creating an account | Process payments reliably and without duplicates |
-| Usage | Credits used and reserved per usage window and per feature, request counts, and a short ledger of settled requests (request identifier, feature, model name, credits, time) kept 24 hours for idempotency and then folded into totals | Enforce your budget and show your usage meter |
+| Account | An internal account identifier (random, meaningless outside the Service); your single verified sign-in email address, converted to lower case and **stored in clear** because we must send email to it; your Google account subject identifier if you link Google; account status; the version of the terms and privacy notice you accepted and when; creation, last sign-in and last request times | Run your account |
+| Terms acceptance | The `terms_version` you accepted before signing in and the time, stored when the account is created and updated when you accept a newer version | Prove that you accepted the terms |
+| Pending sign-in records | A hash of the sign-in state, a PKCE challenge, the accepted terms version, the type of redirect, a hash of the one-time email code, attempt and resend counters, times. A new code request replaces earlier codes. Deleted when used or after 10 minutes | Complete one sign-in |
+| Link tickets | A hash of a single-use ticket, your account identifier, the method being linked, times. Deleted when used or after 5 minutes | Link a second login method after a fresh sign-in |
+| Sign-in counters | Request and failed-attempt counters keyed separately by a salted hash of your email address and by a salted hash of your connection address. **We do not store IP addresses.** The salt rotates and the entries expire after 24 hours | Limit brute force and abuse |
+| Device counters | The number of active devices and sessions on your account and the number of new sessions per day | Enforce the limit of 3 devices; detect abuse |
+| Sessions and devices | A session identifier, a hash of your current refresh token, the hash and rotation time of the previous refresh token, a device identifier, a device label (by default the platform name, which you can edit), the time of your last fresh sign-in, creation and last-use times, and the idle (30 days) and absolute (180 days) expiry times. For a short retry window of about 30 seconds after each refresh, the new token is held encrypted under a key derived from the previous token and then erased | Keep you signed in, let you revoke a device, allow a lost response to be retried safely |
+| Idempotency records | A hash of a retry key scoped to your account and the route, a request identifier, a state (in progress, failed before forwarding, settled), the credits charged, and a time. **No content and nothing derived from content.** Kept 24 hours | Let a request be retried without being charged twice |
+| Consent records | Append-only records: which provider set and version and which features you agreed to or withdrew, the version of the consent text, and the time | Prove and enforce your consent |
+| Plan | Your plan, status, paid periods, usage windows and their limits, whether it cancels at the end of the period, the customer and subscription identifiers assigned by Paddle, and a plan version counter | Know what you are entitled to |
+| Payment event records | Paddle event identifier, type, time, and a short list of non-sensitive fields (identifiers, status, period, price identifier). **We do not store any other field of the payment events; they are discarded.** Events we cannot match to an account are kept in quarantine without creating an account | Process payments reliably and without duplicates |
+| Deletion record | When you delete your account, a record marked as deleting keeps only the Paddle customer and subscription identifiers until your subscription has been cancelled, then it is purged | Make sure the subscription is cancelled |
+| Usage | Credits used and reserved per usage window and per feature, request counts, and a short ledger of settled requests (request identifier, feature, model name, credits, time) kept 24 hours and then folded into totals | Enforce your budget and show your usage meter |
 | Operational logs | A request identifier, your account identifier, the route, a status code, credits charged, latency and time. No content, no tokens, no IP address | Operate and debug the Service |
 
-We do not receive or store your card number or billing address (Paddle does, see section 5). We do not store geolocation. We do not use advertising or analytics identifiers.
+We do not receive or store your card number, billing address, name or tax identifiers from payments (Paddle does, see section 5). We do not store geolocation. We do not use advertising or analytics identifiers.
 
 ### 3.2 What we do not store
 
-We do not store the content you send: not your questions, not the course passages, transcripts, documents, audio or images, and not the answers. We do not store request or response bodies, access tokens, plaintext refresh tokens or one-time codes.
+We do not store the content you send: not your questions, not the course passages, transcripts, documents, audio or images, and not the answers. We do not store request or response bodies, body hashes or fingerprints, access tokens, plaintext refresh tokens or one-time codes.
 
 ### 3.3 Content in transit
 
@@ -92,9 +97,9 @@ We use the following processors and independent providers. [PLACEHOLDER: confirm
 | --- | --- | --- | --- |
 | Inference provider: [PLACEHOLDER: provider legal name and processing region; the first planned production model is gpt-oss-120b on Groq, to be confirmed] | Processor | Content in transit (prompts and passages, transcript text), the pseudonymous per-account identifier | Must contract that it does not train on the content and keeps it no longer than needed to provide the response; retention [PLACEHOLDER: provider retention terms]. We route only to the providers in the set you consented to |
 | Transcription and OCR provider(s): [PLACEHOLDER: provider(s), chosen before launch] | Processor | Audio or images in transit | Same conditions; listed in the provider set shown on the consent screen |
-| Paddle ([PLACEHOLDER: Paddle legal entity]) | Merchant of record and **seller of record** of your purchase; controller for the sale, payment, tax and invoice data | Your purchase details, email, and billing data you give at checkout | Paddle's privacy notice applies to the checkout and refunds. We receive the plan status, identifiers and events |
+| Paddle ([PLACEHOLDER: Paddle legal entity]) | Merchant of record and **seller of record** of your purchase; controller for the sale, payment, tax and invoice data | Your purchase details, email, and billing data you give at checkout | Paddle's privacy notice applies to the checkout and refunds. We receive the plan status, identifiers and events and keep only the fields listed in section 3.1 |
 | Google ([PLACEHOLDER: Google legal entity]) | Identity provider when you choose Sign in with Google | Your sign-in with Google | Google's privacy policy applies to your Google account. We request only `openid` and `email`, no offline access, use the data only to sign you in, discard Google's tokens after verifying them, and follow the Google API Services User Data Policy including its limited-use rules [PLACEHOLDER: OAuth client configuration and verification status; LAWYER: confirm] |
-| Hosting and edge provider: [PLACEHOLDER: hosting provider, for example Cloudflare; location] | Processor | All traffic to the gateway, the account database and counters | It sees IP addresses and connection metadata and, because it terminates the connection, the request in transit. It does not store the content under our configuration. Its own retention for network metadata: [PLACEHOLDER: provider retention] |
+| Hosting and edge provider: [PLACEHOLDER: hosting provider, for example Cloudflare; the planned setup pins the account database, counters and storage to an EU region, to verify] | Processor | All traffic to the gateway, the account database and counters | It sees IP addresses and connection metadata and, because it terminates the connection, the request in transit. It does not store the content under our configuration. Its own retention for network metadata: [PLACEHOLDER: provider retention] |
 | Email delivery provider: [PLACEHOLDER: provider] | Processor | Your email address and the message with your one-time code | |
 | Monitoring and alerting provider: [PLACEHOLDER: provider, if any] | Processor | Operational metrics and logs without content | Only if used; configured not to receive content |
 | Support tool: [PLACEHOLDER: provider, if any] | Processor | The messages you send us | Only if used |
@@ -114,17 +119,23 @@ Periods are proposals to confirm. [LAWYER: confirm each.]
 | --- | --- |
 | Content in transit | Not stored by us; held in memory for the duration of the request. The provider retains it only as stated in its contract with us ([PLACEHOLDER: provider retention]) |
 | Prompts and answers | Not stored |
-| Account | While your account is open; deleted within [PLACEHOLDER: period, for example 30 days] of closure |
+| Account | While your account is open; deleted within [PLACEHOLDER: period, for example 30 days] of closure, once the subscription cancellation has succeeded |
 | Pending sign-in records | Deleted on use or after 10 minutes |
 | Sign-in counters | 24 hours |
 | Sessions and devices | Until they expire or are revoked, then deleted within [PLACEHOLDER: period] |
 | Consent records | Duration of the account plus [PLACEHOLDER: period] as proof |
 | Plan | While your account is open; transaction references for [PLACEHOLDER: period] after the sale, according to accounting obligations |
+| Terms acceptance | Duration of the account plus [PLACEHOLDER: period] as proof |
+| Link tickets | Deleted on use or after 5 minutes |
+| Device counters | While the sessions exist; daily counts [PLACEHOLDER: period, for example 30 days] |
+| Previous refresh token hash and the encrypted successor | The hash until the session ends; the encrypted successor is erased after about 30 seconds or at its first use |
+| Idempotency records | 24 hours |
+| Deletion record | Until the subscription cancellation succeeds, then purged |
 | Payment event records | [PLACEHOLDER: period, for example 90 days] |
 | Usage ledger and totals | Ledger 24 hours; totals [PLACEHOLDER: period, for example the current and previous 12 months] |
 | Operational logs | [PLACEHOLDER: period, for example 30 days] |
 | Support messages | [PLACEHOLDER: period] after the request is closed |
-| Platform snapshots and backups | Our database platform may keep point-in-time snapshots; deleted data can persist in them for up to [PLACEHOLDER: platform retention period, to verify with the provider] before it is overwritten, and is not restored except to recover from an incident |
+| Platform snapshots and backups | Our database platform keeps point-in-time snapshots. We use the shortest retention the platform allows; deleted data can persist in them for up to [PLACEHOLDER: platform retention period, to verify with the provider] before it is overwritten, and is not restored except to recover from an incident |
 
 ## 8. Security
 
@@ -137,7 +148,8 @@ You have the right to: access the personal data we hold about you; have it recti
 How to exercise them:
 
 - **Access and portability:** the account screen offers an export of everything the Service holds (section 3.1) in a machine-readable file. You can also contact [PLACEHOLDER: privacy contact].
-- **Erasure and closure:** you can delete your account from the account screen; it cancels your subscription and deletes the data in section 3.1, subject to the retention periods above.
+- **Erasure and closure:** you can delete your account from the account screen; it cancels your subscription and deletes the data in section 3.1, subject to the retention periods above. We send a notification email to your account address when a login method is linked or unlinked and when the account is deleted.
+- **Refunds:** where you are entitled to a refund, we will arrange it through Paddle, the seller of record. [LAWYER: confirm who owes and who issues refunds.]
 - **Withdrawal of consent:** turn the cloud feature or the whole cloud mode off in the application; it takes effect at the next request.
 - **Content:** the Service does not hold your content, so there is nothing to access, correct or export on our side. Your course data stays on your device. When encrypted backup is introduced, you will be able to download it and decrypt it on your device, and delete it.
 - Other requests, and objection: write to [PLACEHOLDER: privacy contact]. We reply within one month, extendable under the law, and may ask you to verify your identity.

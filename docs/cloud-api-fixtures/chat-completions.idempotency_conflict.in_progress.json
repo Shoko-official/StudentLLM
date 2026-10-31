@@ -1,0 +1,51 @@
+{
+  "name": "chat-completions.idempotency_conflict.in_progress",
+  "operation": "chatCompletions",
+  "description": "A retry while the first attempt is in_flight. The client waits and does not resend with a new key.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0",
+      "X-StudentLLM-Consent": "cns_01EXAMPLE",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a11",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "model": "studentllm-large",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Answer from the provided course passages."
+        },
+        {
+          "role": "user",
+          "content": "EXAMPLE QUESTION AND PASSAGES"
+        }
+      ],
+      "stream": false,
+      "max_tokens": 512
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001",
+      "Retry-After": "5"
+    },
+    "body": {
+      "error": {
+        "code": "idempotency_conflict",
+        "message": "A request with this key is still in progress.",
+        "request_id": "req_01EXAMPLE0000000000000001",
+        "retry_after_seconds": 5,
+        "details": {
+          "state": "in_progress",
+          "request_id": "req_01EXAMPLE0000000000000000"
+        }
+      }
+    }
+  },
+  "response_schema": "Error"
+}

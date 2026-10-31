@@ -154,7 +154,9 @@ docs/
   desktop.md                 Tauri desktop runtime setup and validation
   course-notes.md             live note lifecycle and rich-block provider contract
   cloud-plan.md              planned optional cloud tier: architecture, quotas, rollout
-  cloud-api.md               planned HTTP contract of the cloud gateway
+  cloud-api.md               planned cloud gateway API: conventions and behaviors
+  cloud-api.openapi.yaml     OpenAPI 3.1 source of truth for that API
+  cloud-api-fixtures/        shared JSON conformance examples for the API
   legal/                     draft terms and privacy policy for the cloud tier (not legal advice)
 ```
 

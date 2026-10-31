@@ -1,0 +1,41 @@
+{
+  "name": "models.list.success",
+  "operation": "listModels",
+  "description": "Logical models; the app compares provider_set with its consent.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/models",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001",
+      "X-StudentLLM-Plan-Version": "7"
+    },
+    "body": {
+      "object": "list",
+      "data": [
+        {
+          "id": "studentllm-large",
+          "object": "model",
+          "features": [
+            "chat"
+          ],
+          "context_window": 131072,
+          "max_output_tokens": 4096,
+          "credits_per_1k_input": 0.2,
+          "credits_per_1k_output": 0.8,
+          "provider_set": "ps1",
+          "provider_set_version": 1,
+          "requires_plan": "plus",
+          "available": true
+        }
+      ]
+    }
+  },
+  "response_schema": "ModelList"
+}
