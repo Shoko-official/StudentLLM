@@ -143,6 +143,9 @@ jobs:
         run: npm run build
       - name: Desktop debug build
         run: npm run desktop:build
+      - name: Desktop Rust tests (Windows)
+        if: runner.os == 'Windows'
+        run: npm run desktop:test
 
   desktop-package:
     name: Desktop package (${{ matrix.os }})
