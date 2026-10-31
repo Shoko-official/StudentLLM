@@ -196,6 +196,24 @@ test.describe('when IndexedDB is not available', () => {
 });
 
 test.describe('real browser storage behaviour', () => {
+  test('a transaction that never completes ends in a message and the fallback, not an endless loading screen', async ({ page }) => {
+    test.setTimeout(60_000);
+    await page.addInitScript((workspace) => {
+      if (localStorage.getItem('studentllm.workspace.v1') === null) localStorage.setItem('studentllm.workspace.v1', workspace);
+      // IndexedDB opens, but no transaction ever reports that it completed.
+      Object.defineProperty(IDBTransaction.prototype, 'oncomplete', { configurable: true, get: () => null, set: () => undefined });
+    }, JSON.stringify(createFixtureWorkspace()));
+    await page.goto('/');
+
+    await expect(page.getByText(/Opening your workspace/)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Reload' })).toBeVisible({ timeout: 15_000 });
+    const banner = page.getByRole('alert').filter({ hasText: 'did not answer in time' });
+    await expect(banner).toBeVisible({ timeout: 35_000 });
+    await expect(banner.getByRole('button', { name: 'Reload' })).toBeVisible();
+    await expect(banner.getByRole('button', { name: 'Export this course' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Self-attention and Context' })).toBeVisible();
+  });
+
   test('a full IndexedDB (the browser\'s own quota) is a failed save, never an exception', async ({ page, context }) => {
     await page.route('**/__seed__', (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>seed</title>' }));
     await page.goto('/__seed__');
