@@ -7,6 +7,8 @@ export interface SidecarHealth {
 export interface SidecarHealthOptions {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /** Report addresses outside this computer as unreachable instead of requesting them (packaged app). */
+  loopbackOnly?: boolean;
 }
 
 export async function probeSidecar(baseUrl: string | undefined, options: SidecarHealthOptions = {}): Promise<SidecarHealth> {
@@ -17,6 +19,7 @@ export async function probeSidecar(baseUrl: string | undefined, options: Sidecar
     return { available: false, detail: 'The service URL is invalid.' };
   }
   if (!normalizedUrl) return { available: false, detail: 'Not configured.' };
+  if (options.loopbackOnly && !isLoopbackServiceUrl(normalizedUrl)) return { available: false, detail: LOOPBACK_ONLY_DETAIL };
 
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   const controller = new AbortController();
@@ -41,4 +44,4 @@ export async function probeSidecar(baseUrl: string | undefined, options: Sidecar
   }
 }
 import { readJsonResponse } from './response-json';
-import { normalizeServiceBaseUrl } from './service-url';
+import { isLoopbackServiceUrl, LOOPBACK_ONLY_DETAIL, normalizeServiceBaseUrl } from './service-url';

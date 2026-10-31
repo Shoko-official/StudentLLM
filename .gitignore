@@ -4,6 +4,7 @@ src-tauri/gen/
 .venv-bench/
 .venv-bench-sys/
 dist/
+dist-csp/
 .env
 .env.*
 !.env.example

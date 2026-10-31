@@ -4,7 +4,7 @@
 
 Open **Settings** to set the local OpenAI-compatible endpoint and model, speech service address, and document service address. **Save connections** persists these settings on the current device and checks the services. The app reads `/models`, shows the discovered model IDs, and selects the first available model when the configured model is not loaded. A reachable model catalog confirms availability, not successful generation.
 
-During development, use `/lm-studio/v1` for LM Studio. The same field accepts Bionic and any server implementing the OpenAI-compatible `/v1/models` and `/v1/chat/completions` routes. For a packaged app, use its local server address and enable CORS for the application origin when needed.
+During development, use `/lm-studio/v1` for LM Studio. The same field accepts Bionic and any server implementing the OpenAI-compatible `/v1/models` and `/v1/chat/completions` routes. For a packaged app, use its local server address and enable CORS for the application origin when needed. The packaged app only connects to `127.0.0.1` and `localhost` because of its Content Security Policy; a remote or LAN address is reported as unavailable. Reach a remote model through a local proxy or tunnel on `127.0.0.1` (see [Desktop runtime](./desktop.md#remote-model-endpoints-in-the-packaged-app)).
 
 Start the optional local services with a Python environment that has their dependencies installed:
 

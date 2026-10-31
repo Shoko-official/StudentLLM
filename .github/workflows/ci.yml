@@ -59,6 +59,13 @@ jobs:
         run: npm run desktop:check
       - name: Desktop Rust tests
         run: npm run desktop:test
+      - name: Navigation guard without debug assertions
+        # Pins the shipped behaviour (the dev server is denied). Only this crate is rebuilt; dependencies are reused.
+        env:
+          CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: 'false'
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml navigation::tests::denies_the_dev_server_without_debug_assertions -- --exact 2>&1 | tee navigation-release.log
+          grep -q "test result: ok. 1 passed" navigation-release.log
 
   cloud-gateway:
     name: Cloud gateway
@@ -169,6 +176,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Browser tests
         run: npm run test:e2e
+      - name: Browser tests with the production Content Security Policy
+        run: npm run test:e2e:csp
 
   desktop-ui:
     name: Desktop UI (${{ matrix.os }})

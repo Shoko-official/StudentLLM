@@ -1,3 +1,4 @@
+mod navigation;
 mod sidecars;
 mod workspace;
 
@@ -8,6 +9,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        .plugin(navigation::plugin::<tauri::Wry>())
         .manage(sidecars::SidecarSupervisor::default())
         .invoke_handler(tauri::generate_handler![
             workspace::load_workspace,

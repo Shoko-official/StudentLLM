@@ -29,6 +29,8 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    // The CSP browser tests serve the production build with the packaged app's policy (see playwright.config.ts).
+    preview: env.STUDENTLLM_PREVIEW_CSP ? { headers: { 'Content-Security-Policy': env.STUDENTLLM_PREVIEW_CSP } } : {},
     test: {
       environment: 'jsdom',
       setupFiles: './src/test/setup.ts',

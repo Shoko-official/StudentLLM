@@ -105,6 +105,7 @@ Provider credentials are read at runtime and are never loaded from a repository 
 - Browser development chat uses `/lm-studio/v1` through the built-in Vite proxy by default; set `VITE_LM_STUDIO_BASE_URL` only when overriding the endpoint. The proxy derives its target origin from `LM_STUDIO_BASE_URL` and keeps the request same-origin when LM Studio CORS is disabled.
 - An absolute browser endpoint remains supported when it allows the Vite origin through CORS; the browser integration never accepts an NVIDIA credential.
 - Optional endpoint and model overrides are listed in [.env.example](./.env.example); it contains no secret values.
+- The packaged desktop app is loopback-only: its Content Security Policy lets it call only `127.0.0.1` and `localhost`, so a remote or LAN model address needs a local proxy or tunnel (see [docs/desktop.md](./docs/desktop.md#remote-model-endpoints-in-the-packaged-app)).
 
 See [docs/providers.md](./docs/providers.md) for provider-specific commands.
 
