@@ -124,6 +124,77 @@ class PdfExtractionTests(unittest.TestCase):
         width, height = Image.open(BytesIO(calls[0])).size
         self.assertEqual((width, height), (612 * local_document_server.PDF_OCR_SCALE, 792 * local_document_server.PDF_OCR_SCALE))
 
+    def test_recovers_a_large_scan_below_a_native_caption_without_replacing_native_text(self):
+        pdf = pdf_fixtures.mixed_image_pdf(bytes([255]) * 100, 10, 10)
+        ocr_blocks = [
+            {"x": 144, "y": 80, "width": 160, "height": 24, "text": "Wrong OCR caption", "kind": "text"},
+            {"x": 160, "y": 500, "width": 200, "height": 40, "text": "Text inside the scan", "kind": "text"},
+        ]
+        with mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=True), \
+                mock.patch.object(local_document_server, "ocr_image", return_value=("rapidocr", ocr_blocks)) as ocr:
+            model, pages = local_document_server.extract_pdf(pdf)
+        self.assertEqual(model, "pdfminer+rapidocr")
+        self.assertEqual(pages[0]["text"], "Native caption\nText inside the scan")
+        self.assertEqual(pages[0]["blocks"][0]["kind"], "paragraph")
+        recovered = pages[0]["blocks"][1]
+        self.assertEqual((recovered["x"], recovered["y"], recovered["width"], recovered["height"]), (80, 250, 100, 20))
+        ocr.assert_called_once()
+
+    def test_keeps_native_pdf_text_without_running_ocr_for_a_small_decoration(self):
+        pdf = pdf_fixtures.mixed_image_pdf(bytes([255]) * 100, 10, 10, image_box=(50, 150, 40, 30))
+        with mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=True), \
+                mock.patch.object(local_document_server, "ocr_image") as ocr:
+            model, pages = local_document_server.extract_pdf(pdf)
+        self.assertEqual((model, pages[0]["text"]), ("pdfminer", "Native caption"))
+        ocr.assert_not_called()
+
+    def test_keeps_native_caption_when_mixed_page_ocr_finds_no_text(self):
+        pdf = pdf_fixtures.mixed_image_pdf(bytes([255]) * 100, 10, 10)
+        with mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=True), \
+                mock.patch.object(local_document_server, "ocr_image", return_value=("rapidocr", [])) as ocr:
+            model, pages = local_document_server.extract_pdf(pdf)
+        self.assertEqual((model, pages[0]["text"]), ("pdfminer+rapidocr", "Native caption"))
+        ocr.assert_called_once()
+
+    def test_does_not_hide_a_mixed_page_ocr_failure_behind_the_native_caption(self):
+        pdf = pdf_fixtures.mixed_image_pdf(bytes([255]) * 100, 10, 10)
+        with mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=True), \
+                mock.patch.object(local_document_server, "ocr_image", side_effect=ValueError("unreadable raster")):
+            with self.assertRaisesRegex(ValueError, "unreadable raster"):
+                local_document_server.extract_pdf(pdf)
+
+    def test_keeps_available_native_text_when_mixed_page_ocr_is_not_installed(self):
+        pdf = pdf_fixtures.mixed_image_pdf(bytes([255]) * 100, 10, 10)
+        with mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=False), \
+                mock.patch.object(local_document_server, "ocr_image") as ocr:
+            model, pages = local_document_server.extract_pdf(pdf)
+        self.assertEqual((model, pages[0]["text"]), ("pdfminer", "Native caption"))
+        ocr.assert_not_called()
+
+    def test_does_not_re_ocr_a_large_scan_already_covered_by_native_text(self):
+        native = [("A complete native paragraph " * 3, 72, 680 - index * 18) for index in range(28)]
+        pdf = pdf_fixtures.mixed_image_pdf(bytes([255]) * 100, 10, 10, native_runs=native)
+        with mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=True), \
+                mock.patch.object(local_document_server, "ocr_image") as ocr:
+            model, pages = local_document_server.extract_pdf(pdf)
+        self.assertEqual(model, "pdfminer")
+        self.assertIn("complete native paragraph", pages[0]["text"])
+        ocr.assert_not_called()
+
+    def test_avoids_duplicate_native_text_when_completing_an_image_region(self):
+        native = [("Native caption", 72, 740), ("Known native word", 100, 400)]
+        pdf = pdf_fixtures.mixed_image_pdf(bytes([255]) * 100, 10, 10, native_runs=native)
+        ocr_blocks = [
+            {"x": 202, "y": 766, "width": 120, "height": 12, "text": "Wrong duplicated native", "kind": "text"},
+            {"x": 160, "y": 500, "width": 200, "height": 40, "text": "Recovered image text", "kind": "text"},
+        ]
+        with mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=True), \
+                mock.patch.object(local_document_server, "ocr_image", return_value=("rapidocr", ocr_blocks)):
+            _, pages = local_document_server.extract_pdf(pdf)
+        self.assertIn("Known native word", pages[0]["text"])
+        self.assertIn("Recovered image text", pages[0]["text"])
+        self.assertNotIn("Wrong duplicated", pages[0]["text"])
+
     def test_ocrs_only_pages_whose_text_layer_has_unmapped_glyphs(self):
         pdf = pdf_fixtures.text_pdf([[("F1", 11, 72, 700, "Garbled first page")], [("F1", 11, 72, 700, "Clean printed text.")]])
         real_layout_blocks = local_document_server.pdf_layout_blocks
@@ -180,6 +251,18 @@ class ScannedPdfOcrTests(unittest.TestCase):
         self.assertIn("energy", text)
         self.assertIn("solar", text)
         self.assertTrue(all(block["kind"] == "text" for block in pages[0]["blocks"]))
+
+    def test_reads_a_real_scan_region_without_losing_its_native_caption(self):
+        pixels = pdf_fixtures.gray_text_bitmap("Energie solaire\nMesure locale")
+        pdf = pdf_fixtures.mixed_image_pdf(pixels, pdf_fixtures.PAGE_WIDTH * 2, pdf_fixtures.PAGE_HEIGHT * 2)
+
+        model, pages = local_document_server.extract_pdf(pdf)
+
+        self.assertEqual(model, "pdfminer+rapidocr")
+        self.assertTrue(pages[0]["text"].startswith("Native caption\n"))
+        self.assertIn("energie solaire", pages[0]["text"].lower())
+        self.assertIn("mesure locale", pages[0]["text"].lower())
+        self.assertEqual(pages[0]["blocks"][0]["kind"], "paragraph")
 
 
 @unittest.skipUnless(PDF_ENGINES, "pdfminer.six and pypdfium2 are not installed")

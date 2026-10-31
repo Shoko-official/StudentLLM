@@ -172,15 +172,44 @@ def parse_args() -> argparse.Namespace:
 def has_ocr_dependencies() -> bool:
     try:
         from rapidocr import RapidOCR  # noqa: F401
-        return True
+        from rapidocr.utils.typings import ModelType, OCRVersion
+        return hasattr(OCRVersion, "PPOCRV6") and hasattr(ModelType, "SMALL")
     except Exception:
         return False
 
 
-def ocr_image(image: bytes) -> tuple[str, list[dict[str, object]]]:
-    from rapidocr import RapidOCR
+_OCR_ENGINE = None
+_OCR_LOCK = threading.Lock()
 
-    result = RapidOCR()(image)
+
+def _create_ocr_engine():
+    from rapidocr import RapidOCR
+    from rapidocr.utils.typings import ModelType, OCRVersion
+
+    try:
+        version, model_type = OCRVersion.PPOCRV6, ModelType.SMALL
+    except AttributeError as error:
+        raise RuntimeError("Install rapidocr>=3.10 to use the multilingual PP-OCRv6 small models.") from error
+    return RapidOCR(params={
+        "Det.ocr_version": version,
+        "Rec.ocr_version": version,
+        "Det.model_type": model_type,
+        "Rec.model_type": model_type,
+        "EngineConfig.onnxruntime.intra_op_num_threads": 4,
+        "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+        "EngineConfig.onnxruntime.use_cuda": False,
+        "EngineConfig.onnxruntime.use_dml": False,
+        "Global.log_level": "warning",
+    })
+
+
+def ocr_image(image: bytes) -> tuple[str, list[dict[str, object]]]:
+    global _OCR_ENGINE
+    # Requests share one mutable engine. Spawned PDF workers each keep their own engine for that document.
+    with _OCR_LOCK:
+        if _OCR_ENGINE is None:
+            _OCR_ENGINE = _create_ocr_engine()
+        result = _OCR_ENGINE(image)
     boxes = getattr(result, "boxes", None)
     texts = getattr(result, "txts", None)
     if boxes is None:
@@ -562,6 +591,9 @@ def has_unmapped_glyphs(text: str, threshold: float = 0.1) -> bool:
 
 MAX_PDF_PAGES = 500
 PDF_OCR_SCALE = 2
+# Read substantial image regions that a native text layer barely covers, without OCRing small decorations.
+PDF_OCR_IMAGE_MIN_PAGE_FRACTION = 0.1
+PDF_OCR_IMAGE_MAX_NATIVE_COVERAGE = 0.1
 
 # Time and size limits for one PDF request. pdfminer.six is pure Python and its box-ordering step is quadratic in
 # the number of text boxes, so pathological pages (thousands of scattered words) can take a minute or more.
@@ -678,6 +710,50 @@ def render_pdf_page_png(document: object, page_index: int) -> bytes:
         page.close()
 
 
+def pdf_uncovered_image_regions(layout_page: object, native_blocks: list[dict[str, object]]) -> list[tuple[float, float, float, float]]:
+    """Large raster boxes with little native text coverage; coordinates are top-left PDF points."""
+    from pdfminer.layout import LTContainer, LTImage
+
+    left, bottom, right, top = layout_page.bbox
+    page_area = (right - left) * (top - bottom)
+    regions = []
+
+    def visit(element: object) -> None:
+        if isinstance(element, LTImage):
+            x0, y0, x1, y1 = element.bbox
+            box = (max(0, x0 - left), max(0, top - y1), min(right - left, x1 - left), min(top - bottom, top - y0))
+            area = max(0, box[2] - box[0]) * max(0, box[3] - box[1])
+            if area <= 0 or area < page_area * PDF_OCR_IMAGE_MIN_PAGE_FRACTION:
+                return
+            covered = 0.0
+            for block in native_blocks:
+                bx0, by0, bx1, by1 = block["bbox"]
+                covered += max(0, min(box[2], bx1) - max(box[0], bx0)) * max(0, min(box[3], by1) - max(box[1], by0))
+            if covered / area < PDF_OCR_IMAGE_MAX_NATIVE_COVERAGE:
+                regions.append(box)
+        elif isinstance(element, LTContainer):
+            for child in element:
+                visit(child)
+
+    visit(layout_page)
+    return regions
+
+
+def image_region_ocr_blocks(blocks: list[dict[str, object]], regions: list[tuple[float, float, float, float]], native: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Keep OCR additions inside the raster regions, retaining native text instead of its OCR approximation."""
+    additions = []
+    for block in blocks:
+        normalized = {**block, **{key: float(block[key]) / PDF_OCR_SCALE for key in ("x", "y", "width", "height")}}
+        x, y = normalized["x"] + normalized["width"] / 2, normalized["y"] + normalized["height"] / 2
+        if not any(x0 <= x <= x1 and y0 <= y <= y1 for x0, y0, x1, y1 in regions):
+            continue
+        if any(float(item["x"]) <= x <= float(item["x"]) + float(item["width"])
+               and float(item["y"]) <= y <= float(item["y"]) + float(item["height"]) for item in native):
+            continue
+        additions.append(normalized)
+    return additions
+
+
 def _iter_characters(element: object):
     from pdfminer.layout import LTChar, LTContainer
 
@@ -718,6 +794,7 @@ def _extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
 
     pages: list[dict[str, object]] = []
     too_dense: list[int] = []
+    image_regions: dict[int, list[tuple[float, float, float, float]]] = {}
     resources = PDFResourceManager()
     device = PDFPageAggregator(resources, laparams=None)  # Raw characters first; the analysis is chosen per page.
     interpreter = PDFPageInterpreter(resources, device)
@@ -729,6 +806,7 @@ def _extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
             pages.append({"pageNumber": page_number, "text": "", "blocks": []})
             continue
         layout_blocks, width, height = pdf_layout_blocks(layout_page)
+        image_regions[page_number] = pdf_uncovered_image_regions(layout_page, layout_blocks)
         text = "\n".join(block_text(block) for block in layout_blocks).strip()
         pages.append({
             "pageNumber": page_number,
@@ -742,10 +820,11 @@ def _extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
             f"Page {too_dense[0]} has more than {PDF_MAX_PAGE_CHARACTERS:,} text characters, which is too many to read "
             "as text in a reasonable time. Install the OCR dependencies so such pages can be read as images."
         )
-    # A page with no text layer, or one whose glyphs cannot be mapped to letters, is rasterised and read by OCR.
+    # OCR missing/unmapped text, and supplement uncovered raster regions on otherwise readable mixed pages.
     ocr_pages = [
         page for page in pages
-        if page["pageNumber"] in too_dense or not page["text"] or (ocr_ready and has_unmapped_glyphs(str(page["text"])))
+        if page["pageNumber"] in too_dense or not page["text"]
+        or (ocr_ready and (has_unmapped_glyphs(str(page["text"])) or image_regions.get(page["pageNumber"])))
     ]
     if ocr_pages:
         import pypdfium2
@@ -755,6 +834,9 @@ def _extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
             try:
                 for page in ocr_pages:
                     _, blocks = ocr_image(render_pdf_page_png(document, int(page["pageNumber"]) - 1))
+                    if page["text"] and not has_unmapped_glyphs(str(page["text"])):
+                        # Native reading order is kept; recovered image text follows it, without invented structure.
+                        blocks = [*page["blocks"], *image_region_ocr_blocks(blocks, image_regions[page["pageNumber"]], page["blocks"])]
                     page["blocks"] = blocks
                     page["text"] = "\n".join(str(block["text"]) for block in blocks)
             finally:

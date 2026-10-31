@@ -1,5 +1,11 @@
+import sys
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
+from unittest import mock
 
+from scripts import local_document_server
 from scripts.local_document_server import extract_document, has_unmapped_glyphs, formula_aware_pdf_blocks, group_formula_blocks, is_block_covered_by_formula_crop, is_formula_block, is_formula_group
 
 
@@ -140,6 +146,97 @@ class LocalDocumentServerTests(unittest.TestCase):
 
     def test_does_not_count_the_letters_inside_placeholders_as_text(self):
         self.assertTrue(has_unmapped_glyphs("(cid:1)(cid:2)(cid:3)(cid:4)(cid:5)(cid:6)(cid:7)(cid:8)(cid:9)(cid:10)"))
+
+
+class LocalOcrEngineTests(unittest.TestCase):
+    def setUp(self):
+        self.cache = mock.patch.object(local_document_server, "_OCR_ENGINE", None, create=True)
+        self.cache.start()
+        self.addCleanup(self.cache.stop)
+        self.engine = mock.Mock(return_value=SimpleNamespace(boxes=[[(0, 0), (50, 0), (50, 10), (0, 10)]], txts=["Recovered text"]))
+        self.factory = mock.Mock(return_value=self.engine)
+        self.modules = mock.patch.dict(sys.modules, {
+            "rapidocr": SimpleNamespace(RapidOCR=self.factory),
+            "rapidocr.utils.typings": SimpleNamespace(
+                ModelType=SimpleNamespace(SMALL="small"), OCRVersion=SimpleNamespace(PPOCRV6="PP-OCRv6"),
+            ),
+        })
+        self.modules.start()
+        self.addCleanup(self.modules.stop)
+
+    def test_reuses_one_explicit_cpu_v6_small_engine_for_multiple_pages(self):
+        for image in (b"first page", b"second page"):
+            model, blocks = local_document_server.ocr_image(image)
+            self.assertEqual((model, blocks[0]["text"]), ("rapidocr", "Recovered text"))
+        self.assertEqual(self.factory.call_count, 1)
+        params = self.factory.call_args.kwargs["params"]
+        self.assertEqual(params["Det.ocr_version"], "PP-OCRv6")
+        self.assertEqual(params["Rec.ocr_version"], "PP-OCRv6")
+        self.assertEqual(params["Det.model_type"], "small")
+        self.assertEqual(params["Rec.model_type"], "small")
+        self.assertEqual(params["EngineConfig.onnxruntime.intra_op_num_threads"], 4)
+        self.assertEqual(params["EngineConfig.onnxruntime.inter_op_num_threads"], 1)
+        self.assertFalse(params["EngineConfig.onnxruntime.use_cuda"])
+        self.assertFalse(params["EngineConfig.onnxruntime.use_dml"])
+
+    def test_serializes_inference_when_http_threads_share_the_engine(self):
+        entered = threading.Event()
+        release = threading.Event()
+        second_started = threading.Event()
+        concurrent_entry = threading.Event()
+        output = self.engine.return_value
+
+        def infer(image):
+            if image == b"first":
+                entered.set()
+                if not release.wait(5):
+                    raise TimeoutError("test did not release the first OCR call")
+            elif not release.is_set():
+                concurrent_entry.set()
+            return output
+
+        def second():
+            second_started.set()
+            return local_document_server.ocr_image(b"second")
+
+        self.engine.side_effect = infer
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(local_document_server.ocr_image, b"first")
+            try:
+                self.assertTrue(entered.wait(5))
+                other = executor.submit(second)
+                self.assertTrue(second_started.wait(5))
+                self.assertFalse(concurrent_entry.wait(0.1), "the mutable OCR engine was entered concurrently")
+            finally:
+                release.set()
+            self.assertEqual(first.result(timeout=5)[0], "rapidocr")
+            self.assertEqual(other.result(timeout=5)[0], "rapidocr")
+        self.assertEqual(self.factory.call_count, 1)
+
+    def test_a_failed_inference_releases_the_lock_for_the_next_image(self):
+        self.engine.side_effect = [ValueError("invalid image"), self.engine.return_value]
+        with self.assertRaisesRegex(ValueError, "invalid image"):
+            local_document_server.ocr_image(b"bad")
+        self.assertEqual(local_document_server.ocr_image(b"good")[1][0]["text"], "Recovered text")
+        self.assertEqual(self.factory.call_count, 1)
+
+    def test_failed_construction_can_be_retried_without_poisoning_the_cache(self):
+        self.factory.side_effect = [RuntimeError("load failed"), self.engine]
+        with self.assertRaisesRegex(RuntimeError, "load failed"):
+            local_document_server.ocr_image(b"first")
+        self.assertEqual(local_document_server.ocr_image(b"retry")[0], "rapidocr")
+        self.assertEqual(local_document_server.ocr_image(b"next")[0], "rapidocr")
+        self.assertEqual(self.factory.call_count, 2)
+
+    def test_does_not_advertise_the_old_engine_as_supporting_multilingual_v6(self):
+        self.assertTrue(local_document_server.has_ocr_dependencies())
+        with mock.patch.dict(sys.modules, {"rapidocr.utils.typings": SimpleNamespace(
+            ModelType=SimpleNamespace(MOBILE="mobile"), OCRVersion=SimpleNamespace(PPOCRV4="PP-OCRv4"),
+        )}):
+            self.assertFalse(local_document_server.has_ocr_dependencies())
+            with self.assertRaisesRegex(RuntimeError, "rapidocr>=3.10"):
+                local_document_server.ocr_image(b"requires upgrade")
+        self.factory.assert_not_called()
 
 
 if __name__ == "__main__":
