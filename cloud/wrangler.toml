@@ -1,0 +1,51 @@
+# Cloudflare Worker configuration for the StudentLLM gateway.
+# PLACEHOLDERS ONLY. Never commit an account id, a secret or a real domain here.
+# Secrets are set with `wrangler secret put <NAME>` per environment (see .dev.vars.example
+# for the names) and, for local runs, in an untracked `.dev.vars` file.
+# The account id comes from the deploy environment (CLOUDFLARE_ACCOUNT_ID), not from this file.
+
+name = "studentllm-gateway"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+workers_dev = false
+
+# Platform features that persist request payloads must stay off (docs/cloud-plan.md,
+# "No content in logs"): no full request logging, replay or body sampling.
+[observability]
+enabled = false
+
+# TODO(owner: ops): bind the account Durable Object, D1 and the EU jurisdiction here when the
+# storage adapters land. They are intentionally absent from the scaffold.
+
+[vars]
+ENVIRONMENT = "development"
+PADDLE_ENVIRONMENT = "sandbox"
+GATEWAY_ISSUER = "https://api.example.invalid"
+MIN_CLIENT_VERSION = "0.1.0"
+TERMS_VERSION = "PLACEHOLDER-terms-version"
+GOOGLE_CLIENT_ID = ""
+
+# Vars are not inherited by named environments, so each one repeats them.
+[env.staging]
+name = "studentllm-gateway-staging"
+# routes = [{ pattern = "[PLACEHOLDER: staging api domain]/*", zone_name = "[PLACEHOLDER: zone]" }]
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+PADDLE_ENVIRONMENT = "sandbox"
+GATEWAY_ISSUER = "https://api.example.invalid"
+MIN_CLIENT_VERSION = "0.1.0"
+TERMS_VERSION = "PLACEHOLDER-terms-version"
+GOOGLE_CLIENT_ID = ""
+
+[env.production]
+name = "studentllm-gateway-production"
+# routes = [{ pattern = "[PLACEHOLDER: api domain]/*", zone_name = "[PLACEHOLDER: zone]" }]
+
+[env.production.vars]
+ENVIRONMENT = "production"
+PADDLE_ENVIRONMENT = "sandbox"
+GATEWAY_ISSUER = "https://api.example.invalid"
+MIN_CLIENT_VERSION = "0.1.0"
+TERMS_VERSION = "PLACEHOLDER-terms-version"
+GOOGLE_CLIENT_ID = ""

@@ -1,0 +1,23 @@
+# Copy to `.dev.vars` (untracked) for local runs. Values stay empty here.
+# Secret names come from docs/cloud-plan.md ("Security requirements" > Secrets).
+# Use separate values per environment (staging, production, Paddle sandbox and live).
+
+# Ed25519 private key (PKCS8, base64) that signs access tokens; rotated through `kid` and the JWKS.
+TOKEN_SIGNING_KEY=
+# Keyed HMAC for one-time email codes and other stored code hashes.
+CODE_HMAC_KEY=
+# HMAC key for the per-account pseudonym sent upstream as `user`.
+UPSTREAM_PSEUDONYM_KEY=
+# Master key for the rotating salt of the sign-in and rate-limit counters.
+RATE_LIMIT_SALT_KEY=
+# Google OAuth client secret (the client id is a public var).
+GOOGLE_CLIENT_SECRET=
+# Email provider key used to send one-time codes and notifications.
+EMAIL_PROVIDER_API_KEY=
+# Inference provider key (first production provider: Groq).
+GROQ_API_KEY=
+# Paddle API key and webhook secret (sandbox and live are never mixed).
+PADDLE_API_KEY=
+PADDLE_WEBHOOK_SECRET=
+# Optional: the previous webhook secret, accepted only during a rotation.
+PADDLE_WEBHOOK_SECRET_PREVIOUS=
