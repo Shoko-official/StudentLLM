@@ -154,6 +154,7 @@ docs/
   desktop.md                 Tauri desktop runtime setup and validation
   course-notes.md             live note lifecycle and rich-block provider contract
   cloud-plan.md              planned optional cloud tier: architecture, quotas, rollout
+  cloud-api.md               planned HTTP contract of the cloud gateway
   legal/                     draft terms and privacy policy for the cloud tier (not legal advice)
 ```
 
@@ -163,7 +164,7 @@ docs/
 - Extend the `SpeechEngine` contract to diarization and crash-resumable jobs while preserving the current live partial transcript path.
 - Extend OCR with handwriting recognition, richer formula recovery, diagram understanding, and region-level provenance.
 - Add reranking and a citation-first retrieval loop on top of the current hybrid lexical/dense adapter.
-- Cloud (planned, not implemented): an optional paid Plus plan with larger models, cloud transcription and OCR, and encrypted backup; the local app stays free and complete. See [docs/cloud-plan.md](./docs/cloud-plan.md).
+- Cloud (planned, not implemented): an optional paid Plus plan with larger models, cloud transcription and OCR (encrypted backup comes later); the local app stays free and complete. See [docs/cloud-plan.md](./docs/cloud-plan.md).
 - Expand public benchmark coverage and the versioned LectureBench described in [docs/benchmarks.md](./docs/benchmarks.md).
 
 ## Contributing
