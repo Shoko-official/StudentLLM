@@ -83,6 +83,8 @@ If something goes wrong while recording:
 
 ## 5. What needs which service
 
+In the development web app, Settings also offers optional NVIDIA NIM cloud models. **Connected** means the chosen model answered a short connection test. The suggested model is Nemotron 3.5 Lightning. If a different model is retired or does not answer in time, StudentLLM tests the suggestion before switching and tells you what changed; a key or quota error keeps your selection. The connection test contains no course material. While NIM is selected and saved, course work uses NVIDIA as explained in the consent notice. See [Provider configuration](providers.md#nvidia-nim-in-the-development-app).
+
 StudentLLM does the following by itself, with nothing else installed: create courses, record audio, import text and Markdown, search, take notes, export and import courses.
 
 Three optional helpers add more. They are separate programs that run on your computer. Setting them up currently takes some technical steps (see [Provider configuration](providers.md), [Local transcription](local-asr.md) and [Local document extraction](local-documents.md)); the desktop app does not include them yet.

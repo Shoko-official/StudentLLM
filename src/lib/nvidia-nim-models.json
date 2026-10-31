@@ -1,0 +1,10 @@
+{
+  "defaultModel": "nvidia/nemotron-3.5-lightning-30b-a3b",
+  "models": [
+    {
+      "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
+      "label": "Nemotron 3.5 Lightning",
+      "chatTemplateKwargs": { "enable_thinking": false }
+    }
+  ]
+}

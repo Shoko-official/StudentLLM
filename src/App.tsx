@@ -48,6 +48,7 @@ import { describeStorageUsage, readPersistentStorage, readStorageEstimate, reque
 import type { PersistentStorageState, StorageEstimateInfo } from './lib/storage-estimate';
 import type { WorkspaceStorageError } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
+import { DEFAULT_NIM_MODEL, NIM_MODELS, NIM_PROXY_BASE_URL, nimChatTemplateKwargs, probeNimModel } from './lib/nvidia-nim';
 import type { LLMProvider } from './lib/llm-provider';
 import { classifyChatQuestion } from './lib/chat-intent';
 import { createLocalSpeechEngine } from './lib/speech-engine';
@@ -174,9 +175,6 @@ type ServiceSettings = { llmProvider: string; llmUrl: string; model: string; nim
 // NVIDIA NIM goes through the dev server's credential proxy, so it is only offered in development builds.
 const USER_GUIDE_URL = 'https://github.com/Shoko-official/StudentLLM/blob/main/docs/user-guide.md';
 const NIM_AVAILABLE = import.meta.env.DEV;
-const NIM_PROXY_BASE_URL = '/nvidia-nim/v1';
-const NIM_PROXY_ERROR_HEADER = 'x-studentllm-proxy-error';
-const DEFAULT_NIM_MODEL = 'openai/gpt-oss-20b';
 const usesNim = (settings: ServiceSettings) => NIM_AVAILABLE && settings.llmProvider === 'nvidia-nim';
 const llmConnection = (settings: ServiceSettings) => usesNim(settings)
   ? { baseUrl: NIM_PROXY_BASE_URL, model: settings.nimModel || DEFAULT_NIM_MODEL }
@@ -609,6 +607,8 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   const [sidecarHealth, setSidecarHealth] = useState<{ asr: SidecarHealth; documents: SidecarHealth } | null>(null);
   const [managedSidecars, setManagedSidecars] = useState<ManagedSidecarStatus[]>([]);
   const [isCheckingSidecars, setIsCheckingSidecars] = useState(false);
+  const healthCheckRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { healthCheckRef.current?.abort(); }, []);
   const [transcribingResourceIds, setTranscribingResourceIds] = useState<Set<string>>(() => new Set());
   const [resourcePreview, setResourcePreview] = useState<ResourcePreview | null>(null);
   const [newCourseTitle, setNewCourseTitle] = useState('');
@@ -640,7 +640,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     if (provider !== undefined) return provider;
     const connection = llmConnection(serviceSettings);
     if (!connection.baseUrl) return null;
-    const created = createLocalLLMProvider({ MODE: import.meta.env.MODE, VITE_LM_STUDIO_AUTO_CONNECT: connectionsEnabled ? 'true' : import.meta.env.VITE_LM_STUDIO_AUTO_CONNECT, VITE_LM_STUDIO_BASE_URL: connection.baseUrl, VITE_LM_STUDIO_MODEL: connection.model });
+    const created = createLocalLLMProvider({ MODE: import.meta.env.MODE, VITE_LM_STUDIO_AUTO_CONNECT: connectionsEnabled ? 'true' : import.meta.env.VITE_LM_STUDIO_AUTO_CONNECT, VITE_LM_STUDIO_BASE_URL: connection.baseUrl, VITE_LM_STUDIO_MODEL: connection.model }, usesNim(serviceSettings) ? { chatTemplateKwargs: nimChatTemplateKwargs(connection.model) } : {});
     // The NIM proxy exposes no embeddings route, so retrieval keeps its lexical ranking instead of a doomed request.
     if (created && usesNim(serviceSettings)) return { generate: created.generate.bind(created), supportsStructuredOutputs: created.supportsStructuredOutputs };
     return created;
@@ -1503,17 +1503,22 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
 
 
   const checkSidecars = async (settings = serviceSettings) => {
+    healthCheckRef.current?.abort();
+    const controller = new AbortController();
+    healthCheckRef.current = controller;
+    const isCurrent = () => healthCheckRef.current === controller && !controller.signal.aborted;
     setIsCheckingSidecars(true);
     const [asr, documents, managed] = await Promise.all([
       probeSidecar(settings.asrUrl, { loopbackOnly: isNativeRuntime() }),
       probeSidecar(settings.documentsUrl, { loopbackOnly: isNativeRuntime() }),
       getManagedSidecarStatus().catch(() => []),
     ]);
+    if (!isCurrent()) return;
     setSidecarHealth({ asr, documents });
     setManagedSidecars(managed);
     if (usesNim(settings)) {
-      await checkNim(settings);
-      setIsCheckingSidecars(false);
+      await checkNim(settings, controller);
+      if (isCurrent()) setIsCheckingSidecars(false);
       return;
     }
     try {
@@ -1525,8 +1530,10 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         return;
       }
       const response = await fetch(`${normalizeServiceBaseUrl(settings.llmUrl)}/models`, { signal: AbortSignal.timeout(3000) });
+      if (!isCurrent()) return;
       if (!response.ok) throw new Error('LM Studio is not responding.');
       const body = await readJsonResponse(response, 'LM Studio');
+      if (!isCurrent()) return;
       const models = Array.isArray(body.data)
         ? body.data.map((model: { id?: unknown }) => typeof model?.id === 'string' ? model.id.trim() : '').filter(Boolean)
         : [];
@@ -1549,45 +1556,40 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         setLlmHealth('Connected. No model is currently loaded.');
       }
     } catch {
+      if (!isCurrent()) return;
       setAvailableModels([]);
       setLlmHealth('Unavailable. Start the LM Studio server and load a model.');
     }
-    setIsCheckingSidecars(false);
+    if (isCurrent()) setIsCheckingSidecars(false);
   };
 
-  // The NIM catalog is large and some entries cannot generate, so the chosen model is never replaced automatically.
-  const checkNim = async (settings: ServiceSettings) => {
+  // Catalog membership does not prove that a model can answer. Never send course material for a connection test.
+  const checkNim = async (settings: ServiceSettings, controller: AbortController) => {
     setAvailableModels([]);
     const model = llmConnection(settings).model;
-    try {
-      const response = await fetch(`${NIM_PROXY_BASE_URL}/models`, { signal: AbortSignal.timeout(10_000) });
-      const proxyError = response.headers?.get?.(NIM_PROXY_ERROR_HEADER);
-      if (proxyError === 'missing_key') {
-        setLlmHealth('Unavailable. NVIDIA_API_KEY is not set on this computer. Set it, then restart the dev server.');
-        return;
-      }
-      if (proxyError === 'forbidden') {
-        setLlmHealth('Unavailable. The dev server only accepts NVIDIA NIM requests from a current browser at a localhost address.');
-        return;
-      }
-      if (!proxyError && (response.status === 401 || response.status === 403)) {
-        setLlmHealth('Unavailable. NVIDIA rejected NVIDIA_API_KEY. Check the key, then restart the dev server.');
-        return;
-      }
-      if (!response.ok) {
-        setLlmHealth(`Unavailable. NVIDIA NIM answered with HTTP ${response.status}. Try again later.`);
-        return;
-      }
-      const body = await readJsonResponse(response, 'NVIDIA NIM');
-      const models: string[] = Array.isArray(body.data)
-        ? body.data.map((entry: { id?: unknown }) => typeof entry?.id === 'string' ? entry.id.trim() : '').filter(Boolean)
-        : [];
-      setLlmHealth(models.includes(model)
-        ? `Connected. ${model} is available in the NVIDIA catalog (${models.length} models).`
-        : `Connected, but ${model} is not in the NVIDIA catalog (${models.length} models). Check the model name.`);
-    } catch {
-      setLlmHealth('Unavailable. NVIDIA NIM could not be reached.');
+    const isCurrent = () => healthCheckRef.current === controller && !controller.signal.aborted;
+    const result = await probeNimModel(model, { signal: controller.signal });
+    if (!isCurrent()) return;
+    if (result.ok) {
+      setLlmHealth(`Connected. ${model} answered the connection test.`);
+      return;
     }
+    if (result.kind === 'cancelled') return;
+    if (!result.canFallback || model === DEFAULT_NIM_MODEL) { setLlmHealth(result.message); return; }
+
+    const fallback = await probeNimModel(DEFAULT_NIM_MODEL, { signal: controller.signal });
+    if (!isCurrent()) return;
+    if (!fallback.ok) { setLlmHealth(`${result.message} The recommended model could not answer either. ${fallback.message}`); return; }
+    const sameSelection = (current: ServiceSettings) => usesNim(current) && llmConnection(current).model === model;
+    setServiceSettings((current) => {
+      if (!sameSelection(current)) return current;
+      const recovered = { ...current, nimModel: DEFAULT_NIM_MODEL };
+      try { localStorage.setItem(SERVICES_STORAGE_KEY, JSON.stringify(recovered)); } catch { /* Keep it for this session. */ }
+      return recovered;
+    });
+    setServiceDraft((current) => sameSelection(current) ? { ...current, nimModel: DEFAULT_NIM_MODEL } : current);
+    const reason = result.kind === 'retired' ? 'was no longer available' : 'did not answer in time';
+    setLlmHealth(`Connected. Switched from ${model}, which ${reason}, to ${DEFAULT_NIM_MODEL}, which answered the connection test.`);
   };
 
   const saveServiceSettings = (event: FormEvent) => {
@@ -3182,7 +3184,9 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           {NIM_AVAILABLE && <label>AI provider<select value={serviceDraft.llmProvider} onChange={(event) => setServiceDraft((current) => ({ ...current, llmProvider: event.target.value }))}><option value="lm-studio">LM Studio (local)</option><option value="nvidia-nim">NVIDIA NIM (cloud)</option></select></label>}
           {usesNim(serviceDraft) ? <>
             <p className="connection-notice" role="note">While NVIDIA NIM is selected, lecture transcripts, imported document text, notes and your questions are sent to NVIDIA automatically to format notes, answer chat and build study material. The dev server reads the key from NVIDIA_API_KEY on this computer; it never reaches this page.</p>
-            <label>NVIDIA model<input value={serviceDraft.nimModel} onChange={(event) => setServiceDraft((current) => ({ ...current, nimModel: event.target.value }))} placeholder={DEFAULT_NIM_MODEL} /></label>
+            <label>NVIDIA model<input list="nim-models" value={serviceDraft.nimModel} onChange={(event) => setServiceDraft((current) => ({ ...current, nimModel: event.target.value }))} placeholder={DEFAULT_NIM_MODEL} /></label>
+            <datalist id="nim-models">{NIM_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</datalist>
+            <p className="empty-state">Suggested: {NIM_MODELS.map((model) => model.label).join(', ')}. You can enter another model ID. Connection checks send only a short test phrase.</p>
           </> : <>
             <div className="connection-field"><label htmlFor="local-llm-url">LM Studio address</label><input id="local-llm-url" value={serviceDraft.llmUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, llmUrl: event.target.value }))} placeholder="/lm-studio/v1" /><small>Works with LM Studio, Bionic, and any OpenAI-compatible local server.{isNativeRuntime() && ` ${LOOPBACK_HINT}`}</small></div>
             <label>Model<input value={serviceDraft.model} onChange={(event) => setServiceDraft((current) => ({ ...current, model: event.target.value }))} placeholder="Model identifier in LM Studio" /></label>
