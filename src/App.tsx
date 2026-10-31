@@ -44,6 +44,8 @@ import { isNativeRuntime, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspace
 import type { WorkspaceLoadIssue, WorkspaceSnapshot } from './lib/workspace-storage';
 import { openBrowserWorkspace, openLocalStorageWorkspace, shouldUseIndexedDb } from './lib/browser-workspace-store';
 import type { BrowserBootstrap } from './lib/browser-workspace-store';
+import { eraseCourseSources, eraseRemovedSource, isSafeToErase, sweepPendingErases } from './lib/source-erase';
+import type { EraseOperations } from './lib/source-erase';
 import { describeStorageUsage, readPersistentStorage, readStorageEstimate, requestPersistentStorage } from './lib/storage-estimate';
 import type { PersistentStorageState, StorageEstimateInfo } from './lib/storage-estimate';
 import type { WorkspaceStorageError } from './lib/workspace-storage';
@@ -466,6 +468,10 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   const saveFailedRef = useRef(false);
   // The save in progress, so a stored original is only erased after the workspace that stopped listing it is stored.
   const lastSaveRef = useRef<Promise<unknown>>(Promise.resolve());
+  // Whether the workspace was read cleanly at the start: when it was not, "not listed" means "not read".
+  const workspaceTrustedRef = useRef(!storageUnavailable && (!workspaceLoadIssue || workspaceLoadIssue.kind === 'older-copy'));
+  // A deliberate reload (from the stale-tab banner) must not ask a second time.
+  const skipUnloadWarningRef = useRef(false);
   const [saveTick, setSaveTick] = useState(0);
   // Imports whose file is already being stored but not yet listed in a course ("lessonId|resourceId").
   const inFlightImportsRef = useRef(new Set<string>());
@@ -622,6 +628,13 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     });
     lastSaveRef.current = saving;
     return saving;
+  };
+
+  const eraseOperations: EraseOperations = {
+    removeBlob: (sourceId) => sourceBlobStore.remove(sourceId),
+    clearChunks: (recordingId) => recordingChunkStore.clear(recordingId),
+    forget: removePendingSourceErase,
+    remember: addPendingSourceErase,
   };
 
   const activeLesson = lessons.find((lesson) => lesson.id === activeLessonId) ?? lessons[0] ?? emptyLesson;
@@ -961,21 +974,8 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     const stale = listPendingSourceErases().filter((entry) => isStalePendingSourceErase(entry) && entry.id !== pendingSourceRemovalRef.current?.resource.id);
     if (!stale.length) return;
     const referenced = new Set(Object.values(lessonWorkspaces).flatMap((item) => item.resources.map((resource) => resource.id)));
-    void (async () => {
-      for (const entry of stale) {
-        if (referenced.has(entry.id)) {
-          removePendingSourceErase(entry.id);
-          continue;
-        }
-        try {
-          await sourceBlobStore.remove(entry.id);
-          if (entry.kind === 'audio') await recordingChunkStore.clear(entry.id);
-          removePendingSourceErase(entry.id);
-        } catch {
-          // Keep the entry; the next start retries.
-        }
-      }
-    })();
+    // A workspace that was not read cleanly lists nothing it did not manage to read: erase nothing, keep every entry.
+    void sweepPendingErases(stale, { referencedIds: referenced, workspaceTrusted: workspaceTrustedRef.current && !savingPausedRef.current }, eraseOperations);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nativeStorageReady, sourceBlobStore, recordingChunkStore]);
 
@@ -1165,7 +1165,11 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   const workInProgress = importQueue.length > 0 || transcribingResourceIds.size > 0 || isRecording || isFinalizingRecording || changesAtRisk;
   useEffect(() => {
     if (!workInProgress) return undefined;
-    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    const warn = (event: BeforeUnloadEvent) => {
+      if (skipUnloadWarningRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [workInProgress]);
@@ -1191,6 +1195,9 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     // While saving is paused or failing, this tab's workspace is not the saved one: a manifest whose course "does not exist"
     // here may belong to a workspace that could not be loaded, and a recovered source would not be written down.
     if (!nativeStorageReady || savingPausedRef.current || saveFailedRef.current) return undefined;
+    // While the workspace has a load problem (unreadable, partly read, copy kept) a course "that does not exist" may only
+    // be one that was not read. The manifests wait until the student has decided what to do.
+    if (storageNotice?.kind === 'load-issue') return undefined;
 
     let cancelled = false;
     const pendingRecordings = listPendingRecordings();
@@ -1200,7 +1207,14 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       for (const pending of pendingRecordings) {
         const lesson = lessons.find((item) => item.id === pending.lessonId);
         if (!lesson) {
-          removePendingRecording(pending.recordingId);
+          // The course is not in this workspace. That is normal for a deleted course, but also for a workspace that was
+          // replaced by an empty one (an unreadable copy kept, "Start empty anyway"). A manifest is only forgotten when no
+          // audio is left to recover, so the recording can still be found from the saved copy.
+          try {
+            if (await recordingChunkStore.count(pending.recordingId) === 0) removePendingRecording(pending.recordingId);
+          } catch {
+            // Keep the manifest.
+          }
           continue;
         }
 
@@ -1241,7 +1255,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     return () => {
       cancelled = true;
     };
-  }, [lessons, nativeStorageReady, recordingChunkStore]);
+  }, [lessons, nativeStorageReady, recordingChunkStore, storageNotice?.kind === 'load-issue']);
 
   useEffect(() => () => {
     void recorderRef.current?.stop();
@@ -2478,11 +2492,14 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
 
   const commitSourceRemoval = async (pending: PendingSourceRemoval) => {
     try {
-      if (!isSourceUsedElsewhere(pending.resource.id)) {
-        await sourceBlobStore.remove(pending.resource.id);
-        if (pending.resource.kind === 'audio') await recordingChunkStore.clear(pending.resource.id);
-      }
-      removePendingSourceErase(pending.resource.id);
+      // The original is only erased once the workspace that no longer lists it is stored. While saving is paused (another
+      // tab, a protected original) or failing (a full store) the saved workspace may still list the source: the erase waits
+      // in the pending-erase ledger, and the startup sweep, which checks references, finishes it later.
+      await lastSaveRef.current;
+      await eraseRemovedSource(pending.resource, {
+        safety: { savingPaused: savingPausedRef.current, saveFailed: saveFailedRef.current },
+        usedElsewhere: isSourceUsedElsewhere(pending.resource.id),
+      }, eraseOperations);
     } catch {
       // The ledger entry stays, so the erase is retried the next time the app starts.
       notify(`${pending.resource.name} could not be fully removed.`);
@@ -2611,33 +2628,37 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     flushPendingSourceRemoval();
     const lessonId = activeLesson.id;
     const lessonTitle = activeLesson.title;
+    const deletedResources = resources;
+    // Read before the course leaves the screen: once it is gone, the recovery effect no longer finds its lesson.
+    const interruptedRecordings = listPendingRecordings().filter((entry) => entry.lessonId === lessonId);
+    const nextLessons = lessons.filter((lesson) => lesson.id !== lessonId);
+    const nextLesson = nextLessons[0];
+    const nextWorkspaces = Object.fromEntries(Object.entries(lessonWorkspacesRef.current).filter(([id]) => id !== lessonId));
+    const nextActive = nextWorkspaces[nextLesson?.id ?? ''] ?? emptyLessonWorkspace;
+    setLessons(nextLessons);
+    setLessonWorkspaces(nextWorkspaces);
+    setActiveLessonId(nextLesson?.id ?? '');
+    setSelectedArtifactId(nextLesson ? lessonWorkspaces[nextLesson.id]?.artifacts[0]?.id ?? null : null);
+    setView('course');
+    setShowAllResources(false);
+    setShowDeleteCourse(false);
     try {
-      const pendingRecordings = listPendingRecordings().filter((pending) => pending.lessonId === lessonId);
-      for (const resource of resources) {
-        if (isSourceUsedElsewhere(resource.id, lessonId)) continue;
-        await sourceBlobStore.remove(resource.id);
-        await recordingChunkStore.clear(resource.id);
-      }
-      for (const pending of pendingRecordings) {
-        await recordingChunkStore.clear(pending.recordingId);
-        if (!removePendingRecording(pending.recordingId)) throw new Error('Unable to remove interrupted recording state.');
-      }
-      const nextLessons = lessons.filter((lesson) => lesson.id !== lessonId);
-      const nextLesson = nextLessons[0];
-      setLessons(nextLessons);
-      setLessonWorkspaces((current) => {
-        const next = { ...current };
-        delete next[lessonId];
-        return next;
+      // The deletion is stored first; only then are the originals erased. If saving is paused or failing, the saved
+      // workspace may still list this course, so its files stay (and are remembered for the startup sweep).
+      const stored = savingPausedRef.current ? false : await persistWorkspace({
+        activeLessonId: nextLesson?.id ?? '', lessons: nextLessons, ...nextActive, lessonWorkspaces: nextWorkspaces,
       });
-      setActiveLessonId(nextLesson?.id ?? '');
-      setSelectedArtifactId(nextLesson ? lessonWorkspaces[nextLesson.id]?.artifacts[0]?.id ?? null : null);
-      setView('course');
-      setShowAllResources(false);
-      setShowDeleteCourse(false);
-      notify(`${lessonTitle} deleted.`);
+      const safety = { savingPaused: savingPausedRef.current, saveFailed: !stored };
+      await eraseCourseSources(deletedResources, { safety, usedElsewhere: (resourceId) => isSourceUsedElsewhere(resourceId, lessonId) }, eraseOperations);
+      if (isSafeToErase(safety)) {
+        for (const pending of interruptedRecordings) {
+          await recordingChunkStore.clear(pending.recordingId);
+          if (!removePendingRecording(pending.recordingId)) throw new Error('Unable to remove interrupted recording state.');
+        }
+      }
+      notify(isSafeToErase(safety) ? `${lessonTitle} deleted.` : `${lessonTitle} deleted. Its files are kept until your changes can be saved.`);
     } catch {
-      notify(`${lessonTitle} could not be deleted.`);
+      notify(`${lessonTitle} was deleted, but some of its files could not be removed yet. They are removed the next time StudentLLM starts.`);
     }
   };
 
@@ -2896,7 +2917,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       </header>
 
       {storageNotice && <div className="action-error storage-banner" role="alert"><p>{storageNoticeText(storageNotice)}</p><span className="storage-banner-actions">
-        {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'indexeddb-blocked') && <button className="text-action" onClick={() => window.location.reload()}>Reload</button>}
+        {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'indexeddb-blocked') && <button className="text-action" onClick={() => { skipUnloadWarningRef.current = true; window.location.reload(); }}>Reload</button>}
         {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'save-failed' || storageNotice.kind === 'indexeddb-blocked') && hasCourse && <button className="text-action" onClick={() => void exportCourse()}>Export this course</button>}
         {storageNotice.kind === 'load-issue' && <button className="text-action" onClick={() => void downloadSavedCopy(storageNotice.issue)}>{storageNotice.issue.kind === 'older-copy' ? 'Download older copy' : storageNotice.issue.protect ? 'Download saved data' : 'Download saved copy'}</button>}
         {storageNotice.kind === 'indexeddb-unavailable' && <button className="text-action" onClick={() => setStorageNotice(null)}>Dismiss</button>}
