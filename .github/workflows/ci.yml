@@ -146,6 +146,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Browser tests
         run: npm run test:e2e
+      - name: Browser tests with the production Content Security Policy
+        run: npm run test:e2e:csp
 
   desktop-ui:
     name: Desktop UI (${{ matrix.os }})

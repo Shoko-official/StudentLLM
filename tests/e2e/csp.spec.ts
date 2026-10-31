@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { parseCsp, productionCspHeader, type TauriSecurityConfig } from '../../src/test/tauri-csp';
 import { createFixtureWorkspace } from '../../src/test/workspace-fixture';
 
@@ -66,12 +66,14 @@ async function mockLoopbackServices(page: Page, options: { llm: 'online' | 'offl
   });
 }
 
-function minimalPdf() {
+function textPdf() {
+  const content = 'BT /F1 28 Tf 20 90 Td (Hello CSP) Tj ET';
   const objects = [
     '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
     '2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n',
-    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 180] /Resources <<>> /Contents 4 0 R >>\nendobj\n',
-    '4 0 obj\n<< /Length 34 >>\nstream\n0.2 0.5 0.8 rg 20 20 200 140 re f\nendstream\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 240 180] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n',
+    `4 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`,
+    '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
   ];
   let pdf = '%PDF-1.4\n';
   const offsets = [0];
@@ -185,6 +187,29 @@ test.describe('production Content Security Policy', () => {
     await expectNoViolations(read);
   });
 
+  test('loads the audio capture worklet from the bundle', async ({ page }) => {
+    const assets = await readdir('dist-csp/assets');
+    const worklet = assets.find((name) => /^pcm-capture\.worklet.*\.js$/.test(name));
+    expect(worklet, 'the worklet is emitted as a separate same-origin file').toBeDefined();
+    const read = await watchViolations(page);
+    await mockLoopbackServices(page);
+    await page.goto('/');
+    const loaded = await page.evaluate(async (url) => {
+      if (typeof AudioContext === 'undefined' || typeof AudioWorkletNode === 'undefined') return 'unsupported';
+      const context = new AudioContext({ sampleRate: 48000 });
+      try {
+        await context.audioWorklet.addModule(url);
+        new AudioWorkletNode(context, 'studentllm-pcm-capture');
+        return 'loaded';
+      } finally {
+        await context.close();
+      }
+    }, `/assets/${worklet}`);
+    test.skip(loaded === 'unsupported', 'This browser has no AudioWorklet.');
+    expect(loaded).toBe('loaded');
+    await expectNoViolations(read);
+  });
+
   test('creates a course, imports text with a formula, and previews PDF, image, audio and document sources', async ({ page }) => {
     test.setTimeout(90_000);
     await page.addInitScript(() => {
@@ -215,7 +240,7 @@ test.describe('production Content Security Policy', () => {
     })).toBeGreaterThan(0);
 
     for (const file of [
-      { name: 'slides.pdf', mimeType: 'application/pdf', buffer: minimalPdf() },
+      { name: 'slides.pdf', mimeType: 'application/pdf', buffer: textPdf() },
       { name: 'figure.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64') },
       { name: 'lecture.wav', mimeType: 'audio/wav', buffer: silentWav() },
       { name: 'handout.rtf', mimeType: 'application/rtf', buffer: Buffer.from('{\\rtf1\\ansi Handout}') },
@@ -229,7 +254,16 @@ test.describe('production Content Security Policy', () => {
     await page.getByRole('button', { name: /^Show \d+ more sources$/ }).click();
     await page.getByRole('button', { name: /^slides\.pdf/ }).click();
     const pdf = page.getByRole('dialog', { name: 'slides.pdf' });
-    await expect(pdf.locator('canvas[aria-label="PDF page 1"]')).toBeVisible({ timeout: 20_000 });
+    const canvas = pdf.locator('canvas[aria-label="PDF page 1"]');
+    await expect(canvas).toBeVisible({ timeout: 20_000 });
+    // The page has text in a standard font, so glyphs must actually be painted, not just an empty canvas.
+    await expect.poll(() => canvas.evaluate((element) => {
+      const target = element as HTMLCanvasElement;
+      const { data } = target.getContext('2d')!.getImageData(0, 0, target.width, target.height);
+      let painted = 0;
+      for (let index = 3; index < data.length; index += 4) if (data[index] !== 0) painted += 1;
+      return painted;
+    })).toBeGreaterThan(50);
     await page.getByRole('button', { name: 'Close source preview' }).click();
 
     await page.getByRole('button', { name: /^figure\.png/ }).click();
