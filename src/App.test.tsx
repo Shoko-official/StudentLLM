@@ -1617,7 +1617,7 @@ describe('StudentLLM workspace', () => {
     await user.click(within(screen.getByRole('complementary', { name: 'Course navigation' })).getByRole('button', { name: 'Quick start' }));
 
     const title = screen.getByRole('heading', { level: 1 }).textContent ?? '';
-    expect(title).toMatch(/^(Untitled lecture|Study session|Quick course) · [A-Z0-9]{4}$/);
+    expect(title).toMatch(/^(Untitled lecture|Study course|Quick course) · [A-Z0-9]{4}$/);
     expect(savedWorkspace().lessons).toEqual([expect.objectContaining({ title, subject: 'General', chapter: 'General notes' })]);
     expect(savedWorkspace().lessonWorkspaces[savedWorkspace().activeLessonId]).toMatchObject({ resources: [], transcript: [], chat: [], artifacts: [] });
   });

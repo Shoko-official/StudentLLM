@@ -214,7 +214,7 @@ function formatElapsed(totalSeconds: number) {
 }
 
 function randomQuickCourseTitle() {
-  const prefixes = ['Untitled lecture', 'Study session', 'Quick course'];
+  const prefixes = ['Untitled lecture', 'Study course', 'Quick course'];
   const suffix = crypto.randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase();
   return `${prefixes[Math.floor(Math.random() * prefixes.length)]} · ${suffix}`;
 }
