@@ -1,12 +1,13 @@
 {
   "name": "audit.list.success",
   "operation": "listAuditLog",
-  "description": "Two consecutive rows, newest first. Each row_hash is the SHA-256 of prev_hash, a newline and the canonical JSON of the row, so the validator recomputes the chain. There is no IP address, no content and no token in a row.",
+  "description": "Two consecutive rows, newest first. Each row_hash is an HMAC-SHA-256 over prev_hash and the canonical JSON of the chained fields (the validator uses a fixture key that is not a secret). The reason text is outside the chain: the row holds only a salted commitment. There is no IP address, no content and no token in a row.",
   "request": {
     "method": "GET",
     "path": "/admin/v1/audit?target_account_id=acc_01EXAMPLE&limit=2",
     "headers": {
-      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE"
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001"
     }
   },
   "response": {
@@ -19,43 +20,57 @@
         {
           "audit_id": "aud_01EXAMPLE0042",
           "seq": 42,
+          "chain_version": 1,
           "occurred_at": "2026-11-02T10:30:10Z",
           "actor_kind": "admin",
-          "actor_admin_id": "adm_01EXAMPLEADMIN",
-          "actor_role": "admin",
+          "actor_admin_id": "adm_01EXAMPLEOWNER",
+          "actor_role": "owner",
           "action": "grant.create",
           "target_account_id": "acc_01EXAMPLE",
           "target_admin_id": null,
-          "reason": "Private beta tester, ticket EX-1042.",
-          "request_id": "req_01EXAMPLE0000000000000001",
+          "reason_commitment": "260a29eee3b55d83987a8e2b36d336fbdb5c0f644892f7b4d57c2bdb8a431965",
+          "reason_text": "Private beta tester.",
+          "reason_state": "present",
+          "request_id": "req_01EXAMPLE0000000000000042",
+          "session_ref": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+          "country": null,
           "result": "success",
           "result_code": null,
           "params": {
+            "grant_id": "grt_01EXAMPLE",
+            "operation_id": "opr_01EXAMPLEGRANT",
             "days": 30,
-            "credits_per_window": 12500,
+            "budget_percent": 100,
             "start_policy": "now",
-            "grant_id": "grt_01EXAMPLE"
+            "reason_category": "beta_tester"
           },
-          "prev_hash": "0d834722f7cebbc6a8f6bf1f4ca4aac0a621d37937c1e59d53f97aad09d84f41",
-          "row_hash": "08aa34060f77e450476c3f8b08b01db1bf925a439ba4f06e263afa9c5c4ee09d"
+          "prev_hash": "65389d972a38a7d9ab402179f2e0da0acf5b2f8cf6975a33fe6c1d6cdefd4003",
+          "row_hash": "5259f5094437ca4b6bbc4ba2db750923258e8715113a4fb60c2cf1080d1b7141"
         },
         {
           "audit_id": "aud_01EXAMPLE0041",
           "seq": 41,
+          "chain_version": 1,
           "occurred_at": "2026-11-02T10:29:40Z",
           "actor_kind": "admin",
-          "actor_admin_id": "adm_01EXAMPLEADMIN",
-          "actor_role": "admin",
+          "actor_admin_id": "adm_01EXAMPLEOWNER",
+          "actor_role": "owner",
           "action": "account.read",
           "target_account_id": "acc_01EXAMPLE",
           "target_admin_id": null,
-          "reason": null,
-          "request_id": "req_01EXAMPLE0000000000000040",
+          "reason_commitment": null,
+          "reason_text": null,
+          "reason_state": "none",
+          "request_id": "req_01EXAMPLE0000000000000041",
+          "session_ref": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+          "country": null,
           "result": "success",
           "result_code": null,
-          "params": {},
+          "params": {
+            "purpose": "support_request"
+          },
           "prev_hash": "abababababababababababababababababababababababababababababababab",
-          "row_hash": "0d834722f7cebbc6a8f6bf1f4ca4aac0a621d37937c1e59d53f97aad09d84f41"
+          "row_hash": "65389d972a38a7d9ab402179f2e0da0acf5b2f8cf6975a33fe6c1d6cdefd4003"
         }
       ],
       "next_cursor": null

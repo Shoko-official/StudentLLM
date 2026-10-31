@@ -1,13 +1,12 @@
 {
   "name": "invitation.accept.invalid",
   "operation": "acceptInvitation",
-  "description": "A wrong, expired, used, over-attempted code, or an identity whose email differs from the invitation, all return the same answer.",
+  "description": "Later phase. Exempt from the session header (a not-yet-registered identity has no session; the single-use code is the CSRF defence). A wrong, expired, used or over-attempted code, or an identity whose email differs from the invitation, all return the same answer.",
   "request": {
     "method": "POST",
     "path": "/admin/v1/invitations/accept",
     "headers": {
       "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
-      "X-StudentLLM-Admin-CSRF": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
       "Content-Type": "application/json"
     },
     "body": {

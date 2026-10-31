@@ -1,19 +1,21 @@
 {
-  "name": "account.suspend.reauth_required",
+  "name": "account.suspend.stepup_required",
   "operation": "suspendAccount",
-  "description": "Banning is a sensitive action: it needs a re-authentication within the last 5 minutes.",
+  "description": "Banning is sensitive: the request must carry an assertion bound to this exact method, path and body.",
   "request": {
     "method": "POST",
     "path": "/admin/v1/accounts/acc_01EXAMPLE/suspend",
     "headers": {
       "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
-      "X-StudentLLM-Admin-CSRF": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
       "Content-Type": "application/json",
       "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
     },
     "body": {
-      "reason": "Repeated automated scraping of the service, ticket EX-2201.",
-      "reason_category": "abuse"
+      "reason": "Repeated automated scraping of the service.",
+      "reason_category": "abuse",
+      "duration_days": 30,
+      "cancel_subscription": "none"
     }
   },
   "response": {
@@ -23,11 +25,11 @@
     },
     "body": {
       "error": {
-        "code": "reauth_required",
-        "message": "A fresh re-authentication is required for this action.",
+        "code": "stepup_required",
+        "message": "A step-up bound to this action is required.",
         "request_id": "req_01EXAMPLE0000000000000001",
         "details": {
-          "max_age_seconds": 300
+          "challenge_endpoint": "/admin/v1/stepup/challenge"
         }
       }
     }

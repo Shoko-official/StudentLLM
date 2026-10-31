@@ -1,13 +1,13 @@
 {
   "name": "session.get.success",
   "operation": "getAdminSession",
-  "description": "The session of an owner who has not re-authenticated recently. The CSRF token is returned here, kept in memory by the UI, and never placed in a URL or in storage.",
+  "description": "A GET carries the session header and never an Idempotency-Key. The token is not repeated.",
   "request": {
     "method": "GET",
     "path": "/admin/v1/session",
     "headers": {
       "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
-      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001"
     }
   },
   "response": {
@@ -20,9 +20,10 @@
       "admin_id": "adm_01EXAMPLEOWNER",
       "email": "owner@example.invalid",
       "role": "owner",
-      "csrf_token": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
-      "reauth_fresh_until": null,
+      "expires_at": "2026-11-02T17:00:00Z",
+      "idle_expires_at": "2026-11-02T09:30:00Z",
       "writes_frozen": false,
+      "credentials_count": 2,
       "server_time": "2026-11-02T09:00:00Z"
     }
   },

@@ -1,21 +1,21 @@
 {
   "name": "grant.create.forbidden_role",
   "operation": "createGrant",
-  "description": "A support admin tries to create a grant. Support is read-only on account metadata.",
+  "description": "A later-phase admin tries to override the default budget. Only an owner can.",
   "request": {
     "method": "POST",
     "path": "/admin/v1/accounts/acc_01EXAMPLE/grants",
     "headers": {
       "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
-      "X-StudentLLM-Admin-CSRF": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
       "Content-Type": "application/json",
       "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
     },
     "body": {
       "days": 30,
-      "credit_budget_per_window": 12500,
+      "budget_percent": 150,
       "start_policy": "now",
-      "reason": "Private beta tester, ticket EX-1042.",
+      "reason": "Private beta tester.",
       "reason_category": "beta_tester",
       "notify_user": true
     }
@@ -31,7 +31,8 @@
         "message": "Your role cannot perform this action.",
         "request_id": "req_01EXAMPLE0000000000000001",
         "details": {
-          "required_role": "admin"
+          "required_role": "owner",
+          "field": "budget_percent"
         }
       }
     }

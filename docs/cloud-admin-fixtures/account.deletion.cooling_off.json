@@ -1,21 +1,22 @@
 {
   "name": "account.deletion.cooling_off",
   "operation": "requestAccountDeletion",
-  "description": "Deletion with a 24-hour cooling-off period. The account is suspended until executes_at, the data-rights routes still work, and the request can be withdrawn until then. The typed confirmation equals the account id.",
+  "description": "Deletion with a 24-hour cooling-off period. The account is suspended until executes_at, the data-rights routes still work, and the request can be withdrawn until then. At execution the system re-validates the requester, the freeze and the account state. The typed confirmation equals the account id.",
   "request": {
     "method": "POST",
     "path": "/admin/v1/accounts/acc_01EXAMPLE/deletion",
     "headers": {
       "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
-      "X-StudentLLM-Admin-CSRF": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
       "Content-Type": "application/json",
-      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21",
+      "X-StudentLLM-Admin-StepUp": "chl_01EXAMPLE.EXAMPLE_NOT_A_REAL_ASSERTION_BASE64URL"
     },
     "body": {
-      "reason": "Legal erasure request received by email, ticket EX-3310.",
+      "reason": "Legal erasure request received by email.",
       "confirm_account_id": "acc_01EXAMPLE",
       "cooling_off_hours": 24,
-      "notify_user": true
+      "send_heads_up": true
     }
   },
   "response": {
@@ -30,10 +31,12 @@
       "state": "cooling_off",
       "effective_from": null,
       "executes_at": "2026-11-03T10:30:00Z",
+      "overdue": false,
+      "hold_reason": null,
       "attempts": 0,
       "last_error_code": null,
       "next_retry_at": null,
-      "requested_by_admin_id": "adm_01EXAMPLEADMIN",
+      "requested_by_admin_id": "adm_01EXAMPLEOWNER",
       "created_at": "2026-11-02T10:30:00Z",
       "updated_at": "2026-11-02T10:30:00Z",
       "audit_id": "aud_01EXAMPLE0043"

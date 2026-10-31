@@ -1,12 +1,13 @@
 {
   "name": "account.read.success",
   "operation": "getAdminAccount",
-  "description": "A support read of one account. Metadata only: plan and windows with their source, counters, device count, consent state. The Paddle ids are null for the support role. The call writes an account.read audit row.",
+  "description": "One account, read with a declared purpose. The full email is shown here (and audited). Metadata only: no content, prompt, answer or IP address. The Paddle ids are null below the admin role. The call writes an account.read row, with the purpose, before the response is sent.",
   "request": {
     "method": "GET",
-    "path": "/admin/v1/accounts/acc_01EXAMPLE",
+    "path": "/admin/v1/accounts/acc_01EXAMPLE?purpose=support_request",
     "headers": {
-      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE"
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001"
     }
   },
   "response": {

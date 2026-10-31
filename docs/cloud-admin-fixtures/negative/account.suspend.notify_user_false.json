@@ -1,0 +1,40 @@
+{
+  "name": "account.suspend.notify_user_false",
+  "operation": "suspendAccount",
+  "description": "Negative fixture: validation must fail with a message containing 'notify_user'. A 30-day suspension, covered by one action-bound step-up. Sessions and manage tokens are revoked, the data-rights routes keep working, the user is always emailed, the owners are emailed. The blocklist fields belong to the later phase.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/accounts/acc_01EXAMPLE/suspend",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21",
+      "X-StudentLLM-Admin-StepUp": "chl_01EXAMPLE.EXAMPLE_NOT_A_REAL_ASSERTION_BASE64URL"
+    },
+    "body": {
+      "reason": "Repeated automated scraping of the service.",
+      "reason_category": "abuse",
+      "duration_days": 30,
+      "cancel_subscription": "none",
+      "notify_user": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "account_id": "acc_01EXAMPLE",
+      "status": "suspended",
+      "expires_at": "2026-12-02T10:00:00Z",
+      "sessions_revoked": 2,
+      "manage_tokens_revoked": 0,
+      "blocklist_entry_ids": [],
+      "operation_id": "opr_01EXAMPLESUSPEND"
+    }
+  },
+  "response_schema": "SuspensionResult",
+  "expect_failure": "notify_user"
+}

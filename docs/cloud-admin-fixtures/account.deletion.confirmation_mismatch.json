@@ -7,14 +7,16 @@
     "path": "/admin/v1/accounts/acc_01EXAMPLE/deletion",
     "headers": {
       "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
-      "X-StudentLLM-Admin-CSRF": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
       "Content-Type": "application/json",
-      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21",
+      "X-StudentLLM-Admin-StepUp": "chl_01EXAMPLE.EXAMPLE_NOT_A_REAL_ASSERTION_BASE64URL"
     },
     "body": {
-      "reason": "Legal erasure request received by email, ticket EX-3310.",
+      "reason": "Legal erasure request received by email.",
       "confirm_account_id": "acc_01OTHER",
-      "cooling_off_hours": 24
+      "cooling_off_hours": 24,
+      "send_heads_up": true
     }
   },
   "response": {

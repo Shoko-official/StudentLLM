@@ -1,18 +1,19 @@
 {
   "name": "admin.remove.last_owner_protected",
   "operation": "removeAdmin",
-  "description": "The change would leave no enabled owner. This guard matters under concurrency: two owners removing each other at the same time cannot both succeed, because the count of remaining enabled owners is checked in the same transaction as the change.",
+  "description": "Later phase. This refusal is reachable only under concurrency (two owners removing each other at the same moment) or from a runbook script, because nobody can act on their own record and only owners act on owners. The count of remaining enabled owners is evaluated in the same transaction as the change, against one serialised admin-registry object.",
   "request": {
     "method": "POST",
     "path": "/admin/v1/admins/adm_01EXAMPLEOWNER2/remove",
     "headers": {
       "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
-      "X-StudentLLM-Admin-CSRF": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
       "Content-Type": "application/json",
-      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21",
+      "X-StudentLLM-Admin-StepUp": "chl_01EXAMPLE.EXAMPLE_NOT_A_REAL_ASSERTION_BASE64URL"
     },
     "body": {
-      "reason": "Offboarding the second owner, ticket EX-5001."
+      "reason": "Offboarding the second owner."
     }
   },
   "response": {

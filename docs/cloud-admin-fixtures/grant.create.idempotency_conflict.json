@@ -1,21 +1,21 @@
 {
   "name": "grant.create.idempotency_conflict",
   "operation": "createGrant",
-  "description": "The same Idempotency-Key reused with a different body. Admin requests carry no user content, so the record keeps a body hash and a changed body is refused instead of silently replayed.",
+  "description": "The same Idempotency-Key reused with a different request. The record keeps a digest of the method, the full path and the canonical body, so a changed request is refused instead of silently replayed.",
   "request": {
     "method": "POST",
     "path": "/admin/v1/accounts/acc_01EXAMPLE/grants",
     "headers": {
       "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
-      "X-StudentLLM-Admin-CSRF": "csrf_EXAMPLE_NOT_A_REAL_TOKEN_0001",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
       "Content-Type": "application/json",
       "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21"
     },
     "body": {
       "days": 45,
-      "credit_budget_per_window": 12500,
+      "budget_percent": 100,
       "start_policy": "now",
-      "reason": "Private beta tester, ticket EX-1042.",
+      "reason": "Private beta tester.",
       "reason_category": "beta_tester",
       "notify_user": true
     }
