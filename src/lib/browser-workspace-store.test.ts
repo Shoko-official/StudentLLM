@@ -981,7 +981,7 @@ describe('copies kept aside in IndexedDB', () => {
     expect(await result.store.save({ ...empty, activeLessonId: 'x' })).toBe(false);
   });
 
-  it('stop growing past a cap for older copies', async () => {
+  it('reports an older copy at the cap without removing copies or pausing the current workspace', async () => {
     const factory = new IDBFactory();
     const migrated = createFixtureWorkspace();
     localStorage.setItem(WORKSPACE_STORAGE_KEY, legacyRaw(migrated));
@@ -991,12 +991,22 @@ describe('copies kept aside in IndexedDB', () => {
     await inspect(factory, async (db) => {
       for (let index = 0; index < 8; index += 1) await db.putAll(new Map([[index === 0 ? WORKSPACE_UNREADABLE_BACKUP_KEY : `${WORKSPACE_UNREADABLE_BACKUP_KEY}.${index}`, `copy ${index}`]]));
     });
-    localStorage.setItem(WORKSPACE_STORAGE_KEY, legacyRaw({ ...migrated, lessons: migrated.lessons.slice(0, 1) }));
+    const olderRaw = legacyRaw({ ...migrated, lessons: migrated.lessons.slice(0, 1) });
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, olderRaw);
 
     const second = await track(open(factory));
 
-    expect(second.issue).toBeNull();
+    expect(second.issue).toMatchObject({ kind: 'older-copy', backedUp: false, protect: false, copyLimitReached: true, raw: olderRaw });
+    expect(await second.store.readCopy(second.issue!)).toBe(olderRaw);
+    expect(second.snapshot.lessons).toHaveLength(2);
+    expect(await second.store.save({ ...second.snapshot, activeLessonId: 'fixture-context' })).toBe(true);
+    expect(JSON.parse(String(await storedSnapshot(factory))).activeLessonId).toBe('fixture-context');
+    expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(olderRaw);
     const keys = await inspect(factory, (db) => db.keysWithPrefix(WORKSPACE_UNREADABLE_BACKUP_KEY));
     expect(keys).toHaveLength(8);
+    for (let index = 0; index < 8; index += 1) {
+      const key = index === 0 ? WORKSPACE_UNREADABLE_BACKUP_KEY : `${WORKSPACE_UNREADABLE_BACKUP_KEY}.${index}`;
+      expect(await inspect(factory, (db) => db.get(key))).toBe(`copy ${index}`);
+    }
   });
 });

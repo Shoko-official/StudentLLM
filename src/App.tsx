@@ -17,9 +17,7 @@ import {
   Layers,
   ListChecks,
   Menu,
-  Mic,
   Network,
-  Pencil,
   Plus,
   Search,
   Send,
@@ -27,7 +25,6 @@ import {
   Shuffle,
   Sparkles,
   Square,
-  Star,
   Trash2,
   Upload,
   X,
@@ -35,6 +32,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useDialogFocus, useDismissibleMenu } from './lib/focus-management';
 import { AnimatedIcon, EmptyStateIcon } from './lib/animated-icon';
+import { LicensesDialog } from './lib/licenses-dialog';
 import { folderNameOf, planBatchImport } from './lib/batch-import';
 import { BrandGlyph } from './lib/brand-mark';
 import { foldForSearch, textMatchesQuery } from './lib/snippet';
@@ -68,7 +66,7 @@ import { createSourceBlobStore, type SourceBlobStore } from './lib/source-storag
 import { describeAiFailure, describeDocumentFailure, describeSpeechFailure } from './lib/service-errors';
 import { mergeSegments } from './lib/transcript-merge';
 import { AudioChunkStore, createRecordingChunkStore } from './lib/recording-storage';
-import { listPendingRecordings, removePendingRecording, savePendingRecording } from './lib/recording-recovery';
+import { hasSessionOnlyPendingRecordings, listPendingRecordings, removePendingRecording, savePendingRecording, type PendingRecording } from './lib/recording-recovery';
 import { buildCourseExport, describeCourseImportFailure, exportSizeWarning, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocumentsHybrid } from './lib/local-retrieval';
@@ -341,6 +339,7 @@ function storageNoticeText(notice: StorageNotice) {
     const when = notice.issue.since ? ` from ${new Date(notice.issue.since).toLocaleDateString()}` : '';
     return `Your workspace storage was reset. StudentLLM is showing the older copy${when}; changes made after it are lost. Download the copy to keep it.`;
   }
+  if (kind === 'older-copy' && notice.issue.copyLimitReached) return 'StudentLLM already holds 8 recovery copies, so this different older workspace could not be copied again. The current workspace is shown and the older data is still in the fallback storage. Download the older copy now to keep it.';
   if (kind === 'older-copy') return 'A different copy of your workspace, saved by an older version of StudentLLM or while this browser could not use its large-course storage, was found and kept. The workspace shown is the current one. Download the older copy if it holds work you need.';
   const what = kind === 'partial'
     ? 'Some entries in your saved workspace could not be read and were left out.'
@@ -565,6 +564,9 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   const [showReviewPanel, setShowReviewPanel] = useState(false);
   const [showTranscriptPanel, setShowTranscriptPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  const [showLicenses, setShowLicenses] = useState(false);
+  const licensesOpenRef = useRef(false);
+  licensesOpenRef.current = showLicenses;
   const [showRecordingNotice, setShowRecordingNotice] = useState(false);
   const [recordingNoticeChecked, setRecordingNoticeChecked] = useState(false);
   const [recordingNoticeAcknowledged, setRecordingNoticeAcknowledged] = useState(hasAcknowledgedRecordingNotice);
@@ -637,7 +639,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   const localDocumentEngine = useMemo(() => documentEngine === undefined ? createLocalDocumentEngine({ VITE_LOCAL_DOCUMENT_BASE_URL: serviceSettings.documentsUrl }) : documentEngine, [documentEngine, serviceSettings]);
   const sourceBlobStore = useMemo(() => sourceBlobStoreOverride ?? createSourceBlobStore(), [sourceBlobStoreOverride]);
   const recordingChunkStore = useMemo(() => recordingChunkStoreOverride ?? createRecordingChunkStore(), [recordingChunkStoreOverride]);
-  const hasOpenDialog = Boolean(resourcePreview || showNewCourse || showDeleteCourse || showGlobalSearch || showReviewPanel || showTranscriptPanel || showSettingsPanel || showQuickStart || showEditCourse);
+  const hasOpenDialog = Boolean(resourcePreview || showNewCourse || showDeleteCourse || showGlobalSearch || showReviewPanel || showTranscriptPanel || showSettingsPanel || showLicenses || showQuickStart || showEditCourse);
 
   const reportStorageError = (error: WorkspaceStorageError) => {
     console.warn(`[workspace-storage:${error.operation}] ${error.message}`);
@@ -976,12 +978,18 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         setShowNewCourse(true);
       }
       if (event.key === 'Escape') {
+        // A licences dialog stacked on Settings closes alone; a second Escape closes Settings.
+        if (licensesOpenRef.current) {
+          setShowLicenses(false);
+          return;
+        }
         setShowNewCourse(false);
         setShowDeleteCourse(false);
         setShowGlobalSearch(false);
         setShowReviewPanel(false);
         setShowTranscriptPanel(false);
         setShowSettingsPanel(false);
+        setShowLicenses(false);
         setShowQuickStart(false);
         setShowEditCourse(false);
         setResourcePreview(null);
@@ -992,7 +1000,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  useDialogFocus(hasOpenDialog);
+  useDialogFocus(hasOpenDialog, showLicenses ? 'licenses' : 'main');
   useDismissibleMenu(courseActionsOpen, courseActionsRef, () => setCourseActionsOpen(false), courseActionsSummaryRef, hasOpenDialog);
 
   useEffect(() => {
@@ -2735,15 +2743,24 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     }
   };
 
-  // Interrupted recordings whose course is not in this workspace: they stay recoverable until the student removes them.
+  // A missing course is only meaningful in a trusted, current workspace. Recent manifests may belong to another live tab.
   const [orphanTick, setOrphanTick] = useState(0);
-  const orphanRecordings = showSettingsPanel ? listPendingRecordings().filter((entry) => !lessons.some((lesson) => lesson.id === entry.lessonId)) : [];
+  const canDiscardRecording = (entry: PendingRecording) => nativeStorageReady && workspaceTrustedRef.current
+    && !savingPausedRef.current && !saveFailedRef.current
+    && Date.now() - entry.startedAt >= 24 * 60 * 60 * 1000
+    && !lessons.some((lesson) => lesson.id === entry.lessonId)
+    && !Object.values(lessonWorkspaces).some((workspace) => workspace.resources.some((resource) => resource.id === entry.recordingId));
+  const orphanRecordings = showSettingsPanel ? listPendingRecordings().filter(canDiscardRecording) : [];
+  const sessionOnlyRecovery = hasSessionOnlyPendingRecordings();
   void orphanTick;
-  const discardUnrecoveredRecording = async (entry: { recordingId: string; lessonTitle: string }) => {
-    if (!window.confirm(`Remove the unrecovered recording from "${entry.lessonTitle}"? Its audio will be erased and cannot be recovered.`)) return;
+  const discardUnrecoveredRecording = async (entry: PendingRecording) => {
+    if (!canDiscardRecording(entry)) return;
+    if (!window.confirm(`Permanently erase the recording from "${entry.lessonTitle}" and its recovery information? First check that no other StudentLLM tab or window is still recording or needs this audio. This cannot be undone.`)) return;
+    const current = listPendingRecordings().find((item) => item.recordingId === entry.recordingId);
+    if (!current || !canDiscardRecording(current) || current.startedAt !== entry.startedAt || current.lessonId !== entry.lessonId) return;
     try {
       await recordingChunkStore.clear(entry.recordingId);
-      removePendingRecording(entry.recordingId);
+      if (!removePendingRecording(entry.recordingId)) throw new Error('Unable to remove recovery information.');
     } catch {
       notify('The recording could not be removed.');
     }
@@ -3004,6 +3021,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         <button className="icon-button" aria-label="Settings" onClick={() => setShowSettingsPanel(true)}><Settings2 size={19} /></button>
       </header>
 
+      {sessionOnlyRecovery && <div className="action-error storage-banner" role="status"><p>Recovery information is saved only for this browser session because local storage is full or blocked. Finish and save your recording before closing this tab or browser; interrupted audio may otherwise be hard to find.</p></div>}
       {storageNotice && <div className="action-error storage-banner" role="alert"><p>{storageNoticeText(storageNotice)}</p><span className="storage-banner-actions">
         {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'indexeddb-blocked' || storageNotice.kind === 'indexeddb-timeout') && <button className="text-action" onClick={() => { skipUnloadWarningRef.current = true; window.location.reload(); }}>Reload</button>}
         {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'save-failed' || storageNotice.kind === 'indexeddb-blocked' || storageNotice.kind === 'indexeddb-timeout') && hasCourse && <button className="text-action" onClick={() => void exportCourse()}>Export this course</button>}
@@ -3040,7 +3058,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
               {!courseTree.length && <p className="empty-state">{lessons.length ? 'No matching courses.' : 'Your courses will appear here.'}</p>}
             </nav>
             <div className="sidebar-footer">
-              {lessons.length > 0 && <button className="ghost-row sidebar-row" onClick={() => setShowGlobalSearch(true)}><AnimatedIcon name="magnifier" size={18} target="button" fallback={<Search size={16} />} /><span>Global search</span></button>}
+              {lessons.length > 0 && <button className="ghost-row sidebar-row" onClick={() => setShowGlobalSearch(true)}><AnimatedIcon name="magnifier" size={18} /><span>Global search</span></button>}
               <label className="ghost-row sidebar-row file-label"><Upload size={16} /><span>Import course</span><input className="visually-hidden" type="file" accept="application/json,.json" aria-label="Import course export" onChange={(event) => void importCourse(event)} /></label>
             </div>
           </aside>
@@ -3068,7 +3086,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
               <details className="course-actions" ref={courseActionsRef} open={courseActionsOpen} onToggle={(event) => setCourseActionsOpen(event.currentTarget.open)}>
                 <summary aria-label="Course actions" ref={courseActionsSummaryRef}>More <ChevronDown size={15} /></summary>
                 <div className="course-actions-menu" onClick={() => setCourseActionsOpen(false)}>
-                  <button onClick={openEditCourse}><AnimatedIcon name="pencil" size={17} target="button" fallback={<Pencil size={15} />} /> Edit course</button>
+                  <button onClick={openEditCourse}><AnimatedIcon name="pencil" size={17} /> Edit course</button>
                   <button onClick={openAiOrganizer}><Sparkles size={15} /> Organize material with AI</button>
                   <button onClick={exportCourseNote}><Download size={15} /> Save note</button>
                   <button onClick={() => void exportCourse()}><Download size={15} /> Export course</button>
@@ -3087,7 +3105,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
               <section className={`recording-bar ${isRecording ? 'recording' : ''}`} aria-label="Course recording">
                 <div className="recording-actions">
                   <button className={`primary-action ${isRecording ? 'stop' : ''}`} onClick={toggleRecording} disabled={isFinalizingRecording || isStartingRecording} aria-label={isRecording ? 'Stop recording' : isFinalizingRecording ? 'Finishing recording' : isStartingRecording ? 'Starting recording' : 'Start recording'}>
-                    {isRecording ? <Square size={16} /> : <AnimatedIcon name="microphone" size={19} target="button" fallback={<Mic size={17} />} />}{isRecording ? 'Stop recording' : isFinalizingRecording ? 'Saving recording' : isStartingRecording ? 'Starting...' : 'Record'}
+                    {isRecording ? <Square size={16} /> : <AnimatedIcon name="microphone" size={19} />}{isRecording ? 'Stop recording' : isFinalizingRecording ? 'Saving recording' : isStartingRecording ? 'Starting...' : 'Record'}
                   </button>
                   {!isRecording && <button className="secondary-action" onClick={() => openSourcePicker(sourceAccept)}><Upload size={16} /> Import file</button>}
                   {isRecording && <><span className="recording-time">{formatElapsed(recordingSeconds)}</span><button className="text-action" onClick={addBookmark} aria-label="Bookmark this passage"><Plus size={16} /> Mark passage</button></>}
@@ -3100,7 +3118,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
                 <div className="course-note-toolbar"><span>Course notes</span><div className="course-note-toolbar-actions">{isRecording && <span className="course-note-status" role="status" aria-label="Live transcription status">{localSpeechEngine ? visibleLiveTranscript.length ? 'Live transcription' : 'Waiting for transcription' : 'Audio recording'}</span>}{(transcript.length > 0 || visibleLiveTranscript.length > 0) && <button className="text-action" onClick={exportCourseNote}><Download size={15} /> Save note</button>}</div></div>
                 <div className="course-note-content" aria-live={isRecording ? 'polite' : 'off'}>
                   {isRecording && <p className="course-note-meta" role="status">{localProvider ? !recorderRef.current?.readPreviewWindow ? 'This browser cannot draft live notes. The transcript is shown below; notes are written after recording stops.' : liveDraft.status || 'Waiting for a complete passage to write notes. The verbatim transcript appears below.' : 'Verbatim transcript. Connect a language model in Settings for structured notes.'}</p>}
-                  {transcript.length || visibleLiveTranscript.length ? activeCourseNote.blocks.map(renderCourseNoteBlock) : <div className="note-empty"><EmptyStateIcon name="microphone" state="morph-waveform" /><h2>Your notes start here.</h2><p>Record your lecture or import a file above.</p><p>Text notes appear directly. Audio transcription and PDF extraction need a connected service.</p><button className="text-action" onClick={() => setShowSettingsPanel(true)}>Set up transcription</button></div>}
+                  {transcript.length || visibleLiveTranscript.length ? activeCourseNote.blocks.map(renderCourseNoteBlock) : <div className="note-empty"><EmptyStateIcon name="microphone" /><h2>Your notes start here.</h2><p>Record your lecture or import a file above.</p><p>Text notes appear directly. Audio transcription and PDF extraction need a connected service.</p><button className="text-action" onClick={() => setShowSettingsPanel(true)}>Set up transcription</button></div>}
                 </div>
               </section>
               {isRecording && localSpeechEngine && <section className="live-transcript-panel" aria-label="Live course transcription">
@@ -3131,7 +3149,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
             </section>}
             {view === 'study' && <section className="study-view" id="view-panel-study" role="tabpanel" aria-labelledby="view-tab-study">
               <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>
-              {!hasStudyMaterial && <p className="study-empty-hint"><AnimatedIcon name="star" size={22} target=".study-empty-hint" intro="in-reveal" className="hint-icon" fallback={<Star size={20} />} />Import notes or finish a transcription to enable study material generation.</p>}
+              {!hasStudyMaterial && <p className="study-empty-hint"><AnimatedIcon name="star" size={22} intro className="hint-icon" />Import notes or finish a transcription to enable study material generation.</p>}
               <div className="artifact-grid">{artifactCatalog.map((artifact) => <button key={artifact.kind} className={`artifact-button${generatingArtifact === artifact.kind ? ' is-generating' : ''}`} disabled={generatingArtifact !== null || !hasStudyMaterial} onClick={() => void createArtifact(artifact.kind)}><span className={`icon-tile tone-${artifact.tone}`} aria-hidden="true"><artifact.icon size={18} /></span><strong>{generatingArtifact === artifact.kind ? 'Generating...' : artifact.label}</strong><small>{artifact.description}</small></button>)}</div>
               {artifacts.length > 0 && <section className="recent-section"><h3>Saved materials</h3>{artifacts.map((artifact) => <button className="recent-artifact" key={artifact.id} aria-label={`Open artifact ${artifact.label}`} onClick={() => setSelectedArtifactId(artifact.id)}>{artifact.label}</button>)}
               {(() => { const selected = artifacts.find((artifact) => artifact.id === selectedArtifactId); return selected && <article className="artifact-preview"><h3>{selected.label}</h3><RichText content={selected.content ?? ''} className="study-markdown" />{selected.visuals?.map((visual, index) => <VisualBlockView key={`${selected.id}-visual-${index}`} visual={visual} />)}{selected.citations && <div className="citation-list" aria-label="Study material sources">{selected.citations.map((citation, index) => selected.citationTargets?.[index] ? <button type="button" className="citation-chip" key={citation} title="Open original source" onClick={() => openCitation(selected.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className="citation-context" key={citation}>{citation}</span>)}</div>}</article>; })()}</section>}
@@ -3163,7 +3181,8 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           <div className="connection-field"><label htmlFor="local-documents-url">Document service address</label><input id="local-documents-url" value={serviceDraft.documentsUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, documentsUrl: event.target.value }))} placeholder="http://127.0.0.1:8766" />{isNativeRuntime() && <small>{LOOPBACK_HINT}</small>}</div>
           <button className="primary-submit" disabled={isRecording || isFinalizingRecording || isStartingRecording || isCheckingSidecars} type="submit">Save connections</button>
           <p className="empty-state" role="status">{usesNim(serviceSettings) ? 'NVIDIA NIM' : 'LM Studio / Bionic'}: {isCheckingSidecars ? 'Checking...' : llmHealth}</p>{availableModels.length > 0 && <p className="detected-models">Detected local models: {availableModels.join(', ')}</p>}
-        </form>{!isNativeRuntime() && <StorageUsagePanel />}{orphanRecordings.length > 0 && <div className="storage-usage" role="group" aria-label="Unrecovered recordings"><strong>Unrecovered recordings</strong><p className="empty-state">These recordings were interrupted and their course is not in this workspace. The audio is kept in case the course comes back. Remove one only if you do not need it.</p>{orphanRecordings.map((entry) => <p className="empty-state" key={entry.recordingId}>{entry.lessonTitle || 'Untitled course'} <button type="button" className="text-action" onClick={() => void discardUnrecoveredRecording(entry)}>Remove recording</button></p>)}</div>}<div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>These optional helpers run on this computer. Recordings and imported files are always saved first; a helper that is not running only postpones transcription or text extraction.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>Speech service (transcription)</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document service (PDF, images, Office)</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Animated icons by <a href="https://lordicon.com/" target="_blank" rel="noreferrer">Lordicon</a>.</p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
+        </form>{!isNativeRuntime() && <StorageUsagePanel />}{orphanRecordings.length > 0 && <div className="storage-usage" role="group" aria-label="Unrecovered recordings"><strong>Unrecovered recordings</strong><p className="empty-state">These recordings were interrupted and their course is not in this workspace. The audio is kept in case the course comes back. Remove one only if you do not need it.</p>{orphanRecordings.map((entry) => <p className="empty-state" key={entry.recordingId}>{entry.lessonTitle || 'Untitled course'} <button type="button" className="text-action" onClick={() => void discardUnrecoveredRecording(entry)}>Remove recording</button></p>)}</div>}<div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>These optional helpers run on this computer. Recordings and imported files are always saved first; a helper that is not running only postpones transcription or text extraction.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>Speech service (transcription)</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document service (PDF, images, Office)</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Icons by Lucide (ISC). <button type="button" className="link-button" onClick={() => setShowLicenses(true)}>Open-source licences</button></p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
+      {showLicenses && <LicensesDialog onClose={() => setShowLicenses(false)} />}
       {isNativeRuntime() && <div className="managed-sidecar-tray" aria-label="Managed local services"><span>Managed services</span><span aria-live="polite">{managedSidecars.filter((sidecar) => sidecar.running).length}/2 running</span><button type="button" onClick={() => void startConfiguredSidecars()}>Start</button><button type="button" onClick={() => void stopConfiguredSidecars()}>Stop</button></div>}
       <div className="toast-stack">
         <div className="toast-slot" role="status" aria-atomic="true">{toast && <div className="toast">{toast}</div>}</div>

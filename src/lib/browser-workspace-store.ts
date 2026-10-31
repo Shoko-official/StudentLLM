@@ -449,7 +449,9 @@ async function interpretOlderCopy(db: WorkspaceIdb, local: Storage | undefined, 
   const shim = new AsideShim(local);
   await shim.load(db);
   // The localStorage value itself is never touched, so it is not lost either way; the copies aside are capped.
-  if (shim.length >= MAX_ASIDE_COPIES) return null;
+  if (shim.length >= MAX_ASIDE_COPIES) {
+    return { kind: 'older-copy', backedUp: false, copyLimitReached: true, raw: lsRaw, protect: false };
+  }
   const issue = createLoadIssue(lsRaw, 'older-copy', shim);
   if (!issue.backedUp || !await storeAndVerify(db, shim.pending)) return null;
   // Acknowledge this exact value so the notice appears once, not at every start.

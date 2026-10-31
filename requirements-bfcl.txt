@@ -1,2 +1,4 @@
+# Benchmark tooling only. bfcl-eval pulls in html2text (GPL-3.0-or-later): never ship or bundle this environment.
+# See docs/licensing.md.
 bfcl-eval==2026.3.23
 soundfile==0.14.0

@@ -133,6 +133,12 @@ Your data is stored **on this computer only**:
 
 **Back up with Export.** Open the course, choose **More → Export course**. You get one `.studentllm.json` file containing the notes, the original files and the audio. Keep it somewhere safe (not only on the same computer). To restore it, click **Import course** (bottom of the left column). Do this for every course you care about, especially before reinstalling, cleaning your browser or changing computers. A course larger than 256 MB can be exported but cannot be imported back; the app warns you.
 
+**Interrupted recordings.** Settings can remove an unrecovered recording whose course is missing only after the workspace loaded safely, saving is working, and the recording is at least a day old. Recent recordings are kept because another tab may still be recording. Before confirming removal, check that no other tab or window needs the audio; removal is permanent. The age check is a precaution, not proof that a recording has stopped.
+
+**Temporary recovery information.** If the smaller local storage is full or blocked, recovery information may only last for the current browser session. A banner warns you: finish and save the recording before closing the tab or browser. Its audio may remain stored without the information needed to find it automatically.
+
+**Recovery copy limit.** StudentLLM keeps at most eight older recovery copies. If another different older workspace is found after that limit, a banner offers **Download older copy** directly from the fallback data. Existing copies and the current workspace are kept.
+
 **Uninstall and wipe.** Deleting a course (**More → Delete course**) erases it and its files. Uninstalling the desktop app removes the program but may leave the data folders above on disk; delete them yourself if you want everything gone. Export first if you want a copy.
 
 **Do not open StudentLLM in two tabs or windows at once.** If another tab changes your workspace, the first tab stops saving and shows a message asking you to reload, so it cannot overwrite the newer work. The desktop app does not yet prevent a second window from being started.

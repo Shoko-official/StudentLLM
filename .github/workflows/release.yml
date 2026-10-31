@@ -93,10 +93,15 @@ jobs:
         run: npm run check && npm run test:run
       - name: Build the release bundle
         run: node scripts/desktop-command.mjs build --ci --no-sign --bundles ${{ matrix.bundles }}
+      - name: Generate third-party licence texts
+        # Complete npm and Rust licence texts for the exact lockfiles of this tag (needs `npm ci` and the fetched crates).
+        shell: bash
+        run: node scripts/generate-third-party-notices.mjs --full --out third-party-licenses.md
       - name: Collect installers and checksums
         shell: bash
         run: |
           mkdir release-assets
+          cp third-party-licenses.md "release-assets/THIRD_PARTY_LICENSES-${{ runner.os }}.md"
           cp src-tauri/target/release/bundle/${{ matrix.dir }}/${{ matrix.pattern }} release-assets/
           cd release-assets
           if command -v sha256sum >/dev/null; then sha256sum * > "SHA256SUMS-${{ runner.os }}.txt"; else shasum -a 256 * > "SHA256SUMS-${{ runner.os }}.txt"; fi

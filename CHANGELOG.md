@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- Licensing and compliance: the document sidecar no longer uses PyMuPDF (AGPL-3.0 or a commercial licence). PDF text and layout now come from pdfminer.six (MIT) and scanned pages are rendered with pypdfium2 (Apache-2.0 or BSD-3-Clause); the health model is `pdfminer` or `pdfminer+rapidocr`. Page text and OCR output matched the previous engine on synthetic fixtures, but block grouping differs and pdfminer.six is slower, so every PDF now runs in a worker process with a 240-second budget (HTTP 504 when it runs out), a per-page character cap (OCR or HTTP 422 above it), a 64 MB cap on any decoded stream (decompression bombs get HTTP 422), a 2048 MB memory limit per worker, cleanup when the client disconnects, and a worker that exits by itself when its sidecar is hard-killed. Glyphs without a Unicode map that pdfminer.six reports as `(cid:N)` trigger the OCR fallback and are dropped from the text the web app keeps; presentation ligatures are expanded. See [docs/local-documents.md](docs/local-documents.md#differences-from-the-pymupdf-engine).
+- The animated Lordicon icons are replaced by Lucide icons with a CSS animation, because the Lordicon free licence does not clearly allow shipping the icon files in a product that is sold. `@lordicon/react` is removed.
+- `NOTICE.md`, a generated `THIRD_PARTY_LICENSES.md`, `docs/licensing.md` and a CI licence policy (`npm run licenses:check:all`) document and enforce the licences of npm, Cargo and Python dependencies. The release workflow attaches the full licence texts, the installers carry `LICENSE`, `NOTICE.md` and `THIRD_PARTY_LICENSES.md` under `licenses/`, and Settings has an "Open-source licences" dialog that shows them offline.
+
 ### Fixed
 
 - Large courses are no longer silently lost in the browser ([#397](https://github.com/Shoko-official/StudentLLM/issues/397)). The workspace is stored in IndexedDB instead of localStorage (about 5 MB), so a workspace of several megabytes saves and reloads; it was verified above the localStorage quota in Chromium. An existing localStorage workspace is copied on the first start, the copy is read back and checked before it is used, and the old value is never deleted or changed: it stays as a fallback for at least one release. Where IndexedDB is blocked (some private windows), the app says so and keeps using localStorage with its "not being saved" alert and Export button; if IndexedDB held the workspace and cannot be opened, the older copy is shown with saving paused. A full store is reported as a failed save. The active course is no longer written twice (22% to 33% smaller on a synthetic workspace). Two tabs are detected through a version check inside every write plus a BroadcastChannel, so a stale tab cannot overwrite newer work; the `storage` event still covers the localStorage fallback. Settings shows how much browser storage is used, warns at 80%, and has a button to ask the browser to keep the data; Settings also lists interrupted recordings whose course is missing and can remove them. If IndexedDB is emptied after it held the workspace, the app says so and offers the older copy. A load that never finishes falls back after 20 seconds instead of leaving the loading screen. A workspace over the 16 MB limit is reported as such. The interrupted-recording manifest and the erase ledger fall back to sessionStorage when localStorage is full. The desktop app is unchanged.
@@ -16,11 +22,11 @@
 - Typing in a search field or the chat no longer re-typesets every note block and transcript segment: with 800 segments and the CPU slowed 4x, 20 keystrokes went from 5.3 s to 0.8 s and opening the Notes tab from 11.9 s to 3.3 s.
 - The selected tab, open course and needs-review segments stay visible in Windows High Contrast (forced colors).
 - A PDF or Word file the document service refuses is reported as a problem with the file (damaged or password-protected) instead of a service to restart.
+- PPTX extraction returned no text for real files because it looked for the DrawingML `txBody` instead of the PresentationML one that holds shape text, and fused the paragraphs of a shape; each paragraph is now its own line.
 
 ### Added
 
 - [User guide](docs/user-guide.md) for students, linked from the README and from Settings.
-
 
 ### Security
 

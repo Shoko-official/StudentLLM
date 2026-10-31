@@ -65,6 +65,11 @@ export function listPendingRecordings(storage?: Storage): PendingRecording[] {
   return [...primary, ...readList(getSessionStorage()).filter((entry) => !known.has(entry.recordingId))];
 }
 
+export function hasSessionOnlyPendingRecordings(): boolean {
+  const durableIds = new Set(readList(safeDefault()).map((entry) => entry.recordingId));
+  return readList(getSessionStorage()).some((entry) => !durableIds.has(entry.recordingId));
+}
+
 function safeDefault(): Storage | undefined {
   try {
     return getStorage();

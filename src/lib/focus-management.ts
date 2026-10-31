@@ -38,12 +38,14 @@ function useLastFocusedOutsideDialog() {
 /**
  * Modal dialog focus management: moves focus into the open dialog (autofocus control, else the first
  * control outside the header, else the dialog itself), traps Tab, and restores focus to the opener on close.
+ * Change `dialogKey` when a different dialog becomes the top one while another stays open.
  */
-export function useDialogFocus(isOpen: boolean) {
+export function useDialogFocus(isOpen: boolean, dialogKey = '') {
   const lastOutsideRef = useLastFocusedOutsideDialog();
   useEffect(() => {
     if (!isOpen) return undefined;
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    // With a dialog stacked on another (Settings, then Licences) the one rendered last is on top and gets the focus.
+    const dialog = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).pop();
     if (!dialog) return undefined;
     const active = document.activeElement;
     const opener = active instanceof HTMLElement && active !== document.body && !dialog.contains(active) ? active : lastOutsideRef.current;
@@ -78,9 +80,10 @@ export function useDialogFocus(isOpen: boolean) {
     dialog.addEventListener('keydown', onKeyDown);
     return () => {
       dialog.removeEventListener('keydown', onKeyDown);
-      resolveFocusReturnTarget(opener)?.focus();
+      // Only a dialog that is gone gives focus back. A dialog that merely lost the top place to another one stays put.
+      if (!dialog.isConnected) resolveFocusReturnTarget(opener)?.focus();
     };
-  }, [isOpen, lastOutsideRef]);
+  }, [isOpen, dialogKey, lastOutsideRef]);
 }
 
 /**

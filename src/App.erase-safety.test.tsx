@@ -254,6 +254,74 @@ describe('unrecovered recordings in Settings', () => {
     expect(chunks.clear).not.toHaveBeenCalled();
     expect(listPendingRecordings()).toHaveLength(1);
   });
+
+  it('does not offer to erase recordings while another tab owns the workspace', async () => {
+    const user = userEvent.setup();
+    const chunks = chunkStore(4);
+    render(<App provider={null} sourceBlobStore={blobStore()} recordingChunkStore={chunks} />);
+    stopSaving();
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.queryByRole('button', { name: 'Remove recording' })).not.toBeInTheDocument();
+    expect(chunks.clear).not.toHaveBeenCalled();
+  });
+
+  it('does not offer to erase a recently started recording from another tab', async () => {
+    savePendingRecording({ recordingId: 'lost-recording', lessonId: 'course-that-is-gone', lessonTitle: 'Live elsewhere', startedAt: Date.now() });
+    const user = userEvent.setup();
+    render(<App provider={null} sourceBlobStore={blobStore()} recordingChunkStore={chunkStore(4)} />);
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.queryByRole('button', { name: 'Remove recording' })).not.toBeInTheDocument();
+    expect(listPendingRecordings()).toHaveLength(1);
+  });
+
+  it('keeps recording audio that is referenced by another course', async () => {
+    const workspace = createFixtureWorkspace();
+    const resource = { id: 'lost-recording', name: 'Kept audio', kind: 'audio' as const, meta: 'Audio' };
+    workspace.resources = [resource];
+    workspace.lessonWorkspaces![FIXTURE_LESSON_ID].resources = [resource];
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(workspace));
+    const user = userEvent.setup();
+    render(<App provider={null} sourceBlobStore={blobStore()} recordingChunkStore={chunkStore(4)} />);
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.queryByRole('button', { name: 'Remove recording' })).not.toBeInTheDocument();
+    expect(listPendingRecordings()).toHaveLength(1);
+  });
+
+  it('rechecks ownership after the confirmation before erasing audio', async () => {
+    const user = userEvent.setup();
+    const chunks = chunkStore(4);
+    vi.spyOn(window, 'confirm').mockImplementation(() => { stopSaving(); return true; });
+    render(<App provider={null} sourceBlobStore={blobStore()} recordingChunkStore={chunks} />);
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove recording' }));
+    expect(chunks.clear).not.toHaveBeenCalled();
+    expect(listPendingRecordings()).toHaveLength(1);
+  });
+
+  it('keeps the recording when its manifest changed during the confirmation', async () => {
+    const user = userEvent.setup();
+    const chunks = chunkStore(4);
+    vi.spyOn(window, 'confirm').mockImplementation(() => {
+      savePendingRecording({ recordingId: 'lost-recording', lessonId: 'course-that-is-gone', lessonTitle: 'Live elsewhere', startedAt: Date.now() });
+      return true;
+    });
+    render(<App provider={null} sourceBlobStore={blobStore()} recordingChunkStore={chunks} />);
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove recording' }));
+    expect(chunks.clear).not.toHaveBeenCalled();
+    expect(listPendingRecordings()).toHaveLength(1);
+  });
+
+  it('explains when a recovery manifest only lasts for this browser session', async () => {
+    localStorage.removeItem(RECORDING_RECOVERY_STORAGE_KEY);
+    sessionStorage.setItem(RECORDING_RECOVERY_STORAGE_KEY, JSON.stringify({ version: 1, recordings: [
+      { recordingId: 'session-recording', lessonId: 'course-that-is-gone', lessonTitle: 'Session only', startedAt: 1 },
+    ] }));
+    const user = userEvent.setup();
+    render(<App provider={null} sourceBlobStore={blobStore()} recordingChunkStore={chunkStore(4)} />);
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(await screen.findByText(/Recovery information is saved only for this browser session/)).toHaveTextContent('before closing');
+  });
 });
 
 describe('interrupted recordings and an unreadable workspace', () => {
@@ -280,6 +348,15 @@ describe('interrupted recordings and an unreadable workspace', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(listPendingRecordings().map((pending) => pending.recordingId)).toEqual(['lost-course-recording']);
     expect(chunks.clear).not.toHaveBeenCalled();
+  });
+
+  it('does not offer to erase recordings from a workspace that could not be read, even after dismissing its notice', async () => {
+    const user = userEvent.setup();
+    render(<App provider={null} sourceBlobStore={blobStore()} recordingChunkStore={chunkStore(4)} />);
+    await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    expect(screen.queryByRole('button', { name: 'Remove recording' })).not.toBeInTheDocument();
+    expect(listPendingRecordings()).toHaveLength(1);
   });
 
   it('keeps the manifest after "Start empty anyway" while the audio is still stored', async () => {

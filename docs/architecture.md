@@ -133,7 +133,7 @@ interface DocumentEngine {
 }
 ```
 
-The current browser adapter sends supported source bytes to a local PyMuPDF, RapidOCR, and Office XML sidecar. Extracted pages or logical sections are added as reviewable transcript segments with source and page provenance. Structured tables and document blocks are retained for rendering and retrieval. Formula and diagram interpretation remains conservative: the original source and extracted text remain available whenever a semantic reconstruction is uncertain.
+The current browser adapter sends supported source bytes to a local pdfminer.six, pypdfium2, RapidOCR, and Office XML sidecar. Extracted pages or logical sections are added as reviewable transcript segments with source and page provenance. Structured tables and document blocks are retained for rendering and retrieval. Formula and diagram interpretation remains conservative: the original source and extracted text remain available whenever a semantic reconstruction is uncertain.
 
 ## Reliability and privacy
 

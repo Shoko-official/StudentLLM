@@ -1,18 +1,20 @@
 import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
-import { afterEach, beforeEach, vi } from 'vitest';
+import { afterEach, beforeEach, vi, type MockInstance } from 'vitest';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { renderToString } from 'react-dom/server';
 import userEvent from '@testing-library/user-event';
 import App from './App';
-import { openBrowserWorkspace, WORKSPACE_IDB_ACTIVE_KEY } from './lib/browser-workspace-store';
+import * as workspaceStores from './lib/browser-workspace-store';
+import { openBrowserWorkspace, WORKSPACE_IDB_ACTIVE_KEY, type BrowserWorkspaceStore } from './lib/browser-workspace-store';
 import { META_KEY, openWorkspaceDb, SNAPSHOT_KEY, WorkspaceIdb, WorkspaceIdbError } from './lib/workspace-idb';
 import type { SourceBlobStore } from './lib/source-storage';
-import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
+import { WORKSPACE_STORAGE_KEY, WORKSPACE_UNREADABLE_BACKUP_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from './test/workspace-fixture';
 
 // The web app with IndexedDB available: the workspace opens asynchronously and is stored there.
 const RECORDING_NOTICE_STORAGE_KEY = 'studentllm.recording-notice.v1';
+const NativeBroadcastChannel = globalThis.BroadcastChannel;
 const memoryBlobStore = (): SourceBlobStore => ({
   durability: 'memory-only',
   save: vi.fn(async () => undefined),
@@ -47,6 +49,12 @@ describe('the app with its workspace in IndexedDB', () => {
     vi.stubEnv('VITE_LM_STUDIO_AUTO_CONNECT', 'false');
     factory = new IDBFactory();
     setGlobalIndexedDb(factory);
+    // Node channels reach other Vitest workers, whose fake databases are unrelated.
+    // Keep channels real and shared by the simulated tabs, but scoped to this test's database.
+    const channelScope = crypto.randomUUID();
+    vi.stubGlobal('BroadcastChannel', class extends NativeBroadcastChannel {
+      constructor(name: string) { super(`${name}:${channelScope}`); }
+    });
     localStorage.clear();
     sessionStorage.clear();
     localStorage.setItem(RECORDING_NOTICE_STORAGE_KEY, JSON.stringify({ version: 1, acknowledgedAt: new Date().toISOString() }));
@@ -54,6 +62,7 @@ describe('the app with its workspace in IndexedDB', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it('migrates a localStorage workspace, shows it, and keeps the original in localStorage', async () => {
@@ -103,7 +112,7 @@ describe('the app with its workspace in IndexedDB', () => {
     expect(await screen.findByRole('heading', { name: 'A place for your courses.' })).toBeInTheDocument();
   });
 
-  it('keeps a damaged IndexedDB workspace untouched when no copy could be kept, and writes nothing', async () => {
+  it.each(['pagehide', 'visibilitychange'])('keeps a protected original and its paused notice when %s flushes', async (eventName) => {
     const damaged = '{"version":1,"activeLessonId":"a","lessons":[{"id":"a","subject":"Maths"';
     const db = await openWorkspaceDb(factory);
     await db.putIfAbsent(SNAPSHOT_KEY, damaged);
@@ -114,8 +123,13 @@ describe('the app with its workspace in IndexedDB', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('saving is paused');
     await user.upload(screen.getByLabelText('Select course source'), new File(['x'], 'x.md', { type: 'text/markdown' }));
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    await act(async () => {
+      (eventName === 'pagehide' ? window : document).dispatchEvent(new Event(eventName));
+    });
     expect(await idbValue(SNAPSHOT_KEY)).toBe(damaged);
+    // A refused store.save would replace this useful load notice with the generic save-failed banner.
+    expect(screen.getByRole('alert')).toHaveTextContent('saving is paused');
   });
 
   it('offers the aside copy of a damaged IndexedDB workspace for download', async () => {
@@ -167,6 +181,41 @@ describe('the app with its workspace in IndexedDB', () => {
   });
 
   describe('two tabs', () => {
+    it.each(['pagehide', 'visibilitychange'])('does not try to save stale changes when %s flushes', async (eventName) => {
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, fixtureRaw());
+      const realOpen = workspaceStores.openBrowserWorkspace;
+      let appSave: MockInstance<BrowserWorkspaceStore['save']> | undefined;
+      const opening = vi.spyOn(workspaceStores, 'openBrowserWorkspace').mockImplementation(async (...args) => {
+        const bootstrap = await realOpen(...args);
+        appSave = vi.spyOn(bootstrap.store, 'save');
+        return bootstrap;
+      });
+      const user = userEvent.setup();
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+      await screen.findAllByText('Attention & Scaled Dot-Product');
+      await act(async () => { await Promise.all(appSave!.mock.results.map((result) => result.value)); });
+      opening.mockRestore();
+      const other = await realOpen({ activeLessonId: '', lessons: [], resources: [], transcript: [], chat: [], artifacts: [] });
+      try {
+        await act(async () => {
+          expect(await other.store.save({ ...other.snapshot, activeLessonId: 'fixture-context' })).toBe(true);
+        });
+        await screen.findByText(/changed in another tab or window/);
+        await user.upload(screen.getByLabelText('Select course source'), new File(['Unsaved stale notes.'], 'stale-flush.md', { type: 'text/markdown' }));
+        await screen.findByText(/stale-flush\.md added to course sources/);
+        appSave!.mockClear();
+        vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+        await act(async () => {
+          (eventName === 'pagehide' ? window : document).dispatchEvent(new Event(eventName));
+        });
+        expect(appSave).not.toHaveBeenCalled();
+        expect(await storedActiveLesson()).toBe('fixture-context');
+        expect(String(await idbValue(SNAPSHOT_KEY))).not.toContain('stale-flush.md');
+      } finally {
+        other.store.dispose();
+      }
+    });
+
     it('tells the first tab when a second one saves, and keeps the second one\'s work', async () => {
       localStorage.setItem(WORKSPACE_STORAGE_KEY, fixtureRaw());
       const user = userEvent.setup();
@@ -319,6 +368,32 @@ describe('the app with its workspace in IndexedDB', () => {
   });
 
   describe('storage that is reset, slow, or full of the old copy', () => {
+    it('warns when the recovery-copy limit is reached and still downloads the older fallback data', async () => {
+      const current = createFixtureWorkspace();
+      const olderRaw = JSON.stringify({ ...current, lessons: current.lessons.slice(0, 1) });
+      const db = await openWorkspaceDb(factory);
+      await db.putIfAbsent(SNAPSHOT_KEY, fixtureRaw());
+      for (let index = 0; index < 8; index += 1) {
+        await db.putAll(new Map([[`${WORKSPACE_UNREADABLE_BACKUP_KEY}.${index}`, `copy ${index}`]]));
+      }
+      db.close();
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, olderRaw);
+      const created: Blob[] = [];
+      URL.createObjectURL = vi.fn((blob: Blob) => { created.push(blob); return 'blob:older-copy'; });
+      URL.revokeObjectURL = vi.fn();
+      vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+      const user = userEvent.setup();
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+
+      const banner = await screen.findByRole('alert');
+      expect(banner).toHaveTextContent('already holds 8 recovery copies');
+      expect(banner).toHaveTextContent('The current workspace is shown');
+      await user.click(within(banner).getByRole('button', { name: 'Download older copy' }));
+      await waitFor(() => expect(created).toHaveLength(1));
+      expect(await created[0].text()).toBe(olderRaw);
+      expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(olderRaw);
+    });
+
     it('says so when IndexedDB was emptied after it held the workspace, and offers the older copy', async () => {
       localStorage.setItem(WORKSPACE_STORAGE_KEY, fixtureRaw());
       localStorage.setItem(WORKSPACE_IDB_ACTIVE_KEY, '2026-03-04T10:00:00.000Z');

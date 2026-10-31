@@ -8,6 +8,14 @@ const PDF_LIGATURES: Record<string, string> = {
   '\u001e': 'ffi',
   '\u001f': 'fi',
   '\u0088': ' • ',
+  // Presentation-form ligatures, which pdfminer.six reports when the font maps them to Unicode.
+  'ﬀ': 'ff',
+  'ﬁ': 'fi',
+  'ﬂ': 'fl',
+  'ﬃ': 'ffi',
+  'ﬄ': 'ffl',
+  'ﬅ': 'st',
+  'ﬆ': 'st',
 };
 
 function repairMojibakeUtf8(value: string) {
@@ -61,7 +69,7 @@ export function repairCorruptedLatexCommands(value: string) {
 }
 
 /**
- * PyMuPDF can expose a PDF font's missing ligatures as control characters.
+ * PDF text extractors can expose a PDF font's missing ligatures as control characters.
  * Keep this normalization at the document boundary so search, notes, and
  * transcript review all see the same readable source text.
  */
@@ -71,6 +79,8 @@ export function normalizeExtractedDocumentText(value: string) {
     normalized = normalized.replaceAll(character, replacement);
   });
   normalized = normalized
+    // pdfminer.six prints `(cid:N)` for a glyph whose font has no Unicode map. It carries no text, so drop it.
+    .replace(/\(cid:\d+\)/g, '')
     .replaceAll('\u0000', '(')
     .replaceAll('\u0001', ')')
     .replaceAll('\u0002', '')

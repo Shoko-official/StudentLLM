@@ -336,6 +336,8 @@ export interface WorkspaceLoadIssue {
   kind: 'unreadable' | 'newer-version' | 'partial' | 'older-copy' | 'storage-reset';
   /** Whether a copy of the stored value was kept before it can be replaced. */
   backedUp: boolean;
+  /** An older localStorage value could not be copied aside because the saved-copy limit was reached. */
+  copyLimitReached?: boolean;
   /** Storage key holding that copy. */
   copyKey?: string;
   /** Where the copy lives when it is not in localStorage (the browser keeps the workspace and its copies in IndexedDB). */
