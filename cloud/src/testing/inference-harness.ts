@@ -353,9 +353,29 @@ export function routingWithMedia(overrides: { chat?: Partial<Extract<RoutingConf
   };
 }
 
-/** A minimal PCM WAV of `seconds` of silence at 8 kHz mono 8-bit (8000 bytes per second). */
-export function wavBytes(seconds: number): Uint8Array {
-  const dataSize = Math.round(seconds * 8000);
+export interface WavOptions {
+  sampleRate?: number;
+  channels?: number;
+  bits?: number;
+  /** The format tag (1 is PCM). */
+  format?: number;
+  /** Header fields to forge: by default they are consistent (`blockAlign = channels x bits / 8`, `byteRate = sampleRate x blockAlign`). */
+  blockAlign?: number;
+  byteRate?: number;
+  /** The number of data bytes (by default `seconds` of audio at the stated format). */
+  dataBytes?: number;
+  /** The size the data chunk STATES, when it should differ from the bytes that follow. */
+  statedDataBytes?: number;
+}
+
+/** A minimal WAV of `seconds` of silence, 8 kHz mono 8-bit PCM (8000 bytes per second) unless `options` say otherwise. */
+export function wavBytes(seconds: number, options: WavOptions = {}): Uint8Array {
+  const sampleRate = options.sampleRate ?? 8000;
+  const channels = options.channels ?? 1;
+  const bits = options.bits ?? 8;
+  const blockAlign = options.blockAlign ?? channels * (bits / 8);
+  const byteRate = options.byteRate ?? sampleRate * channels * (bits / 8);
+  const dataSize = options.dataBytes ?? Math.round(seconds * sampleRate * channels * (bits / 8));
   const bytes = new Uint8Array(44 + dataSize);
   const view = new DataView(bytes.buffer);
   const text = (offset: number, s: string) => [...s].forEach((c, i) => (bytes[offset + i] = c.charCodeAt(0)));
@@ -364,14 +384,14 @@ export function wavBytes(seconds: number): Uint8Array {
   text(8, "WAVE");
   text(12, "fmt ");
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, 8000, true);
-  view.setUint32(28, 8000, true); // byte rate
-  view.setUint16(32, 1, true);
-  view.setUint16(34, 8, true);
+  view.setUint16(20, options.format ?? 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bits, true);
   text(36, "data");
-  view.setUint32(40, dataSize, true);
+  view.setUint32(40, options.statedDataBytes ?? dataSize, true);
   return bytes;
 }
 

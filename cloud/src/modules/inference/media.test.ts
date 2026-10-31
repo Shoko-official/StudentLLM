@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { expectFixtureConformance, loadFixture, validateAgainst } from "../../testing";
 import {
@@ -99,20 +100,20 @@ describe("POST /v1/audio/transcriptions", () => {
     const h = makeInferenceHarness({ routing: routingWithMedia(), upstream: () => transcript(null) });
     const res = await h.postForm(AUDIO, audioForm(wavBytes(120), { duration_hint_seconds: "120" }));
     expect(res.status).toBe(200);
-    // Reserved on max(header 120 s, bytes / 4000 = 240.01 s, the 44-byte header counts) = 25 credits rounded up, and no
-    // duration reported: the whole reservation.
-    expect(res.headers.get("X-StudentLLM-Credits-Charged")).toBe("25");
+    // Reserved on max(header 120 s, bytes / 8000 = 120.0055 s, the 44-byte header counts): 12.0006 credits rounded up,
+    // and no duration reported: the whole reservation.
+    expect(res.headers.get("X-StudentLLM-Credits-Charged")).toBe("13");
     expect((await res.json()).duration_seconds).toBe(120); // the header, not the reservation
   });
 
-  it("sizes the reservation on the bytes received, not on an under-declared duration", async () => {
+  it("reserves at least the header's duration whatever the client declares", async () => {
     const h = makeInferenceHarness({
       routing: withModel(routingWithMedia(), "studentllm-transcribe", { maxAudioBytes: 4 * 1024 * 1024 }),
       upstream: () => transcript(null),
     });
     // 300 seconds of audio that the client claims is 1 second long.
     const res = await h.postForm(AUDIO, audioForm(wavBytes(300), { duration_hint_seconds: "1" }));
-    expect(res.headers.get("X-StudentLLM-Credits-Charged")).toBe("60"); // max(300 s header, bytes / 4000 = 600 s), no duration reported
+    expect(res.headers.get("X-StudentLLM-Credits-Charged")).toBe("31"); // 300.0055 s at 6 credits a minute, no duration reported
   });
 
   describe("the audio ceiling cannot be bypassed", () => {
@@ -127,27 +128,91 @@ describe("POST /v1/audio/transcriptions", () => {
     };
     let release: () => void = () => undefined;
     const held = () => new Promise<Response>((resolve) => (release = () => resolve(transcript(1))));
+    const big = () => withModel(routingWithMedia(), "studentllm-transcribe", { maxAudioBytes: 4 * 1024 * 1024 });
 
-    /** A WAV whose header states a huge byte rate, so that its header duration is a few milliseconds. */
-    function forgedWav(seconds: number, byteRate = 0xfffffff0): Uint8Array {
-      const bytes = wavBytes(seconds);
-      new DataView(bytes.buffer).setUint32(28, byteRate, true);
-      return bytes;
-    }
+    describe("a WAV is accepted only as PCM whose header agrees with itself", () => {
+      // The header fields a decoder honours but the gateway cannot see through: each is refused, nothing is reserved.
+      const refused: Array<[string, () => Uint8Array]> = [
+        ["a sample rate forged down (1000 Hz stated, byte rate left at 8000): 1920 s to a decoder, 240 s to the gateway", () => wavBytes(0, { sampleRate: 1000, byteRate: 8000, dataBytes: 1_920_000 })],
+        ["a sample rate below 8000 Hz even when the byte rate agrees", () => wavBytes(60, { sampleRate: 4000 })],
+        ["a GSM format tag (1625 bytes a second, hours in few bytes)", () => wavBytes(1, { format: 0x31, byteRate: 1625, blockAlign: 65, bits: 8 })],
+        ["an ADPCM format tag", () => wavBytes(1, { format: 2 })],
+        ["an MP3-in-WAV format tag", () => wavBytes(1, { format: 0x55 })],
+        ["format tag 0", () => wavBytes(1, { format: 0 })],
+        ["a block align that is not channels x bits / 8", () => wavBytes(1, { blockAlign: 2 })],
+        ["a byte rate that is not sample rate x block align", () => wavBytes(1, { byteRate: 16_000 })],
+        ["a forged huge byte rate", () => wavBytes(300, { byteRate: 0xfffffff0 })],
+        ["a forged tiny byte rate", () => wavBytes(1, { byteRate: 1 })],
+        ["bits per sample that are not 8, 16, 24 or 32", () => wavBytes(1, { bits: 12, blockAlign: 1.5 as number })],
+        ["no channel", () => wavBytes(1, { channels: 0, blockAlign: 0, byteRate: 0 })],
+        ["no fmt chunk before the data", () => wavBytes(1).map((b, i) => (i >= 12 && i < 16 ? "junk".charCodeAt(i - 12) : b))],
+      ];
+      for (const [name, make] of refused) {
+        it(`refuses ${name}`, async () => {
+          const h = makeInferenceHarness({ routing: big(), upstream: held });
+          const res = await h.postForm(AUDIO, audioForm(make(), { duration_hint_seconds: "1" }));
+          expect(res.status).toBe(400);
+          expect(await code(res)).toBe("invalid_request");
+          expect(h.upstreamCalls).toHaveLength(0);
+          expect(await windowOf(h)).toBeNull();
+        });
+      }
 
-    it("a forged WAV byte rate does not shrink the reservation (it is never the header alone)", async () => {
-      const routing = withModel(routingWithMedia(), "studentllm-transcribe", { maxAudioBytes: 4 * 1024 * 1024 });
-      const h = makeInferenceHarness({ routing, upstream: held });
-      // 300 s of audio (2.4 MB) behind a header that says it is almost instant, declared as 1 s.
-      const reserved = await heldCredits(h, audioForm(forgedWav(300), { duration_hint_seconds: "1" }));
-      expect(reserved).toBe(60); // bytes / 4000 = 600 s, 10 minutes at 6 credits a minute; the header's ~0 s would have been 1
+      const honest: Array<[string, Parameters<typeof wavBytes>[1], number]> = [
+        ["8 kHz mono 8-bit", {}, 10],
+        ["16 kHz mono 16-bit", { sampleRate: 16_000, bits: 16 }, 10],
+        ["44.1 kHz stereo 16-bit", { sampleRate: 44_100, channels: 2, bits: 16 }, 10],
+        ["48 kHz stereo 24-bit", { sampleRate: 48_000, channels: 2, bits: 24 }, 5],
+        ["32-bit float (tag 3)", { sampleRate: 16_000, bits: 32, format: 3 }, 10],
+        ["WAVE_FORMAT_EXTENSIBLE (tag 0xFFFE)", { sampleRate: 22_050, bits: 16, format: 0xfffe }, 10],
+      ];
+      for (const [name, options, seconds] of honest) {
+        it(`keeps working for an honest ${name} file: reserved on the bytes, refunded on the reported duration`, async () => {
+          const bytes = wavBytes(seconds, options);
+          const h = makeInferenceHarness({ routing: big(), upstream: held });
+          const reserved = await heldCredits(h, audioForm(bytes, { duration_hint_seconds: String(seconds) }));
+          // An upper bound: max(header, bytes / 8000) seconds at 6 credits a minute, rounded up once.
+          expect(reserved).toBe(Math.ceil((Math.max(seconds, bytes.length / 8000) * 6) / 60));
+          expect(reserved).toBeGreaterThanOrEqual(Math.ceil((seconds * 6) / 60));
+          // The provider reports the real duration (the stub says 1 s): that is all that is charged.
+          expect(await windowOf(h)).toMatchObject({ used: 1, reserved: 0 });
+        });
+      }
+
+      it("reports the header duration when the provider reports none", async () => {
+        const h = makeInferenceHarness({ routing: big(), upstream: () => transcript(null) });
+        const res = await h.postForm(AUDIO, audioForm(wavBytes(10, { sampleRate: 44_100, channels: 2, bits: 16 })));
+        expect(res.status).toBe(200);
+        expect((await res.json()).duration_seconds).toBe(10);
+      });
+    });
+
+    it("counts a provider that reports more audio than the route allows, and still charges only up to the reservation", async () => {
+      const h = makeInferenceHarness({ routing: routingWithMedia(), upstream: () => transcript(700) });
+      const ogg = new Uint8Array(2000);
+      ogg.set([0x4f, 0x67, 0x67, 0x53]); // OggS: a container whose duration the gateway cannot read
+      const res = await h.postForm(AUDIO, audioForm(ogg, {}, "audio/ogg"));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("X-StudentLLM-Credits-Charged")).toBe("60"); // capped at the reservation: the 100 s above the cap are not recovered
+      expect(await h.stores.switches.getCounter("audio_duration_above_cap", `day:${new Date(h.clock.now()).toISOString().slice(0, 10)}`)).toBe(1);
+      // A duration at or below the cap is not counted.
+      const ok = makeInferenceHarness({ routing: routingWithMedia(), upstream: () => transcript(600) });
+      await ok.postForm(AUDIO, audioForm(ogg, {}, "audio/ogg"));
+      expect(await ok.stores.switches.getCounter("audio_duration_above_cap", `day:${new Date(ok.clock.now()).toISOString().slice(0, 10)}`)).toBe(0);
+    });
+
+    it("a stated data size smaller than the file does not shrink the reservation: it is the bytes that bound it", async () => {
+      const h = makeInferenceHarness({ routing: big(), upstream: held });
+      // 300 s of PCM behind a data chunk that states 1000 bytes (a decoder may read to the end of the file).
+      const reserved = await heldCredits(h, audioForm(wavBytes(300, { statedDataBytes: 1000 }), { duration_hint_seconds: "1" }));
+      expect(reserved).toBe(31); // bytes / 8000 = 300.0055 s, not the stated 0.125 s
     });
 
     it("caps the reservation at the route's duration, and refuses a header that claims more than the cap", async () => {
       const routing = withModel(routingWithMedia(), "studentllm-transcribe", { maxAudioSeconds: 100, maxAudioBytes: 8 * 1024 * 1024 });
       const h = makeInferenceHarness({ routing, upstream: held });
-      // 200 s of audio behind a forged header is only reserved up to the cap: 100 s = 10 credits (6 a minute).
-      expect(await heldCredits(h, audioForm(forgedWav(200)))).toBe(10);
+      // 100 s of audio with 99.99 s of header: reserved on the bytes (100.0055 s) but never above the cap, 10 credits.
+      expect(await heldCredits(h, audioForm(wavBytes(99.99)))).toBe(10);
       const honest = makeInferenceHarness({ routing });
       // A header that honestly says 200 s is above the cap and is refused outright.
       expect((await honest.postForm(AUDIO, audioForm(wavBytes(200)))).status).toBe(413);
@@ -280,15 +345,15 @@ describe("POST /v1/audio/transcriptions", () => {
       });
       const res = await h.postForm(AUDIO, audioForm(wavBytes(120), { duration_hint_seconds: "120" }));
       expect(res.status).toBe(503);
-      expect(res.headers.get("X-StudentLLM-Credits-Charged")).toBe("25"); // max(120 s, bytes / 4000 = 240.01 s) at 6 credits a minute
-      expect((await windowOf(h))!.used).toBe(25);
+      expect(res.headers.get("X-StudentLLM-Credits-Charged")).toBe("13"); // max(120 s, bytes / 8000 = 120.0055 s) at 6 credits a minute
+      expect((await windowOf(h))!.used).toBe(13);
     });
 
     it("charges the full reservation when the answer is unreadable", async () => {
       const h = makeInferenceHarness({ routing: routingWithMedia(), upstream: () => new Response("not json", { status: 200 }) });
       const res = await h.postForm(AUDIO, audioForm(wavBytes(60), { duration_hint_seconds: "60" }));
       expect(res.status).toBe(503);
-      expect(res.headers.get("X-StudentLLM-Credits-Charged")).toBe("13"); // max(60 s, bytes / 4000 = 120.01 s)
+      expect(res.headers.get("X-StudentLLM-Credits-Charged")).toBe("7"); // max(60 s, bytes / 8000 = 60.0055 s)
     });
 
     it("skips a provider that cannot transcribe, then releases", async () => {
@@ -389,5 +454,16 @@ describe("POST /v1/ocr (the response schema is provisional)", () => {
     const h = makeInferenceHarness({ routing: routingWithMedia(), providers: (id) => (id === "groq" ? provider : undefined) });
     expect((await h.postForm(AUDIO, audioForm(wavBytes(5)))).status).toBe(200);
     expect(signal).toBeDefined();
+  });
+});
+
+describe("the residual risk of compressed containers is written down", () => {
+  it("says so in the README and next to the byte cap", () => {
+    const readme = readFileSync(new URL("../../../README.md", import.meta.url), "utf8");
+    expect(readme).toMatch(/Residual risk/);
+    expect(readme).toContain("audio_duration_above_cap");
+    expect(readme).toMatch(/`maxAudioBytes` must stay small before audio is enabled/);
+    const routing = readFileSync(new URL("./routing.ts", import.meta.url), "utf8");
+    expect(routing).toMatch(/Keep this SMALL until audio is enabled/);
   });
 });

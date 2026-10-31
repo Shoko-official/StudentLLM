@@ -82,11 +82,11 @@ const MAX_BYTE_RATE: Record<AudioKind, number> = {
 };
 
 /**
- * The lowest byte rate a WAV can plausibly have (8-bit PCM at 4 kHz, or ADPCM). The duration the WAV header states
- * is client-controlled (a forged byte rate of 0xfffffff0 makes any file "last" a few milliseconds), so the
- * reservation is `max(header duration, bytes / WAV_MIN_BYTE_RATE)`: never the header alone.
+ * The lowest byte rate a WAV can have once its header has passed `checkPcmWav`: 8-bit mono PCM at 8000 Hz, 8000 bytes
+ * per second. Every accepted header has a byte rate at or above it, so `bytes / WAV_MIN_BYTE_RATE` is an upper bound of
+ * the duration of the audio data whatever the header says about it.
  */
-export const WAV_MIN_BYTE_RATE = 4000;
+export const WAV_MIN_BYTE_RATE = 8000;
 
 function sniffAudio(head: Uint8Array): AudioKind | null {
   if (ascii(head, 0, "RIFF") && ascii(head, 8, "WAVE")) return "wav";
@@ -98,26 +98,62 @@ function sniffAudio(head: Uint8Array): AudioKind | null {
   return null;
 }
 
-/** Exact duration of a PCM WAV from its header (the byte rate and the data chunk size), or null when unreadable. */
-export function wavDurationSeconds(bytes: Uint8Array): number | null {
+export interface WavInfo {
+  formatTag: number;
+  channels: number;
+  sampleRate: number;
+  byteRate: number;
+  blockAlign: number;
+  bitsPerSample: number;
+  /** Bytes of the data chunk as stated (0, 0xFFFFFFFF or a size that overruns the file mean "what was received"). */
+  dataBytes: number;
+}
+
+/** Reads the `fmt ` and `data` chunks of a RIFF/WAVE file, or null when either is missing or truncated. */
+export function parseWav(bytes: Uint8Array): WavInfo | null {
   if (bytes.length < 12) return null;
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 12;
-  let byteRate = 0;
+  let fmt: Omit<WavInfo, "dataBytes"> | null = null;
   while (offset + 8 <= bytes.length) {
     const id = String.fromCharCode(at(bytes, offset), at(bytes, offset + 1), at(bytes, offset + 2), at(bytes, offset + 3));
     let size = view.getUint32(offset + 4, true);
     const body = offset + 8;
-    if (id === "fmt " && body + 12 <= bytes.length) {
-      byteRate = view.getUint32(body + 8, true);
+    if (id === "fmt " && size >= 16 && body + 16 <= bytes.length) {
+      fmt = {
+        formatTag: view.getUint16(body, true),
+        channels: view.getUint16(body + 2, true),
+        sampleRate: view.getUint32(body + 4, true),
+        byteRate: view.getUint32(body + 8, true),
+        blockAlign: view.getUint16(body + 12, true),
+        bitsPerSample: view.getUint16(body + 14, true),
+      };
     } else if (id === "data") {
       // A streamed WAV may carry 0 or 0xFFFFFFFF as the size: use what was received.
       if (size === 0 || size === 0xffffffff || body + size > bytes.length) size = bytes.length - body;
-      return byteRate > 0 ? size / byteRate : null;
+      return fmt ? { ...fmt, dataBytes: size } : null;
     }
     offset = body + size + (size % 2);
   }
   return null;
+}
+
+/**
+ * Only PCM-style WAVs are accepted, and only when the header agrees with itself. A decoder honours the sample rate and
+ * the format tag, not the gateway's guess: a header whose byte rate says 8000 while its sample rate says 1000 would
+ * be billed as a short recording and transcribed as a long one, and a compressed format (GSM, ADPCM) packs hours into
+ * few bytes. With these rules the stated duration (`dataBytes / byteRate`) is the real one, and
+ * `bytes / WAV_MIN_BYTE_RATE` is a sound upper bound of it.
+ *   format tag 1 (PCM), 3 (float) or 0xFFFE (extensible); 8, 16, 24 or 32 bits per sample; a sample rate of at least
+ *   8000 Hz; `blockAlign == channels x bits / 8`; `byteRate == sampleRate x blockAlign`.
+ */
+export function checkPcmWav(info: WavInfo): boolean {
+  if (info.formatTag !== 1 && info.formatTag !== 3 && info.formatTag !== 0xfffe) return false;
+  if (![8, 16, 24, 32].includes(info.bitsPerSample)) return false;
+  if (info.channels < 1 || info.channels > 32) return false;
+  if (info.sampleRate < 8000 || info.sampleRate > 768_000) return false;
+  if (info.blockAlign !== info.channels * (info.bitsPerSample / 8)) return false;
+  return info.byteRate === info.sampleRate * info.blockAlign;
 }
 
 export interface AudioInput {
@@ -169,8 +205,11 @@ export async function validateTranscription(form: FormData, routing: RoutingTabl
   let reservedSeconds = route.maxAudioSeconds;
   let fallbackSeconds = declared > 0 ? declared : reservedSeconds;
   if (kind === "wav") {
-    const header = wavDurationSeconds(bytes);
-    if (header === null) throw invalid("The WAV header is unreadable.");
+    const info = parseWav(bytes);
+    if (info === null) throw invalid("The WAV header is unreadable.");
+    // Not a PCM WAV, or a header that contradicts itself: the duration it states cannot be trusted, so the file is refused.
+    if (!checkPcmWav(info)) throw invalid("The WAV must be uncompressed PCM with a consistent header.");
+    const header = info.dataBytes / info.byteRate;
     longest = Math.max(longest, header); // a header that claims more than the cap is refused too
     reservedSeconds = Math.min(route.maxAudioSeconds, Math.max(declared, header, bytes.length / WAV_MIN_BYTE_RATE));
     fallbackSeconds = Math.min(route.maxAudioSeconds, Math.max(declared, header));
