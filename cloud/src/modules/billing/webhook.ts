@@ -186,13 +186,17 @@ async function processEvent(env: BillingEnv, ev: NormalizedEvent): Promise<Outco
       // tombstone and canceled now (with the tombstone's retry). The event itself is quarantined for the operator,
       // who refunds the customer; the alert names the subscription and customer ids.
       const live = ev.subscriptionId !== null && ev.kind !== "adjustment" && ev.status !== "canceled";
-      const outcome = await quarantine(env, ev, "account_deleted", accountId, live);
+      // The operator hears about a stray subscription ONCE: a later event for an id the tombstone already lists (Paddle
+      // sends several per subscription) is recorded without another alert. It still asks for the cancel, which is a
+      // no-op once that id is confirmed.
+      const known = ev.subscriptionId !== null && [tombstone.paddleSubscriptionId, ...(tombstone.paddleSubscriptionIds ?? [])].includes(ev.subscriptionId);
+      const outcome: Outcome = known ? { state: "quarantined", fields, after: [] } : await quarantine(env, ev, "account_deleted", accountId, live);
       if (live) {
         const subscriptionId = ev.subscriptionId!;
         const customerId = ev.customerId;
         outcome.after.push(() => cancelStraySubscription(env, accountId, subscriptionId, customerId).then(() => undefined));
       }
-      if (ev.kind === "transaction" || (ev.kind === "subscription" && ev.status === "active")) {
+      if (!known && (ev.kind === "transaction" || (ev.kind === "subscription" && ev.status === "active"))) {
         outcome.after.push(() => env.notifier.alertOperator({ kind: "purchase_while_deleting", accountId }));
       }
       return outcome;

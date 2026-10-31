@@ -112,15 +112,33 @@ export interface PlanRecord {
 
 /**
  * The cancellation of every Paddle subscription of a deleted account, kept on the tombstone because the plan row is
- * gone by then. `pending` lists the subscription ids Paddle has not confirmed yet; the scheduled task retries them
- * with backoff until the list is empty (`done`). Ids only.
+ * gone by then. The store keeps one invariant, in every operation that touches it:
+ *
+ *   pendingIds = (every subscription id of the tombstone) minus `confirmedIds`, and state = done exactly when
+ *   `pendingIds` is empty.
+ *
+ * So `done` means every id the account ever had was confirmed canceled (or found already gone) at Paddle, and an id
+ * that is added later re-opens it. The scheduled task retries the pending ids with backoff. Ids only.
  */
 export interface TombstoneCancel {
   state: "pending" | "done";
   pendingIds: string[];
+  confirmedIds: string[];
   attempts: number;
   nextAttemptAt: number;
   alerted: boolean;
+}
+
+/** What one cancel attempt learned, applied to the tombstone's cancel state in one atomic step. */
+export interface TombstoneCancelUpdate {
+  now: number;
+  /** Subscription ids Paddle confirmed canceled (or already gone). Ids that are not the tombstone's are ignored. */
+  confirmed?: readonly string[];
+  /**
+   * At least one cancel did not go through: counts an attempt and schedules the next one at `nextAttemptAt`; once
+   * the attempts reach `alertAfter` the state is marked `alerted` (reported back once, as `newlyAlerted`).
+   */
+  failedAttempt?: { nextAttemptAt: number; alertAfter: number };
 }
 
 export interface DeletionTombstone {
@@ -256,9 +274,15 @@ export interface AccountStore {
    * the Paddle indexes, so the cancel covers it and its later events resolve to the tombstone. Idempotent. Null when
    * there is no tombstone.
    */
-  addTombstoneSubscription(accountId: string, subscriptionId: string, customerId: string | null): Promise<DeletionTombstone | null>;
-  /** Records the state of the cancellation of a deleted account on its tombstone. Null when there is no tombstone. */
-  setTombstoneCancel(accountId: string, cancel: TombstoneCancel | null): Promise<DeletionTombstone | null>;
+  addTombstoneSubscription(accountId: string, subscriptionId: string, customerId: string | null, now: number): Promise<DeletionTombstone | null>;
+  /**
+   * Atomically applies what a cancel attempt learned to the tombstone's cancel state: removes the confirmed ids from
+   * the pending list, counts a failed attempt, and recomputes `state` (see TombstoneCancel). It never overwrites ids
+   * it was not told about: an id added or confirmed by a concurrent step stays as that step left it, so a slow
+   * attempt cannot erase a newer one. When no cancel state exists yet it is created with EVERY tombstone id pending.
+   * Null when there is no tombstone.
+   */
+  updateTombstoneCancel(accountId: string, update: TombstoneCancelUpdate): Promise<{ tombstone: DeletionTombstone; newlyAlerted: boolean } | null>;
   /** Removes the account (if any), its plan, its tombstone and the Paddle indexes. */
   purgeAccount(accountId: string): Promise<void>;
 }

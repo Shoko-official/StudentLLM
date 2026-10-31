@@ -79,38 +79,87 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
       expect(await stores.accounts.listPendingCancels(T0 + 400, 1)).toEqual(["acc_2"]);
     });
 
-    it("keeps the Paddle ids in the tombstone while a cancellation is pending, and schedules the retry from the tombstone", async () => {
+    /** A deleted account with two subscriptions (sub_1 current, sub_2 recorded by billing). */
+    async function deletedWithTwo() {
       const stores = await accountWith();
-      await stores.accounts.applyPlanEvent("acc_1", T0, () => plan({ pendingCancel: { when: "now", requestedAt: T0, attempts: 0, nextAttemptAt: T0, alerted: false } }));
-      const t = await stores.accounts.markDeleting("acc_1", T0 + 1);
+      await stores.accounts.applyPlanEvent("acc_1", T0, () => plan({ extraCancels: [{ subscriptionId: "sub_2", customerId: null, reason: "duplicate", requestedAt: T0, attempts: 0, nextAttemptAt: T0, alerted: false }] }));
+      await stores.accounts.markDeleting("acc_1", T0 + 1);
+      return stores;
+    }
+
+    it("keeps the Paddle ids in the tombstone and schedules the retry from the tombstone once a cancel attempt failed", async () => {
+      const stores = await deletedWithTwo();
+      const t = (await stores.accounts.getTombstone("acc_1"))!;
       expect(t).toMatchObject({ paddleCustomerId: "ctm_1", paddleSubscriptionId: "sub_1" });
-      // The deletion erased the plan, and with it the plan's own pending cancel: only the tombstone can schedule now.
+      expect([...t.paddleSubscriptionIds!].sort()).toEqual(["sub_1", "sub_2"]);
+      // The deletion erased the plan, and with it the plan\'s own pending cancel: only the tombstone can schedule now.
       expect(await stores.accounts.listPendingCancels(T0 + 1, 10)).toEqual([]);
-      await stores.accounts.setTombstoneCancel("acc_1", { state: "pending", pendingIds: ["sub_1"], attempts: 1, nextAttemptAt: T0 + 100, alerted: false });
+      const r = await stores.accounts.updateTombstoneCancel("acc_1", { now: T0 + 2, confirmed: ["sub_1"], failedAttempt: { nextAttemptAt: T0 + 100, alertAfter: 5 } });
+      expect(r!.tombstone.cancel).toMatchObject({ state: "pending", pendingIds: ["sub_2"], confirmedIds: ["sub_1"], attempts: 1, nextAttemptAt: T0 + 100, alerted: false });
       expect(await stores.accounts.listPendingCancels(T0 + 99, 10)).toEqual([]);
       expect(await stores.accounts.listPendingCancels(T0 + 100, 10)).toEqual(["acc_1"]);
-      expect((await stores.accounts.getTombstone("acc_1"))!.cancel).toMatchObject({ pendingIds: ["sub_1"] });
-      await stores.accounts.setTombstoneCancel("acc_1", { state: "done", pendingIds: [], attempts: 1, nextAttemptAt: T0 + 100, alerted: false });
+      const done = await stores.accounts.updateTombstoneCancel("acc_1", { now: T0 + 101, confirmed: ["sub_2"] });
+      expect(done!.tombstone.cancel).toMatchObject({ state: "done", pendingIds: [], confirmedIds: ["sub_1", "sub_2"] });
       expect(await stores.accounts.listPendingCancels(T0 + 1000, 10)).toEqual([]);
-      expect(await stores.accounts.setTombstoneCancel("ghost", null)).toBeNull();
+      expect(await stores.accounts.updateTombstoneCancel("ghost", { now: T0 })).toBeNull();
+    });
+
+    it("creates the cancel state with EVERY tombstone id pending, and is done only when every id is confirmed", async () => {
+      const stores = await deletedWithTwo();
+      const first = await stores.accounts.updateTombstoneCancel("acc_1", { now: T0 + 2, confirmed: ["sub_2"] }); // a confirmation before any attempt
+      expect(first!.tombstone.cancel).toMatchObject({ state: "pending", pendingIds: ["sub_1"], confirmedIds: ["sub_2"] });
+      // An id that is not the tombstone\'s confirms nothing and cannot complete the job.
+      const stray = await stores.accounts.updateTombstoneCancel("acc_1", { now: T0 + 3, confirmed: ["sub_unrelated"] });
+      expect(stray!.tombstone.cancel).toMatchObject({ state: "pending", pendingIds: ["sub_1"] });
+    });
+
+    it("applies updates additively: a late update cannot erase what a concurrent one recorded", async () => {
+      const stores = await deletedWithTwo();
+      await stores.accounts.addTombstoneSubscription("acc_1", "sub_stray", null, T0 + 2);
+      // The slow attempt only knows about sub_1 and sub_2; it must not mark the stray confirmed or the job done.
+      const r = await stores.accounts.updateTombstoneCancel("acc_1", { now: T0 + 3, confirmed: ["sub_1", "sub_2"] });
+      expect(r!.tombstone.cancel).toMatchObject({ state: "pending", pendingIds: ["sub_stray"] });
+      // Parallel updates all land: each confirmation is kept.
+      const s2 = await deletedWithTwo();
+      await Promise.all([
+        s2.accounts.updateTombstoneCancel("acc_1", { now: T0 + 2, confirmed: ["sub_1"] }),
+        s2.accounts.updateTombstoneCancel("acc_1", { now: T0 + 2, confirmed: ["sub_2"] }),
+        s2.accounts.addTombstoneSubscription("acc_1", "sub_stray", null, T0 + 2),
+      ]);
+      const t = (await s2.accounts.getTombstone("acc_1"))!;
+      expect(t.cancel!.confirmedIds.slice().sort()).toEqual(["sub_1", "sub_2"]);
+      expect(t.cancel!.pendingIds).toEqual(["sub_stray"]);
+      expect(t.cancel!.state).toBe("pending");
+    });
+
+    it("counts failed attempts, reports the alert threshold once, and a new id re-opens a finished cancel", async () => {
+      const stores = await deletedWithTwo();
+      const fail = (now: number) => stores.accounts.updateTombstoneCancel("acc_1", { now, failedAttempt: { nextAttemptAt: now + 10, alertAfter: 2 } });
+      expect((await fail(T0 + 2))!.newlyAlerted).toBe(false);
+      expect((await fail(T0 + 3))!.newlyAlerted).toBe(true);
+      const third = await fail(T0 + 4);
+      expect(third!.newlyAlerted).toBe(false);
+      expect(third!.tombstone.cancel).toMatchObject({ attempts: 3, alerted: true });
+      await stores.accounts.updateTombstoneCancel("acc_1", { now: T0 + 5, confirmed: ["sub_1", "sub_2"] });
+      expect((await stores.accounts.getTombstone("acc_1"))!.cancel).toMatchObject({ state: "done" });
+      const reopened = await stores.accounts.addTombstoneSubscription("acc_1", "sub_late", "ctm_late", T0 + 50);
+      expect(reopened!.cancel).toMatchObject({ state: "pending", pendingIds: ["sub_late"], attempts: 0, alerted: false, nextAttemptAt: T0 + 50 });
     });
 
     it("appends a subscription that appears after the deletion to the tombstone and the indexes, once", async () => {
       const stores = await accountWith();
       await stores.accounts.applyPlanEvent("acc_1", T0, () => plan());
       await stores.accounts.markDeleting("acc_1", T0 + 1);
-      const t = await stores.accounts.addTombstoneSubscription("acc_1", "sub_late", "ctm_late");
+      const t = await stores.accounts.addTombstoneSubscription("acc_1", "sub_late", "ctm_late", T0 + 2);
       expect([...t!.paddleSubscriptionIds!].sort()).toEqual(["sub_1", "sub_late"]);
       expect([...t!.paddleCustomerIds!].sort()).toEqual(["ctm_1", "ctm_late"]);
-      await stores.accounts.addTombstoneSubscription("acc_1", "sub_late", "ctm_late");
+      await stores.accounts.addTombstoneSubscription("acc_1", "sub_late", "ctm_late", T0 + 3);
       expect((await stores.accounts.getTombstone("acc_1"))!.paddleSubscriptionIds).toHaveLength(2);
       expect(await stores.accounts.findAccountIdByPaddleSubscription("sub_late")).toBe("acc_1");
       expect(await stores.accounts.findAccountIdByPaddleCustomer("ctm_late")).toBe("acc_1");
-      expect(await stores.accounts.addTombstoneSubscription("ghost", "sub_x", null)).toBeNull();
+      expect(await stores.accounts.addTombstoneSubscription("ghost", "sub_x", null, T0)).toBeNull();
     });
-  });
 
-  describe(`${label}: billing, id indexes, tombstone and extra cancellations`, () => {
     it("resolves a payment to its account, and keeps resolving the ids an account used after its plan moved on", async () => {
       const stores = await accountWith();
       await stores.accounts.applyPlanEvent("acc_1", T0, () => plan({ revokedPurchaseIds: ["txn_refunded"] }));

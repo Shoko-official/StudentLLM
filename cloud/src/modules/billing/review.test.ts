@@ -289,6 +289,21 @@ describe("post-rebase low items", () => {
     expect(unknown.notifier.alerts.map((a) => a.kind)).toContain("subscription_needs_review");
   });
 
+  it("a grant shortened until nothing remains cannot be recreated by a replay without startsAt", async () => {
+    const app = await setup();
+    const env = envFromDeps(app.t.deps);
+    await createGrantWindows(env, "acc_test", { grantId: "g", days: 60, startPolicy: "now", startsAt: T + 5 * DAY });
+    const { shortenGrantWindows } = await import("./grants");
+    expect(await shortenGrantWindows(env, "acc_test", "g", T + 5 * DAY)).toMatchObject({ ok: true });
+    expect(await liveWindows(app)).toEqual([]);
+    expect((await app.stores.ledger.listWindows("acc_test")).filter((w) => w.grantId === "g").length).toBeGreaterThan(0); // history stays
+    expect(await createGrantWindows(env, "acc_test", { grantId: "g", days: 60, startPolicy: "now" })).toEqual({ ok: false, reason: "grant_revoked" });
+    // A partial shortening still removes the later windows as before.
+    await createGrantWindows(env, "acc_test", { grantId: "h", days: 90, startPolicy: "now", startsAt: T + 100 * DAY });
+    expect(await shortenGrantWindows(env, "acc_test", "h", T + 100 * DAY + 40 * DAY)).toMatchObject({ ok: true });
+    expect((await liveWindows(app)).filter((w) => w.grantId === "h")).toHaveLength(2);
+  });
+
   it("refuses to recreate a revoked grant under its id, with or without startsAt", async () => {
     const app = await setup();
     const env = envFromDeps(app.t.deps);

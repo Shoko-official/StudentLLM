@@ -17,7 +17,7 @@
 //
 // A deleted account has no plan row (the deletion keeps only a tombstone with every subscription and customer id).
 // Then the ids come from the tombstone, all of them are canceled now, and the retry state lives on the tombstone
-// (`TombstoneCancel`: the ids Paddle has not confirmed, attempts, next try) until every cancel succeeded. A webhook
+// (`TombstoneCancel`: the ids Paddle has not confirmed, attempts, next try) until every id of the tombstone is confirmed. A webhook
 // for such an account only confirms a cancellation there; it never recreates plan state.
 
 import type { DeletionTombstone, ExtraCancel, PendingCancel, PlanRecord } from "../../storage";
@@ -140,69 +140,61 @@ async function cancelExtra(env: BillingEnv, accountId: string, extra: ExtraCance
   return "pending";
 }
 
-const tombstoneIds = (t: DeletionTombstone): string[] => [...new Set([...(t.paddleSubscriptionIds ?? []), ...(t.paddleSubscriptionId ? [t.paddleSubscriptionId] : [])])];
+const tombstoneIds = (t: DeletionTombstone): string[] => [...new Set([...(t.paddleSubscriptionId ? [t.paddleSubscriptionId] : []), ...(t.paddleSubscriptionIds ?? [])])];
 
-/** Cancels, now, every subscription the tombstone lists that Paddle has not confirmed yet; keeps the retry on the tombstone. */
+/**
+ * Cancels, now, EVERY subscription of the tombstone that Paddle has not confirmed yet (all of them when no cancel was
+ * attempted before), and reports what it learned to the store in one atomic update. Nothing here overwrites the cancel
+ * state: a subscription added or confirmed while this call waited on Paddle stays as that step left it, and the state
+ * is `done` only when the store sees every id confirmed (see TombstoneCancel). The answer comes from that state:
+ * `pending` while any id is unconfirmed, `cancelled` when this call completed the job, `none` when there was nothing to do.
+ */
 async function cancelFromTombstone(env: BillingEnv, accountId: string, tomb: DeletionTombstone): Promise<CancelState> {
   const { accounts } = env.stores;
-  if (tomb.cancel?.state === "done") return "none";
-  const all = tombstoneIds(tomb);
-  const previous = tomb.cancel ?? null;
-  const targets = previous?.state === "pending" ? previous.pendingIds : all;
-  const now = env.clock.now();
-  const failed: string[] = [];
-  let confirmed = 0;
+  const confirmedBefore = new Set(tomb.cancel?.confirmedIds ?? []);
+  const targets = tombstoneIds(tomb).filter((id) => !confirmedBefore.has(id));
+  if (targets.length === 0) return "none";
+  const confirmed: string[] = [];
+  let failedAny = false;
   for (const id of targets) {
-    if (await askPaddle(env, id, "now")) confirmed++;
-    else failed.push(id);
+    if (await askPaddle(env, id, "now")) confirmed.push(id);
+    else failedAny = true;
   }
-  if (failed.length === 0) {
-    await accounts.setTombstoneCancel(accountId, { state: "done", pendingIds: [], attempts: previous?.attempts ?? 0, nextAttemptAt: now, alerted: previous?.alerted ?? false });
-    return confirmed > 0 ? "cancelled" : "none";
+  const now = env.clock.now();
+  const previousAttempts = tomb.cancel?.attempts ?? 0;
+  const result = await accounts.updateTombstoneCancel(accountId, {
+    now,
+    confirmed,
+    ...(failedAny ? { failedAttempt: { nextAttemptAt: now + retryDelayMs(env, previousAttempts + 1), alertAfter: env.settings.cancel.alertAfterAttempts } } : {}),
+  });
+  if (!result) return "none";
+  if (result.newlyAlerted) {
+    await env.notifier.alertOperator({ kind: "cancel_failing", accountId, attempts: result.tombstone.cancel!.attempts, subscriptionId: result.tombstone.cancel!.pendingIds[0]! });
   }
-  const attempts = (previous?.attempts ?? 0) + 1;
-  const reached = attempts >= env.settings.cancel.alertAfterAttempts;
-  await accounts.setTombstoneCancel(accountId, { state: "pending", pendingIds: failed, attempts, nextAttemptAt: now + retryDelayMs(env, attempts), alerted: (previous?.alerted ?? false) || reached });
-  if (reached && !(previous?.alerted ?? false)) {
-    await env.notifier.alertOperator({ kind: "cancel_failing", accountId, attempts, subscriptionId: failed[0]! });
-  }
-  return "pending";
+  return result.tombstone.cancel!.state === "done" ? "cancelled" : "pending";
 }
 
 /**
  * A `subscription.canceled` for a subscription of a deleted account: the cancel is confirmed, so it leaves the pending
- * list (and the retry ends when the list is empty). It changes nothing else. Returns whether the id was one of the tombstone's.
+ * list (and the retry ends when every id is confirmed). It changes nothing else. Returns whether the id was one of the tombstone's.
  */
 export async function confirmTombstoneSubscription(env: BillingEnv, accountId: string, subscriptionId: string): Promise<boolean> {
   const tomb = await env.stores.accounts.getTombstone(accountId);
   if (!tomb || !tombstoneIds(tomb).includes(subscriptionId)) return false;
-  if (tomb.cancel?.state === "done") return true;
-  const pending = (tomb.cancel?.state === "pending" ? tomb.cancel.pendingIds : tombstoneIds(tomb)).filter((id) => id !== subscriptionId);
-  const base = tomb.cancel ?? { state: "pending" as const, pendingIds: [], attempts: 0, nextAttemptAt: env.clock.now(), alerted: false };
-  await env.stores.accounts.setTombstoneCancel(accountId, { ...base, state: pending.length === 0 ? "done" : "pending", pendingIds: pending });
+  await env.stores.accounts.updateTombstoneCancel(accountId, { now: env.clock.now(), confirmed: [subscriptionId] });
   return true;
 }
 
 /**
  * A subscription that was paid for after the deletion started (a checkout opened before it, paid during it): it is
- * appended to the tombstone, put on the pending list (re-opening a finished cancel) and canceled now, so it cannot keep
- * billing an account that no longer exists. The retry is the tombstone's, like for the others.
+ * appended to the tombstone (re-opening a finished cancel) and then EVERY unconfirmed id of the tombstone is canceled
+ * now, the account's own subscription included, so a stray can neither hide behind nor skip the main one. The retry is
+ * the tombstone's, like for the others.
  */
 export async function cancelStraySubscription(env: BillingEnv, accountId: string, subscriptionId: string, customerId: string | null): Promise<CancelState> {
-  const { accounts } = env.stores;
-  const tomb = await accounts.addTombstoneSubscription(accountId, subscriptionId, customerId);
+  const tomb = await env.stores.accounts.addTombstoneSubscription(accountId, subscriptionId, customerId, env.clock.now());
   if (!tomb) return "none";
-  const previous = tomb.cancel ?? null;
-  const pending = new Set(previous?.state === "pending" ? previous.pendingIds : []);
-  pending.add(subscriptionId);
-  const reopened = await accounts.setTombstoneCancel(accountId, {
-    state: "pending",
-    pendingIds: [...pending],
-    attempts: previous?.state === "pending" ? previous.attempts : 0,
-    nextAttemptAt: env.clock.now(),
-    alerted: previous?.alerted ?? false,
-  });
-  return reopened ? cancelFromTombstone(env, accountId, reopened) : "none";
+  return cancelFromTombstone(env, accountId, tomb);
 }
 
 export async function cancelSubscription(env: BillingEnv, accountId: string, when: CancelWhen): Promise<{ state: CancelState }> {

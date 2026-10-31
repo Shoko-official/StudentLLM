@@ -160,7 +160,13 @@ export async function shortenGrantWindows(
   if (windows.length === 0) return { ok: false, reason: "not_found" };
   const currentEnd = Math.max(...windows.map((w) => w.end));
   if (!(newEnd < currentEnd)) return { ok: false, reason: "not_earlier" };
-  const changed = await ledger.truncateWindows(accountId, newEnd, { source: "admin_grant", grantId });
+  // A shortening that leaves nothing of the grant would remove every window and with them any trace of the grant id,
+  // so a replay without startsAt could create it again. Then the windows are revoked instead (they stay as history).
+  const firstStart = Math.min(...windows.map((w) => w.start));
+  const changed =
+    newEnd <= firstStart
+      ? await ledger.revokeWindows(accountId, newEnd, { source: "admin_grant", grantId })
+      : await ledger.truncateWindows(accountId, newEnd, { source: "admin_grant", grantId });
   if (changed > 0) await accounts.touchPlanVersion(accountId);
   return { ok: true, changed };
 }

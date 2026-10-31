@@ -5,7 +5,7 @@ import type {
   ApplyPlanEventResult,
   DeletionJob,
   DeletionTombstone,
-  TombstoneCancel,
+  TombstoneCancelUpdate,
   LoginMethod,
   NewAccount,
   PlanReducer,
@@ -16,6 +16,11 @@ import type {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const copy = <T>(value: T): T => structuredClone(value);
+
+/** Every subscription id of a tombstone: the current one and the others billing recorded. */
+function tombstoneSubscriptionIds(t: DeletionTombstone): string[] {
+  return [...new Set([...(t.paddleSubscriptionId ? [t.paddleSubscriptionId] : []), ...(t.paddleSubscriptionIds ?? [])])];
+}
 
 /** The earliest time a cancellation of this plan (the plan's own or an extra one) is due, or null when none waits. */
 function dueAt(plan: PlanRecord): number | null {
@@ -212,25 +217,52 @@ export class InMemoryAccountStore implements AccountStore {
       .map(([id]) => id);
   }
 
-  async addTombstoneSubscription(accountId: string, subscriptionId: string, customerId: string | null) {
+  async addTombstoneSubscription(accountId: string, subscriptionId: string, customerId: string | null, now: number) {
     const t = this.tombstones.get(accountId);
     if (!t) return null;
-    const subs = new Set([...(t.paddleSubscriptionIds ?? []), ...(t.paddleSubscriptionId ? [t.paddleSubscriptionId] : []), subscriptionId]);
-    t.paddleSubscriptionIds = [...subs];
+    const known = tombstoneSubscriptionIds(t).includes(subscriptionId);
+    t.paddleSubscriptionIds = [...new Set([...tombstoneSubscriptionIds(t), subscriptionId])];
     if (customerId !== null) {
-      const customers = new Set([...(t.paddleCustomerIds ?? []), ...(t.paddleCustomerId ? [t.paddleCustomerId] : []), customerId]);
-      t.paddleCustomerIds = [...customers];
+      t.paddleCustomerIds = [...new Set([...(t.paddleCustomerIds ?? []), ...(t.paddleCustomerId ? [t.paddleCustomerId] : []), customerId])];
       if (!this.byCustomer.has(customerId)) this.byCustomer.set(customerId, accountId);
     }
     if (!this.bySubscription.has(subscriptionId)) this.bySubscription.set(subscriptionId, accountId);
+    if (!known && t.cancel) {
+      // A new unconfirmed id re-opens a finished cancel, with a fresh attempt count, due at once.
+      const reopened = t.cancel.state === "done";
+      t.cancel = {
+        ...t.cancel,
+        state: "pending",
+        pendingIds: tombstoneSubscriptionIds(t).filter((id) => !t.cancel!.confirmedIds.includes(id)),
+        attempts: reopened ? 0 : t.cancel.attempts,
+        alerted: reopened ? false : t.cancel.alerted,
+        nextAttemptAt: reopened ? now : Math.min(t.cancel.nextAttemptAt, now),
+      };
+    }
     return copy(t);
   }
 
-  async setTombstoneCancel(accountId: string, cancel: TombstoneCancel | null) {
+  async updateTombstoneCancel(accountId: string, update: TombstoneCancelUpdate) {
+    // Synchronous from the read to the write, so it is atomic (an adapter does this in one step).
     const t = this.tombstones.get(accountId);
     if (!t) return null;
-    t.cancel = cancel === null ? null : copy(cancel);
-    return copy(t);
+    const all = tombstoneSubscriptionIds(t);
+    const previous = t.cancel ?? { state: "pending" as const, pendingIds: [], confirmedIds: [], attempts: 0, nextAttemptAt: update.now, alerted: false };
+    const confirmed = new Set(previous.confirmedIds.filter((id) => all.includes(id)));
+    for (const id of update.confirmed ?? []) if (all.includes(id)) confirmed.add(id);
+    const pending = all.filter((id) => !confirmed.has(id));
+    let { attempts, nextAttemptAt, alerted } = previous;
+    let newlyAlerted = false;
+    if (update.failedAttempt && pending.length > 0) {
+      attempts += 1;
+      nextAttemptAt = update.failedAttempt.nextAttemptAt;
+      if (!alerted && attempts >= update.failedAttempt.alertAfter) {
+        alerted = true;
+        newlyAlerted = true;
+      }
+    }
+    t.cancel = { state: pending.length === 0 ? "done" : "pending", pendingIds: pending, confirmedIds: [...confirmed], attempts, nextAttemptAt, alerted };
+    return { tombstone: copy(t), newlyAlerted };
   }
 
   async findAccountIdByPaddleSubscription(subscriptionId: string) {

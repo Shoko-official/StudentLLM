@@ -26,7 +26,7 @@ export class FakePaddle implements PaddleClient {
   readonly calls: Array<{ method: string; args: unknown[] }> = [];
   readonly subscriptions = new Map<string, PaddleSubscription>();
   /** Failures to throw, consumed one per call of the named method. */
-  private readonly failures: Array<{ method: string; failure: PaddleFailure }> = [];
+  private readonly failures: Array<{ method: string; failure: PaddleFailure; subscriptionId?: string }> = [];
   private n = 0;
   /** The host of the checkout URLs it returns (a test sets another one to play a wrong answer from Paddle). */
   checkoutHost = "checkout.paddle.example.invalid";
@@ -50,15 +50,23 @@ export class FakePaddle implements PaddleClient {
     for (let i = 0; i < times; i++) this.failures.push({ method, failure });
   }
 
+  /** Fails the next call of `method` about this subscription id (the first argument), whatever calls come before it. */
+  failFor(method: "cancelSubscription" | "getSubscription", subscriptionId: string, failure: PaddleFailure = "unavailable"): void {
+    this.failures.push({ method, failure, subscriptionId });
+  }
+
   private async record(method: string, args: unknown[]): Promise<void> {
     this.calls.push({ method, args });
+    // A queued failure is taken by the call that arrives first, BEFORE any hold: a call held mid-flight does not take
+    // a failure that was queued for the calls that come after it.
+    const i = this.failures.findIndex((f) => f.method === method && (f.subscriptionId === undefined || args[0] === f.subscriptionId));
+    const failure = i >= 0 ? this.failures.splice(i, 1)[0]!.failure : null;
     const gate = this.gates.get(method);
     if (gate) {
       this.gates.delete(method);
       await gate;
     }
-    const i = this.failures.findIndex((f) => f.method === method);
-    if (i >= 0) throw new PaddleError(this.failures.splice(i, 1)[0]!.failure);
+    if (failure) throw new PaddleError(failure);
   }
 
   callsTo(method: string): unknown[][] {
