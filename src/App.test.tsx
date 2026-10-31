@@ -459,7 +459,7 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('Gradient descent updates parameters using the learning rate.')).toBeInTheDocument();
   }, 15000);
 
-  it('imports several files as one lesson each, one file at a time', async () => {
+  it('imports several files into the selected course, one file at a time', async () => {
     const user = userEvent.setup();
     let running = 0;
     let overlapped = false;
@@ -474,21 +474,18 @@ describe('StudentLLM workspace', () => {
     render(<App documentEngine={{ extract }} />);
 
     await user.upload(screen.getByLabelText('Select course source'), [
-      new File(['%PDF-1.7'], 'TD2.pdf', { type: 'application/pdf' }),
-      new File(['%PDF-1.7'], 'chapitre1.pdf', { type: 'application/pdf' }),
-      new File(['%PDF-1.7'], 'TD1.pdf', { type: 'application/pdf' }),
+      new File(['%PDF-1.7 TD2'], 'TD2.pdf', { type: 'application/pdf' }),
+      new File(['%PDF-1.7 chapter1'], 'chapitre1.pdf', { type: 'application/pdf' }),
+      new File(['%PDF-1.7 TD1'], 'TD1.pdf', { type: 'application/pdf' }),
     ]);
 
     await waitFor(() => expect(extract).toHaveBeenCalledTimes(3), { timeout: 5000 });
-    expect(await screen.findByText('3 sources imported.')).toBeInTheDocument();
+    expect(await screen.findByText('Import finished. 3 files processed.')).toBeInTheDocument();
     expect(overlapped).toBe(false);
     expect(extract.mock.calls.map(([file]) => (file as File).name)).toEqual(['chapitre1.pdf', 'TD1.pdf', 'TD2.pdf']);
-    const sidebar = screen.getByRole('complementary', { name: 'Course navigation' });
-    expect(within(sidebar).getByText('Travaux dirigés')).toBeInTheDocument();
-    for (const title of ['Chapitre 1', 'TD 1', 'TD 2']) {
-      await user.click(within(sidebar).getByRole('button', { name: title }));
-      expect((await screen.findAllByText(`Content of ${title === 'Chapitre 1' ? 'chapitre1' : title.replace(' ', '')}.pdf.`)).length).toBeGreaterThan(0);
-    }
+    expect(savedWorkspace().lessons).toHaveLength(createFixtureWorkspace().lessons.length);
+    const note = screen.getByRole('region', { name: 'Course notes document' });
+    for (const name of ['chapitre1.pdf', 'TD1.pdf', 'TD2.pdf']) expect(note).toHaveTextContent(`Content of ${name}.`);
   }, 15000);
 
   it('does not retry a failed extraction in a loop after a batch import', async () => {
@@ -497,11 +494,11 @@ describe('StudentLLM workspace', () => {
     render(<App documentEngine={{ extract }} />);
 
     await user.upload(screen.getByLabelText('Select course source'), [
-      new File(['%PDF-1.7'], 'TD1.pdf', { type: 'application/pdf' }),
-      new File(['%PDF-1.7'], 'TD2.pdf', { type: 'application/pdf' }),
+      new File(['%PDF-1.7 TD1'], 'TD1.pdf', { type: 'application/pdf' }),
+      new File(['%PDF-1.7 TD2'], 'TD2.pdf', { type: 'application/pdf' }),
     ]);
 
-    expect(await screen.findByText('2 sources imported.', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText('Import finished. 2 files processed.', {}, { timeout: 5000 })).toBeInTheDocument();
     await new Promise((resolve) => setTimeout(resolve, 500));
     const settledCalls = extract.mock.calls.length;
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -544,7 +541,7 @@ describe('StudentLLM workspace', () => {
       { type: 'text/markdown' },
     ));
     await user.click(screen.getByRole('tab', { name: /Chat/ }));
-    await user.type(screen.getByLabelText('Ask the course chat'), 'What updates parameters using the learning rate?');
+    fireEvent.change(screen.getByLabelText('Ask the course chat'), { target: { value: 'What updates parameters using the learning rate?' } });
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('The source explains gradient descent.')).toBeInTheDocument();
@@ -1040,7 +1037,7 @@ describe('StudentLLM workspace', () => {
     expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].resources[0]).toMatchObject({ name: 'week-1.md', lastModified: 123, sizeBytes: 12, sha256: expect.any(String) });
   });
 
-  it('routes imported text notes to the existing course selected by LM Studio', async () => {
+  it('keeps imported text notes in the selected course despite a confident AI placement', async () => {
     const user = userEvent.setup();
     const generate = vi.fn(async () => ({
       model: 'fixture-model',
@@ -1059,34 +1056,22 @@ describe('StudentLLM workspace', () => {
       { type: 'text/markdown' },
     ));
 
-    expect(await screen.findByText('Imported material routed to Matrices and Linear Maps.')).toBeInTheDocument();
+    await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].transcript.some((segment: { text: string }) => segment.text === 'Matrices preserve addition and scalar multiplication.')).toBe(true));
     const saved = savedWorkspace();
-    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].resources).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'linear-algebra-notes.md' }),
-    ]));
-    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toEqual(expect.arrayContaining([
+    expect(saved.lessons).toHaveLength(createFixtureWorkspace().lessons.length);
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toHaveLength(0);
+    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'linear-algebra-notes.md', kind: 'transcript' }),
     ]));
-    expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
+    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].transcript).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: expect.stringContaining(':text'), sourceId: expect.any(String), text: 'Matrices preserve addition and scalar multiplication.' }),
     ]));
-    expect(saved.lessonWorkspaces['fixture-linear-algebra'].courseNote.detection.basis).toContain('routed this material');
-    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate).toHaveBeenCalledTimes(1);
   });
 
-  it('renders source-linked AI rich blocks after imported material is routed', async () => {
+  it('renders source-linked AI rich blocks without routing imported material', async () => {
     const user = userEvent.setup();
     const generate = vi.fn(async (messages: Array<{ role: string; content: string }>) => {
-      if (generate.mock.calls.length === 1) {
-        return {
-          model: 'fixture-model',
-          content: JSON.stringify({
-            placement: 'existing', targetCourseId: 'fixture-linear-algebra', course: 'Mathematics',
-            lesson: 'Linear Algebra', sublesson: 'Matrices and Linear Maps', subject: 'Mathematics',
-            confidence: 0.94, rationale: 'The notes describe a linear map.',
-          }),
-        };
-      }
       const sourceIds = [...messages[1].content.matchAll(/SOURCE ([^ ]+)/g)].map((match) => match[1]);
       const sourceId = sourceIds.at(-1) ?? '';
       return {
@@ -1108,8 +1093,8 @@ describe('StudentLLM workspace', () => {
       { type: 'text/markdown' },
     ));
 
-    expect(await screen.findByText('Imported material routed to Matrices and Linear Maps.')).toBeInTheDocument();
-    const note = savedWorkspace().lessonWorkspaces['fixture-linear-algebra'].courseNote;
+    await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.detection.method).toBe('LM Studio'));
+    const note = savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote;
     expect(note.detection.method).toBe('LM Studio');
     expect(note.detection.basis).toContain('Source-linked lecture notes');
     expect(note.blocks).toEqual(expect.arrayContaining([
@@ -1117,10 +1102,10 @@ describe('StudentLLM workspace', () => {
       expect.objectContaining({ type: 'schema', sourceId: expect.stringContaining(':text') }),
     ]));
     expect(screen.getByRole('region', { name: 'Course notes document' })).toHaveTextContent('Input');
-    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate).toHaveBeenCalledTimes(1);
   });
 
-  it('routes extracted PDF pages to the existing course selected by LM Studio', async () => {
+  it('keeps extracted PDF pages in the selected course despite a confident AI placement', async () => {
     const user = userEvent.setup();
     const extract = vi.fn().mockResolvedValue({
       model: 'pdfminer',
@@ -1143,18 +1128,17 @@ describe('StudentLLM workspace', () => {
       { type: 'application/pdf' },
     ));
 
-    expect(await screen.findByText('Imported material routed to Matrices and Linear Maps.')).toBeInTheDocument();
+    expect(await screen.findByText('eigenvectors.pdf indexed 1 page locally.')).toBeInTheDocument();
     const saved = savedWorkspace();
-    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].resources).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'eigenvectors.pdf' }),
-    ]));
-    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toEqual(expect.arrayContaining([
+    expect(saved.lessons).toHaveLength(createFixtureWorkspace().lessons.length);
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toHaveLength(0);
+    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'eigenvectors.pdf', kind: 'document' }),
     ]));
-    expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
+    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].transcript).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: expect.stringContaining(':page-1'), sourceId: expect.any(String), text: 'Eigenvectors describe invariant directions.' }),
     ]));
-    expect(generate).toHaveBeenCalledTimes(3);
+    expect(generate).toHaveBeenCalledTimes(1);
     expect(extract).toHaveBeenCalledWith(expect.any(Blob));
   });
 
@@ -1269,7 +1253,7 @@ describe('StudentLLM workspace', () => {
     await waitFor(() => expect(extract).toHaveBeenCalledWith(expect.any(Blob)));
     await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.detection.basis).toContain('layout-v11'));
     expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.blocks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'document-source-title', type: 'heading' }),
+      expect.objectContaining({ id: expect.stringContaining(':document-source-title'), type: 'heading' }),
     ]));
     expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.detection.basis).toContain('layout-v11');
   });
@@ -1441,7 +1425,7 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByText('imported-lecture.webm removed from this course.')).toBeInTheDocument();
   });
 
-  it('routes imported audio to the existing course selected by LM Studio', async () => {
+  it('keeps imported audio in the selected course despite a confident AI placement', async () => {
     const user = userEvent.setup();
     const transcribe = vi.fn(async () => ({
       model: 'faster-whisper-small',
@@ -1464,21 +1448,20 @@ describe('StudentLLM workspace', () => {
       { type: 'audio/webm' },
     ));
 
-    expect(await screen.findByText('Local transcription added and routed to Matrices and Linear Maps.')).toBeInTheDocument();
+    expect(await screen.findByText('Local transcription added 1 segments from imported-linear-algebra.webm.')).toBeInTheDocument();
     const saved = savedWorkspace();
-    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].resources).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'imported-linear-algebra.webm' }),
-    ]));
-    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toEqual(expect.arrayContaining([
+    expect(saved.lessons).toHaveLength(createFixtureWorkspace().lessons.length);
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toHaveLength(0);
+    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'imported-linear-algebra.webm', kind: 'audio' }),
     ]));
-    expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
+    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].transcript).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: expect.stringContaining(':imported-routing-segment'), sourceId: expect.any(String) }),
     ]));
-    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate).toHaveBeenCalledTimes(1);
   });
 
-  it('reroutes an existing imported audio source when Transcribe is run later', async () => {
+  it('keeps an existing imported audio source in its course when Transcribe is run later', async () => {
     const user = userEvent.setup();
     const transcribe = vi.fn(async () => ({
       model: 'faster-whisper-small',
@@ -1516,18 +1499,17 @@ describe('StudentLLM workspace', () => {
     await openSources(user);
     await user.click(screen.getByRole('button', { name: 'Transcribe deferred-routing.webm' }));
 
-    expect(await screen.findByText('Transcription added and routed to Matrices and Linear Maps.')).toBeInTheDocument();
+    expect(await screen.findByText('Transcription added to your course notes.')).toBeInTheDocument();
     const saved = savedWorkspace();
-    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].resources).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'deferred-routing.webm' }),
-    ]));
-    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toEqual(expect.arrayContaining([
+    expect(saved.lessons).toHaveLength(createFixtureWorkspace().lessons.length);
+    expect(saved.lessonWorkspaces['fixture-linear-algebra'].resources).toHaveLength(0);
+    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].resources).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'deferred-routing.webm', kind: 'audio' }),
     ]));
-    expect(saved.lessonWorkspaces['fixture-linear-algebra'].transcript).toEqual(expect.arrayContaining([
+    expect(saved.lessonWorkspaces[FIXTURE_LESSON_ID].transcript).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: expect.stringContaining(':deferred-routing-segment'), sourceId: expect.any(String) }),
     ]));
-    expect(generate).toHaveBeenCalledTimes(4);
+    expect(generate).toHaveBeenCalledTimes(2);
   });
 
   it('clears persisted chunks when removing an audio source', async () => {
