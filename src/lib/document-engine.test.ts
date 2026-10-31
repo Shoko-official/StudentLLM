@@ -4,7 +4,7 @@ import { createLocalDocumentEngine, LocalDocumentEngine } from './document-engin
 describe('local document engine', () => {
   it('posts a PDF and normalizes page blocks', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
-      model: 'pymupdf',
+      model: 'pdfminer',
       pages: [{
         pageNumber: 1,
         text: 'A page of notes.',
@@ -14,7 +14,7 @@ describe('local document engine', () => {
     const engine = new LocalDocumentEngine({ baseUrl: 'http://127.0.0.1:8766/', fetchImpl });
 
     await expect(engine.extract(new Blob(['pdf'], { type: 'application/pdf' }))).resolves.toEqual({
-      model: 'pymupdf',
+      model: 'pdfminer',
       pages: [{
         pageNumber: 1,
         text: 'A page of notes.',
@@ -49,17 +49,17 @@ describe('local document engine', () => {
   });
 
   it('surfaces sidecar failures', async () => {
-    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ error: 'PyMuPDF is not installed.' }), { status: 422 }));
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ error: 'The PDF engine is not installed.' }), { status: 422 }));
 
     await expect(new LocalDocumentEngine({ baseUrl: 'http://127.0.0.1:8766', fetchImpl }).extract(new Blob(['pdf'])))
-      .rejects.toThrow('Local document extraction failed (422): PyMuPDF is not installed.');
+      .rejects.toThrow('Local document extraction failed (422): The PDF engine is not installed.');
   });
 
   it('binds the default fetch implementation to its global context', async () => {
     const fetchMock = vi.fn(function (this: unknown) {
       if (this !== globalThis) throw new Error('fetch context was lost');
       return Promise.resolve(new Response(JSON.stringify({
-        model: 'pymupdf',
+        model: 'pdfminer',
         pages: [{ pageNumber: 1, text: 'Bound fetch works.', blocks: [] }],
       }), { status: 200 }));
     });
@@ -69,7 +69,7 @@ describe('local document engine', () => {
       const engine = new LocalDocumentEngine({ baseUrl: 'http://127.0.0.1:8766', timeoutMs: 1_000 });
 
       await expect(engine.extract(new Blob(['pdf']))).resolves.toMatchObject({
-        model: 'pymupdf',
+        model: 'pdfminer',
         pages: [{ text: 'Bound fetch works.' }],
       });
       expect(fetchMock).toHaveBeenCalledTimes(1);

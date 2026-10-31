@@ -1,5 +1,9 @@
 # Benchmark evidence and release gates
 
+## Dataset licences
+
+Some datasets used below are restricted to research or non-commercial use (CRAG, FiQA, NFCorpus, OmniDocBench) or have unknown terms (DocVQA, STSBenchmark). They are used for internal evaluation only; see [licensing.md](./licensing.md#models-and-datasets) before quoting these scores outside the project.
+
 ## Measurement methodology
 
 A passing UI test demonstrates an interface workflow. It does not measure ASR, OCR, retrieval, or generation quality. StudentLLM records the dataset, model version, hardware, quantization, seed, command, raw output, and validity of every published result.
@@ -26,8 +30,8 @@ Regression checks complement the public benchmark results below. Each reported s
 | FLEURS plus MUSAN robustness | 100 public FLEURS test examples mixed with four public MUSAN sources at 10 dB and 0 dB | `benchmarks/run_asr_musan.py --musan-root artifacts\\benchmarks\\musan --limit 100 --snrs 10,0` | Clean WER 0.1576; noisy WER 0.1737-0.8447 at 10/0 dB across public MUSAN categories |
 | Local ASR sidecar | Python service plus public FLEURS request | `npm run asr:server` with `POST /transcribe` | PASS observed on 2026-08-27; public sample returned timestamped output |
 | Local ASR browser recording | Playwright browser, durable recording, public FLEURS audio, and running faster-whisper sidecar | Manual live UI check | PASS observed on 2026-08-27; one French review segment rendered, 0 page errors |
-| Local document sidecar | PyMuPDF and RapidOCR service plus public arXiv source | `npm run document:server` with `POST /extract` | PASS observed on 2026-08-27; PDF 15/15 pages, rasterized page 69 OCR blocks |
-| Local document browser import | Playwright UI plus the running PyMuPDF sidecar and public arXiv PDF | Manual live UI check | PASS observed on 2026-08-27; source stored, 15 pages indexed, `Page 1` visible, 0 page errors |
+| Local document sidecar | PyMuPDF (since replaced by pdfminer.six and pypdfium2, see [licensing.md](./licensing.md)) and RapidOCR service plus public arXiv source | `npm run document:server` with `POST /extract` | PASS observed on 2026-08-27; PDF 15/15 pages, rasterized page 69 OCR blocks |
+| Local document browser import | Playwright UI plus the running PyMuPDF-based sidecar (since replaced) and public arXiv PDF | Manual live UI check | PASS observed on 2026-08-27; source stored, 15 pages indexed, `Page 1` visible, 0 page errors |
 | DocVQA OCR diagnostic | Public DocVQA validation images plus RapidOCR | `benchmarks/run_docvqa_ocr.py --split validation --limit 100` | Normalized reference-answer visibility `0.8600` on 100 samples; partial diagnostic |
 | DocVQA ANLS vision evaluation | Public DocVQA validation images through NVIDIA `meta/llama-3.2-11b-vision-instruct` | `benchmarks/run_docvqa_anls.py --split validation --limit 100 --concurrency 4` | Official ANLS `0.8591` on 100/100 successful public validation examples; partial subset |
 | DocVQA ANLS vision evaluation, larger subset | Public DocVQA validation images through NVIDIA `meta/llama-3.2-11b-vision-instruct` | `benchmarks/run_docvqa_anls.py --split validation --limit 500 --concurrency 4` | Official ANLS `0.8297` on 498/500 successful public validation examples; larger partial subset and selected baseline |

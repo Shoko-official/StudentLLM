@@ -31,7 +31,7 @@ StudentLLM is built around three principles:
 - Course routing keeps notes under `Courses/<subject>/<chapter>/<lesson>/` in the persisted workspace, uses transcript signals as a fallback, and can refine the route through LM Studio JSON classification. After a durable recording is transcribed, the same classifier can move the audio and transcript into an existing course or create a structured new course when confidence is sufficient; uncertain or unavailable classifications stay in the selected course.
 - Course notes can be saved as a clean Markdown document using the detected course filename.
 - Imported audio can use the same local ASR path, with transcript segments linked back to the audio source.
-- Optional local PDF text extraction, RapidOCR, Office XML parsing, and typed document blocks for headings, lists, tables, code, and formula-like regions.
+- Optional local PDF text extraction (pdfminer.six and pypdfium2), RapidOCR, Office XML parsing, and typed document blocks for headings, lists, tables, code, and formula-like regions.
 - Local source import with MIME classification, file metadata, and SHA-256 fingerprints.
 - Original imported source blobs are stored in IndexedDB when available, alongside their fingerprints.
 - Imported text, image, audio, and PDF sources can be opened from the workspace through a local preview.
@@ -135,7 +135,7 @@ scripts/
   validate-cloud-contract.py validates the planned cloud public and admin API contracts and fixtures
   local_asr_server.py        local faster-whisper transcription sidecar
   local_document_server.py   local PDF/OCR/Office/XML document sidecar
-  requirements-local-documents.txt  Python sidecar dependencies
+  requirements-local-documents.txt  Python sidecar dependencies (pdfminer.six, pypdfium2, RapidOCR; permissive licences)
 benchmarks/
   run_asr_fleurs.py         full public FLEURS French ASR baseline
   run_asr_hf.py             configurable public Hugging Face ASR evaluation
@@ -184,4 +184,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the development and pull request wo
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+StudentLLM's own code is MIT. See [LICENSE](./LICENSE). Third-party components keep their own licences:
+[NOTICE.md](./NOTICE.md) and the generated [THIRD_PARTY_LICENSES.md](./THIRD_PARTY_LICENSES.md) list them, and
+[docs/licensing.md](./docs/licensing.md) covers the optional Python sidecars, models, datasets, fonts and icons, what the
+release bundles contain, and the decisions still open before commercial distribution. The desktop bundles do not include
+the sidecars, Python or any model weights.

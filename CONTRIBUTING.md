@@ -49,6 +49,17 @@ Keep visual changes, product behavior, and documentation separate when they can 
 5. Wait for green CI.
 6. Squash merge into `main` and delete the merged branch.
 
+## Licences
+
+The repository is MIT. A change that adds a dependency, font, icon, model, dataset or copied code must say what its licence is and where that was verified, and must keep the licence policy green:
+
+- `npm run licenses:check` (and `npm run licenses:check:all` with Python and Cargo) fails on strong-copyleft, non-commercial or unknown licences; fix it by choosing another package or, for a justified case, add an entry with its evidence to `scripts/license-policy.json`;
+- after changing `package-lock.json` or `src-tauri/Cargo.lock`, run `npm run licenses:notices` and commit `THIRD_PARTY_LICENSES.md`;
+- do not add GPL, AGPL or PyMuPDF-style dual licences to a requirements file other than benchmark tooling, and never to the document or speech sidecars;
+- do not copy code, icons or fonts from elsewhere without recording their licence in `NOTICE.md`.
+
+See [docs/licensing.md](docs/licensing.md).
+
 ## Data handling
 
 Do not commit API keys, `.env` files, course audio, student documents, database dumps, or benchmark outputs containing private data.

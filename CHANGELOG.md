@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- Licensing and compliance: the document sidecar no longer uses PyMuPDF (AGPL-3.0 or a commercial licence). PDF text and layout now come from pdfminer.six (MIT) and scanned pages are rendered with pypdfium2 (Apache-2.0 or BSD-3-Clause); the health model is `pdfminer` or `pdfminer+rapidocr`. Page text and OCR output matched the previous engine on synthetic fixtures, but block grouping differs and pdfminer.six is slower, so every PDF now runs in a worker process with a 240-second budget (HTTP 504 when it runs out), a per-page character cap (OCR or HTTP 422 above it), a 64 MB cap on any decoded stream (decompression bombs get HTTP 422), a 2048 MB memory limit per worker, cleanup when the client disconnects, and a worker that exits by itself when its sidecar is hard-killed. Glyphs without a Unicode map that pdfminer.six reports as `(cid:N)` trigger the OCR fallback and are dropped from the text the web app keeps; presentation ligatures are expanded. See [docs/local-documents.md](docs/local-documents.md#differences-from-the-pymupdf-engine).
+- The animated Lordicon icons are replaced by Lucide icons with a CSS animation, because the Lordicon free licence does not clearly allow shipping the icon files in a product that is sold. `@lordicon/react` is removed.
+- `NOTICE.md`, a generated `THIRD_PARTY_LICENSES.md`, `docs/licensing.md` and a CI licence policy (`npm run licenses:check:all`) document and enforce the licences of npm, Cargo and Python dependencies. The release workflow attaches the full licence texts, the installers carry `LICENSE`, `NOTICE.md` and `THIRD_PARTY_LICENSES.md` under `licenses/`, and Settings has an "Open-source licences" dialog that shows them offline.
+
 ### Fixed
 
 - An unreachable AI model, speech service or document service is explained in plain language in Chat, Study, the organizer, imports and Settings, instead of "Provider request failed (502)" or "Failed to fetch". A failed chat request is no longer saved as an assistant answer; the question returns to the composer ([#338](https://github.com/Shoko-official/StudentLLM/issues/338)).
@@ -12,11 +18,11 @@
 - Typing in a search field or the chat no longer re-typesets every note block and transcript segment: with 800 segments and the CPU slowed 4x, 20 keystrokes went from 5.3 s to 0.8 s and opening the Notes tab from 11.9 s to 3.3 s.
 - The selected tab, open course and needs-review segments stay visible in Windows High Contrast (forced colors).
 - A PDF or Word file the document service refuses is reported as a problem with the file (damaged or password-protected) instead of a service to restart.
+- PPTX extraction returned no text for real files because it looked for the DrawingML `txBody` instead of the PresentationML one that holds shape text, and fused the paragraphs of a shape; each paragraph is now its own line.
 
 ### Added
 
 - [User guide](docs/user-guide.md) for students, linked from the README and from Settings.
-
 
 ### Security
 

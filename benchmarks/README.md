@@ -2,6 +2,10 @@
 
 This directory contains benchmark adapters and commands, not raw outputs. Local artifacts are written under `artifacts/` and ignored by Git so prompts and private data are not published accidentally.
 
+## Dataset and model licences
+
+The adapters download public datasets and models when you run them; nothing is committed. Several datasets are not free for commercial use: CRAG is CC BY-NC 4.0, FiQA (BEIR and inside MTRAG) is non-commercial, NFCorpus is academic use, OmniDocBench is research only, and DocVQA's terms are unknown. Use them for internal evaluation only and do not redistribute them, train a shipped model on them, or quote their scores in product material without checking the terms. The full table with sources is in [docs/licensing.md](../docs/licensing.md#models-and-datasets). The benchmark requirements files also install GPL (`html2text`) and LGPL (`chardet`) packages as transitive dependencies; they are developer tooling and must never ship.
+
 ## FLEURS French ASR
 
 `run_asr_fleurs.py` evaluates the public `google/fleurs` French test split with `faster-whisper`. It reports WER, CER, real-time factor, scope, model settings, and a hardware snapshot. Use CPU execution when a local inference server is already using the GPU:

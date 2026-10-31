@@ -1,1 +1,2 @@
+# Benchmark tooling only. lm-eval pulls in chardet 6 (LGPL-2.1-or-later) through mbstrdecoder. See docs/licensing.md.
 lm-eval[api]==0.4.12

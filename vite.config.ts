@@ -36,7 +36,8 @@ export default defineConfig(({ mode }) => {
       setupFiles: './src/test/setup.ts',
       globals: true,
       css: true,
-      exclude: ['tests/e2e/**', 'tests/desktop-ui/**', 'node_modules/**', 'dist/**', 'cloud/**'],
+      // scripts/ holds node:test files (run by npm run licenses:test) that vitest must not collect.
+      exclude: ['tests/e2e/**', 'tests/desktop-ui/**', 'node_modules/**', 'dist/**', 'cloud/**', 'scripts/**'],
     },
   };
 });

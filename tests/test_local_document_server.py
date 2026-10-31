@@ -1,24 +1,16 @@
-import sys
-import types
 import unittest
-from unittest import mock
 
-from scripts import local_document_server
 from scripts.local_document_server import extract_document, has_unmapped_glyphs, formula_aware_pdf_blocks, group_formula_blocks, is_block_covered_by_formula_crop, is_formula_block, is_formula_group
 
 
 class LocalDocumentServerTests(unittest.TestCase):
     def test_emits_semantic_text_for_math_regions_instead_of_formula_images(self):
-        class Page:
-            rect = type("Rect", (), {"width": 600.0, "height": 800.0})()
+        layout_blocks = [
+            {"type": 0, "bbox": (80, 100, 150, 112), "lines": [{"spans": [{"text": "Divergence", "font": "F37"}]}]},
+            {"type": 0, "bbox": (150, 120, 260, 132), "lines": [{"spans": [{"text": "∂Fₓ/∂x + ∂Fᵧ/∂y", "font": "CMMI10"}]}]},
+        ]
 
-            def get_text(self, _mode):
-                return {"blocks": [
-                    {"type": 0, "bbox": (80, 100, 150, 112), "lines": [{"spans": [{"text": "Divergence", "font": "F37"}]}]},
-                    {"type": 0, "bbox": (150, 120, 260, 132), "lines": [{"spans": [{"text": "∂Fₓ/∂x + ∂Fᵧ/∂y", "font": "CMMI10"}]}]},
-                ]}
-
-        blocks = formula_aware_pdf_blocks(Page())
+        blocks = formula_aware_pdf_blocks(layout_blocks, 600.0, 800.0)
 
         self.assertTrue(any("∂Fₓ" in str(block["text"]) for block in blocks))
         self.assertTrue(all("imageData" not in block for block in blocks))
@@ -97,6 +89,28 @@ class LocalDocumentServerTests(unittest.TestCase):
         self.assertEqual([block['kind'] for block in pages[0]['blocks']], ['heading', 'paragraph', 'table'])
         self.assertEqual(pages[0]['blocks'][2]['rows'], [['Name', 'Value'], ['A', '2']])
 
+    def test_extracts_pptx_paragraphs_on_separate_lines_and_keeps_line_breaks(self):
+        import io
+        import zipfile
+
+        slide = (
+            '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+            'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree>'
+            "<p:sp><p:txBody><a:p><a:r><a:t>Slide title</a:t></a:r></a:p></p:txBody></p:sp>"
+            "<p:sp><p:txBody><a:p><a:r><a:t>Slide body text</a:t></a:r></a:p>"
+            "<a:p><a:r><a:t>Second </a:t></a:r><a:r><a:t>bullet</a:t></a:r><a:br/><a:r><a:t>wrapped</a:t></a:r></a:p>"
+            "<a:p/></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+        )
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("ppt/slides/slide1.xml", slide)
+
+        model, pages = extract_document(buffer.getvalue(), "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+
+        self.assertEqual(model, "pptx-xml")
+        self.assertEqual([block["text"] for block in pages[0]["blocks"]], ["Slide title", "Slide body text\nSecond bullet\nwrapped"])
+        self.assertEqual(pages[0]["text"], "Slide title\nSlide body text\nSecond bullet\nwrapped")
+
     def test_extracts_html_tables_as_structured_blocks(self):
         model, pages = extract_document(
             b'<h1>Results</h1><table><tr><th>Term</th><th>Value</th></tr><tr><td>Loss</td><td>0.2</td></tr></table>',
@@ -117,39 +131,15 @@ class LocalDocumentServerTests(unittest.TestCase):
     def test_flags_text_layers_whose_letters_are_unmapped_glyphs(self):
         self.assertTrue(has_unmapped_glyphs("Montrr qu un"))
         self.assertFalse(has_unmapped_glyphs("Montrer que chacun des problèmes admet une solution."))
-        self.assertFalse(has_unmapped_glyphs("A long clean page " * 20 + ""))
+        self.assertFalse(has_unmapped_glyphs("A long clean page " * 20 + ""))
 
-    def test_ocrs_pdf_pages_with_an_unmapped_text_layer(self):
-        class Pixmap:
-            def tobytes(self, _format):
-                return b"png"
+    def test_flags_pdfminer_placeholders_for_glyphs_without_a_unicode_map(self):
+        self.assertTrue(has_unmapped_glyphs("(cid:55)(cid:82)(cid:81) (cid:87)(cid:85)(cid:72)"))
+        self.assertTrue(has_unmapped_glyphs("Mon(cid:87)(cid:85)(cid:72)"))
+        self.assertFalse(has_unmapped_glyphs("A page with one stray (cid:12) in a long paragraph of readable text, " * 4))
 
-        class Page:
-            def __init__(self, text):
-                self.text = text
-
-            def get_text(self, kind="text"):
-                return {"blocks": []} if kind == "dict" else self.text
-
-            def get_pixmap(self, **_options):
-                return Pixmap()
-
-        class Document(list):
-            page_count = 2
-
-            def close(self):
-                pass
-
-        pages = Document([Page("Montrr qu un"), Page("Clean printed text.")])
-        fake_fitz = types.SimpleNamespace(open=lambda **_kwargs: pages, Matrix=lambda *_args: None)
-        ocr_blocks = [{"type": "paragraph", "text": "Montrer que chacun"}]
-        with mock.patch.dict(sys.modules, {"fitz": fake_fitz}),                 mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=True),                 mock.patch.object(local_document_server, "ocr_image", return_value=("rapidocr", ocr_blocks)) as ocr:
-            model, extracted = local_document_server.extract_pdf(b"%PDF")
-
-        self.assertEqual(model, "pymupdf+rapidocr")
-        self.assertEqual(extracted[0]["text"], "Montrer que chacun")
-        self.assertEqual(extracted[1]["text"], "Clean printed text.")
-        ocr.assert_called_once()
+    def test_does_not_count_the_letters_inside_placeholders_as_text(self):
+        self.assertTrue(has_unmapped_glyphs("(cid:1)(cid:2)(cid:3)(cid:4)(cid:5)(cid:6)(cid:7)(cid:8)(cid:9)(cid:10)"))
 
 
 if __name__ == "__main__":
