@@ -124,6 +124,11 @@ const PLAIN_CACHE_MAX_CHARS = 8_000_000;
 const plainCache = new Map<string, string>();
 let plainCacheChars = 0;
 
+/** Test-only: current size of the plain-text cache and the characters it accounts for. */
+export function __plainCacheStatsForTests() {
+  return { size: plainCache.size, chars: plainCacheChars };
+}
+
 /** Lowercased plain text of a source, cached (bounded, least recently used) so each keystroke does not re-strip every segment. */
 function lowerPlainText(source: string, query: string): string {
   // Longer sources are windowed around the query, so their plain text depends on the query: do not cache.
