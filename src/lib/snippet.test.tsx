@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { buildSnippet, textMatchesQuery, toPlainText } from './snippet';
+import { __plainCacheStatsForTests, buildSnippet, textMatchesQuery, toPlainText } from './snippet';
 import { Snippet } from './snippet-view';
 
 const sample = '# Introduction to probability\n\n## Definitions\n\n- A **sample space** is the set of outcomes.\n\n$$P(A \\mid B) = \\frac{P(B \\mid A)P(A)}{P(B)}$$\n\n```python\nprint("Bayes")\n```\n\n| Outcome | Probability |\n|---|---|\n| Heads | 0.5 |\n';
@@ -89,6 +89,61 @@ describe('robustness', () => {
     toPlainText('\\('.repeat(20_000));
     // Generous on purpose: shared CI runners took ~1 s here. This only guards against runaway backtracking.
     expect(performance.now() - started).toBeLessThan(5000);
+  });
+
+  it('scales linearly on long runs of spaces and keeps table separators working', () => {
+    // toPlainText only reads the first 20,000 characters, so compare 5,000 vs 20,000 spaces (4x the input).
+    // Quadratic backtracking gives ~16x (190 ms at 20,000); linear gives ~4x. Min of several runs damps noise.
+    const best = (size: number) => {
+      const input = `${' '.repeat(size)}x`;
+      let min = Infinity;
+      for (let run = 0; run < 5; run += 1) {
+        const started = performance.now();
+        toPlainText(input);
+        min = Math.min(min, performance.now() - started);
+      }
+      return min;
+    };
+    best(5_000); // warm up
+    const small = best(5_000);
+    const large = best(20_000);
+    // Absolute floor: sub-millisecond timings give meaningless ratios, and anything under 100 ms is not the regression.
+    expect(large < 100 || large / Math.max(small, 1) < 8).toBe(true);
+    expect(toPlainText('a | b\n  | --- | :---: |  \nc | d')).toBe('a b c d');
+    expect(toPlainText('x\n \t---\t|\t---\ny')).toBe('x y');
+  });
+
+  it('never returns a stale result after a segment text is edited', () => {
+    const segment = { id: 's1', text: 'the **sample space** of outcomes' };
+    expect(textMatchesQuery(segment.text, 'sample space')).toBe(true);
+    expect(textMatchesQuery(segment.text, 'sample space')).toBe(true); // second call is served from the cache
+    segment.text = 'the **event** of outcomes';
+    expect(textMatchesQuery(segment.text, 'sample space')).toBe(false);
+    expect(textMatchesQuery(segment.text, 'event')).toBe(true);
+    segment.text = 'the **sample space** again';
+    expect(textMatchesQuery(segment.text, 'sample space')).toBe(true);
+  });
+
+  it('stays correct when more segments than the cache holds are searched', () => {
+    const segments = Array.from({ length: 25_000 }, (_, index) => `item **${index}** of $\\alpha_{${index}}$`);
+    for (const segment of segments) textMatchesQuery(segment, 'zzz');
+    expect(textMatchesQuery(segments[0], 'item 0 of')).toBe(true);
+    expect(textMatchesQuery(segments[24_999], 'item 24999 of')).toBe(true);
+    expect(textMatchesQuery(segments[24_999], 'item 0 of')).toBe(false);
+    const stats = __plainCacheStatsForTests();
+    expect(stats.size).toBeLessThanOrEqual(20_000);
+    expect(stats.chars).toBeLessThanOrEqual(8_000_000);
+  });
+
+  it('keeps the cache within its character budget for very long segments', () => {
+    const segments = Array.from({ length: 600 }, (_, index) => `${index} ${'word '.repeat(3_800)}`);
+    for (const segment of segments) textMatchesQuery(segment, 'zzz');
+    const stats = __plainCacheStatsForTests();
+    expect(stats.chars).toBeLessThanOrEqual(8_000_000);
+    expect(stats.size).toBeGreaterThan(0);
+    expect(stats.size).toBeLessThan(600);
+    expect(textMatchesQuery(segments[599], 'word word')).toBe(true);
+    expect(textMatchesQuery(segments[0], '599 word')).toBe(false);
   });
 
   it('bounds very long text but still finds a late match', () => {
