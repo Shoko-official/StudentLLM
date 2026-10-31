@@ -1,3 +1,6 @@
-PyMuPDF>=1.26,<2
+# PDF text and layout: pdfminer.six (MIT). Page rendering for OCR: pypdfium2 (Apache-2.0 OR BSD-3-Clause, wrapping PDFium).
+# Neither is copyleft. See docs/licensing.md. PyMuPDF (AGPL-3.0 or commercial) is intentionally not used.
+pdfminer.six>=20260107,<20270101
+pypdfium2>=5.13,<6
 rapidocr>=3.8,<4
 onnxruntime>=1.20,<2

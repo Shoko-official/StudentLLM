@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import threading
 import zipfile
 from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -59,7 +60,7 @@ class DocumentHandler(BaseHTTPRequestHandler):
         ocr_available = has_ocr_dependencies()
         self._write_json(200, {
             "status": "ok",
-            "model": "pymupdf+rapidocr" if ocr_available else "pymupdf",
+            "model": "pdfminer+rapidocr" if ocr_available else "pdfminer",
             "capabilities": [
                 "pdf-text",
                 "image-ocr",
@@ -324,6 +325,7 @@ def extract_docx(payload: bytes) -> tuple[str, list[dict[str, object]]]:
 
 def extract_pptx(payload: bytes) -> tuple[str, list[dict[str, object]]]:
     namespace = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    presentation = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
     with zipfile.ZipFile(BytesIO(payload)) as archive:
         validate_zip_members(archive.infolist())
         slide_names = sorted(
@@ -334,7 +336,8 @@ def extract_pptx(payload: bytes) -> tuple[str, list[dict[str, object]]]:
         for page_number, name in enumerate(slide_names, start=1):
             root = ElementTree.fromstring(archive.read(name))
             blocks = []
-            for shape in root.findall(f".//{namespace}txBody"):
+            # Shape text lives in `p:txBody` (PresentationML); table cells use `a:txBody` (DrawingML).
+            for shape in (element for element in root.iter() if element.tag in {f"{presentation}txBody", f"{namespace}txBody"}):
                 text = _text_from_xml(shape)
                 if text:
                     blocks.append({"x": 0, "y": len(blocks) * 20, "width": 0, "height": 0, "text": text, "kind": "paragraph"})
@@ -434,13 +437,15 @@ def group_formula_blocks(blocks: list[dict[str, object]]) -> list[list[int]]:
     return sorted(groups, key=lambda group: group[0])
 
 
-def formula_crop_bounds(blocks: list[dict[str, object]], group: list[int], page: object) -> tuple[float, float, float, float]:
+def formula_crop_bounds(
+    blocks: list[dict[str, object]], group: list[int], page_width: float, page_height: float
+) -> tuple[float, float, float, float]:
     members = [blocks[index] for index in group]
     return (
         max(0, min(member["bbox"][0] for member in members) - 4),
         max(0, min(member["bbox"][1] for member in members) - 4),
-        min(page.rect.width, max(member["bbox"][2] for member in members) + 4),
-        min(page.rect.height, max(member["bbox"][3] for member in members) + 4),
+        min(page_width, max(member["bbox"][2] for member in members) + 4),
+        min(page_height, max(member["bbox"][3] for member in members) + 4),
     )
 
 
@@ -449,12 +454,15 @@ def is_block_covered_by_formula_crop(block: dict[str, object], crop: tuple[float
     return bbox[0] >= crop[0] and bbox[1] >= crop[1] and bbox[2] <= crop[2] and bbox[3] <= crop[3]
 
 
-def formula_aware_pdf_blocks(page: object) -> list[dict[str, object]]:
-    raw_blocks = [block for block in page.get_text("dict").get("blocks", []) if block.get("type") == 0 and block_text(block)]
+def formula_aware_pdf_blocks(
+    layout_blocks: list[dict[str, object]], page_width: float, page_height: float
+) -> list[dict[str, object]]:
+    """Turn a page's text blocks (see `pdf_layout_blocks`) into provenance blocks, keeping math regions together."""
+    raw_blocks = [block for block in layout_blocks if block.get("type") == 0 and block_text(block)]
     blocks = [{"bbox": tuple(block["bbox"]), "text": block_text(block), "math": math_character_counts(block)[0] > 0, "raw": block} for block in raw_blocks]
     formula_groups = [group for group in group_formula_blocks(blocks) if is_formula_group([blocks[index]["raw"] for index in group])]
     grouped_indexes = {index for group in formula_groups for index in group}
-    formula_crops = [formula_crop_bounds(blocks, group, page) for group in formula_groups]
+    formula_crops = [formula_crop_bounds(blocks, group, page_width, page_height) for group in formula_groups]
     covered_indexes = {
         index
         for index, block in enumerate(blocks)
@@ -481,36 +489,137 @@ def formula_aware_pdf_blocks(page: object) -> list[dict[str, object]]:
     return sorted(rendered, key=lambda block: (block["y"], block["x"]))
 
 
+_UNMAPPED_CID = re.compile(r"\(cid:\d+\)")
+_SUBSET_PREFIX = re.compile(r"^[A-Z]{6}\+")
+
+
 def has_unmapped_glyphs(text: str, threshold: float = 0.1) -> bool:
     """True when a text layer is mostly unusable: fonts embedded without a Unicode map
-    come out as Private Use Area code points instead of letters."""
-    unmapped = sum(1 for character in text if 0xE000 <= ord(character) <= 0xF8FF)
+    come out as Private Use Area code points, or as `(cid:N)` placeholders in pdfminer,
+    instead of letters."""
+    placeholders = len(_UNMAPPED_CID.findall(text))
+    text = _UNMAPPED_CID.sub("", text)
+    unmapped = placeholders + sum(1 for character in text if 0xE000 <= ord(character) <= 0xF8FF)
     letters = sum(1 for character in text if character.isalpha())
     return unmapped > 0 and unmapped / (letters + unmapped) >= threshold
 
 
-def extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
-    import fitz
+MAX_PDF_PAGES = 500
+PDF_OCR_SCALE = 2
 
-    document = fitz.open(stream=pdf_bytes, filetype="pdf")
-    if document.page_count > 500:
-        document.close()
-        raise ValueError("The PDF contains too many pages.")
-    pages = []
-    used_ocr = False
+# PDFium is not thread-safe and the sidecar serves requests on several threads.
+_PDFIUM_LOCK = threading.Lock()
+
+
+def _span_font(name: str) -> str:
+    return _SUBSET_PREFIX.sub("", name)
+
+
+def _layout_text_lines(element: object) -> list[object]:
+    """Every text line below a pdfminer layout element, in reading order."""
+    from pdfminer.layout import LTContainer, LTTextLine
+
+    if isinstance(element, LTTextLine):
+        return [element]
+    if isinstance(element, LTContainer):
+        lines: list[object] = []
+        for child in element:
+            lines.extend(_layout_text_lines(child))
+        return lines
+    return []
+
+
+def _line_spans(line: object) -> list[dict[str, object]]:
+    """Group a text line's characters into spans that share a font."""
+    from pdfminer.layout import LTChar
+
+    spans: list[dict[str, object]] = []
+    for item in line:
+        if isinstance(item, LTChar):
+            font = _span_font(item.fontname)
+            if not spans or spans[-1]["font"] != font:
+                spans.append({"text": "", "font": font})
+            spans[-1]["text"] += item.get_text()
+        elif spans:  # An LTAnno: the virtual space or line break the layout analysis inserted.
+            spans[-1]["text"] += item.get_text()
+    return spans
+
+
+def pdf_layout_blocks(layout_page: object) -> tuple[list[dict[str, object]], float, float]:
+    """Text blocks of one pdfminer page in the shape the formula logic expects.
+
+    Each block has a top-left origin `bbox` in PDF points and `lines` of `spans` carrying the
+    text and the font name (subset prefix removed), so math fonts such as CMMI10 stay visible.
+    """
+    from pdfminer.layout import LTContainer, LTTextBox
+
+    left, bottom, right, top = layout_page.bbox
+    blocks: list[dict[str, object]] = []
+
+    def visit(container: object) -> None:
+        for child in container:
+            if isinstance(child, LTTextBox):
+                lines = [{"spans": spans} for spans in (_line_spans(line) for line in _layout_text_lines(child)) if spans]
+                if lines:
+                    x0, y0, x1, y1 = child.bbox
+                    blocks.append({"type": 0, "bbox": (x0 - left, top - y1, x1 - left, top - y0), "lines": lines})
+            elif isinstance(child, LTContainer):
+                visit(child)
+
+    visit(layout_page)
+    return blocks, right - left, top - bottom
+
+
+def render_pdf_page_png(document: object, page_index: int) -> bytes:
+    """Rasterise one page at `PDF_OCR_SCALE` for OCR."""
+    page = document[page_index]
     try:
-        for page_number, page in enumerate(document, start=1):
-            text = page.get_text("text").strip()
-            blocks = formula_aware_pdf_blocks(page)
-            if not text or (has_unmapped_glyphs(text) and has_ocr_dependencies()):
-                used_ocr = True
-                image = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False).tobytes("png")
-                _, blocks = ocr_image(image)
-                text = "\n".join(block["text"] for block in blocks)
-            pages.append({"pageNumber": page_number, "text": text, "blocks": blocks})
+        buffer = BytesIO()
+        page.render(scale=PDF_OCR_SCALE).to_pil().convert("RGB").save(buffer, format="PNG")
+        return buffer.getvalue()
     finally:
-        document.close()
-    return ("pymupdf+rapidocr" if used_ocr else "pymupdf"), pages
+        page.close()
+
+
+def extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
+    from pdfminer.high_level import extract_pages
+    from pdfminer.layout import LAParams
+    from pdfminer.pdfpage import PDFPage
+
+    page_count = 0
+    for _ in PDFPage.get_pages(BytesIO(pdf_bytes)):
+        page_count += 1
+        if page_count > MAX_PDF_PAGES:
+            raise ValueError("The PDF contains too many pages.")
+
+    pages: list[dict[str, object]] = []
+    for page_number, layout_page in enumerate(
+        extract_pages(BytesIO(pdf_bytes), laparams=LAParams(all_texts=True)), start=1
+    ):
+        layout_blocks, width, height = pdf_layout_blocks(layout_page)
+        text = "\n".join(block_text(block) for block in layout_blocks).strip()
+        pages.append({
+            "pageNumber": page_number,
+            "text": text,
+            "blocks": formula_aware_pdf_blocks(layout_blocks, width, height),
+        })
+
+    # A page with no text layer, or one whose glyphs cannot be mapped to letters, is rasterised and read by OCR.
+    ocr_ready = has_ocr_dependencies()
+    ocr_pages = [page for page in pages if not page["text"] or (ocr_ready and has_unmapped_glyphs(str(page["text"])))]
+    if ocr_pages:
+        import pypdfium2
+
+        with _PDFIUM_LOCK:
+            document = pypdfium2.PdfDocument(pdf_bytes)
+            try:
+                for page in ocr_pages:
+                    _, blocks = ocr_image(render_pdf_page_png(document, int(page["pageNumber"]) - 1))
+                    page["blocks"] = blocks
+                    page["text"] = "\n".join(str(block["text"]) for block in blocks)
+            finally:
+                document.close()
+    return ("pdfminer+rapidocr" if ocr_pages else "pdfminer"), pages
 
 
 def main() -> None:

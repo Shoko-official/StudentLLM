@@ -447,7 +447,7 @@ describe('StudentLLM workspace', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       running -= 1;
       const name = (file as File).name;
-      return { model: 'pymupdf', pages: [{ pageNumber: 1, text: `Content of ${name}.`, blocks: [] }] };
+      return { model: 'pdfminer', pages: [{ pageNumber: 1, text: `Content of ${name}.`, blocks: [] }] };
     });
     render(<App documentEngine={{ extract }} />);
 
@@ -490,7 +490,7 @@ describe('StudentLLM workspace', () => {
   it('opens a cited document source and preserves its page target', async () => {
     const user = userEvent.setup();
     const extract = vi.fn().mockResolvedValue({
-      model: 'pymupdf',
+      model: 'pdfminer',
       pages: [{ pageNumber: 4, text: 'The divergence identity is stated on this page.', blocks: [] }],
     });
     render(<App documentEngine={{ extract }} />);
@@ -1076,7 +1076,7 @@ describe('StudentLLM workspace', () => {
   it('routes extracted PDF pages to the existing course selected by LM Studio', async () => {
     const user = userEvent.setup();
     const extract = vi.fn().mockResolvedValue({
-      model: 'pymupdf',
+      model: 'pdfminer',
       pages: [{ pageNumber: 1, text: 'Eigenvectors describe invariant directions.', blocks: [] }],
     });
     const generate = vi.fn(async () => ({
@@ -1114,7 +1114,7 @@ describe('StudentLLM workspace', () => {
   it('indexes extracted PDF pages as reviewable transcript segments', async () => {
     const user = userEvent.setup();
     const extract = vi.fn().mockResolvedValue({
-      model: 'pymupdf',
+      model: 'pdfminer',
       pages: [
         { pageNumber: 1, text: 'Gradient descent updates parameters.', blocks: [] },
         { pageNumber: 2, text: 'The learning rate controls the step size.', blocks: [] },
@@ -1139,7 +1139,7 @@ describe('StudentLLM workspace', () => {
   it('renders extracted PDF blocks as readable note sections without invalid KaTeX', async () => {
     const user = userEvent.setup();
     const extract = vi.fn().mockResolvedValue({
-      model: 'pymupdf',
+      model: 'pdfminer',
       pages: [{
         pageNumber: 1,
         text: 'Dé\u001cnition\nPour f(x), on dérive.',
@@ -1166,7 +1166,7 @@ describe('StudentLLM workspace', () => {
   it('renders a faithful formula image supplied by the local document sidecar', async () => {
     const user = userEvent.setup();
     const extract = vi.fn().mockResolvedValue({
-      model: 'pymupdf',
+      model: 'pdfminer',
       pages: [{
         pageNumber: 1,
         text: 'Example\n∂f\n∂x = 3x2y4ez',
@@ -1209,7 +1209,7 @@ describe('StudentLLM workspace', () => {
       remove: vi.fn(async () => undefined),
     };
     const extract = vi.fn().mockResolvedValue({
-      model: 'pymupdf',
+      model: 'pdfminer',
       pages: [{
         pageNumber: 1,
         text: page.text,
@@ -1840,7 +1840,7 @@ describe('StudentLLM workspace', () => {
   it('removes transcript segments derived from an imported PDF', async () => {
     const user = userEvent.setup();
     const extract = vi.fn().mockResolvedValue({
-      model: 'pymupdf',
+      model: 'pdfminer',
       pages: [{ pageNumber: 1, text: 'Derived page content.', blocks: [] }],
     });
     render(<App documentEngine={{ extract }} />);

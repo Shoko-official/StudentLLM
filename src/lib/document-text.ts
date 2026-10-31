@@ -61,7 +61,7 @@ export function repairCorruptedLatexCommands(value: string) {
 }
 
 /**
- * PyMuPDF can expose a PDF font's missing ligatures as control characters.
+ * PDF text extractors can expose a PDF font's missing ligatures as control characters.
  * Keep this normalization at the document boundary so search, notes, and
  * transcript review all see the same readable source text.
  */
