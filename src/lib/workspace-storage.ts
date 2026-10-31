@@ -6,6 +6,7 @@ import { isValidVisualBlock } from './visual-blocks';
 
 export const WORKSPACE_STORAGE_KEY = 'studentllm.workspace.v1';
 export const WORKSPACE_MIGRATION_BACKUP_KEY = 'studentllm.workspace.v1.legacy-demo-backup';
+export const WORKSPACE_UNREADABLE_BACKUP_KEY = 'studentllm.workspace.v1.unreadable-backup';
 export const MAX_WORKSPACE_SNAPSHOT_BYTES = 16 * 1024 * 1024;
 
 export interface WorkspaceSnapshot {
@@ -27,6 +28,8 @@ export interface WorkspaceStorageError {
 
 export interface WorkspaceStorageCallbacks {
   onError?: (error: WorkspaceStorageError) => void;
+  /** The stored workspace could not be read and was replaced by an empty one. */
+  onUnreadable?: (issue: WorkspaceLoadIssue) => void;
 }
 
 type GlobalTauri = {
@@ -282,18 +285,67 @@ export function isNativeRuntime() {
     || (import.meta.env.PROD && window.location.hostname === 'localhost');
 }
 
-export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): WorkspaceSnapshot {
-  if (!storage) return fallback;
+export interface WorkspaceLoadIssue {
+  /** `unreadable`: damaged or truncated data. `newer-version`: written by a newer version of the app. */
+  kind: 'unreadable' | 'newer-version';
+  /** Whether a copy of the stored value was kept before the empty workspace replaces it. */
+  backedUp: boolean;
+}
+
+function classifyUnreadable(raw: string): WorkspaceLoadIssue['kind'] {
+  if (raw.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return 'unreadable';
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isRecord(parsed) && typeof parsed.version === 'number' && parsed.version > 1 ? 'newer-version' : 'unreadable';
+  } catch {
+    return 'unreadable';
+  }
+}
+
+// A stored value that cannot be read is replaced by an empty workspace at the next save. Keep the original first, so a
+// damaged, truncated or newer-format workspace is never destroyed without a trace.
+function keepUnreadableCopy(raw: string, storage: Storage): boolean {
+  try {
+    for (let index = 0; index <= storage.length; index += 1) {
+      const key = index === 0 ? WORKSPACE_UNREADABLE_BACKUP_KEY : `${WORKSPACE_UNREADABLE_BACKUP_KEY}.${index}`;
+      const existing = storage.getItem(key);
+      if (existing === raw) return true;
+      if (existing === null) {
+        storage.setItem(key, raw);
+        return storage.getItem(key) === raw;
+      }
+    }
+  } catch {
+    // Storage is full or blocked: report that no copy could be kept.
+  }
+  return false;
+}
+
+export function loadWorkspaceWithStatus(
+  fallback: WorkspaceSnapshot,
+  storage: Storage | undefined = getStorage(),
+): { snapshot: WorkspaceSnapshot; issue: WorkspaceLoadIssue | null } {
+  if (!storage) return { snapshot: fallback, issue: null };
   try {
     const raw = storage.getItem(WORKSPACE_STORAGE_KEY);
     const snapshot = parseWorkspaceRaw(raw, fallback);
-    if (snapshot === fallback) return snapshot;
+    if (snapshot === fallback) {
+      // `raw` is empty on a first launch; anything else that failed to parse is data the user had.
+      const issue: WorkspaceLoadIssue | null = raw
+        ? { kind: classifyUnreadable(raw), backedUp: keepUnreadableCopy(raw, storage) }
+        : null;
+      return { snapshot, issue };
+    }
     const migrated = migrateWithBackup(raw, snapshot, storage);
     if (migrated !== snapshot) saveWorkspace(migrated, storage);
-    return migrated;
+    return { snapshot: migrated, issue: null };
   } catch {
-    return fallback;
+    return { snapshot: fallback, issue: null };
   }
+}
+
+export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): WorkspaceSnapshot {
+  return loadWorkspaceWithStatus(fallback, storage).snapshot;
 }
 
 export function saveWorkspace(snapshot: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): boolean {
@@ -319,6 +371,9 @@ export async function loadWorkspaceAsync(
   try {
     const raw = await invokeNative<string | null>('load_workspace');
     const parsed = parseWorkspaceRaw(raw, fallback);
+    if (parsed === fallback && raw) {
+      callbacks.onUnreadable?.({ kind: classifyUnreadable(raw), backedUp: storage ? keepUnreadableCopy(raw, storage) : false });
+    }
     const snapshot = parsed === fallback ? parsed : migrateWithBackup(raw, parsed, storage);
     if (raw === null || snapshot === fallback || snapshot !== parsed) {
       try {

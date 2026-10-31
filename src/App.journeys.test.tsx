@@ -1,13 +1,31 @@
 import { afterEach, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 import { AI_UNREACHABLE_MESSAGE } from './lib/service-errors';
-import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
+import { SOURCE_REMOVAL_UNDO_MS } from './lib/source-removal';
+import type { SourceBlobStore } from './lib/source-storage';
+import { WORKSPACE_STORAGE_KEY, WORKSPACE_UNREADABLE_BACKUP_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from './test/workspace-fixture';
 
 // Regression tests for the user-journey QA pass: each one reproduces a problem a real student could hit.
 const savedWorkspace = () => JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY)!);
+const memoryBlobStore = (): SourceBlobStore => ({
+  durability: 'memory-only',
+  save: vi.fn(async () => undefined),
+  load: vi.fn(async () => null),
+  remove: vi.fn(async () => undefined),
+});
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+};
+const expireUndoWindow = (timers: { mock: { calls: unknown[][] } }) => {
+  const call = timers.mock.calls.find((args) => args[1] === SOURCE_REMOVAL_UNDO_MS);
+  expect(call).toBeDefined();
+  act(() => { (call![0] as () => void)(); });
+};
 const RECORDING_NOTICE_STORAGE_KEY = 'studentllm.recording-notice.v1';
 
 function seedWorkspace() {
@@ -88,6 +106,166 @@ describe('user journeys', () => {
       await user.click(within(dialog).getByRole('button', { name: 'Analyze structure' }));
 
       await waitFor(() => expect(within(dialog).getByText(AI_UNREACHABLE_MESSAGE)).toBeInTheDocument());
+    });
+  });
+
+  describe('imports that overlap with other work', () => {
+    it('keeps text imported while an audio file is still being transcribed', async () => {
+      const user = userEvent.setup();
+      const transcription = deferred<{ model: string; segments: Array<{ id: string; timestamp: string; speaker: string; text: string; status: 'review' }> }>();
+      render(<App provider={null} speechEngine={{ transcribe: () => transcription.promise }} sourceBlobStore={memoryBlobStore()} />);
+
+      await user.upload(screen.getByLabelText('Select course source'), new File(['audio-bytes'], 'lecture.webm', { type: 'audio/webm' }));
+      await screen.findByText(/Transcribing with local ASR/);
+      await user.upload(screen.getByLabelText('Select course source'), new File(['Notes imported during the wait.'], 'during.md', { type: 'text/markdown' }));
+      await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].transcript.some((segment: { text: string }) => segment.text === 'Notes imported during the wait.')).toBe(true));
+
+      await act(async () => {
+        transcription.resolve({ model: 'fixture', segments: [{ id: '1', timestamp: '00:00:01', speaker: 'Speaker', text: 'Spoken words from the recording.', status: 'review' }] });
+      });
+      await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].transcript.some((segment: { text: string }) => segment.text === 'Spoken words from the recording.')).toBe(true));
+
+      const texts = savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].transcript.map((segment: { text: string }) => segment.text);
+      expect(texts).toContain('Notes imported during the wait.');
+      expect(texts).toContain('Spoken words from the recording.');
+      expect(texts).toContain('We can write attention as the softmax of Q K transposed over the square root of d, multiplied by V.');
+    });
+
+    it('does not resurrect a course that was deleted while its document was being extracted', async () => {
+      const user = userEvent.setup();
+      const extraction = deferred<{ model: string; pages: Array<{ pageNumber: number; text: string; blocks: [] }> }>();
+      render(<App provider={null} documentEngine={{ extract: () => extraction.promise }} sourceBlobStore={memoryBlobStore()} />);
+
+      await user.upload(screen.getByLabelText('Select course source'), new File(['%PDF-1.4'], 'slow.pdf', { type: 'application/pdf' }));
+      await screen.findByText(/slow\.pdf added to course sources/);
+      await user.click(screen.getByLabelText('Course actions'));
+      await user.click(screen.getByRole('button', { name: 'Delete course' }));
+      await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
+      await screen.findByText('Attention & Scaled Dot-Product deleted.');
+
+      await act(async () => {
+        extraction.resolve({ model: 'pymupdf', pages: [{ pageNumber: 1, text: 'Text of the deleted course.', blocks: [] }] });
+      });
+      await waitFor(() => expect(JSON.stringify(savedWorkspace())).not.toContain('Text of the deleted course.'));
+      expect(Object.keys(savedWorkspace().lessonWorkspaces)).not.toContain(FIXTURE_LESSON_ID);
+    });
+
+    it('refuses an empty file and a second copy of a file already in the course', async () => {
+      const user = userEvent.setup();
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+
+      await user.upload(screen.getByLabelText('Select course source'), new File([], 'empty.pdf', { type: 'application/pdf' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('empty.pdf is empty, so nothing was imported.');
+      expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].resources.map((resource: { name: string }) => resource.name)).not.toContain('empty.pdf');
+
+      const note = () => new File(['The same notes.'], 'notes.md', { type: 'text/markdown' });
+      await user.upload(screen.getByLabelText('Select course source'), note());
+      await screen.findByText(/notes\.md added to course sources/);
+      await user.upload(screen.getByLabelText('Select course source'), note());
+      expect(await screen.findByRole('alert')).toHaveTextContent('notes.md is already in this course.');
+      expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].resources.filter((resource: { name: string }) => resource.name === 'notes.md')).toHaveLength(1);
+    });
+
+    it('keeps the stored original while another course still uses the same file', async () => {
+      const user = userEvent.setup();
+      const sourceBlobStore = memoryBlobStore();
+      render(<App provider={null} sourceBlobStore={sourceBlobStore} />);
+      const shared = () => new File(['Shared handout text.'], 'handout.md', { type: 'text/markdown' });
+
+      await user.upload(screen.getByLabelText('Select course source'), shared());
+      await screen.findByText(/handout\.md added to course sources/);
+      await user.click(screen.getByRole('button', { name: 'Self-attention and Context' }));
+      await user.upload(screen.getByLabelText('Select course source'), shared());
+      await waitFor(() => expect(savedWorkspace().lessonWorkspaces['fixture-context'].resources.map((resource: { name: string }) => resource.name)).toContain('handout.md'));
+
+      // Removing it from the second course must not erase the original the first course still points to.
+      await user.click(screen.getByRole('tab', { name: /^Sources/ }));
+      const timers = vi.spyOn(window, 'setTimeout');
+      await user.click(screen.getByRole('button', { name: 'Remove source handout.md' }));
+      expireUndoWindow(timers);
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument());
+      expect(vi.mocked(sourceBlobStore.remove).mock.calls.filter(([id]) => id.startsWith('source-'))).toHaveLength(0);
+
+      // Deleting the first course after that is the last use, so the original goes with it.
+      await user.click(screen.getByRole('button', { name: 'Attention & Scaled Dot-Product' }));
+      await user.click(screen.getByLabelText('Course actions'));
+      await user.click(screen.getByRole('button', { name: 'Delete course' }));
+      await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
+      await screen.findByText('Attention & Scaled Dot-Product deleted.');
+      expect(vi.mocked(sourceBlobStore.remove).mock.calls.filter(([id]) => id.startsWith('source-'))).toHaveLength(1);
+    });
+  });
+
+  describe('browser storage safety', () => {
+    it('tells the student when the workspace cannot be saved instead of claiming it was', async () => {
+      const user = userEvent.setup();
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+      const original = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key: string, value: string) {
+        if (key === WORKSPACE_STORAGE_KEY) throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+        return original.call(this, key, value);
+      };
+      try {
+        await user.upload(screen.getByLabelText('Select course source'), new File(['Notes that do not fit.'], 'big.md', { type: 'text/markdown' }));
+        const banner = await screen.findByText(/Your changes are not being saved/);
+        expect(banner.closest('[role="alert"]')).toHaveTextContent('Export course');
+        expect(within(banner.closest('[role="alert"]') as HTMLElement).getByRole('button', { name: 'Export this course' })).toBeInTheDocument();
+      } finally {
+        Storage.prototype.setItem = original;
+      }
+      // Once storage works again the next successful save clears the banner.
+      await user.upload(screen.getByLabelText('Select course source'), new File(['More notes.'], 'more.md', { type: 'text/markdown' }));
+      await waitFor(() => expect(screen.queryByText(/Your changes are not being saved/)).not.toBeInTheDocument());
+    });
+
+    it('explains that a damaged workspace was replaced and that a copy was kept', async () => {
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, '{"version":1,"lessons":[{"id":"a","subj');
+      render(<App provider={null} />);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('could not be read');
+      expect(screen.getByRole('alert')).toHaveTextContent('A copy of the original data was kept');
+      expect(localStorage.getItem(WORKSPACE_UNREADABLE_BACKUP_KEY)).toBe('{"version":1,"lessons":[{"id":"a","subj');
+      await userEvent.setup().click(within(screen.getByRole('alert')).getByRole('button', { name: 'Dismiss' }));
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('stops saving when another tab changed the workspace, so it cannot overwrite that work', async () => {
+      const user = userEvent.setup();
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+      const otherTabsWorkspace = JSON.stringify({ ...createFixtureWorkspace(), lessons: [] });
+
+      act(() => {
+        localStorage.setItem(WORKSPACE_STORAGE_KEY, otherTabsWorkspace);
+        window.dispatchEvent(new StorageEvent('storage', { key: WORKSPACE_STORAGE_KEY, newValue: otherTabsWorkspace }));
+      });
+      expect(await screen.findByRole('alert')).toHaveTextContent('changed in another tab or window');
+      expect(within(screen.getByRole('alert')).getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+
+      await user.upload(screen.getByLabelText('Select course source'), new File(['Written in the stale tab.'], 'stale.md', { type: 'text/markdown' }));
+      await screen.findByText(/stale\.md added to course sources/);
+      expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(otherTabsWorkspace);
+    });
+
+    it('asks before closing the tab while an import is still running', async () => {
+      const user = userEvent.setup();
+      const extraction = deferred<{ model: string; pages: Array<{ pageNumber: number; text: string; blocks: [] }> }>();
+      render(<App provider={null} documentEngine={{ extract: () => extraction.promise }} sourceBlobStore={memoryBlobStore()} />);
+      const closeTab = () => {
+        const event = new Event('beforeunload', { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+
+      expect(closeTab()).toBe(false);
+      await user.upload(screen.getByLabelText('Select course source'), [
+        new File(['%PDF-1.4 a'], 'a.pdf', { type: 'application/pdf' }),
+        new File(['%PDF-1.4 b'], 'b.pdf', { type: 'application/pdf' }),
+      ]);
+      await waitFor(() => expect(closeTab()).toBe(true));
+      await act(async () => {
+        extraction.resolve({ model: 'pymupdf', pages: [{ pageNumber: 1, text: 'Page text.', blocks: [] }] });
+      });
+      await waitFor(() => expect(closeTab()).toBe(false));
     });
   });
 });

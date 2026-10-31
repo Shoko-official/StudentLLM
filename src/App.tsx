@@ -40,7 +40,7 @@ import { BrandGlyph } from './lib/brand-mark';
 import { textMatchesQuery } from './lib/snippet';
 import { Snippet } from './lib/snippet-view';
 import { requestRecorderSession, RecorderSession } from './lib/recorder';
-import { isNativeRuntime, loadWorkspace, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspaceAsync } from './lib/workspace-storage';
+import { isNativeRuntime, loadWorkspaceAsync, loadWorkspaceWithStatus, runPackagedIpcSmoke, saveWorkspaceAsync, WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
 import type { WorkspaceStorageError } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import type { LLMProvider } from './lib/llm-provider';
@@ -59,6 +59,7 @@ import { getManagedSidecarStatus, ManagedSidecarStatus, startManagedSidecars, st
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore, type SourceBlobStore } from './lib/source-storage';
 import { describeAiFailure } from './lib/service-errors';
+import { mergeSegments } from './lib/transcript-merge';
 import { AudioChunkStore, createRecordingChunkStore } from './lib/recording-storage';
 import { listPendingRecordings, removePendingRecording, savePendingRecording } from './lib/recording-recovery';
 import { buildCourseExport, readCourseExport } from './lib/course-transfer';
@@ -303,8 +304,27 @@ interface ResourcePreview {
   detail?: string;
 }
 
+type StorageNotice =
+  | { kind: 'unreadable' | 'newer-version'; backedUp: boolean }
+  | { kind: 'save-failed' }
+  | { kind: 'changed-elsewhere' };
+
+function storageNoticeText(notice: StorageNotice) {
+  if (notice.kind === 'save-failed') return "Your changes are not being saved: this browser's storage is full or blocked. Use More → Export course to keep a copy of what is on screen, then free up space or clear old courses.";
+  if (notice.kind === 'changed-elsewhere') return 'StudentLLM was changed in another tab or window. Reload this page to see the latest version. Changes made here are not saved until you reload, so they would otherwise be lost.';
+  const copy = notice.backedUp
+    ? 'A copy of the original data was kept in this browser.'
+    : 'A copy of the original data could not be kept because browser storage is full.';
+  return notice.kind === 'newer-version'
+    ? `Your saved workspace was written by a newer version of StudentLLM that this version cannot read, so it started empty. ${copy} Update the app to get your courses back.`
+    : `Your saved workspace could not be read, so StudentLLM started empty. ${copy} Courses you export are never affected.`;
+}
+
 function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine, recordingChunkStore: recordingChunkStoreOverride, sourceBlobStore: sourceBlobStoreOverride, liveTranscriptionIntervalMs = 3_000 }: AppProps) {
-  const [workspace] = useState(() => loadWorkspace(initialWorkspace));
+  const [{ snapshot: workspace, issue: workspaceLoadIssue }] = useState(() => loadWorkspaceWithStatus(initialWorkspace));
+  // A banner for the problems that must not go unnoticed: the workspace could not be read, saved, or changed in another window.
+  const [storageNotice, setStorageNotice] = useState<StorageNotice | null>(() => workspaceLoadIssue ? { kind: workspaceLoadIssue.kind, backedUp: workspaceLoadIssue.backedUp } : null);
+  const savingPausedRef = useRef(false);
   const [nativeStorageReady, setNativeStorageReady] = useState(() => !isNativeRuntime());
   const [lessons, setLessons] = useState(workspace.lessons);
   const [activeLessonId, setActiveLessonId] = useState(workspace.activeLessonId);
@@ -334,6 +354,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [chatError, setChatError] = useState('');
   const activeLessonIdRef = useRef(activeLessonId);
   activeLessonIdRef.current = activeLessonId;
+  // Long-running work (transcription, extraction) must read the workspace as it is when it finishes, not as it was when it started.
+  const lessonWorkspacesRef = useRef(lessonWorkspaces);
+  lessonWorkspacesRef.current = lessonWorkspaces;
+  const lessonsRef = useRef(lessons);
+  lessonsRef.current = lessons;
   const [liveTranscriptionError, setLiveTranscriptionError] = useState('');
   const [liveSettledThrough, setLiveSettledThrough] = useState(0);
   const startingRecorderRef = useRef(false);
@@ -436,21 +461,23 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const hasStudyMaterial = transcript.length > 0 || resources.some(isTextResource);
 
   const updateLessonWorkspace = (lessonId: string, update: (current: LessonWorkspace) => LessonWorkspace) => {
-    setLessonWorkspaces((current) => ({
-      ...current,
-      [lessonId]: (() => {
-        const previous = current[lessonId] ?? emptyLessonWorkspace;
-        const next = update(previous);
-        const lesson = lessons.find((item) => item.id === lessonId);
-        const hasDocumentNote = next.courseNote?.blocks?.some((block) => block.id === 'document-source-title');
-        // Rebuild the deterministic note when it is not AI-written or the set of segments changed; status-only edits (review toggles) keep an AI note.
-        const segmentIds = (items: TranscriptSegment[]) => items.map((segment) => segment.id).join('\u0000');
-        const needsRebuild = next.courseNote?.detection.method !== 'LM Studio' || segmentIds(next.transcript) !== segmentIds(previous.transcript);
-        return lesson && next.transcript !== previous.transcript && needsRebuild && !hasDocumentNote
+    setLessonWorkspaces((current) => {
+      const lesson = lessonsRef.current.find((item) => item.id === lessonId);
+      // A course deleted while an import or transcription was still running must not be brought back as an orphan workspace.
+      if (!current[lessonId] && !lesson) return current;
+      const previous = current[lessonId] ?? emptyLessonWorkspace;
+      const next = update(previous);
+      const hasDocumentNote = next.courseNote?.blocks?.some((block) => block.id === 'document-source-title');
+      // Rebuild the deterministic note when it is not AI-written or the set of segments changed; status-only edits (review toggles) keep an AI note.
+      const segmentIds = (items: TranscriptSegment[]) => items.map((segment) => segment.id).join('\u0000');
+      const needsRebuild = next.courseNote?.detection.method !== 'LM Studio' || segmentIds(next.transcript) !== segmentIds(previous.transcript);
+      return {
+        ...current,
+        [lessonId]: lesson && next.transcript !== previous.transcript && needsRebuild && !hasDocumentNote
           ? { ...next, courseNote: buildCourseNote(lesson, next.transcript) }
-          : next;
-      })(),
-    }));
+          : next,
+      };
+    });
   };
 
   const updateActiveWorkspace = (update: (current: LessonWorkspace) => LessonWorkspace) => updateLessonWorkspace(activeLessonId, update);
@@ -848,7 +875,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     if (!isNativeRuntime()) return undefined;
 
     let cancelled = false;
-    void loadWorkspaceAsync(initialWorkspace, undefined, { onError: reportStorageError }).then((loaded) => {
+    void loadWorkspaceAsync(initialWorkspace, undefined, {
+      onError: reportStorageError,
+      onUnreadable: (issue) => setStorageNotice({ kind: issue.kind, backedUp: issue.backedUp }),
+    }).then((loaded) => {
       if (cancelled) return;
       const loadedWorkspaces = loaded.lessonWorkspaces ?? {
         [loaded.activeLessonId]: {
@@ -931,13 +961,40 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   }, [lessonWorkspaces, lessons, localDocumentEngine, localProvider, sourceBlobStore, semanticReviewTick, importQueue.length]);
 
   useEffect(() => {
-    if (!nativeStorageReady) return;
+    if (!nativeStorageReady || savingPausedRef.current) return;
     void saveWorkspaceAsync(
       { activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces },
       undefined,
       { onError: reportStorageError },
-    );
+    ).then((saved) => {
+      // Never claim "saved" silently: a full or blocked browser store used to lose everything since the last good save.
+      setStorageNotice((current) => saved
+        ? (current?.kind === 'save-failed' ? null : current)
+        : (current?.kind === 'changed-elsewhere' ? current : { kind: 'save-failed' }));
+    });
   }, [nativeStorageReady, activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces]);
+
+  // Another tab or window wrote the workspace (or the browser data was cleared). Saving from this stale copy would
+  // overwrite that work, so stop saving here and ask for a reload.
+  useEffect(() => {
+    if (isNativeRuntime()) return undefined;
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== WORKSPACE_STORAGE_KEY) return;
+      savingPausedRef.current = true;
+      setStorageNotice({ kind: 'changed-elsewhere' });
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  // Closing the tab during an import, a transcription or a recording is the one way to lose work in progress.
+  const workInProgress = importQueue.length > 0 || transcribingResourceIds.size > 0 || isRecording || isFinalizingRecording;
+  useEffect(() => {
+    if (!workInProgress) return undefined;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [workInProgress]);
 
   useEffect(() => {
     if (!packagedIpcSmokeRequested || !nativeStorageReady) return;
@@ -1482,16 +1539,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           mimeType: 'audio/webm',
         };
         const saveRecordingFallback = (segments: TranscriptSegment[] = []) => {
-          const previousWorkspace = lessonWorkspaces[recordingLessonId] ?? emptyLessonWorkspace;
-          const nextTranscript = segments.length
-            ? [...previousWorkspace.transcript, ...segments.filter((segment) => !previousWorkspace.transcript.some((existing) => existing.id === segment.id))]
-            : previousWorkspace.transcript;
+          const nextTranscript = mergeSegments((lessonWorkspacesRef.current[recordingLessonId] ?? emptyLessonWorkspace).transcript, segments);
           updateLessonWorkspace(recordingLessonId, (current) => ({
             ...current,
             resources: current.resources.some((resource) => resource.id === recordingResource.id)
               ? current.resources
               : [recordingResource, ...current.resources],
-            transcript: nextTranscript,
+            transcript: mergeSegments(current.transcript, segments),
           }));
           formatExistingCourseNote(recordingLessonId, nextTranscript);
         };
@@ -1874,8 +1928,18 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const importSourceFile = async (file: File, targetLesson: Lesson, routeMaterial = true) => {
     setActionError('');
     const lessonId = targetLesson.id;
+    if (file.size === 0) {
+      setActionError(`${file.name} is empty, so nothing was imported.`);
+      return;
+    }
     try {
       const resource = await createSourceResource(file);
+      const existing = (lessonWorkspacesRef.current[lessonId] ?? emptyLessonWorkspace).resources.find((candidate) => candidate.id === resource.id);
+      if (existing) {
+        // The same bytes are already in this course: a second copy would only duplicate its notes and share one stored original.
+        setActionError(existing.name === file.name ? `${file.name} is already in this course.` : `${file.name} has the same content as ${existing.name}, which is already in this course.`);
+        return;
+      }
       await sourceBlobStore.save(resource.id, file);
       const isExtractable = isExtractableDocument(resource);
       if (localDocumentEngine && isExtractable) rebuiltDocumentSourceIds.current.add(resource.id);
@@ -1888,9 +1952,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             id: `${resource.id}:text`, sourceId: resource.id, timestamp: 'Notes', speaker: resource.name, text, status: 'review',
           };
           if (routeMaterial && await routeImportedMaterial(targetLesson, resource, [segment])) return;
-          const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
-          const nextTranscript = [...previousWorkspace.transcript, segment];
-          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: nextTranscript }));
+          const nextTranscript = mergeSegments((lessonWorkspacesRef.current[lessonId] ?? emptyLessonWorkspace).transcript, [segment]);
+          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: mergeSegments(current.transcript, [segment]) }));
           formatExistingCourseNote(lessonId, nextTranscript);
         }
       }
@@ -1943,9 +2006,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               // Keep imported audio in the selected course when classification is unavailable or uncertain.
             }
           }
-          const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
-          const nextTranscript = [...previousWorkspace.transcript, ...segments];
-          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: nextTranscript }));
+          const nextTranscript = mergeSegments((lessonWorkspacesRef.current[lessonId] ?? emptyLessonWorkspace).transcript, segments);
+          updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: mergeSegments(current.transcript, segments) }));
           formatExistingCourseNote(lessonId, nextTranscript);
           notify(segments.length
             ? `Local transcription added ${segments.length} segments from ${resource.name}.`
@@ -1978,14 +2040,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               status: 'review' as const,
             }));
           if (routeMaterial && pageSegments.length && await routeImportedMaterial(targetLesson, resource, pageSegments, extraction.pages)) return;
-          const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
-          const nextTranscript = [...previousWorkspace.transcript, ...pageSegments];
           extractedDocumentPages.current.set(resource.id, extraction.pages);
           // Show the extracted note right away; the background review rewrites it with the model.
           const documentCourseNote = await formatDocumentCourseNoteWithProvider(targetLesson, extraction.pages, resource.name, null);
           updateLessonWorkspace(lessonId, (current) => ({
             ...current,
-            transcript: nextTranscript,
+            transcript: mergeSegments(current.transcript, pageSegments),
             courseNote: documentCourseNote,
           }));
           notify(pageSegments.length > 0
@@ -2138,9 +2198,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           // Keep the source in its current course when classification is unavailable or uncertain.
         }
       }
-      const previousWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
-      const nextTranscript = [...previousWorkspace.transcript.filter((segment) => segment.sourceId !== resource.id), ...segments];
-      updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: nextTranscript }));
+      const nextTranscript = mergeSegments((lessonWorkspacesRef.current[lessonId] ?? emptyLessonWorkspace).transcript, segments, { replaceSourceId: resource.id });
+      updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: mergeSegments(current.transcript, segments, { replaceSourceId: resource.id }) }));
       formatExistingCourseNote(lessonId, nextTranscript);
       notify('Transcription added to your course notes.');
     } catch (error) {
@@ -2156,10 +2215,17 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     sourceInputRef.current.click();
   };
 
+  // Files are stored under a fingerprint of their content, so the same file imported into two courses shares one stored
+  // original. It may only be erased when no course refers to it any more.
+  const isSourceUsedElsewhere = (resourceId: string, exceptLessonId?: string) => Object.entries(lessonWorkspacesRef.current)
+    .some(([id, workspace]) => id !== exceptLessonId && workspace.resources.some((resource) => resource.id === resourceId));
+
   const commitSourceRemoval = async (pending: PendingSourceRemoval) => {
     try {
-      await sourceBlobStore.remove(pending.resource.id);
-      if (pending.resource.kind === 'audio') await recordingChunkStore.clear(pending.resource.id);
+      if (!isSourceUsedElsewhere(pending.resource.id)) {
+        await sourceBlobStore.remove(pending.resource.id);
+        if (pending.resource.kind === 'audio') await recordingChunkStore.clear(pending.resource.id);
+      }
       removePendingSourceErase(pending.resource.id);
     } catch {
       // The ledger entry stays, so the erase is retried the next time the app starts.
@@ -2292,6 +2358,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     try {
       const pendingRecordings = listPendingRecordings().filter((pending) => pending.lessonId === lessonId);
       for (const resource of resources) {
+        if (isSourceUsedElsewhere(resource.id, lessonId)) continue;
         await sourceBlobStore.remove(resource.id);
         await recordingChunkStore.clear(resource.id);
       }
@@ -2575,6 +2642,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         <button className="icon-button" aria-label="Settings" onClick={() => setShowSettingsPanel(true)}><Settings2 size={19} /></button>
       </header>
 
+      {storageNotice && <div className="action-error storage-banner" role="alert"><p>{storageNoticeText(storageNotice)}</p>{storageNotice.kind === 'changed-elsewhere' ? <button className="text-action" onClick={() => window.location.reload()}>Reload</button> : storageNotice.kind === 'save-failed' ? (hasCourse && <button className="text-action" onClick={() => void exportCourse()}>Export this course</button>) : <button className="text-action" onClick={() => setStorageNotice(null)}>Dismiss</button>}</div>}
       <div className={`workspace-grid ${showLeftSidebar ? 'with-navigation' : ''}`}>
         {showLeftSidebar && <>
           <button className="navigation-scrim" tabIndex={-1} aria-label="Close navigation" onClick={() => setShowLeftSidebar(false)} />
