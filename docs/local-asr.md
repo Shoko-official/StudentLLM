@@ -6,6 +6,10 @@ The default model is `large-v3-turbo`, with French (`fr`), CPU, and `int8` compu
 
 Full uploads retain the 250 MiB limit (262,144,000 bytes). Preview uploads have smaller byte and duration bounds below. The sidecar uses the shared localhost binding validation, upload validation, and local-origin CORS helpers. Responses keep `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`; model failures do not expose model or filesystem details.
 
+## Licences
+
+`faster-whisper`, CTranslate2 and the Whisper weights (`small`, `large-v3-turbo`) are MIT. `faster-whisper` depends on PyAV (`av`), whose binary wheels bundle FFmpeg built with x264 and x265, which are GPL. Installing it on your own machine is fine; redistributing the wheel inside a product has GPL consequences. This project does not bundle the sidecar. See [licensing.md](licensing.md#python-sidecars-and-tooling) for the details and options.
+
 ## Start the sidecar
 
 Use an environment with `faster-whisper` installed. For a new environment, install it separately with `python -m pip install faster-whisper`. The selected model must be available locally to avoid a first-use model download.
