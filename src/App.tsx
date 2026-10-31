@@ -40,7 +40,8 @@ import { BrandGlyph } from './lib/brand-mark';
 import { foldForSearch, textMatchesQuery } from './lib/snippet';
 import { Snippet } from './lib/snippet-view';
 import { describeMicrophoneError, requestRecorderSession, RecorderSession } from './lib/recorder';
-import { isNativeRuntime, loadWorkspaceAsync, loadWorkspaceWithStatus, runPackagedIpcSmoke, saveWorkspaceAsync, WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
+import { isNativeRuntime, loadWorkspaceAsync, loadWorkspaceWithStatus, readWorkspaceCopy, runPackagedIpcSmoke, saveWorkspaceAsync, WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
+import type { WorkspaceLoadIssue } from './lib/workspace-storage';
 import type { WorkspaceStorageError } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import type { LLMProvider } from './lib/llm-provider';
@@ -311,19 +312,25 @@ interface ResourcePreview {
 }
 
 type StorageNotice =
-  | { kind: 'unreadable' | 'newer-version'; backedUp: boolean }
+  | { kind: 'load-issue'; issue: WorkspaceLoadIssue }
   | { kind: 'save-failed' }
   | { kind: 'changed-elsewhere' };
 
 function storageNoticeText(notice: StorageNotice) {
-  if (notice.kind === 'save-failed') return "Your changes are not being saved: this browser's storage is full or blocked. Use More → Export course to keep a copy of what is on screen, then free up space or clear old courses.";
-  if (notice.kind === 'changed-elsewhere') return 'StudentLLM was changed in another tab or window. Reload this page to see the latest version. Changes made here are not saved until you reload, so they would otherwise be lost.';
-  const copy = notice.backedUp
+  if (notice.kind === 'save-failed') return "Your changes are not being saved: this browser's storage is full or blocked. Use More \u2192 Export course to keep a copy of what is on screen, then free up space or clear old courses.";
+  if (notice.kind === 'changed-elsewhere') return 'StudentLLM was changed in another tab or window. Reload this page to see the latest version. Changes made here are not saved until you reload, so export anything you want to keep first.';
+  const { kind, backedUp, protect } = notice.issue;
+  const what = kind === 'partial'
+    ? 'Some entries in your saved workspace could not be read and were left out.'
+    : kind === 'newer-version'
+      ? 'Your saved workspace was written by a newer version of StudentLLM that this version cannot read, so it started empty.'
+      : 'Your saved workspace could not be read, so StudentLLM started empty.';
+  const copy = backedUp
     ? 'A copy of the original data was kept in this browser.'
     : 'A copy of the original data could not be kept because browser storage is full.';
-  return notice.kind === 'newer-version'
-    ? `Your saved workspace was written by a newer version of StudentLLM that this version cannot read, so it started empty. ${copy} Update the app to get your courses back.`
-    : `Your saved workspace could not be read, so StudentLLM started empty. ${copy} Courses you export are never affected.`;
+  if (kind === 'newer-version') return `${what} The saved data was left untouched and saving is paused in this window, so nothing done here is kept. Open it with the newer version of the app, or download it to keep a copy.`;
+  if (protect) return `${what} ${copy} To protect your data it was left untouched and saving is paused in this window, so nothing done here is kept. Download the saved data first.`;
+  return `${what} ${copy} Download it to keep it elsewhere; courses you export are never affected.`;
 }
 
 // Module-level and memoized: a keystroke in the search field or the chat composer re-renders App, and without this every
@@ -383,8 +390,13 @@ function TranscriptDisclosure({ summary, children }: { summary: string; children
 function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine, recordingChunkStore: recordingChunkStoreOverride, sourceBlobStore: sourceBlobStoreOverride, liveTranscriptionIntervalMs = 3_000 }: AppProps) {
   const [{ snapshot: workspace, issue: workspaceLoadIssue }] = useState(() => loadWorkspaceWithStatus(initialWorkspace));
   // A banner for the problems that must not go unnoticed: the workspace could not be read, saved, or changed in another window.
-  const [storageNotice, setStorageNotice] = useState<StorageNotice | null>(() => workspaceLoadIssue ? { kind: workspaceLoadIssue.kind, backedUp: workspaceLoadIssue.backedUp } : null);
-  const savingPausedRef = useRef(false);
+  const [storageNotice, setStorageNotice] = useState<StorageNotice | null>(() => workspaceLoadIssue ? { kind: 'load-issue', issue: workspaceLoadIssue } : null);
+  // While paused nothing is written, so a stale tab or a protected original cannot be overwritten.
+  const savingPausedRef = useRef(Boolean(workspaceLoadIssue?.protect));
+  const saveFailedRef = useRef(false);
+  const [saveTick, setSaveTick] = useState(0);
+  // Imports whose file is already being stored but not yet listed in a course ("lessonId|resourceId").
+  const inFlightImportsRef = useRef(new Set<string>());
   const [nativeStorageReady, setNativeStorageReady] = useState(() => !isNativeRuntime());
   const [lessons, setLessons] = useState(workspace.lessons);
   const [activeLessonId, setActiveLessonId] = useState(workspace.activeLessonId);
@@ -411,7 +423,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [isSending, setIsSending] = useState(false);
   const [generatingArtifact, setGeneratingArtifact] = useState<ArtifactKind | null>(null);
   const [actionError, setActionError] = useState('');
-  const [chatError, setChatError] = useState('');
+  const [chatError, setChatError] = useState<{ lessonId: string; message: string } | null>(null);
   const activeLessonIdRef = useRef(activeLessonId);
   activeLessonIdRef.current = activeLessonId;
   // Long-running work (transcription, extraction) must read the workspace as it is when it finishes, not as it was when it started.
@@ -420,6 +432,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const toggleRecordingRef = useRef<() => Promise<void>>(async () => undefined);
   const lessonsRef = useRef(lessons);
   lessonsRef.current = lessons;
+  // An import is no longer "in flight" once its source is listed in the course, or the course is gone.
+  useEffect(() => {
+    for (const key of [...inFlightImportsRef.current]) {
+      const [lessonId, resourceId] = key.split('|');
+      const listed = lessonWorkspaces[lessonId]?.resources.some((resource) => resource.id === resourceId);
+      if (listed || !lessons.some((lesson) => lesson.id === lessonId)) inFlightImportsRef.current.delete(key);
+    }
+  }, [lessonWorkspaces, lessons]);
   const [liveTranscriptionError, setLiveTranscriptionError] = useState('');
   const [liveSettledThrough, setLiveSettledThrough] = useState(0);
   const startingRecorderRef = useRef(false);
@@ -463,6 +483,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     try { return localStorage.getItem(SERVICES_STORAGE_KEY) !== null; } catch { return false; }
   });
   const [serviceDraft, setServiceDraft] = useState(serviceSettings);
+  const aiFailure = (error: unknown, fallback?: string) => describeAiFailure(error, fallback, { cloud: usesNim(serviceSettings) });
   const [llmHealth, setLlmHealth] = useState('Not checked.');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [sidecarHealth, setSidecarHealth] = useState<{ asr: SidecarHealth; documents: SidecarHealth } | null>(null);
@@ -938,7 +959,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     let cancelled = false;
     void loadWorkspaceAsync(initialWorkspace, undefined, {
       onError: reportStorageError,
-      onUnreadable: (issue) => setStorageNotice({ kind: issue.kind, backedUp: issue.backedUp }),
+      onUnreadable: (issue) => {
+        if (issue.protect) savingPausedRef.current = true;
+        setStorageNotice({ kind: 'load-issue', issue });
+      },
     }).then((loaded) => {
       if (cancelled) return;
       const loadedWorkspaces = loaded.lessonWorkspaces ?? {
@@ -1029,11 +1053,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       { onError: reportStorageError },
     ).then((saved) => {
       // Never claim "saved" silently: a full or blocked browser store used to lose everything since the last good save.
+      saveFailedRef.current = !saved;
       setStorageNotice((current) => saved
         ? (current?.kind === 'save-failed' ? null : current)
         : (current?.kind === 'changed-elsewhere' ? current : { kind: 'save-failed' }));
     });
-  }, [nativeStorageReady, activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces]);
+  }, [nativeStorageReady, activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces, saveTick]);
 
   // Another tab or window wrote the workspace (or the browser data was cleared). Saving from this stale copy would
   // overwrite that work, so stop saving here and ask for a reload.
@@ -1049,7 +1074,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   }, []);
 
   // Closing the tab during an import, a transcription or a recording is the one way to lose work in progress.
-  const workInProgress = importQueue.length > 0 || transcribingResourceIds.size > 0 || isRecording || isFinalizingRecording;
+  // The same goes for changes that are not being saved: a stale tab, a full store, or a protected original.
+  const changesAtRisk = storageNotice?.kind === 'save-failed' || storageNotice?.kind === 'changed-elsewhere'
+    || (storageNotice?.kind === 'load-issue' && storageNotice.issue.protect && lessons.length > 0);
+  const workInProgress = importQueue.length > 0 || transcribingResourceIds.size > 0 || isRecording || isFinalizingRecording || changesAtRisk;
   useEffect(() => {
     if (!workInProgress) return undefined;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
@@ -1075,7 +1103,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   }, [nativeStorageReady]);
 
   useEffect(() => {
-    if (!nativeStorageReady) return undefined;
+    // While saving is paused or failing, this tab's workspace is not the saved one: a manifest whose course "does not exist"
+    // here may belong to a workspace that could not be loaded, and a recovered source would not be written down.
+    if (!nativeStorageReady || savingPausedRef.current || saveFailedRef.current) return undefined;
 
     let cancelled = false;
     const pendingRecordings = listPendingRecordings();
@@ -1162,7 +1192,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setQuickStartProposal(proposal);
       setQuickStartPlacement(proposal.targetCourseId ?? 'new');
     } catch (error) {
-      setQuickStartError(describeAiFailure(error, 'Quick Start could not analyze this material.'));
+      setQuickStartError(aiFailure(error, 'Quick Start could not analyze this material.'));
     } finally {
       setIsAnalyzingQuickStart(false);
     }
@@ -1202,8 +1232,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     };
     try {
       await sourceBlobStore.save(resource.id, new Blob([segment.text], { type: 'text/markdown;charset=utf-8' }));
-      const previous = lessonWorkspaces[targetLesson.id] ?? emptyLessonWorkspace;
-      const nextTranscript = [...previous.transcript, segment];
+      const previous = lessonWorkspacesRef.current[targetLesson.id] ?? emptyLessonWorkspace;
+      const nextTranscript = mergeSegments(previous.transcript, [segment]);
       const baseNote = buildCourseNote(targetLesson, nextTranscript);
       const routedNote = {
         ...baseNote,
@@ -1218,10 +1248,22 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       };
       const aiNote = await formatCourseNoteWithProvider(targetLesson, nextTranscript, localProvider);
       const courseNote = aiNote.detection.method === 'LM Studio' ? aiNote : routedNote;
-      setLessonWorkspaces((current) => ({
-        ...current,
-        [targetLesson.id]: { ...previous, resources: [resource, ...previous.resources], transcript: nextTranscript, courseNote },
-      }));
+      // The model call above can take minutes: merge into the course as it is now, not as it was before the call.
+      setLessonWorkspaces((current) => {
+        if (targetExisting && !current[targetLesson.id]) return current;
+        const base = current[targetLesson.id] ?? emptyLessonWorkspace;
+        const transcriptNow = mergeSegments(base.transcript, [segment]);
+        const unchangedMeanwhile = base.transcript.length === previous.transcript.length && base.transcript.every((item, index) => item.id === previous.transcript[index]?.id);
+        return {
+          ...current,
+          [targetLesson.id]: {
+            ...base,
+            resources: base.resources.some((item) => item.id === resource.id) ? base.resources : [resource, ...base.resources],
+            transcript: transcriptNow,
+            courseNote: unchangedMeanwhile ? courseNote : buildCourseNote(targetLesson, transcriptNow),
+          },
+        };
+      });
       if (!targetExisting) {
         setExpandedSubjects((expanded) => ({ ...expanded, [targetLesson.subject]: true }));
         setLessons((current) => [targetLesson, ...current]);
@@ -1243,7 +1285,6 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const selectLesson = (lessonId: string) => {
     if (isRecording || isFinalizingRecording || isStartingRecording) { notify('Stop and save the recording before switching courses.'); return; }
     setActionError('');
-    setChatError('');
     if (window.innerWidth <= 900) setShowLeftSidebar(false);
     setActiveLessonId(lessonId);
     setView('course');
@@ -1603,7 +1644,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       void session.stop().then(async ({ chunksPersisted, persistenceError }) => {
         // A clean stop is no longer recoverable work. Clear the manifest before
         // state updates can re-run the recovery effect against persisted chunks.
-        removePendingRecording(session.recordingId);
+        // Not while saving is paused or failing: the course would not list this recording, and without the manifest nothing
+        // would ever bring it back.
+        if (!savingPausedRef.current && !saveFailedRef.current) removePendingRecording(session.recordingId);
         const recordingResource: Resource = {
           id: session.recordingId,
           name: `${recordingLessonTitle} audio.webm`,
@@ -1754,7 +1797,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const message = composerValue.trim();
     if (!message || isSending || !hasCourse) return;
     setView('chat');
-    setChatError('');
+    setChatError(null);
     const chatLessonId = activeLessonId;
     const userMessageId = `user-${Date.now()}`;
     const assistantMessageId = `assistant-${Date.now() + 1}`;
@@ -1845,9 +1888,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     } catch (error) {
       // A failed request is not an answer: keep it out of the saved history, show it as an alert, and hand
       // the question back to the composer so it can be sent again with one key press.
-      // If the student moved to another course in the meantime, the question simply stays in the history it was asked in.
+      // The alert belongs to the course the question was asked in. If the student is still there, the question goes back to
+      // the composer; if not, it stays in that course's history and the alert is waiting there.
+      setChatError({ lessonId: chatLessonId, message: aiFailure(error, 'The local provider could not answer this question.') });
       if (activeLessonIdRef.current === chatLessonId) {
-        setChatError(describeAiFailure(error, 'The local provider could not answer this question.'));
         updateLessonWorkspace(chatLessonId, (current) => ({
           ...current,
           chat: current.chat.filter((item) => item.id !== userMessageId),
@@ -1925,7 +1969,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setSelectedArtifactId(artifact.id);
       notify(`${definition.label} saved.`);
     } catch (error) {
-      setActionError(describeAiFailure(error, 'Generation failed. Check LM Studio in Settings and try again.'));
+      setActionError(aiFailure(error, 'Generation failed. Check the AI connection in Settings and try again.'));
     } finally {
       setGeneratingArtifact(null);
     }
@@ -2050,14 +2094,20 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setActionError(`${file.name} is empty, so nothing was imported.`);
       return;
     }
+    let inFlightKey: string | null = null;
     try {
       const resource = await createSourceResource(file);
       const existing = (lessonWorkspacesRef.current[lessonId] ?? emptyLessonWorkspace).resources.find((candidate) => candidate.id === resource.id);
-      if (existing) {
+      const importKey = `${lessonId}|${resource.id}`;
+      if (existing || inFlightImportsRef.current.has(importKey)) {
         // The same bytes are already in this course: a second copy would only duplicate its notes and share one stored original.
-        setActionError(existing.name === file.name ? `${file.name} is already in this course.` : `${file.name} has the same content as ${existing.name}, which is already in this course.`);
+        setActionError(!existing
+          ? `${file.name} is already being imported into this course.`
+          : existing.name === file.name ? `${file.name} is already in this course.` : `${file.name} has the same content as ${existing.name}, which is already in this course.`);
         return;
       }
+      inFlightKey = importKey;
+      inFlightImportsRef.current.add(importKey);
       await sourceBlobStore.save(resource.id, file);
       const isExtractable = isExtractableDocument(resource);
       if (localDocumentEngine && isExtractable) rebuiltDocumentSourceIds.current.add(resource.id);
@@ -2178,6 +2228,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         }
       }
     } catch (error) {
+      if (inFlightKey) inFlightImportsRef.current.delete(inFlightKey);
       setActionError(error instanceof Error ? error.message : 'The file could not be stored. Please try importing it again.');
     }
   };
@@ -2336,7 +2387,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   // Files are stored under a fingerprint of their content, so the same file imported into two courses shares one stored
   // original. It may only be erased when no course refers to it any more.
   const isSourceUsedElsewhere = (resourceId: string, exceptLessonId?: string) => Object.entries(lessonWorkspacesRef.current)
-    .some(([id, workspace]) => id !== exceptLessonId && workspace.resources.some((resource) => resource.id === resourceId));
+    .some(([id, workspace]) => id !== exceptLessonId && workspace.resources.some((resource) => resource.id === resourceId))
+    // A course that is importing the same file right now stores the original before it lists the source.
+    || [...inFlightImportsRef.current].some((key) => key.endsWith(`|${resourceId}`) && key.split('|')[0] !== exceptLessonId);
 
   const commitSourceRemoval = async (pending: PendingSourceRemoval) => {
     try {
@@ -2501,6 +2554,33 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     } catch {
       notify(`${lessonTitle} could not be deleted.`);
     }
+  };
+
+  // The raw saved workspace is not a course export (it cannot be imported); it is a copy to keep and to restore from.
+  const downloadSavedCopy = (issue: WorkspaceLoadIssue) => {
+    try {
+      const raw = readWorkspaceCopy(issue);
+      if (!raw) {
+        notify('The saved copy could not be read from this browser.');
+        return;
+      }
+      const url = URL.createObjectURL(new Blob([raw], { type: 'application/json' }));
+      const link = window.document.createElement('a');
+      link.href = url;
+      link.download = 'studentllm-workspace-saved-copy.json';
+      link.click();
+      URL.revokeObjectURL(url);
+      notify('Saved copy downloaded. Keep the file somewhere safe.');
+    } catch {
+      notify('The saved copy could not be downloaded.');
+    }
+  };
+
+  const startEmptyAnyway = () => {
+    if (!window.confirm('Start with an empty workspace? The saved data will be replaced by what you do from now on. Download it first if you want to keep it.')) return;
+    savingPausedRef.current = false;
+    setStorageNotice(null);
+    setSaveTick((tick) => tick + 1);
   };
 
   const exportCourse = async () => {
@@ -2678,7 +2758,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       }));
       notify('AI suggested a course title and structure. Review before saving.');
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'AI could not suggest course details.');
+      setActionError(aiFailure(error, 'AI could not suggest course details.'));
     } finally {
       setIsSuggestingCourseDetails(false);
     }
@@ -2729,7 +2809,13 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         <button className="icon-button" aria-label="Settings" onClick={() => setShowSettingsPanel(true)}><Settings2 size={19} /></button>
       </header>
 
-      {storageNotice && <div className="action-error storage-banner" role="alert"><p>{storageNoticeText(storageNotice)}</p>{storageNotice.kind === 'changed-elsewhere' ? <button className="text-action" onClick={() => window.location.reload()}>Reload</button> : storageNotice.kind === 'save-failed' ? (hasCourse && <button className="text-action" onClick={() => void exportCourse()}>Export this course</button>) : <button className="text-action" onClick={() => setStorageNotice(null)}>Dismiss</button>}</div>}
+      {storageNotice && <div className="action-error storage-banner" role="alert"><p>{storageNoticeText(storageNotice)}</p><span className="storage-banner-actions">
+        {storageNotice.kind === 'changed-elsewhere' && <button className="text-action" onClick={() => window.location.reload()}>Reload</button>}
+        {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'save-failed') && hasCourse && <button className="text-action" onClick={() => void exportCourse()}>Export this course</button>}
+        {storageNotice.kind === 'load-issue' && <button className="text-action" onClick={() => downloadSavedCopy(storageNotice.issue)}>{storageNotice.issue.protect ? 'Download saved data' : 'Download saved copy'}</button>}
+        {storageNotice.kind === 'load-issue' && storageNotice.issue.protect && storageNotice.issue.kind !== 'newer-version' && <button className="text-action" onClick={startEmptyAnyway}>Start empty anyway</button>}
+        {storageNotice.kind === 'load-issue' && !storageNotice.issue.protect && <button className="text-action" onClick={() => setStorageNotice(null)}>Dismiss</button>}
+      </span></div>}
       <div className={`workspace-grid ${showLeftSidebar ? 'with-navigation' : ''}`}>
         {showLeftSidebar && <>
           <button className="navigation-scrim" tabIndex={-1} aria-label="Close navigation" onClick={() => setShowLeftSidebar(false)} />
@@ -2845,7 +2931,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               {!resources.length && !transcript.length && <p className="empty-state">Import material or record a lecture before asking a question.</p>}
                <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list" aria-label="Response sources">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button type="button" className="citation-chip" title="Open original source" key={citation} onClick={() => openCitation(message.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className={citation.startsWith('LM Studio') ? 'citation-model' : 'citation-context'} key={citation}>{citation}</span>)}</div>}</article>)}</div>
               {isSending && <div className="chat-typing" aria-hidden="true"><span /><span /><span /></div>}
-              {chatError && <div className="action-error chat-error" role="alert"><p>{chatError}</p><button type="button" className="text-action" onClick={() => setShowSettingsPanel(true)}>Open Settings</button></div>}<form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => { setComposerValue(event.target.value); if (chatError) setChatError(''); }} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
+              {chatError && chatError.lessonId === activeLessonId && <div className="action-error chat-error" role="alert"><p>{chatError.message}</p><button type="button" className="text-action" onClick={() => setShowSettingsPanel(true)}>Open Settings</button></div>}<form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => { setComposerValue(event.target.value); if (chatError) setChatError(null); }} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
             </section>}
             {view === 'study' && <section className="study-view" id="view-panel-study" role="tabpanel" aria-labelledby="view-tab-study">
               <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>

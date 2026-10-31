@@ -232,6 +232,7 @@ html { scroll-padding-top: 72px; }
 .action-error p { margin: 0; }
 .storage-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 8px 16px; }
 .storage-banner .text-action { font-weight: 600; text-decoration: underline; }
+.storage-banner-actions { display: inline-flex; flex-wrap: wrap; gap: 8px 16px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .file-label:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 .modal-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(0 0 0 / .45); backdrop-filter: blur(3px); }

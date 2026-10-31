@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, vi } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 import { AI_UNREACHABLE_MESSAGE } from './lib/service-errors';
 import { SOURCE_REMOVAL_UNDO_MS } from './lib/source-removal';
 import type { SourceBlobStore } from './lib/source-storage';
+import { listPendingRecordings } from './lib/recording-recovery';
 import { WORKSPACE_STORAGE_KEY, WORKSPACE_UNREADABLE_BACKUP_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from './test/workspace-fixture';
 
@@ -404,6 +405,294 @@ describe('user journeys', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('physics.studentllm.json could not be imported. The file is damaged or cut short');
       expect(screen.getByRole('alert')).toHaveTextContent('Nothing was changed.');
       expect(savedWorkspace().lessons).toHaveLength(lessonsBefore);
+    });
+  });
+
+  describe('review follow-ups', () => {
+    const PROPOSAL = '{"placement":"existing","targetCourseId":"fixture-attention","course":"Machine Learning","lesson":"Transformers","title":"Cross-attention notes","sublesson":"Decoder context","subject":"Machine Learning","confidence":0.92,"rationale":"The excerpt refers to queries."}';
+    const otherCourse = () => screen.getByRole('button', { name: 'Self-attention and Context' });
+    const firstCourse = () => screen.getByRole('button', { name: 'Attention & Scaled Dot-Product' });
+    const unreadableCopyKey = WORKSPACE_UNREADABLE_BACKUP_KEY;
+
+    it('leaves the saved workspace alone and pauses saving when no copy of it can be kept', async () => {
+      const user = userEvent.setup();
+      const truncated = '{"version":1,"activeLessonId":"a","lessons":[{"id":"a","subject":"Maths"';
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, truncated);
+      const original = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key: string, value: string) {
+        if (key.startsWith(unreadableCopyKey)) throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+        return original.call(this, key, value);
+      };
+      try {
+        render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+        expect(await screen.findByRole('alert')).toHaveTextContent('could not be kept');
+        expect(screen.getByRole('alert')).toHaveTextContent('saving is paused');
+        expect(within(screen.getByRole('alert')).getByRole('button', { name: 'Download saved data' })).toBeInTheDocument();
+
+        await user.upload(screen.getByLabelText('Select course source'), new File(['x'], 'x.md', { type: 'text/markdown' }));
+        await user.click(screen.getAllByRole('button', { name: 'Quick start' })[0]);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } finally {
+        Storage.prototype.setItem = original;
+      }
+      expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(truncated);
+    });
+
+    it('offers the saved data for download and can start empty on request', async () => {
+      const user = userEvent.setup();
+      const truncated = '{"version":1,"activeLessonId":"a","lessons":[{"id":"a","subject":"Maths"';
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, truncated);
+      const original = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key: string, value: string) {
+        if (key.startsWith(unreadableCopyKey)) throw new DOMException('full', 'QuotaExceededError');
+        return original.call(this, key, value);
+      };
+      const created: Blob[] = [];
+      URL.createObjectURL = vi.fn((blob: Blob) => { created.push(blob); return 'blob:copy'; });
+      URL.revokeObjectURL = vi.fn();
+      vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      try {
+        render(<App provider={null} />);
+        await user.click(await screen.findByRole('button', { name: 'Download saved data' }));
+        expect(await created[0].text()).toBe(truncated);
+      } finally {
+        Storage.prototype.setItem = original;
+      }
+      await user.click(screen.getByRole('button', { name: 'Start empty anyway' }));
+      await waitFor(() => expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).not.toBe(truncated));
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('protects a workspace written by a newer version and offers the saved copy', async () => {
+      const user = userEvent.setup();
+      const newer = JSON.stringify({ version: 2, lessons: [{ id: 'a', subject: 'S', chapter: 'C', title: 'Future course', teacher: '', duration: '0', date: 'd', progress: 0 }] });
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, newer);
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('newer version');
+      expect(alert).toHaveTextContent('left untouched');
+      expect(within(alert).getByRole('button', { name: 'Download saved data' })).toBeInTheDocument();
+      expect(within(alert).queryByRole('button', { name: 'Start empty anyway' })).not.toBeInTheDocument();
+      await user.click(screen.getAllByRole('button', { name: 'Quick start' })[0]);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toBe(newer);
+    });
+
+    it('offers to download the aside copy of a damaged workspace', async () => {
+      const user = userEvent.setup();
+      const truncated = '{"version":1,"lessons":[{"id":"a","subj';
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, truncated);
+      const created: Blob[] = [];
+      URL.createObjectURL = vi.fn((blob: Blob) => { created.push(blob); return 'blob:copy'; });
+      URL.revokeObjectURL = vi.fn();
+      vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+      render(<App provider={null} />);
+
+      await user.click(await screen.findByRole('button', { name: 'Download saved copy' }));
+      expect(await created[0].text()).toBe(truncated);
+    });
+
+    it('flags a workspace that lost entries while loading', async () => {
+      const lesson = { id: 'a', subject: 'S', chapter: 'C', title: 'Mon cours', teacher: '', duration: '0', date: 'd', progress: 0 };
+      const raw = JSON.stringify({
+        version: 1, activeLessonId: 'a', lessons: [lesson], resources: [], transcript: [], chat: [], artifacts: [],
+        lessonWorkspaces: { a: { resources: [], transcript: [{ id: 's1', timestamp: '0', speaker: 'P', text: 'Kept', status: 'verified' }, { id: 's2', text: 42 }], chat: [], artifacts: [] } },
+      });
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, raw);
+      render(<App provider={null} />);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('could not be read and were left out');
+      expect(localStorage.getItem(unreadableCopyKey)).toBe(raw);
+    });
+
+    it('keeps the stored original when the same file is deleted with one of two courses', async () => {
+      const user = userEvent.setup();
+      const sourceBlobStore = memoryBlobStore();
+      render(<App provider={null} sourceBlobStore={sourceBlobStore} />);
+      const shared = () => new File(['Shared handout text.'], 'handout.md', { type: 'text/markdown' });
+
+      await user.upload(screen.getByLabelText('Select course source'), shared());
+      await screen.findByText(/handout\.md added to course sources/);
+      await user.click(otherCourse());
+      await user.upload(screen.getByLabelText('Select course source'), shared());
+      await waitFor(() => expect(savedWorkspace().lessonWorkspaces['fixture-context'].resources.map((resource: { name: string }) => resource.name)).toContain('handout.md'));
+
+      // Delete the first course while the second still uses the same original.
+      await user.click(firstCourse());
+      await user.click(screen.getByLabelText('Course actions'));
+      await user.click(screen.getByRole('button', { name: 'Delete course' }));
+      await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
+      await screen.findByText('Attention & Scaled Dot-Product deleted.');
+      expect(vi.mocked(sourceBlobStore.remove).mock.calls.filter(([id]) => id.startsWith('source-'))).toHaveLength(0);
+
+      // Deleting the last course that uses it erases it.
+      await user.click(otherCourse());
+      await user.click(screen.getByLabelText('Course actions'));
+      await user.click(screen.getByRole('button', { name: 'Delete course' }));
+      await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
+      await screen.findByText('Self-attention and Context deleted.');
+      expect(vi.mocked(sourceBlobStore.remove).mock.calls.filter(([id]) => id.startsWith('source-'))).toHaveLength(1);
+    });
+
+    it('keeps the original while another course is still storing the same file', async () => {
+      const user = userEvent.setup();
+      const gate = deferred<void>();
+      const sourceBlobStore = memoryBlobStore();
+      render(<App provider={null} sourceBlobStore={sourceBlobStore} />);
+      const shared = () => new File(['Shared handout text.'], 'handout.md', { type: 'text/markdown' });
+
+      await user.upload(screen.getByLabelText('Select course source'), shared());
+      await screen.findByText(/handout\.md added to course sources/);
+      await user.click(otherCourse());
+      vi.mocked(sourceBlobStore.save).mockImplementationOnce(() => gate.promise);
+      await user.upload(screen.getByLabelText('Select course source'), shared());
+      // The second course is mid-import: its copy is being stored but is not listed yet.
+      await user.click(firstCourse());
+      await user.click(screen.getByRole('tab', { name: /^Sources/ }));
+      const timers = vi.spyOn(window, 'setTimeout');
+      await user.click(screen.getByRole('button', { name: 'Remove source handout.md' }));
+      expireUndoWindow(timers);
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument());
+      expect(vi.mocked(sourceBlobStore.remove).mock.calls.filter(([id]) => id.startsWith('source-'))).toHaveLength(0);
+      await act(async () => { gate.resolve(); });
+    });
+
+    it('refuses the same file imported twice in the same moment', async () => {
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+      const input = screen.getByLabelText('Select course source');
+      const twin = () => new File(['Twin notes.'], 'twin.md', { type: 'text/markdown' });
+      fireEvent.change(input, { target: { files: [twin()] } });
+      fireEvent.change(input, { target: { files: [twin()] } });
+
+      await screen.findByText(/twin\.md added to course sources/);
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('twin.md is already being imported'));
+      await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].resources.filter((resource: { name: string }) => resource.name === 'twin.md')).toHaveLength(1));
+    });
+
+    it('keeps text imported while the organizer waits for the model', async () => {
+      const user = userEvent.setup();
+      const formatting = deferred<{ content: string; model: string }>();
+      const generate = vi.fn()
+        .mockResolvedValueOnce({ model: 'fixture-model', content: PROPOSAL })
+        .mockImplementationOnce(() => formatting.promise)
+        .mockRejectedValue(new Error('Provider request failed (502)'));
+      render(<App provider={{ generate }} sourceBlobStore={memoryBlobStore()} />);
+
+      await user.click(screen.getByLabelText('Course actions'));
+      await user.click(screen.getByRole('button', { name: 'Organize material with AI' }));
+      const dialog = screen.getByRole('dialog', { name: 'Organize material with AI' });
+      await user.type(within(dialog).getByLabelText('Lecture excerpt or course description'), 'Cross-attention reads encoder keys.');
+      await user.click(within(dialog).getByRole('button', { name: 'Analyze structure' }));
+      await within(dialog).findByLabelText('Title');
+      await user.click(within(dialog).getByRole('button', { name: 'Apply structure' }));
+      await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+
+      // While the model rewrites the note, the student imports another file into the same course.
+      await user.upload(screen.getByLabelText('Select course source'), new File(['Imported during the model call.'], 'during.md', { type: 'text/markdown' }));
+      await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].transcript.some((segment: { text: string }) => segment.text === 'Imported during the model call.')).toBe(true));
+      await act(async () => { formatting.resolve({ model: 'fixture-model', content: 'not json' }); });
+
+      await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].transcript.some((segment: { text: string }) => segment.text === 'Cross-attention reads encoder keys.')).toBe(true));
+      const texts = savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].transcript.map((segment: { text: string }) => segment.text);
+      expect(texts).toContain('Imported during the model call.');
+      expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].resources.map((resource: { name: string }) => resource.name)).toEqual(expect.arrayContaining(['during.md']));
+    });
+
+    it('explains an unreachable model when asking AI to name a course', async () => {
+      const user = userEvent.setup();
+      render(<App provider={{ generate: vi.fn().mockRejectedValue(new Error('Provider request failed (502): <html>Bad Gateway</html>')) }} />);
+      await user.click(screen.getByLabelText('Course actions'));
+      await user.click(screen.getByRole('button', { name: 'Edit course' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Edit course' });
+      await user.click(within(dialog).getByRole('button', { name: /AI/ }));
+
+      expect((await screen.findAllByText(AI_UNREACHABLE_MESSAGE)).length).toBeGreaterThan(0);
+      expect(screen.queryByText(/Bad Gateway|502/)).not.toBeInTheDocument();
+    });
+
+    it('shows a failed question in the course it was asked in, even after switching courses', async () => {
+      const user = userEvent.setup();
+      let failAnswer!: (error: Error) => void;
+      const answer = new Promise<never>((_resolve, reject) => { failAnswer = reject; });
+      render(<App provider={{ generate: vi.fn(() => answer) }} />);
+
+      await user.click(screen.getByRole('tab', { name: /Chat/ }));
+      await user.type(screen.getByLabelText('Ask the course chat'), 'Explain why normalization matters.');
+      await user.click(screen.getByRole('button', { name: 'Send' }));
+      await user.click(otherCourse());
+      await act(async () => { failAnswer(new Error('Provider request failed (502)')); });
+
+      // The other course shows no alert for a question it never saw, and its composer is untouched.
+      await user.click(screen.getByRole('tab', { name: /Chat/ }));
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.getByLabelText('Ask the course chat')).toHaveValue('');
+      await user.click(firstCourse());
+      await user.click(screen.getByRole('tab', { name: /Chat/ }));
+      expect(await screen.findByRole('alert')).toHaveTextContent(AI_UNREACHABLE_MESSAGE);
+      // The question was not lost: it stays in the history it was asked in.
+      expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].chat).toEqual([expect.objectContaining({ role: 'user', content: 'Explain why normalization matters.' })]);
+    });
+
+    it('does not forget a recording stopped while saving is paused', async () => {
+      const user = userEvent.setup();
+      const session = {
+        recordingId: 'paused-recording',
+        stream: {} as MediaStream,
+        durability: 'durable' as const,
+        readChunks: vi.fn(async () => []),
+        stop: vi.fn(async () => ({ recordingId: 'paused-recording', chunksPersisted: 2, persistenceError: false })),
+      };
+      render(<App provider={null} speechEngine={null} recorderSessionFactory={async () => session} />);
+
+      await user.click(screen.getByRole('button', { name: 'Start recording' }));
+      await screen.findByRole('button', { name: 'Stop recording' });
+      expect(listPendingRecordings().map((pending) => pending.recordingId)).toContain('paused-recording');
+
+      // Another tab writes the workspace: this tab stops saving.
+      act(() => { window.dispatchEvent(new StorageEvent('storage', { key: WORKSPACE_STORAGE_KEY })); });
+      await user.click(screen.getByRole('button', { name: 'Stop recording' }));
+      await waitFor(() => expect(session.stop).toHaveBeenCalled());
+      await screen.findByText(/audio chunks saved locally/);
+
+      // Nothing was saved from this tab, so the manifest must stay to bring the recording back after a reload.
+      expect(listPendingRecordings().map((pending) => pending.recordingId)).toContain('paused-recording');
+    });
+
+    it('asks before closing when changes are not being saved, and offers Export in the stale-tab alert', async () => {
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+      const closeTab = () => {
+        const event = new Event('beforeunload', { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      expect(closeTab()).toBe(false);
+
+      act(() => { window.dispatchEvent(new StorageEvent('storage', { key: WORKSPACE_STORAGE_KEY })); });
+      const alert = await screen.findByRole('alert');
+      expect(within(alert).getByRole('button', { name: 'Export this course' })).toBeInTheDocument();
+      expect(within(alert).getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+      await waitFor(() => expect(closeTab()).toBe(true));
+    });
+
+    it('asks before closing while the browser store is full', async () => {
+      const user = userEvent.setup();
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+      const original = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key: string, value: string) {
+        if (key === WORKSPACE_STORAGE_KEY) throw new DOMException('full', 'QuotaExceededError');
+        return original.call(this, key, value);
+      };
+      try {
+        await user.upload(screen.getByLabelText('Select course source'), new File(['Notes.'], 'notes.md', { type: 'text/markdown' }));
+        await screen.findByText(/Your changes are not being saved/);
+        const event = new Event('beforeunload', { cancelable: true });
+        window.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+      } finally {
+        Storage.prototype.setItem = original;
+      }
     });
   });
 });

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { loadWorkspaceWithStatus, saveWorkspace, WORKSPACE_STORAGE_KEY, WORKSPACE_UNREADABLE_BACKUP_KEY, type WorkspaceSnapshot } from './workspace-storage';
+import { loadWorkspaceWithStatus, readWorkspaceCopy, saveWorkspace, WORKSPACE_STORAGE_KEY, WORKSPACE_UNREADABLE_BACKUP_KEY, type WorkspaceSnapshot } from './workspace-storage';
 
 const empty: WorkspaceSnapshot = { activeLessonId: '', lessons: [], resources: [], transcript: [], chat: [], artifacts: [] };
 
@@ -17,7 +17,7 @@ describe('unreadable stored workspaces', () => {
 
     const result = loadWorkspaceWithStatus(empty);
     expect(result.snapshot).toBe(empty);
-    expect(result.issue).toEqual({ kind: 'unreadable', backedUp: true });
+    expect(result.issue).toMatchObject({ kind: 'unreadable', backedUp: true, protect: false, copyKey: WORKSPACE_UNREADABLE_BACKUP_KEY });
 
     // This is what the app does right after loading: it saves the (empty) workspace over the damaged value.
     saveWorkspace(result.snapshot);
@@ -29,7 +29,8 @@ describe('unreadable stored workspaces', () => {
     const newer = JSON.stringify({ version: 2, lessons: [{ id: 'a', subject: 'S', chapter: 'C', title: 'Mon cours', teacher: '', duration: '0', date: 'd', progress: 0 }] });
     localStorage.setItem(WORKSPACE_STORAGE_KEY, newer);
 
-    expect(loadWorkspaceWithStatus(empty).issue).toEqual({ kind: 'newer-version', backedUp: true });
+    // A newer version owns this data: it is protected, not just copied.
+    expect(loadWorkspaceWithStatus(empty).issue).toMatchObject({ kind: 'newer-version', backedUp: true, protect: true });
     expect(localStorage.getItem(WORKSPACE_UNREADABLE_BACKUP_KEY)).toBe(newer);
   });
 
@@ -53,9 +54,40 @@ describe('unreadable stored workspaces', () => {
       return original.call(this, key, value);
     };
     try {
-      expect(loadWorkspaceWithStatus(empty).issue).toEqual({ kind: 'unreadable', backedUp: false });
+      const issue = loadWorkspaceWithStatus(empty).issue;
+      // No copy could be kept, so the original must not be replaced: it is protected and offered as raw text.
+      expect(issue).toMatchObject({ kind: 'unreadable', backedUp: false, protect: true, raw: '{broken' });
+      expect(readWorkspaceCopy(issue!)).toBe('{broken');
     } finally {
       Storage.prototype.setItem = original;
     }
+  });
+
+  it('does not treat the native bootstrap row as damage', () => {
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify({ version: 1, bootstrap: true }));
+    expect(loadWorkspaceWithStatus(empty).issue).toBeNull();
+    expect(localStorage.getItem(WORKSPACE_UNREADABLE_BACKUP_KEY)).toBeNull();
+  });
+
+  it('flags a snapshot that silently lost entries and keeps the original', () => {
+    const lesson = { id: 'a', subject: 'S', chapter: 'C', title: 'Mon cours', teacher: '', duration: '0', date: 'd', progress: 0 };
+    const goodSegment = { id: 's1', timestamp: '00:00', speaker: 'P', text: 'Bonjour', status: 'verified' };
+    const raw = JSON.stringify({
+      version: 1, activeLessonId: 'a', lessons: [lesson, { id: 'broken-lesson' }], resources: [], transcript: [], chat: [], artifacts: [],
+      lessonWorkspaces: { a: { resources: [], transcript: [goodSegment, { id: 's2', text: 42 }], chat: [], artifacts: [] } },
+    });
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, raw);
+
+    const { snapshot, issue } = loadWorkspaceWithStatus(empty);
+    expect(issue).toMatchObject({ kind: 'partial', backedUp: true, protect: false });
+    expect(snapshot.lessons.map((item) => item.id)).toEqual(['a']);
+    expect(snapshot.lessonWorkspaces?.a.transcript).toHaveLength(1);
+    expect(localStorage.getItem(WORKSPACE_UNREADABLE_BACKUP_KEY)).toBe(raw);
+  });
+
+  it('does not flag a clean snapshot', () => {
+    const lesson = { id: 'a', subject: 'S', chapter: 'C', title: 'Mon cours', teacher: '', duration: '0', date: 'd', progress: 0 };
+    saveWorkspace({ ...empty, activeLessonId: 'a', lessons: [lesson], lessonWorkspaces: { a: { resources: [], transcript: [], chat: [], artifacts: [] } } });
+    expect(loadWorkspaceWithStatus(empty).issue).toBeNull();
   });
 });

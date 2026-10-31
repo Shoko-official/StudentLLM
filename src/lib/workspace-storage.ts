@@ -158,17 +158,31 @@ function isChatMessage(value: unknown): value is ChatMessage {
     && (value.citationTargets === undefined || (Array.isArray(value.citationTargets) && value.citationTargets.every((target) => typeof target === 'string')));
 }
 
+// Entries that failed validation while a snapshot was parsed. A snapshot that loses entries is not "fine": the next
+// save would erase them for good, so the caller treats it like an unreadable one (copy aside, tell the student).
+let droppedEntries = 0;
+
+function keep<T>(value: unknown, guard: (item: unknown) => item is T): T[] {
+  if (!Array.isArray(value)) return [];
+  const kept = value.filter(guard);
+  droppedEntries += value.length - kept.length;
+  return kept;
+}
+
 function parseLessonWorkspace(value: unknown): LessonWorkspace | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isRecord(value)) {
+    if (value !== undefined) droppedEntries += 1;
+    return undefined;
+  }
   const { courseNote, ...fields } = value;
-  const resources = Array.isArray(value.resources) ? value.resources.filter(isResource) : [];
+  const resources = keep(value.resources, isResource);
   const sourceIds = new Set(resources.map((resource) => resource.id));
   return {
     ...fields,
     resources,
-    transcript: Array.isArray(value.transcript) ? value.transcript.filter(isTranscriptSegment) : [],
-    chat: Array.isArray(value.chat) ? value.chat.filter(isChatMessage) : [],
-    artifacts: Array.isArray(value.artifacts) ? value.artifacts.filter((artifact) => isArtifact(artifact, sourceIds)) : [],
+    transcript: keep(value.transcript, isTranscriptSegment),
+    chat: keep(value.chat, isChatMessage),
+    artifacts: keep(value.artifacts, (artifact): artifact is Artifact => isArtifact(artifact, sourceIds)),
     ...(isCourseNote(courseNote, sourceIds) ? { courseNote } : {}),
   };
 }
@@ -203,23 +217,39 @@ function invokeNative<T>(command: string, args?: Record<string, unknown>) {
   return args === undefined ? invoke<T>(command) : invoke<T>(command, args);
 }
 
-function parseWorkspaceRaw(raw: string | null, fallback: WorkspaceSnapshot): WorkspaceSnapshot {
+/** The empty snapshot the native shell seeds its database with; it is not user data and not damage. */
+function isBootstrapSnapshot(raw: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isRecord(parsed) && parsed.bootstrap === true && !Array.isArray(parsed.lessons);
+  } catch {
+    return false;
+  }
+}
+
+function parseWorkspaceDetailed(raw: string | null, fallback: WorkspaceSnapshot): { snapshot: WorkspaceSnapshot; dropped: number } {
+  droppedEntries = 0;
+  const snapshot = parseWorkspaceUncounted(raw, fallback);
+  return { snapshot, dropped: snapshot === fallback ? 0 : droppedEntries };
+}
+
+function parseWorkspaceUncounted(raw: string | null, fallback: WorkspaceSnapshot): WorkspaceSnapshot {
   if (!raw || raw.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return fallback;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.lessons)) return fallback;
 
-    const lessons = parsed.lessons.filter(isLesson);
+    const lessons = keep(parsed.lessons, isLesson);
     if (parsed.lessons.length && !lessons.length) return fallback;
 
     const activeLessonId = typeof parsed.activeLessonId === 'string' && lessons.some((lesson) => lesson.id === parsed.activeLessonId)
       ? parsed.activeLessonId
       : lessons[0]?.id ?? '';
-    const resources = Array.isArray(parsed.resources) ? parsed.resources.filter(isResource) : [];
-    const transcript = Array.isArray(parsed.transcript) ? parsed.transcript.filter(isTranscriptSegment) : [];
-    const chat = Array.isArray(parsed.chat) ? parsed.chat.filter(isChatMessage) : [];
+    const resources = keep(parsed.resources, isResource);
+    const transcript = keep(parsed.transcript, isTranscriptSegment);
+    const chat = keep(parsed.chat, isChatMessage);
     const sourceIds = new Set(resources.map((resource) => resource.id));
-    const artifacts = Array.isArray(parsed.artifacts) ? parsed.artifacts.filter((artifact) => isArtifact(artifact, sourceIds)) : [];
+    const artifacts = keep(parsed.artifacts, (artifact): artifact is Artifact => isArtifact(artifact, sourceIds));
     const lessonWorkspaces = parseLessonWorkspaces(parsed.lessonWorkspaces, lessons);
 
     return { activeLessonId, lessons, resources, transcript, chat, artifacts, ...(lessonWorkspaces ? { lessonWorkspaces } : {}) };
@@ -286,13 +316,25 @@ export function isNativeRuntime() {
 }
 
 export interface WorkspaceLoadIssue {
-  /** `unreadable`: damaged or truncated data. `newer-version`: written by a newer version of the app. */
-  kind: 'unreadable' | 'newer-version';
-  /** Whether a copy of the stored value was kept before the empty workspace replaces it. */
+  /**
+   * `unreadable`: damaged or truncated data. `newer-version`: written by a newer version of the app.
+   * `partial`: some entries could not be read and were left out.
+   */
+  kind: 'unreadable' | 'newer-version' | 'partial';
+  /** Whether a copy of the stored value was kept before it can be replaced. */
   backedUp: boolean;
+  /** Storage key holding that copy. */
+  copyKey?: string;
+  /**
+   * True when the stored value must not be replaced: no copy could be kept, or a newer version owns the data.
+   * The app then stops saving and leaves the original where it is.
+   */
+  protect: boolean;
+  /** The stored value itself, only when no copy could be kept (it can still be offered for download). */
+  raw?: string;
 }
 
-function classifyUnreadable(raw: string): WorkspaceLoadIssue['kind'] {
+function classifyUnreadable(raw: string): 'unreadable' | 'newer-version' {
   if (raw.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return 'unreadable';
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -303,22 +345,43 @@ function classifyUnreadable(raw: string): WorkspaceLoadIssue['kind'] {
 }
 
 // A stored value that cannot be read is replaced by an empty workspace at the next save. Keep the original first, so a
-// damaged, truncated or newer-format workspace is never destroyed without a trace.
-function keepUnreadableCopy(raw: string, storage: Storage): boolean {
+// damaged, truncated or newer-format workspace is never destroyed without a trace. Returns the key of the copy.
+function keepUnreadableCopy(raw: string, storage: Storage): string | null {
   try {
     for (let index = 0; index <= storage.length; index += 1) {
       const key = index === 0 ? WORKSPACE_UNREADABLE_BACKUP_KEY : `${WORKSPACE_UNREADABLE_BACKUP_KEY}.${index}`;
       const existing = storage.getItem(key);
-      if (existing === raw) return true;
+      if (existing === raw) return key;
       if (existing === null) {
         storage.setItem(key, raw);
-        return storage.getItem(key) === raw;
+        return storage.getItem(key) === raw ? key : null;
       }
     }
   } catch {
     // Storage is full or blocked: report that no copy could be kept.
   }
-  return false;
+  return null;
+}
+
+function createLoadIssue(raw: string, kind: WorkspaceLoadIssue['kind'], storage: Storage | undefined): WorkspaceLoadIssue {
+  const copyKey = storage ? keepUnreadableCopy(raw, storage) : null;
+  const backedUp = copyKey !== null;
+  return {
+    kind,
+    backedUp,
+    ...(copyKey ? { copyKey } : { raw }),
+    protect: !backedUp || kind === 'newer-version',
+  };
+}
+
+/** The stored value an issue refers to, for a download. */
+export function readWorkspaceCopy(issue: WorkspaceLoadIssue, storage: Storage | undefined = getStorage()): string | null {
+  if (issue.raw !== undefined) return issue.raw;
+  try {
+    return issue.copyKey && storage ? storage.getItem(issue.copyKey) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function loadWorkspaceWithStatus(
@@ -328,17 +391,16 @@ export function loadWorkspaceWithStatus(
   if (!storage) return { snapshot: fallback, issue: null };
   try {
     const raw = storage.getItem(WORKSPACE_STORAGE_KEY);
-    const snapshot = parseWorkspaceRaw(raw, fallback);
+    const { snapshot, dropped } = parseWorkspaceDetailed(raw, fallback);
     if (snapshot === fallback) {
       // `raw` is empty on a first launch; anything else that failed to parse is data the user had.
-      const issue: WorkspaceLoadIssue | null = raw
-        ? { kind: classifyUnreadable(raw), backedUp: keepUnreadableCopy(raw, storage) }
-        : null;
+      const issue = raw && !isBootstrapSnapshot(raw) ? createLoadIssue(raw, classifyUnreadable(raw), storage) : null;
       return { snapshot, issue };
     }
+    const issue = dropped > 0 && raw ? createLoadIssue(raw, 'partial', storage) : null;
     const migrated = migrateWithBackup(raw, snapshot, storage);
-    if (migrated !== snapshot) saveWorkspace(migrated, storage);
-    return { snapshot: migrated, issue: null };
+    if (migrated !== snapshot && !issue?.protect) saveWorkspace(migrated, storage);
+    return { snapshot: migrated, issue };
   } catch {
     return { snapshot: fallback, issue: null };
   }
@@ -370,12 +432,15 @@ export async function loadWorkspaceAsync(
 
   try {
     const raw = await invokeNative<string | null>('load_workspace');
-    const parsed = parseWorkspaceRaw(raw, fallback);
-    if (parsed === fallback && raw) {
-      callbacks.onUnreadable?.({ kind: classifyUnreadable(raw), backedUp: storage ? keepUnreadableCopy(raw, storage) : false });
-    }
+    const { snapshot: parsed, dropped } = parseWorkspaceDetailed(raw, fallback);
+    // The native database starts with a bootstrap row that holds no user data.
+    const issue = raw && !isBootstrapSnapshot(raw) && (parsed === fallback || dropped > 0)
+      ? createLoadIssue(raw, parsed === fallback ? classifyUnreadable(raw) : 'partial', storage)
+      : null;
+    if (issue) callbacks.onUnreadable?.(issue);
     const snapshot = parsed === fallback ? parsed : migrateWithBackup(raw, parsed, storage);
-    if (raw === null || snapshot === fallback || snapshot !== parsed) {
+    // A protected original stays in the database untouched; the app stops saving instead of replacing it.
+    if (!issue?.protect && (raw === null || snapshot === fallback || snapshot !== parsed)) {
       try {
         await invokeNative('save_workspace', { snapshot: JSON.stringify({ version: 1, ...snapshot }) });
       } catch (error) {
