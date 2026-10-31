@@ -2,6 +2,15 @@
 // concurrency limits of "Quota design". Keys are opaque strings: `acct:<accountId>` for the per-account
 // window, a `SaltedHash` for a connection. Never a raw IP address or email.
 
+import type { SaltedHash } from "../../crypto/keyed-hash";
+
+/**
+ * The key of a sliding window: `acct:<accountId>[:<purpose>]` for a per-account window, or a `SaltedHash` (rotating
+ * salt, purpose-separated) for a connection or an email address. The brand makes a raw IP address or a plain
+ * email a type error at the call site.
+ */
+export type RateLimitKey = `acct:${string}` | SaltedHash;
+
 export interface RateLimitResult {
   allowed: boolean;
   limit: number;
@@ -19,8 +28,10 @@ export interface RateLimitStore {
    * and records this hit when fewer than `limit` are counted, otherwise denies WITHOUT recording (a
    * denied client does not extend its own lockout).
    */
-  hit(key: string, limit: number, windowMs: number, now: number): Promise<RateLimitResult>;
+  hit(key: RateLimitKey, limit: number, windowMs: number, now: number): Promise<RateLimitResult>;
   deleteExpired(now: number): Promise<number>;
+  /** Removes every per-account window: the key `acct:<accountId>` and every `acct:<accountId>:<purpose>` (account deletion). */
+  purgeAccount(accountId: string): Promise<void>;
 }
 
 export interface ConcurrencyLease {

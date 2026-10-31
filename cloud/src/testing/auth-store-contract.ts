@@ -1,0 +1,156 @@
+// Test-only: behavior of the store methods that the auth and account modules added on top of the shared
+// suite in store-contract.ts (grace clearing, manage-token revocation, deletion retry bookkeeping, the
+// pending sign-in columns and the register-then-consume flow). Adapters run it with their own factory:
+//
+//   runAuthStoreContract("in-memory", () => createInMemoryStores());
+//   runAuthStoreContract("in-memory with chaos", () => chaosStores(createInMemoryStores()));
+
+import { describe, expect, it } from "vitest";
+import type { StableHash } from "../crypto/keyed-hash";
+import type { PendingSignIn, SessionRecord, Stores } from "../storage";
+import type { StoreFactory } from "./store-contract";
+
+const T0 = Date.UTC(2026, 10, 1);
+
+export function runAuthStoreContract(label: string, factory: StoreFactory): void {
+  const session = (over: Partial<SessionRecord> = {}): SessionRecord => ({
+    familyId: "fam_1", accountId: "a", deviceId: "d1", currentHash: "h1", prevHash: null, rotatedAt: null, graceSuccessor: null,
+    authTime: T0, createdAt: T0, lastUsedAt: T0, idleExpiresAt: T0 + 30 * 86_400_000, absoluteExpiresAt: T0 + 180 * 86_400_000,
+    revokedAt: null, ...over,
+  });
+
+  describe(`${label}: auth additions`, () => {
+    it("clears the encrypted successor once the grace window is over, and only then", async () => {
+      const { sessions } = factory();
+      await sessions.create(session());
+      await sessions.create(session({ familyId: "fam_2", currentHash: "x1", deviceId: "d2" }));
+      await sessions.rotate("fam_1", "h1", { newHash: "h2", graceSuccessor: "enc", now: T0 + 1000, idleExpiresAt: T0 + 9e9 });
+      await sessions.rotate("fam_2", "x1", { newHash: "x2", graceSuccessor: "enc2", now: T0 + 25_000, idleExpiresAt: T0 + 9e9 });
+      expect(await sessions.clearExpiredGrace(T0 + 20_000, 30_000)).toBe(0);
+      expect((await sessions.getByFamily("fam_1"))!.graceSuccessor).toBe("enc");
+      expect(await sessions.clearExpiredGrace(T0 + 31_000, 30_000)).toBe(1);
+      expect((await sessions.getByFamily("fam_1"))!.graceSuccessor).toBeNull();
+      expect((await sessions.getByFamily("fam_2"))!.graceSuccessor).toBe("enc2");
+      // The hashes stay so a late reuse is still detected.
+      expect((await sessions.findByTokenHash("h1"))!.match).toBe("previous");
+    });
+
+    it("revokes every manage token of an account without making room for a fourth one for the same code", async () => {
+      const { devices } = factory();
+      const mk = (n: number, accountId = "a", codeId = "code_1") => ({ tokenHash: `th${n}`, accountId, expiresAt: T0 + 300_000, codeId });
+      for (const n of [1, 2, 3]) expect(await devices.mintManageToken(mk(n), T0)).toBe(true);
+      expect(await devices.mintManageToken(mk(9, "b", "code_2"), T0)).toBe(true);
+      expect(await devices.revokeManageTokens("a")).toBe(3);
+      expect(await devices.getManageToken("th1", T0)).toBeNull();
+      expect(await devices.getManageToken("th9", T0)).not.toBeNull();
+      expect(await devices.mintManageToken(mk(4), T0)).toBe(false);
+    });
+
+    it("claims a deletion for exactly one of several parallel callers, until the lease ends", async () => {
+      const { accounts } = factory();
+      await accounts.create({ accountId: "a", email: "a@example.invalid", googleSubject: null, loginMethods: ["email"], termsVersion: "v1", now: T0 });
+      const claims = await Promise.all(Array.from({ length: 8 }, () => accounts.claimDeletion("a", T0, 60_000)));
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      expect(await accounts.claimDeletion("a", T0 + 59_999, 60_000)).toBe(false);
+      expect(await accounts.claimDeletion("a", T0 + 60_000, 60_000)).toBe(true); // a crashed attempt can be repeated
+      expect(await accounts.claimDeletion("nobody", T0, 60_000)).toBe(false);
+      await accounts.purgeAccount("a");
+      expect(await accounts.claimDeletion("a", T0 + 1e6, 60_000)).toBe(false);
+    });
+
+    it("removes every per-account rate-limit window and nobody else's", async () => {
+      const { rateLimits } = factory();
+      for (const key of ["acct:a", "acct:a:export", "acct:a:account-api", "acct:ab", "acct:b:export"] as const) await rateLimits.hit(key, 1, 60_000, T0);
+      await rateLimits.purgeAccount("a");
+      for (const key of ["acct:a", "acct:a:export", "acct:a:account-api"] as const) expect((await rateLimits.hit(key, 1, 60_000, T0)).allowed, key).toBe(true);
+      for (const key of ["acct:ab", "acct:b:export"] as const) expect((await rateLimits.hit(key, 1, 60_000, T0)).allowed, key).toBe(false);
+    });
+
+    it("forgets the per-code manage token counter once the code is dead, and not before", async () => {
+      const { devices } = factory();
+      const mk = (n: number) => ({ tokenHash: `pt${n}`, accountId: "a", expiresAt: T0 + 300_000, codeId: "code_p" });
+      for (const n of [1, 2, 3]) expect(await devices.mintManageToken(mk(n), T0)).toBe(true);
+      // The tokens expired, the code (10 minutes) may still be alive: the cap holds.
+      await devices.deleteExpiredManageTokens(T0 + 400_000);
+      expect(await devices.mintManageToken(mk(4), T0 + 400_000)).toBe(false);
+      // Long after, the counter is pruned and does not pile up.
+      await devices.deleteExpiredManageTokens(T0 + 300_000 + 10 * 60_000);
+      expect(await devices.mintManageToken(mk(5), T0 + 900_000)).toBe(true);
+      // An account purge drops its counters too.
+      await devices.purgeAccount("a");
+      for (const n of [6, 7, 8]) expect(await devices.mintManageToken({ ...mk(n), expiresAt: T0 + 1_300_000 }, T0 + 1_000_000)).toBe(true);
+    });
+
+    it("tracks the deletion retry schedule on the tombstone", async () => {
+      const { accounts } = factory();
+      await accounts.create({ accountId: "a", email: "a@example.invalid", googleSubject: null, loginMethods: ["email"], termsVersion: "v1", now: T0 });
+      const t = await accounts.markDeleting("a", T0);
+      expect(Object.keys(t!).sort()).toEqual(["accountId", "createdAt", "paddleCustomerId", "paddleSubscriptionId"]);
+      expect((await accounts.listDueDeletions(T0, 10)).map((j) => j.tombstone.accountId)).toEqual(["a"]);
+      expect(await accounts.recordCancelAttempt("a", T0 + 60_000)).toMatchObject({ cancelAttempts: 1, nextAttemptAt: T0 + 60_000 });
+      expect(await accounts.listDueDeletions(T0 + 59_999, 10)).toEqual([]);
+      expect((await accounts.listDueDeletions(T0 + 60_000, 10)).map((j) => j.tombstone.accountId)).toEqual(["a"]);
+      await accounts.markDeleting("a", T0 + 5); // idempotent: the counters stay
+      expect((await accounts.listDueDeletions(T0 + 60_000, 10))[0]).toMatchObject({ cancelAttempts: 1, manualReview: false });
+      // Manual review stops the automatic retries.
+      expect(await accounts.markDeletionManual("a")).toMatchObject({ manualReview: true });
+      expect(await accounts.listDueDeletions(T0 + 1e9, 10)).toEqual([]);
+      expect(await accounts.getTombstone("a")).not.toBeNull();
+      await accounts.purgeAccount("a");
+      expect(await accounts.recordCancelAttempt("a", T0)).toBeNull();
+      expect(await accounts.listDueDeletions(T0 + 1e9, 10)).toEqual([]);
+    });
+
+    it("reads a link ticket without consuming it", async () => {
+      const { authChallenges } = factory();
+      const ticket = { ticketHash: "th", accountId: "a", method: "email" as const, createdAt: T0, expiresAt: T0 + 300_000, used: false };
+      await authChallenges.putLinkTicket(ticket);
+      expect(await authChallenges.getLinkTicket("th", T0 + 1)).toEqual(ticket);
+      expect(await authChallenges.getLinkTicket("th", T0 + 300_000)).toBeNull();
+      expect(await authChallenges.consumeLinkTicket("th", T0 + 2)).not.toBeNull();
+      expect(await authChallenges.getLinkTicket("th", T0 + 3)).toBeNull();
+    });
+
+    it("carries the redirect URI, the app state and the device label through a pending sign-in", async () => {
+      const { authChallenges } = factory();
+      const pending: PendingSignIn = {
+        id: "g1", kind: "google", stateHash: "sh", emailHash: null, codeChallenge: "cc", redirectType: "loopback",
+        redirectUri: "http://127.0.0.1:50321/callback", appState: "app-state-0123456789", deviceLabel: "Laptop", googleSubject: "sub-1", googleEmail: "a@example.invalid",
+        termsVersion: "v1", linkTicketId: null, codeHash: null, accountId: null, attempts: 0, resends: 0, createdAt: T0, expiresAt: T0 + 600_000,
+      };
+      await authChallenges.put(pending);
+      expect(await authChallenges.getByStateHash("sh", T0)).toEqual(pending);
+    });
+  });
+
+  describe(`${label}: register, then consume (parallel redemptions of one code)`, () => {
+    const EH = "eh" as StableHash;
+    const setup = async (stores: Stores) => {
+      await stores.authChallenges.put({
+        id: "p1", kind: "email", stateHash: null, emailHash: EH, codeChallenge: "cc", redirectType: null, redirectUri: null, appState: null,
+        deviceLabel: null, googleSubject: null, googleEmail: null, termsVersion: "v1", linkTicketId: null, codeHash: "right", accountId: null, attempts: 0, resends: 0,
+        createdAt: T0, expiresAt: T0 + 600_000,
+      });
+    };
+
+    it("leaves exactly one device behind when the same code is redeemed by several callers", async () => {
+      const stores = factory();
+      await setup(stores);
+      const redeem = async (deviceId: string) => {
+        const check = await stores.authChallenges.verifyEmailCode({ emailHash: EH, candidateCodeHash: "right", maxAttempts: 5, consume: false, now: T0 });
+        if (check.outcome !== "ok") return "invalid";
+        const reg = await stores.devices.register({ accountId: "a", deviceId, label: deviceId, now: T0 });
+        if (!reg.ok) return "limit";
+        const consumed = await stores.authChallenges.consume(check.pending.id, T0);
+        if (!consumed) {
+          if (reg.created) await stores.devices.revoke("a", deviceId);
+          return "lost";
+        }
+        return "won";
+      };
+      const outcomes = await Promise.all(["d1", "d2", "d3", "d4", "d5", "d6"].map(redeem));
+      expect(outcomes.filter((o) => o === "won")).toHaveLength(1);
+      expect(await stores.devices.list("a")).toHaveLength(1);
+    });
+  });
+}

@@ -6,9 +6,11 @@ The optional cloud gateway described in [docs/cloud-plan.md](../docs/cloud-plan.
 own `package.json`, lockfile and `tsconfig`, and is not a workspace of the app. The contract is the source of
 truth; this code follows it and never changes it.
 
-Status: scaffold only (phase 2 started). Every route in the contract is registered and answers a 501 error
-envelope (the `notImplemented` stub; the contract has no such code, so the stub reuses `internal_error`). Real
-today: the request id, the client-version handshake, body size limits enforced while the body streams in,
+Status: phase 2 in progress. Every route in the contract is registered. The **auth and account modules are
+implemented** (Google and email sign-in, tokens, refresh, devices, account, export, deletion, terms, link and
+unlink, provider sets, consent) against the in-memory stores; the routes of the inference and billing modules and
+`GET /v1/status` still answer a 501 error envelope until their modules replace the `notImplemented` stub (the
+contract has no such code, so the stub reuses `internal_error`). Real today: the request id, the client-version handshake, body size limits enforced while the body streams in,
 `Content-Type` checks, the consent and idempotency header checks, the one-time account load, the fresh sign-in
 check, response cleanup for streams, and fail-closed hooks. Storage has interfaces and in-memory
 implementations only; the Durable Object and D1 adapters come later.
@@ -43,7 +45,7 @@ src/app.ts            createApp(deps) -> { handle(request, executionCtx), schedu
 src/deps.ts           Deps = core services + one deps object per module; createDeps()
 src/config.ts         aggregates the modules' config.ts; fails closed; secrets are redacted wrappers
 src/config-spec.ts    the shapes a module's config.ts exports
-src/platform.ts       local types for ExecutionContext and friends
+src/platform.ts       local types for ExecutionContext and friends (owner: ops; other modules only import from it)
 src/durable-objects.ts  reserved AccountObject class (the per-account object, adapters come later)
 src/scheduled.ts      ScheduledTask for the cron handler
 src/lazy.ts           lazy() for deps that need await to build
@@ -170,9 +172,92 @@ await expectFixtureConformance(await t.app.handle(fixtureRequest(fx)), fx);
 `makeTestApp()` wires the in-memory stores, a manual clock (`t.clock`, shareable through `clock`), deterministic
 request ids and a recording logger. `fakeExecutionContext()` records `waitUntil` promises.
 
+## Auth and account modules
+
+Where things are (the `index.ts` of each module exports only the four standard functions; the work is next to it):
+
+- `modules/auth/`: `tokens.ts` (Ed25519 JWTs, JWKS, key rotation), `hooks.ts` (`authenticate`, `checkAuthRateLimit`),
+  `sessions.ts` (refresh rotation, the encrypted grace copy, reuse detection, logout), `signin.ts` (device slot, code
+  single use, session), `email-routes.ts`, `google-routes.ts`, `google.ts` (the OIDC client over an injected `fetch`),
+  `email.ts` (the `EmailSender` interface, message templates, no provider yet).
+- `modules/account/`: `hooks.ts` (`checkTermsAndStatus`), `account-routes.ts`, `devices.ts`, `link.ts`, `consent.ts`,
+  `deletion.ts` (tombstone, retry with backoff, purge), `seams.ts`, `provider-sets.ts` (placeholder catalog, to be
+  replaced by the routing table).
+- `modules/seams.ts`: `AuthSeam`, `BillingSeam`, `InferenceSeam`. The auth deps implement `AuthSeam`
+  (`deps.auth.revokeAllSessions`, `revokeManageTokens`); the account module calls the billing and inference seams through
+  `deps` and falls back to inert defaults (cancel returns `none`, usage is zero, the ledger purge is a no-op) until those
+  modules provide theirs.
+
+Signing key rotation: set the new private key as `TOKEN_SIGNING_KEY` and the **public** half of the old one (base64url
+`x`, comma separated for several) in the optional variable `TOKEN_PREVIOUS_PUBLIC_KEYS`. Both appear in the JWKS and
+tokens of either key verify; remove the old entry after at least 20 minutes (the token lifetime plus the JWKS cache).
+The `kid` is the RFC 7638 thumbprint of the public key, so it follows the key.
+
+Email: `EmailSender` is injected (`createAuthDeps(core, { email })`). The default sender fails every send, so nothing is
+silently treated as sent; a failing send never fails the request. Messages contain the code (sign-in) or nothing secret
+at all (notifications), and no link.
+
+Rate limits are constants in `modules/auth/constants.ts` (the plan's example numbers): 60 requests a minute per
+connection and route, 5 code requests an hour per address with at least 60 seconds between two, 20 an hour per
+connection, and failed code checks counted per address-and-connection pair and per connection (never per address
+alone). A code request inside the 60 second window changes nothing and is answered like any other. An IPv6 connection
+counts as its /64. A request without a readable `CF-Connecting-IP` shares ONE bucket with much stricter limits (10 a
+minute, 5 code requests an hour), so removing the header never earns more allowance. Connection addresses and email
+addresses are only ever hashed under the rotating salt.
+
+Known limits: the salted counters reset when the salt rotates (every 24 hours, at UTC midnight), so a window that
+straddles it can be used twice; and there is no global cap on the emails the gateway sends (only the per-address and
+per-connection ones), which belongs to the email provider setup.
+
+The `auth-cleanup` scheduled task (challenges, sessions, grace copies, manage tokens, windows) and the
+`account-deletion-retry` task run from the Worker's `scheduled` handler: ops must add a cron trigger to
+`wrangler.toml` (`[triggers] crons = [...]`, for example every 5 minutes); none is configured yet.
+
+Tests drive the real app through `makeAuthApp()` (`src/testing/auth-app.ts`): a fake Google (`fake-google.ts`) and a fake
+email sender (`fake-email.ts`) are injected, so no test touches the network. Pipeline tests that want only the route
+table can use `makeTestApp({ stubRoutes: true, withoutModuleHooks: true })`.
+
+Until the inference module provides `checkRateLimit` the Worker refuses to start with these real handlers (the strict
+startup check of the pipeline, by design); the tests use `allowMissingHooks`.
+
 ## Choices where the contract was silent
 
 The gaps found while scaffolding were settled in the contract itself (strict-semver client header and a 400 on
 `getStatus`; `consent_outdated` for a bad consent header and `invalid_request` for a bad idempotency key; the
 404/400/413/415 behaviors of unknown routes, `/auth/*` and the webhook). The stub's 501 with `internal_error` stays
 for the scaffold only and disappears as modules replace their stubs.
+
+The auth and account modules settled these gaps conservatively (they are listed with their reasons in the pull request,
+under "Contract questions"; none changes the contract):
+
+- The loopback redirect path is `/callback` (any port) and the deep link is `studentllm://auth/callback`; both are
+  constants in `modules/auth/constants.ts`. A bad `/auth/start` parameter is a 400 error envelope, never a redirect.
+- `terms_version` is required on every `/auth/start` (the account is not known yet). A sign-in that carries the current
+  version records the acceptance for an existing account with an older one.
+- Suspension is checked before terms.
+- **User deletion is implemented as a single pass.** `DELETE /v1/account` claims the deletion (one of several
+  parallel calls wins; the others answer `session_revoked`), sends the final email first (bounded by a timeout, a
+  failure is logged by name only and does not block), then writes the tombstone atomically with the removal of the
+  account row (`AccountStore.markDeleting`: the email and Google indexes and the plan go with it; the tombstone keeps
+  the account id, the Paddle ids and the retry bookkeeping), then runs the erase steps (sessions, devices, consents,
+  pending records, ledger, idempotency, leases, the per-account rate-limit windows), each idempotent and repeated by
+  the `account-deletion-retry` job until the cancel succeeds. A repeated `DELETE /v1/account` answers
+  `session_revoked`. There is **no deletion ledger, no outbox, no recorded completion and no retried final email**
+  yet (the admin design in docs/cloud-admin.md specifies them, including three attempts for the email within 15
+  minutes, which is NOT implemented: one bounded attempt only). Those land with the ops and admin work, and the
+  ledger is required before any restore of a database snapshot is accepted, because without it a restore would bring
+  an erased account back. The billing seam must read the Paddle ids from `accounts.getTombstone` (the plan row is
+  already erased when it runs). The cancel is retried for 14 days (a placeholder in `modules/account/deletion.ts`),
+  then waits in manual review.
+- A consent withdrawal is accepted whatever versions the client holds, records the server's versions, works for a
+  retired provider set and is exempt from the gating; a grant needs the current versions and an open gate
+  (`POST /v1/consent` is on the exempt route list for that reason; its handler gates a grant itself).
+- The Google link is made at the callback (the pending sign-in has no field for the subject), and the ticket is only
+  read at `/auth/start` and `/auth/email/request`; it is spent at completion. A new Google user's account, and the
+  acceptance of the terms, are made at `/auth/token`, after the PKCE proof.
+- The account routes opt out of the inference module's per-account window (`rateLimit: "none"`) and use their own
+  (`modules/account/rate-limit.ts`), so chat requests cannot throttle delete, export, devices or withdrawal.
+- Logout also frees the device when no other session uses it. A device whose sessions are all gone is pruned lazily,
+  which is how an expired session frees its slot.
+- The session keeps one previous token hash (as the plan's data table says), so only that generation can be detected as
+  reuse; an older token is `session_revoked` without revoking the family.

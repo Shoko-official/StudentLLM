@@ -37,6 +37,11 @@ export interface AppOptions {
    * Worker entry never sets it.
    */
   allowMissingHooks?: boolean;
+  /**
+   * Ignores the pipeline hooks the modules provide, so a pipeline test can install its own or none (tests only; the
+   * Worker entry never sets it).
+   */
+  withoutModuleHooks?: boolean;
   /** Replaces `registerRoutes` (tests that register their own routes). */
   registerRoutes?: (router: Router, deps: Deps) => void;
 }
@@ -133,7 +138,9 @@ export function createApp(deps: Deps, options: AppOptions = {}): App {
   (options.registerRoutes ?? registerRoutes)(router, deps);
 
   const hooks = composeHooks(
-    [createAuthHooks(deps), createAccountHooks(deps), createInferenceHooks(deps), createBillingHooks(deps), createOpsHooks(deps)],
+    options.withoutModuleHooks
+      ? []
+      : [createAuthHooks(deps), createAccountHooks(deps), createInferenceHooks(deps), createBillingHooks(deps), createOpsHooks(deps)],
     options.hooks,
     options.allowMissingHooks,
   );

@@ -10,9 +10,10 @@ info:
 
     Gating exceptions: `terms_required` and `account_suspended` never block, and are never returned by,
     `GET /v1/account`, `GET /v1/account/export`, `DELETE /v1/account`, `POST /auth/refresh`,
-    `POST /auth/logout`, `GET /v1/devices`, `DELETE /v1/devices/{device_id}`, `GET /v1/billing/portal` and
-    `POST /v1/account/terms`, so data-rights routes always work for a suspended account or one that has not
-    accepted the latest terms. Sign-in routes (`/auth/start`, `/auth/callback`, `/auth/token`, `/auth/email/request`, `/auth/email/verify`) succeed for suspended accounts: the account gets an access token that is usable only on the exempt routes, and every other route returns `account_suspended`.
+    `POST /auth/logout`, `GET /v1/devices`, `DELETE /v1/devices/{device_id}`, `GET /v1/billing/portal`,
+    `POST /v1/account/terms` and `POST /v1/consent`, so data-rights routes always work for a suspended account
+    or one that has not accepted the latest terms, and so does withdrawing consent. `POST /v1/consent` is
+    exempt only for a withdrawal: a grant is gated like any gated route. Sign-in routes (`/auth/start`, `/auth/callback`, `/auth/token`, `/auth/email/request`, `/auth/email/verify`) succeed for suspended accounts: the account gets an access token that is usable only on the exempt routes, and every other route returns `account_suspended`.
 
     Fresh sign-in routes: account export, linking a login method, unlinking a login method and deleting the
     account all require `auth_time` within 5 minutes and otherwise return `reauth_required`.
@@ -48,7 +49,8 @@ paths:
       description: |
         Redirects to Google. The app must have shown the terms and privacy notice and obtained an
         explicit acceptance before calling this route, and passes the accepted `terms_version`.
-        Invalid parameters render a plain error page and never redirect to an unverified URI.
+        Invalid parameters answer 400 `invalid_request` (the JSON error envelope; nothing is rendered or
+        echoed) and never redirect to an unverified URI.
       security: []
       parameters:
         - { name: client_id, in: query, required: true, schema: { type: string, const: studentllm-desktop } }
@@ -134,8 +136,9 @@ paths:
       operationId: authEmailRequest
       summary: Request a one-time sign-in code by email
       description: |
-        Always answers the same way whether or not the address is known. A new request invalidates all
-        earlier codes for the address. The email carries an 8-character code and no link, and says to
+        Always answers the same way whether or not the address is known. A request after the resend interval
+        (60 seconds) invalidates all earlier codes for the address; a request inside the interval changes
+        nothing and gets the same 202. The email carries an 8-character code and no link, and says to
         enter it only in StudentLLM on the device where it was requested.
       security: []
       requestBody:
@@ -306,14 +309,19 @@ paths:
       operationId: deleteAccount
       summary: Delete the account
       description: |
-        Requires a fresh sign-in (`auth_time` within 5 minutes, otherwise `reauth_required`). Sets the
-        account to a `deleting` tombstone that keeps only the Paddle ids, cancels the subscription (retry
-        with backoff and an operator alert on failure), and purges everything once the cancel succeeded.
-        Sends a notification email to the account address. Naturally idempotent: repeating the call while
-        deleting returns the same 202.
+        Requires a fresh sign-in (`auth_time` within 5 minutes, otherwise `reauth_required`). Sends the
+        final notification email to the account address, then **erases all personal data at once**: the
+        account becomes a tombstone that keeps only the Paddle ids (and what is needed to retry the cancel),
+        and the email, the Google subject, the login methods, the terms acceptance, the sessions, the
+        devices, the consents and the pending sign-ins are gone when the 202 is returned. The subscription is
+        then cancelled (retried with backoff for a bounded period, with an operator alert on failure and a
+        manual-review state when the period ran out), and the tombstone is removed once the cancel
+        succeeded. The sessions die with the account, so a repeated call answers 401 `session_revoked`,
+        which the client treats as "already deleted". The address and the Google identity can be used to
+        sign up again straight away.
       responses:
         "202":
-          description: Deletion started.
+          description: Personal data erased; the subscription cancel, if any, continues in the background.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DeletionResponse" }
@@ -417,10 +425,18 @@ paths:
         Appends a record. There is one active record per provider set. Posting an identical grant while it
         is active returns the existing record (idempotent by construction, no Idempotency-Key). Withdrawing
         makes the previous record inactive; requests then get `consent_outdated`. Every text feature
-        (chat, note formatting, study material) is the `chat` feature. A `text_version` that does not equal
-        the server's current `consent_text_version` for the set returns 409 `consent_outdated` with
-        `details.consent_text_version`. Bumping the consent text strands builds that bundle the old text:
-        they cannot collect consent, fall back to local and show an "update required" message. That is accepted.
+        (chat, note formatting, study material) is the `chat` feature. A grant whose `text_version` does not
+        equal the server's current `consent_text_version` for the set, or whose `provider_set_version` is not
+        the set's current version, returns 409 `consent_outdated` with `details.consent_text_version`.
+        Bumping the consent text strands builds that bundle the old text: they cannot collect consent, fall
+        back to local and show an "update required" message. That is accepted. A malformed request, an
+        unknown provider set, a feature the set does not offer or a grant without features is 400
+        `invalid_request` (checked before the 409). A withdrawal (`granted: false`) is never refused for its
+        versions: `text_version`, `provider_set_version` and `features` are ignored, it works for a retired
+        provider set when the account has a record for it, and it is exempt from the terms and suspension
+        gating (a grant is not). The appended record carries the server's current versions of the set (for a
+        retired set, those of the withdrawn record) and the withdrawn record's features. Repeating a
+        withdrawal returns the existing record.
       requestBody:
         required: true
         content:

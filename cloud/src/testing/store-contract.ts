@@ -189,12 +189,15 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
       expect(await stores.accounts.findAccountIdByPaddleSubscription("nope")).toBeNull();
     });
 
-    it("keeps only the Paddle ids in a deleting tombstone and purges everything", async () => {
+    it("erases the account at once, keeps only the Paddle ids in the tombstone, and purges everything", async () => {
       const { stores } = await accountWith();
       await stores.accounts.savePlan(basePlan({ paidPeriods: [] }), { expectedPlanVersion: 0 });
       const t = await stores.accounts.markDeleting("acc_1", T0);
       expect(t).toEqual({ accountId: "acc_1", paddleCustomerId: "ctm_1", paddleSubscriptionId: "sub_p1", createdAt: T0 });
-      expect((await stores.accounts.getById("acc_1"))!.status).toBe("deleting");
+      expect(await stores.accounts.getById("acc_1")).toBeNull(); // erased at tombstone creation
+      expect(await stores.accounts.getByEmail("a@example.invalid")).toBeNull();
+      expect(await stores.accounts.getPlan("acc_1")).toBeNull();
+      expect(await stores.accounts.findAccountIdByPaddleSubscription("sub_p1")).toBe("acc_1"); // webhooks still resolve to the tombstone
       expect(await stores.accounts.markDeleting("acc_1", T0 + 5)).toEqual(t); // naturally idempotent
       await stores.accounts.purgeAccount("acc_1");
       expect(await stores.accounts.getById("acc_1")).toBeNull();
@@ -646,10 +649,10 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
     const EH = "eh" as StableHash;
     const pending = (over: Partial<PendingSignIn> = {}): PendingSignIn => ({
       id: "p1", kind: "email", stateHash: null, emailHash: EH, codeChallenge: "cc", redirectType: null, termsVersion: "v1",
-      linkTicketId: null, codeHash: "right", accountId: null, attempts: 0, resends: 0, createdAt: T0, expiresAt: T0 + 600_000, ...over,
+      linkTicketId: null, redirectUri: null, appState: null, deviceLabel: null, googleSubject: null, googleEmail: null, codeHash: "right", accountId: null, attempts: 0, resends: 0, createdAt: T0, expiresAt: T0 + 600_000, ...over,
     });
-    const verify = (candidateCodeHash: string, over: { countAttempt?: boolean; maxAttempts?: number; now?: number } = {}) =>
-      factoryStores!.authChallenges.verifyEmailCode({ emailHash: EH, candidateCodeHash, maxAttempts: over.maxAttempts ?? 5, countAttempt: over.countAttempt ?? true, now: over.now ?? T0 });
+    const verify = (candidateCodeHash: string, over: { consume?: boolean; maxAttempts?: number; now?: number } = {}) =>
+      factoryStores!.authChallenges.verifyEmailCode({ emailHash: EH, candidateCodeHash, maxAttempts: over.maxAttempts ?? 5, consume: over.consume ?? true, now: over.now ?? T0 });
     let factoryStores: Stores | undefined;
     const fresh = () => (factoryStores = factory());
 
@@ -705,11 +708,11 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
       expect(results.filter((r) => r.outcome === "ok")).toHaveLength(1);
     });
 
-    it("with countAttempt false a right code is neither counted nor consumed, but a wrong one still counts", async () => {
+    it("with consume false a right code is neither counted nor consumed, but a wrong one still counts", async () => {
       const { authChallenges } = fresh();
       await authChallenges.put(pending());
-      for (let i = 0; i < 3; i++) expect(await verify("right", { countAttempt: false })).toMatchObject({ outcome: "ok" });
-      expect(await verify("bad", { countAttempt: false })).toEqual({ outcome: "wrong", attempts: 1 });
+      for (let i = 0; i < 3; i++) expect(await verify("right", { consume: false })).toMatchObject({ outcome: "ok" });
+      expect(await verify("bad", { consume: false })).toEqual({ outcome: "wrong", attempts: 1 });
       expect(await verify("right")).toMatchObject({ outcome: "ok" }); // still there, then consumed
       expect(await verify("right")).toEqual({ outcome: "gone" });
     });
@@ -813,12 +816,12 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
 
     it("slides: old hits expire one by one, and a denied hit is not recorded", async () => {
       const { rateLimits } = factory();
-      await rateLimits.hit("k", 2, 10_000, T0);
-      await rateLimits.hit("k", 2, 10_000, T0 + 5000);
-      expect((await rateLimits.hit("k", 2, 10_000, T0 + 9000)).allowed).toBe(false);
-      expect((await rateLimits.hit("k", 2, 10_000, T0 + 10_000)).allowed).toBe(true); // the T0 hit slid out
-      expect((await rateLimits.hit("k", 2, 10_000, T0 + 10_001)).allowed).toBe(false); // the denied one at +9000 did not count
-      expect((await rateLimits.hit("k", 2, 10_000, T0 + 15_000)).allowed).toBe(true); // +5000 slid out
+      await rateLimits.hit("k" as SaltedHash, 2, 10_000, T0);
+      await rateLimits.hit("k" as SaltedHash, 2, 10_000, T0 + 5000);
+      expect((await rateLimits.hit("k" as SaltedHash, 2, 10_000, T0 + 9000)).allowed).toBe(false);
+      expect((await rateLimits.hit("k" as SaltedHash, 2, 10_000, T0 + 10_000)).allowed).toBe(true); // the T0 hit slid out
+      expect((await rateLimits.hit("k" as SaltedHash, 2, 10_000, T0 + 10_001)).allowed).toBe(false); // the denied one at +9000 did not count
+      expect((await rateLimits.hit("k" as SaltedHash, 2, 10_000, T0 + 15_000)).allowed).toBe(true); // +5000 slid out
     });
 
     it("keeps keys apart and holds the limit under parallel hits", async () => {
@@ -830,9 +833,9 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
 
     it("rejects nonsense limits and cleans up expired keys", async () => {
       const { rateLimits } = factory();
-      await expect(rateLimits.hit("k", 0, 1000, T0)).rejects.toThrow(RangeError);
-      await expect(rateLimits.hit("k", 1, 0, T0)).rejects.toThrow(RangeError);
-      await rateLimits.hit("k", 1, 1000, T0);
+      await expect(rateLimits.hit("k" as SaltedHash, 0, 1000, T0)).rejects.toThrow(RangeError);
+      await expect(rateLimits.hit("k" as SaltedHash, 1, 0, T0)).rejects.toThrow(RangeError);
+      await rateLimits.hit("k" as SaltedHash, 1, 1000, T0);
       expect(await rateLimits.deleteExpired(T0 + 500)).toBe(0);
       expect(await rateLimits.deleteExpired(T0 + 2000)).toBe(1);
     });

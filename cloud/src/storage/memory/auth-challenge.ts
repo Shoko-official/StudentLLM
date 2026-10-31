@@ -44,7 +44,7 @@ export class InMemoryAuthChallengeStore implements AuthChallengeStore {
     emailHash: StableHash;
     candidateCodeHash: string;
     maxAttempts: number;
-    countAttempt: boolean;
+    consume: boolean;
     now: number;
   }): Promise<VerifyEmailCodeResult> {
     // One synchronous step: read, compare, count and consume cannot interleave with another guess.
@@ -59,7 +59,7 @@ export class InMemoryAuthChallengeStore implements AuthChallengeStore {
       return { outcome: "wrong", attempts: p.attempts };
     }
     const pending = copy(p);
-    if (input.countAttempt) this.pending.delete(p.id);
+    if (input.consume) this.pending.delete(p.id);
     return { outcome: "ok", pending };
   }
 
@@ -76,6 +76,11 @@ export class InMemoryAuthChallengeStore implements AuthChallengeStore {
 
   async putLinkTicket(ticket: LinkTicket) {
     this.tickets.set(ticket.ticketHash, copy(ticket));
+  }
+
+  async getLinkTicket(ticketHash: string, now: number) {
+    const t = this.tickets.get(ticketHash);
+    return t && !t.used && t.expiresAt > now ? copy(t) : null;
   }
 
   async consumeLinkTicket(ticketHash: string, now: number) {

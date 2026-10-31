@@ -1,3 +1,6 @@
+// Owner: ops. Edit this file when the Durable Object and D1 adapters need more of the Workers runtime types; the
+// other modules only import from it and do not change it.
+//
 // Local types for the few Cloudflare runtime objects the gateway touches. This replaces
 // `@cloudflare/workers-types`: that package redeclares Request, Response, crypto and streams, which collide
 // with `@types/node` in the test project, and it adds a dependency. These interfaces are structural, so the

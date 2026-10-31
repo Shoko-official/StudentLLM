@@ -3,6 +3,7 @@ import type {
   AccountRecord,
   AccountStore,
   ApplyPlanEventResult,
+  DeletionJob,
   DeletionTombstone,
   LoginMethod,
   NewAccount,
@@ -24,6 +25,8 @@ export class InMemoryAccountStore implements AccountStore {
   private readonly bySubscription = new Map<string, string>();
   private readonly byCustomer = new Map<string, string>();
   private readonly tombstones = new Map<string, DeletionTombstone>();
+  private readonly deletionClaims = new Map<string, number>();
+  private readonly retries = new Map<string, { cancelAttempts: number; nextAttemptAt: number; manualReview: boolean }>();
 
   async create(input: NewAccount) {
     const email = input.email.toLowerCase();
@@ -162,11 +165,10 @@ export class InMemoryAccountStore implements AccountStore {
   }
 
   async markDeleting(accountId: string, now: number) {
-    const a = this.accounts.get(accountId);
-    if (!a) return this.tombstones.has(accountId) ? copy(this.tombstones.get(accountId)!) : null;
-    a.status = "deleting";
     const existing = this.tombstones.get(accountId);
     if (existing) return copy(existing);
+    const a = this.accounts.get(accountId);
+    if (!a) return null;
     const plan = this.plans.get(accountId);
     const tombstone: DeletionTombstone = {
       accountId,
@@ -175,6 +177,12 @@ export class InMemoryAccountStore implements AccountStore {
       createdAt: now,
     };
     this.tombstones.set(accountId, tombstone);
+    this.retries.set(accountId, { cancelAttempts: 0, nextAttemptAt: now, manualReview: false });
+    // Erase: the account row, its plan and the email and Google indexes. The Paddle indexes stay with the tombstone.
+    this.byEmail.delete(a.email);
+    if (a.googleSubject !== null) this.byGoogle.delete(a.googleSubject);
+    this.accounts.delete(accountId);
+    this.plans.delete(accountId);
     return copy(tombstone);
   }
 
@@ -183,7 +191,46 @@ export class InMemoryAccountStore implements AccountStore {
     return t ? copy(t) : null;
   }
 
+  private job(accountId: string): DeletionJob | null {
+    const tombstone = this.tombstones.get(accountId);
+    const retry = this.retries.get(accountId);
+    return tombstone && retry ? copy({ tombstone, ...retry }) : null;
+  }
+
+  async listDueDeletions(now: number, limit: number) {
+    return [...this.tombstones.keys()]
+      .map((id) => this.job(id)!)
+      .filter((j) => !j.manualReview && j.nextAttemptAt <= now)
+      .sort((a, b) => a.tombstone.createdAt - b.tombstone.createdAt)
+      .slice(0, limit);
+  }
+
+  async recordCancelAttempt(accountId: string, nextAttemptAt: number) {
+    const retry = this.retries.get(accountId);
+    if (!retry) return null;
+    retry.cancelAttempts += 1;
+    retry.nextAttemptAt = nextAttemptAt;
+    return this.job(accountId);
+  }
+
+  async claimDeletion(accountId: string, now: number, leaseMs: number) {
+    if (!this.accounts.has(accountId) && !this.tombstones.has(accountId)) return false;
+    if ((this.deletionClaims.get(accountId) ?? 0) > now) return false;
+    this.deletionClaims.set(accountId, now + leaseMs);
+    return true;
+  }
+
+  async markDeletionManual(accountId: string) {
+    const retry = this.retries.get(accountId);
+    if (!retry) return null;
+    retry.manualReview = true;
+    return this.job(accountId);
+  }
+
   async purgeAccount(accountId: string) {
+    const t = this.tombstones.get(accountId);
+    if (t?.paddleSubscriptionId) this.bySubscription.delete(t.paddleSubscriptionId);
+    if (t?.paddleCustomerId) this.byCustomer.delete(t.paddleCustomerId);
     const a = this.accounts.get(accountId);
     if (a) {
       this.byEmail.delete(a.email);
@@ -195,5 +242,7 @@ export class InMemoryAccountStore implements AccountStore {
     this.accounts.delete(accountId);
     this.plans.delete(accountId);
     this.tombstones.delete(accountId);
+    this.retries.delete(accountId);
+    this.deletionClaims.delete(accountId);
   }
 }
