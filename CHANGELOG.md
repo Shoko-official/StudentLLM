@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0 - 2026-10-31
+
 ### Fixed
 
 - Removing a source is no longer instant and irreversible: an Undo toast (a live region, keyboard reachable, paused while hovered or focused) restores the source, its transcript and its note for 8 seconds, and the stored original is only erased afterwards, including after a reload.
