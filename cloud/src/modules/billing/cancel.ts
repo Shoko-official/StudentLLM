@@ -183,6 +183,28 @@ export async function confirmTombstoneSubscription(env: BillingEnv, accountId: s
   return true;
 }
 
+/**
+ * A subscription that was paid for after the deletion started (a checkout opened before it, paid during it): it is
+ * appended to the tombstone, put on the pending list (re-opening a finished cancel) and canceled now, so it cannot keep
+ * billing an account that no longer exists. The retry is the tombstone's, like for the others.
+ */
+export async function cancelStraySubscription(env: BillingEnv, accountId: string, subscriptionId: string, customerId: string | null): Promise<CancelState> {
+  const { accounts } = env.stores;
+  const tomb = await accounts.addTombstoneSubscription(accountId, subscriptionId, customerId);
+  if (!tomb) return "none";
+  const previous = tomb.cancel ?? null;
+  const pending = new Set(previous?.state === "pending" ? previous.pendingIds : []);
+  pending.add(subscriptionId);
+  const reopened = await accounts.setTombstoneCancel(accountId, {
+    state: "pending",
+    pendingIds: [...pending],
+    attempts: previous?.state === "pending" ? previous.attempts : 0,
+    nextAttemptAt: env.clock.now(),
+    alerted: previous?.alerted ?? false,
+  });
+  return reopened ? cancelFromTombstone(env, accountId, reopened) : "none";
+}
+
 export async function cancelSubscription(env: BillingEnv, accountId: string, when: CancelWhen): Promise<{ state: CancelState }> {
   const { accounts } = env.stores;
   const plan = await accounts.getPlan(accountId);

@@ -362,12 +362,13 @@ describe("webhook: mapping to an account", () => {
     expect(await app.stores.webhookEvents.listQuarantined()).toEqual([]); // found by customer id (and ignored: not a refund)
   });
 
-  it("does not bind a purchase to an account that is being deleted without telling the operator", async () => {
+  it("does not bind a purchase to a deleted account: quarantined, canceled, and the operator is told", async () => {
     const app = await setup();
     await app.stores.accounts.markDeleting("acc_test", T);
     await app.webhook(firstSubscription());
-    expect(app.notifier.alerts).toEqual([{ kind: "purchase_while_deleting", accountId: "acc_test" }]);
-    expect(await app.stores.ledger.listWindows("acc_test")).toEqual([]); // no window for a dying account
+    expect(app.notifier.alerts.map((a) => a.kind).sort()).toEqual(["purchase_while_deleting", "webhook_quarantined"]);
+    expect(app.paddle.callsTo("cancelSubscription")).toEqual([["sub_1", "immediately"]]); // and its subscription is canceled (see tombstone.test.ts)
+    expect(await app.stores.ledger.listWindows("acc_test")).toEqual([]); // no window for a deleted account
   });
 });
 

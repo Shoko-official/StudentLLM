@@ -212,6 +212,20 @@ export class InMemoryAccountStore implements AccountStore {
       .map(([id]) => id);
   }
 
+  async addTombstoneSubscription(accountId: string, subscriptionId: string, customerId: string | null) {
+    const t = this.tombstones.get(accountId);
+    if (!t) return null;
+    const subs = new Set([...(t.paddleSubscriptionIds ?? []), ...(t.paddleSubscriptionId ? [t.paddleSubscriptionId] : []), subscriptionId]);
+    t.paddleSubscriptionIds = [...subs];
+    if (customerId !== null) {
+      const customers = new Set([...(t.paddleCustomerIds ?? []), ...(t.paddleCustomerId ? [t.paddleCustomerId] : []), customerId]);
+      t.paddleCustomerIds = [...customers];
+      if (!this.byCustomer.has(customerId)) this.byCustomer.set(customerId, accountId);
+    }
+    if (!this.bySubscription.has(subscriptionId)) this.bySubscription.set(subscriptionId, accountId);
+    return copy(t);
+  }
+
   async setTombstoneCancel(accountId: string, cancel: TombstoneCancel | null) {
     const t = this.tombstones.get(accountId);
     if (!t) return null;

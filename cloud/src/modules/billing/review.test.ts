@@ -214,14 +214,15 @@ describe("review 3: a duplicate subscription is canceled, not just quarantined",
     app.paddle.failNext("cancelSubscription", "unavailable", 1);
     await app.webhook(duplicate(T + DAY));
     const tombstone = await app.stores.accounts.markDeleting("acc_test", T + 2 * DAY);
-    expect(tombstone!.paddleSubscriptionIds.sort()).toEqual(["sub_1", "sub_dup"]);
-    expect(tombstone!.paddleCustomerIds).toEqual(["ctm_1"]);
+    expect([...tombstone!.paddleSubscriptionIds!].sort()).toEqual(["sub_1", "sub_dup"]);
+    expect(tombstone!.paddleCustomerId).toBe("ctm_1");
+    expect(await app.plan()).toBeNull(); // the plan is erased: the tombstone alone holds the ids
     app.paddle.failNext("cancelSubscription", "unavailable", 1); // the duplicate fails again, the main one succeeds
     app.paddle.calls.length = 0;
     expect(await app.billing.cancelSubscription("acc_test", "now")).toEqual({ state: "pending" });
     expect(await app.billing.cancelSubscription("acc_test", "now")).toEqual({ state: "cancelled" });
     expect(await app.billing.cancelSubscription("acc_test", "now")).toEqual({ state: "none" });
-    expect((await app.plan())!.extraCancels).toEqual([]);
+    expect((await app.stores.accounts.getTombstone("acc_test"))!.cancel).toMatchObject({ state: "done", pendingIds: [] });
     expect(app.paddle.callsTo("cancelSubscription").map((c) => c[0])).toContain("sub_dup");
   });
 

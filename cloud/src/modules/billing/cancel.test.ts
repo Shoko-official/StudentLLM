@@ -158,15 +158,16 @@ describe("BillingSeam.cancelSubscription", () => {
     expect((await app.plan())!.pendingCancel).toMatchObject({ when: "now", attempts: 2 });
   });
 
-  it("does not drop the Paddle ids of a deleting account until a cancel succeeds (the tombstone rule)", async () => {
+  it("does not drop the Paddle ids of a deleted account until a cancel succeeds (the tombstone rule)", async () => {
     const app = await subscribed();
     app.paddle.failNext("cancelSubscription", "unavailable", 2);
+    // Deletion erases the account and its plan and keeps only the tombstone with the Paddle ids.
     await app.stores.accounts.markDeleting("acc_test", T + DAY);
+    expect(await app.plan()).toBeNull();
     // The deletion flow calls the seam, sees pending and keeps the tombstone.
     expect(await app.billing.cancelSubscription("acc_test", "now")).toEqual({ state: "pending" });
-    expect(await app.stores.accounts.getTombstone("acc_test")).toMatchObject({ paddleCustomerId: "ctm_1", paddleSubscriptionId: "sub_1" });
-    expect(await app.plan()).toMatchObject({ paddleSubscriptionId: "sub_1", pendingCancel: { attempts: 1 } });
-    // Its own retry hits another failure, then the scheduled task and the next call succeed.
+    expect(await app.stores.accounts.getTombstone("acc_test")).toMatchObject({ paddleCustomerId: "ctm_1", paddleSubscriptionId: "sub_1", cancel: { state: "pending", attempts: 1, pendingIds: ["sub_1"] } });
+    // Its own retry hits another failure, then the next call succeeds.
     expect(await app.billing.cancelSubscription("acc_test", "now")).toEqual({ state: "pending" });
     expect(await app.billing.cancelSubscription("acc_test", "now")).toEqual({ state: "cancelled" });
     // No "your subscription ended" mail on top of the deletion mail.
@@ -181,7 +182,6 @@ describe("BillingSeam.cancelSubscription", () => {
     await app.stores.accounts.markDeleting("acc_test", T + DAY);
     const tombstone = await app.stores.accounts.getTombstone("acc_test");
     expect(tombstone!.paddleSubscriptionId).toBe("sub_1");
-    app.stores.accounts.getPlan = async () => null; // an adapter that dropped the plan row but kept the tombstone
     expect(await app.billing.cancelSubscription("acc_test", "now")).toEqual({ state: "cancelled" });
     expect(app.paddle.callsTo("cancelSubscription")).toEqual([["sub_1", "immediately"]]);
   });

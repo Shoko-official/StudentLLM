@@ -12,7 +12,7 @@
 import type { RequestContext } from "../../http/context";
 import { ApiError, jsonResponse } from "../../http/envelope";
 import type { PlanRecord, WebhookFields } from "../../storage";
-import { attemptPendingCancel, confirmTombstoneSubscription } from "./cancel";
+import { attemptPendingCancel, cancelStraySubscription, confirmTombstoneSubscription } from "./cancel";
 import { envFromDeps, type BillingEnv } from "./env";
 import { EventShapeError, eventFromRecord, ledgerFields, normalizeEvent, type NormalizedEvent } from "./events";
 import { addExtraCancel, emptyPlan, reduceEvent, type ConflictReason, type Reduction } from "./plan-model";
@@ -65,6 +65,8 @@ async function resolveAccountId(env: BillingEnv, ev: NormalizedEvent): Promise<s
   if (ev.accountHint !== null && (ev.kind === "subscription" || ev.kind === "transaction")) {
     const account = await accounts.getById(ev.accountHint);
     if (account) return account.accountId;
+    // An account being deleted has no row, only a tombstone: a checkout opened before the deletion still names it.
+    if (await accounts.getTombstone(ev.accountHint)) return ev.accountHint;
   }
   return null;
 }
@@ -178,9 +180,19 @@ async function processEvent(env: BillingEnv, ev: NormalizedEvent): Promise<Outco
       if (ev.kind === "subscription" && ev.status === "canceled" && ev.subscriptionId !== null && (await confirmTombstoneSubscription(env, accountId, ev.subscriptionId))) {
         return { state: "processed", fields, after: [] };
       }
-      const paid = ev.kind === "transaction" || (ev.kind === "subscription" && ev.status === "active");
+      // A subscription paid for during the deletion would keep billing a deleted account: it is appended to the
+      // tombstone and canceled now (with the tombstone's retry). The event itself is quarantined for the operator,
+      // who refunds the customer; the alert names the subscription and customer ids.
       const outcome = await quarantine(env, ev, "account_deleted", accountId);
-      if (paid) outcome.after.push(() => env.notifier.alertOperator({ kind: "purchase_while_deleting", accountId }));
+      const live = ev.subscriptionId !== null && ev.kind !== "adjustment" && ev.status !== "canceled";
+      if (live) {
+        const subscriptionId = ev.subscriptionId!;
+        const customerId = ev.customerId;
+        outcome.after.push(() => cancelStraySubscription(env, accountId, subscriptionId, customerId).then(() => undefined));
+      }
+      if (ev.kind === "transaction" || (ev.kind === "subscription" && ev.status === "active")) {
+        outcome.after.push(() => env.notifier.alertOperator({ kind: "purchase_while_deleting", accountId }));
+      }
       return outcome;
     }
     if (!account) return quarantine(env, ev, "unknown_account", null);
@@ -219,9 +231,6 @@ async function processEvent(env: BillingEnv, ev: NormalizedEvent): Promise<Outco
     }
     if (reduction.kind === "conflict") return quarantineConflict(env, ev, reduction.reason, accountId);
     if (reduction.kind === "applied") {
-      if (reduction.added.length > 0 && account.status === "deleting") {
-        after.push(() => env.notifier.alertOperator({ kind: "purchase_while_deleting", accountId }));
-      }
       if (reduction.customerAdopted && plan?.paddleCustomerId) {
         const customerId = plan.paddleCustomerId;
         after.push(() => env.notifier.alertOperator({ kind: "customer_adopted", accountId, customerId }));

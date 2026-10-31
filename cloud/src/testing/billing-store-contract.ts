@@ -79,12 +79,34 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
       expect(await stores.accounts.listPendingCancels(T0 + 400, 1)).toEqual(["acc_2"]);
     });
 
-    it("keeps the Paddle ids in the tombstone while a cancellation is pending", async () => {
+    it("keeps the Paddle ids in the tombstone while a cancellation is pending, and schedules the retry from the tombstone", async () => {
       const stores = await accountWith();
       await stores.accounts.applyPlanEvent("acc_1", T0, () => plan({ pendingCancel: { when: "now", requestedAt: T0, attempts: 0, nextAttemptAt: T0, alerted: false } }));
       const t = await stores.accounts.markDeleting("acc_1", T0 + 1);
       expect(t).toMatchObject({ paddleCustomerId: "ctm_1", paddleSubscriptionId: "sub_1" });
-      expect(await stores.accounts.listPendingCancels(T0 + 1, 10)).toEqual(["acc_1"]);
+      // The deletion erased the plan, and with it the plan's own pending cancel: only the tombstone can schedule now.
+      expect(await stores.accounts.listPendingCancels(T0 + 1, 10)).toEqual([]);
+      await stores.accounts.setTombstoneCancel("acc_1", { state: "pending", pendingIds: ["sub_1"], attempts: 1, nextAttemptAt: T0 + 100, alerted: false });
+      expect(await stores.accounts.listPendingCancels(T0 + 99, 10)).toEqual([]);
+      expect(await stores.accounts.listPendingCancels(T0 + 100, 10)).toEqual(["acc_1"]);
+      expect((await stores.accounts.getTombstone("acc_1"))!.cancel).toMatchObject({ pendingIds: ["sub_1"] });
+      await stores.accounts.setTombstoneCancel("acc_1", { state: "done", pendingIds: [], attempts: 1, nextAttemptAt: T0 + 100, alerted: false });
+      expect(await stores.accounts.listPendingCancels(T0 + 1000, 10)).toEqual([]);
+      expect(await stores.accounts.setTombstoneCancel("ghost", null)).toBeNull();
+    });
+
+    it("appends a subscription that appears after the deletion to the tombstone and the indexes, once", async () => {
+      const stores = await accountWith();
+      await stores.accounts.applyPlanEvent("acc_1", T0, () => plan());
+      await stores.accounts.markDeleting("acc_1", T0 + 1);
+      const t = await stores.accounts.addTombstoneSubscription("acc_1", "sub_late", "ctm_late");
+      expect([...t!.paddleSubscriptionIds!].sort()).toEqual(["sub_1", "sub_late"]);
+      expect([...t!.paddleCustomerIds!].sort()).toEqual(["ctm_1", "ctm_late"]);
+      await stores.accounts.addTombstoneSubscription("acc_1", "sub_late", "ctm_late");
+      expect((await stores.accounts.getTombstone("acc_1"))!.paddleSubscriptionIds).toHaveLength(2);
+      expect(await stores.accounts.findAccountIdByPaddleSubscription("sub_late")).toBe("acc_1");
+      expect(await stores.accounts.findAccountIdByPaddleCustomer("ctm_late")).toBe("acc_1");
+      expect(await stores.accounts.addTombstoneSubscription("ghost", "sub_x", null)).toBeNull();
     });
   });
 
@@ -130,8 +152,13 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
         }),
       );
       const t = await stores.accounts.markDeleting("acc_1", T0 + 1);
-      expect([...t!.paddleSubscriptionIds].sort()).toEqual(["sub_1", "sub_dup", "sub_old"]);
-      expect([...t!.paddleCustomerIds].sort()).toEqual(["ctm_1", "ctm_old"]);
+      expect([...t!.paddleSubscriptionIds!].sort()).toEqual(["sub_1", "sub_dup", "sub_old"]);
+      expect([...t!.paddleCustomerIds!].sort()).toEqual(["ctm_1", "ctm_old"]);
+      // A plan with a single id leaves the optional lists out: the tombstone keeps the shape of the account module.
+      const plain = await accountWith("acc_2");
+      await plain.accounts.applyPlanEvent("acc_2", T0, () => plan({ accountId: "acc_2" }));
+      const t2 = await plain.accounts.markDeleting("acc_2", T0 + 1);
+      expect(t2).toEqual({ accountId: "acc_2", paddleCustomerId: "ctm_1", paddleSubscriptionId: "sub_1", createdAt: T0 + 1 });
     });
 
     it("lists an account whose only waiting cancellation is an extra one, when it is due", async () => {

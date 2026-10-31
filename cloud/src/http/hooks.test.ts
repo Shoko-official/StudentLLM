@@ -12,7 +12,6 @@ import { routeMeta, type Handler, type RequestContext, type Step } from "./conte
 import { ApiError } from "./envelope";
 import { defaultHooks, isMissingHook, mergeHooks, mergeProvidedHooks, type PipelineHooks } from "./pipeline";
 import { Router } from "./router";
-import { notImplemented } from "./stub";
 
 const UUID = "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a11";
 const CONTENT = {

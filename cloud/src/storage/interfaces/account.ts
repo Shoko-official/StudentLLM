@@ -251,6 +251,12 @@ export interface AccountStore {
   listDueDeletions(now: number, limit: number): Promise<DeletionJob[]>;
   /** Counts a cancel attempt that did not finish and schedules the next one. Returns the job, or null. */
   recordCancelAttempt(accountId: string, nextAttemptAt: number): Promise<DeletionJob | null>;
+  /**
+   * A subscription (and its customer) that appeared after the deletion started: appends the ids to the tombstone and to
+   * the Paddle indexes, so the cancel covers it and its later events resolve to the tombstone. Idempotent. Null when
+   * there is no tombstone.
+   */
+  addTombstoneSubscription(accountId: string, subscriptionId: string, customerId: string | null): Promise<DeletionTombstone | null>;
   /** Records the state of the cancellation of a deleted account on its tombstone. Null when there is no tombstone. */
   setTombstoneCancel(accountId: string, cancel: TombstoneCancel | null): Promise<DeletionTombstone | null>;
   /** Removes the account (if any), its plan, its tombstone and the Paddle indexes. */
