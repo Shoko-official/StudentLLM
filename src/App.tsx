@@ -58,7 +58,7 @@ import { probeSidecar, SidecarHealth } from './lib/sidecar-health';
 import { getManagedSidecarStatus, ManagedSidecarStatus, startManagedSidecars, stopManagedSidecars } from './lib/sidecar-supervisor';
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore, type SourceBlobStore } from './lib/source-storage';
-import { describeAiFailure } from './lib/service-errors';
+import { describeAiFailure, describeDocumentFailure, describeSpeechFailure } from './lib/service-errors';
 import { mergeSegments } from './lib/transcript-merge';
 import { AudioChunkStore, createRecordingChunkStore } from './lib/recording-storage';
 import { listPendingRecordings, removePendingRecording, savePendingRecording } from './lib/recording-recovery';
@@ -2091,8 +2091,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           notify(segments.length
             ? `Local transcription added ${segments.length} segments from ${resource.name}.`
             : `${resource.name} contains no detected speech.`);
-        } catch {
-          setActionError(`${resource.name} is saved. Transcription failed; check the speech service in Settings.`);
+        } catch (error) {
+          setActionError(`${resource.name} is saved. ${describeSpeechFailure(error)}`);
         } finally {
           setTranscribingResourceIds((current) => {
             const next = new Set(current);
@@ -2132,10 +2132,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             : `${resource.name} contains no extractable text.`);
         } catch (error) {
           rebuiltDocumentSourceIds.current.delete(resource.id);
-          const detail = error instanceof Error && /fetch|timed out|offline/i.test(error.message)
-            ? 'The document service is offline.'
-            : 'The document service could not extract this file.';
-          setActionError(`${resource.name} is saved. ${detail} Open Settings and refresh the local services.`);
+          setActionError(`${resource.name} is saved. ${describeDocumentFailure(error)}`);
         }
       }
     } catch (error) {
@@ -2282,7 +2279,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       formatExistingCourseNote(lessonId, nextTranscript);
       notify('Transcription added to your course notes.');
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Transcription failed. Check the speech service and try again.');
+      setActionError(describeSpeechFailure(error));
     } finally {
       setTranscribingResourceIds((current) => { const ids = new Set(current); ids.delete(resource.id); return ids; });
     }

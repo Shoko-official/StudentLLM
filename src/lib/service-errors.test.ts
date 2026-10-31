@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AI_TIMEOUT_MESSAGE, AI_UNREACHABLE_MESSAGE, describeAiFailure, describeServiceUnreachable, isNetworkFailure } from './service-errors';
+import { AI_TIMEOUT_MESSAGE, AI_UNREACHABLE_MESSAGE, describeAiFailure, describeDocumentFailure, describeServiceUnreachable, describeSpeechFailure, isNetworkFailure } from './service-errors';
 
 describe('service error messages', () => {
   it('explains an unreachable model without the HTTP status', () => {
@@ -28,5 +28,21 @@ describe('service error messages', () => {
     expect(describeServiceUnreachable(new DOMException('Aborted', 'AbortError'))).toMatch(/timed out/);
     expect(describeServiceUnreachable(new Error('Something else'))).toBe('Something else');
     expect(isNetworkFailure(new Error('NetworkError when attempting to fetch resource.'))).toBe(true);
+  });
+
+  it('tells a damaged or protected document apart from a service that is not running', () => {
+    const rejected = describeDocumentFailure(new Error('Local document extraction failed (422): Document extraction failed.'));
+    expect(rejected).toMatch(/damaged or protected by a password/);
+    expect(rejected).not.toMatch(/Start it|refresh/);
+    expect(describeDocumentFailure(new TypeError('Failed to fetch'))).toMatch(/offline\. Start it/);
+    expect(describeDocumentFailure(new Error('Local document extraction timed out.'))).toMatch(/document service is offline or took too long/);
+    expect(describeDocumentFailure(new Error('The document is too large.'))).toBe('The document is too large.');
+    expect(describeDocumentFailure(new Error('Local document extraction failed (500): boom'))).toMatch(/refresh the local services/);
+  });
+
+  it('keeps the audio reassurance in speech failures', () => {
+    expect(describeSpeechFailure(new TypeError('Failed to fetch'))).toMatch(/audio was kept/);
+    expect(describeSpeechFailure(new Error('Local transcription timed out.'))).toMatch(/too long/);
+    expect(describeSpeechFailure(new Error('No speech was detected in this recording.'))).toBe('No speech was detected in this recording.');
   });
 });
