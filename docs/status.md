@@ -17,7 +17,7 @@ Version `0.1.0` is prepared for its first tagged release. `main` carries the fix
 | Python server checks | `python -m unittest tests.test_local_asr_server tests.test_local_server_contract` ran 24 tests, all passed |
 | Dependency audit | `npm audit --omit=dev --audit-level=high` exited 0; only low-severity advisories remain, in nested KaTeX copies pulled in by `rehype-katex` and `remark-math` (GHSA-238p-pmpm-9mq7) |
 
-Known limits of this release: the installers are not code signed, the macOS build targets Apple Silicon only, and the optional Python speech and document services are not bundled. The Tauri content security policy is still unset. The provider and benchmark evidence below was not re-run for this release.
+Known limits of this release: the installers are not code signed, the macOS build targets Apple Silicon only, and the optional Python speech and document services are not bundled. The Tauri content security policy is still unset (set in Unreleased, see CHANGELOG). The provider and benchmark evidence below was not re-run for this release.
 
 ## 2026-09-16 completion baseline
 
