@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Removing a source is no longer instant and irreversible: an Undo toast (a live region, keyboard reachable, paused while hovered or focused) restores the source, its transcript and its note for 8 seconds, and the stored original is only erased afterwards, including after a reload.
+
 ### Added
 
 - Live course notes now turn the incremental transcript into a persisted, routed document with formulas, code, schemas, and compact data visualizations when appropriate; LM Studio can refine the detected subject, chapter, title, and Markdown filename.
