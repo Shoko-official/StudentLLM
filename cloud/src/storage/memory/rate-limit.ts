@@ -25,6 +25,10 @@ export class InMemoryRateLimitStore implements RateLimitStore {
     return { allowed: true, limit, remaining: limit - entry.times.length, resetAfterSeconds: resetAt(), retryAfterSeconds: null };
   }
 
+  async hitAccount(accountId: string, bucket: string, limit: number, windowMs: number, now: number) {
+    return this.hit(`acct:${accountId}:${bucket}`, limit, windowMs, now);
+  }
+
   async purgeAccount(accountId: string) {
     for (const key of [...this.hits.keys()]) {
       if (key === `acct:${accountId}` || key.startsWith(`acct:${accountId}:`)) this.hits.delete(key);
