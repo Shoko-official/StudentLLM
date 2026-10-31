@@ -199,8 +199,19 @@ at all (notifications), and no link.
 
 Rate limits are constants in `modules/auth/constants.ts` (the plan's example numbers): 60 requests a minute per
 connection and route, 5 code requests an hour per address with at least 60 seconds between two, 20 an hour per
-connection, and failed code checks counted per address and per connection. Connection addresses (`CF-Connecting-IP`)
-and email addresses are only ever hashed under the rotating salt.
+connection, and failed code checks counted per address-and-connection pair and per connection (never per address
+alone). A code request inside the 60 second window changes nothing and is answered like any other. An IPv6 connection
+counts as its /64. A request without a readable `CF-Connecting-IP` shares ONE bucket with much stricter limits (10 a
+minute, 5 code requests an hour), so removing the header never earns more allowance. Connection addresses and email
+addresses are only ever hashed under the rotating salt.
+
+Known limits: the salted counters reset when the salt rotates (every 24 hours, at UTC midnight), so a window that
+straddles it can be used twice; and there is no global cap on the emails the gateway sends (only the per-address and
+per-connection ones), which belongs to the email provider setup.
+
+The `auth-cleanup` scheduled task (challenges, sessions, grace copies, manage tokens, windows) and the
+`account-deletion-retry` task run from the Worker's `scheduled` handler: ops must add a cron trigger to
+`wrangler.toml` (`[triggers] crons = [...]`, for example every 5 minutes); none is configured yet.
 
 Tests drive the real app through `makeAuthApp()` (`src/testing/auth-app.ts`): a fake Google (`fake-google.ts`) and a fake
 email sender (`fake-email.ts`) are injected, so no test touches the network. Pipeline tests that want only the route
@@ -223,11 +234,18 @@ under "Contract questions"; none changes the contract):
   constants in `modules/auth/constants.ts`. A bad `/auth/start` parameter is a 400 error envelope, never a redirect.
 - `terms_version` is required on every `/auth/start` (the account is not known yet). A sign-in that carries the current
   version records the acceptance for an existing account with an older one.
-- Suspension is checked before terms. An account being deleted answers `session_revoked` on gated routes; its sessions
-  stay valid until the purge so that a repeated `DELETE /v1/account` returns the same 202.
-- A consent withdrawal is accepted whatever consent text version the client holds; only a grant needs the current one.
+- Suspension is checked before terms.
+- Deleting an account erases all personal data at once (the tombstone keeps only the Paddle ids and the retry
+  bookkeeping), so a repeated `DELETE /v1/account` answers `session_revoked`. The cancel is retried for 14 days
+  (a placeholder in `modules/account/deletion.ts`), then waits in manual review.
+- A consent withdrawal is accepted whatever versions the client holds, records the server's versions, works for a
+  retired provider set and is exempt from the gating; a grant needs the current versions and an open gate
+  (`POST /v1/consent` is on the exempt route list for that reason; its handler gates a grant itself).
 - The Google link is made at the callback (the pending sign-in has no field for the subject), and the ticket is only
-  read at `/auth/start` and `/auth/email/request`; it is spent at completion.
+  read at `/auth/start` and `/auth/email/request`; it is spent at completion. A new Google user's account, and the
+  acceptance of the terms, are made at `/auth/token`, after the PKCE proof.
+- The account routes opt out of the inference module's per-account window (`rateLimit: "none"`) and use their own
+  (`modules/account/rate-limit.ts`), so chat requests cannot throttle delete, export, devices or withdrawal.
 - Logout also frees the device when no other session uses it. A device whose sessions are all gone is pruned lazily,
   which is how an expired session frees its slot.
 - The session keeps one previous token hash (as the plan's data table says), so only that generation can be detected as

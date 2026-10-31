@@ -49,7 +49,8 @@ paths:
       description: |
         Redirects to Google. The app must have shown the terms and privacy notice and obtained an
         explicit acceptance before calling this route, and passes the accepted `terms_version`.
-        Invalid parameters render a plain error page and never redirect to an unverified URI.
+        Invalid parameters answer 400 `invalid_request` (the JSON error envelope; nothing is rendered or
+        echoed) and never redirect to an unverified URI.
       security: []
       parameters:
         - { name: client_id, in: query, required: true, schema: { type: string, const: studentllm-desktop } }
@@ -135,8 +136,9 @@ paths:
       operationId: authEmailRequest
       summary: Request a one-time sign-in code by email
       description: |
-        Always answers the same way whether or not the address is known. A new request invalidates all
-        earlier codes for the address. The email carries an 8-character code and no link, and says to
+        Always answers the same way whether or not the address is known. A request after the resend interval
+        (60 seconds) invalidates all earlier codes for the address; a request inside the interval changes
+        nothing and gets the same 202. The email carries an 8-character code and no link, and says to
         enter it only in StudentLLM on the device where it was requested.
       security: []
       requestBody:
