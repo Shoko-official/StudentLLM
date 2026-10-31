@@ -971,17 +971,69 @@ describe('StudentLLM workspace', () => {
     expect(guide).toHaveAttribute('rel', 'noreferrer');
   });
 
-  it('shows external addresses as text in the packaged app, which opens no windows', async () => {
+  it('shows external addresses as keyboard-reachable read-only fields in the packaged app, which opens no windows', async () => {
     const user = userEvent.setup();
     const invoke = vi.fn(async (command: string) => command === 'load_workspace' ? null : []);
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: { invoke } });
+    try {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
+      render(<App />);
+
+      await user.click(await screen.findByRole('button', { name: /Settings/ }));
+      const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
+      expect(within(settingsDialog).queryByRole('link', { name: 'Read the user guide' })).not.toBeInTheDocument();
+      const address = within(settingsDialog).getByRole('textbox', { name: 'Address of Read the user guide' });
+      expect(address).toHaveValue('https://github.com/Shoko-official/StudentLLM/blob/main/docs/user-guide.md');
+      expect(address).toHaveAttribute('readonly');
+      address.focus();
+      expect(address).toHaveFocus();
+    } finally {
+      delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
+  });
+
+  it('keeps links in a page that merely looks native (only the Tauri bridge turns them into text)', async () => {
+    const user = userEvent.setup();
+    const invoke = vi.fn(async (command: string) => command === 'load_workspace' ? null : []);
+    // `isNativeRuntime` is true for this page (a global `__TAURI__`), but no `__TAURI_INTERNALS__` was injected.
     Object.defineProperty(window, '__TAURI__', { configurable: true, value: { core: { invoke } } });
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ data: [] }), { status: 200 }));
     render(<App />);
 
     await user.click(await screen.findByRole('button', { name: /Settings/ }));
     const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
-    expect(within(settingsDialog).queryByRole('link')).not.toBeInTheDocument();
-    expect(within(settingsDialog).getByText('https://github.com/Shoko-official/StudentLLM/blob/main/docs/user-guide.md')).toBeInTheDocument();
+    expect(within(settingsDialog).getByRole('link', { name: 'Read the user guide' })).toHaveAttribute('target', '_blank');
+  });
+
+  it('shows the legal references of the recording notice as fields in the packaged app and as links in a browser', async () => {
+    const user = userEvent.setup();
+    const references = ['French Penal Code, Article 226-1', 'CNIL consent guidance'];
+    localStorage.removeItem(RECORDING_NOTICE_STORAGE_KEY);
+
+    const browser = render(<App recorderSessionFactory={async () => bookmarkRecorder()} />);
+    await user.click(screen.getByRole('button', { name: 'Start recording' }));
+    const browserNotice = screen.getByRole('dialog', { name: 'Before you record' });
+    for (const name of references) expect(within(browserNotice).getByRole('link', { name })).toHaveAttribute('target', '_blank');
+    browser.unmount();
+
+    const invoke = vi.fn(async (command: string) => command === 'load_workspace' ? null : []);
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { configurable: true, value: { invoke } });
+    try {
+      render(<App recorderSessionFactory={async () => bookmarkRecorder()} />);
+      // A native workspace that has not been saved yet starts empty, so create a course first.
+      await user.click((await screen.findAllByRole('button', { name: /New course|Create your first course/ }))[0]);
+      await user.type(screen.getByLabelText('Course title'), 'Native notice course');
+      await user.click(screen.getByRole('button', { name: 'Create course' }));
+      await user.click(await screen.findByRole('button', { name: 'Start recording' }));
+      const notice = screen.getByRole('dialog', { name: 'Before you record' });
+      expect(within(notice).queryByRole('link')).not.toBeInTheDocument();
+      expect(within(notice).getByRole('textbox', { name: 'Address of French Penal Code, Article 226-1' })).toHaveValue(
+        'https://www.legifrance.gouv.fr/loda/article_lc/LEGIARTI000049312755/2024-06-26',
+      );
+      expect(within(notice).getByRole('textbox', { name: 'Address of CNIL consent guidance' })).toHaveValue('https://www.cnil.fr/fr/les-bases-legales/consentement');
+    } finally {
+      delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    }
   });
 
   it('restores a created course after remounting the workspace', async () => {
