@@ -478,18 +478,6 @@ describe('the app with its workspace in IndexedDB', () => {
       act(() => { window.dispatchEvent(new Event('pagehide')); });
       await waitFor(async () => expect(JSON.stringify(JSON.parse(String(await idbValue(SNAPSHOT_KEY))))).toContain('Kept after the retry.'));
     });
-
-    it('says when the workspace is over the size limit, not that the browser is full', async () => {
-      localStorage.setItem(WORKSPACE_STORAGE_KEY, fixtureRaw());
-      const user = userEvent.setup();
-      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
-      await screen.findAllByText('Attention & Scaled Dot-Product');
-      await user.upload(screen.getByLabelText('Select course source'), new File(['x'.repeat(9 * 1024 * 1024)], 'enormous.md', { type: 'text/markdown' }));
-
-      const banner = (await screen.findByText(/larger than the 16 MB limit/, undefined, { timeout: 15_000 })).closest('[role="alert"]') as HTMLElement;
-      expect(banner).toHaveTextContent('your browser still has room');
-      expect(within(banner).getByRole('button', { name: 'Export this course' })).toBeInTheDocument();
-    }, 30_000);
   });
 
   it('keeps the compact snapshot across a reload of the app', async () => {

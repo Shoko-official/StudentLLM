@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFixtureWorkspace as createFixtureWithVersion } from '../test/workspace-fixture';
 import { createSyntheticWorkspace } from '../test/synthetic-workspace';
 import {
+  DEFAULT_LOAD_TIMEOUT_MS,
   fingerprintWorkspace,
   openBrowserWorkspace,
   openLocalStorageWorkspace,
@@ -1007,6 +1008,29 @@ describe('copies kept aside in IndexedDB', () => {
     for (let index = 0; index < 8; index += 1) {
       const key = index === 0 ? WORKSPACE_UNREADABLE_BACKUP_KEY : `${WORKSPACE_UNREADABLE_BACKUP_KEY}.${index}`;
       expect(await inspect(factory, (db) => db.get(key))).toBe(`copy ${index}`);
+    }
+  });
+});
+
+describe('the default load timeout', () => {
+  it('is 20 seconds, and the load is abandoned exactly then', async () => {
+    expect(DEFAULT_LOAD_TIMEOUT_MS).toBe(20_000);
+    const factory = new IDBFactory();
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, legacyRaw(createFixtureWorkspace()));
+    vi.spyOn(WorkspaceIdb.prototype, 'getSnapshotAndMeta').mockImplementation(() => new Promise(() => undefined));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let settled = false;
+      const opening = open(factory, { openTimeoutMs: 1e9 }).then((value) => { settled = true; opened.push(value); return value; });
+      // Let the database open (it runs on real timers) before the clock moves.
+      for (let turn = 0; turn < 5; turn += 1) await new Promise((resolve) => (globalThis as unknown as { setImmediate: (callback: () => void) => void }).setImmediate(() => resolve(undefined)));
+      await vi.advanceTimersByTimeAsync(DEFAULT_LOAD_TIMEOUT_MS - 1);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(2);
+      const result = await opening;
+      expect(result.unavailable).toEqual({ reason: 'indexeddb-timeout', protect: false });
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
