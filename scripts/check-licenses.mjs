@@ -9,7 +9,7 @@
 //   node scripts/check-licenses.mjs --require-cargo fail instead of skipping when cargo is missing
 //   node scripts/check-licenses.mjs --json          machine-readable result
 
-import { spawnSync } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -58,25 +58,31 @@ function checkCargo() {
   notes.push(`src-tauri/Cargo.lock: ${rows.length} crates (normal and build dependencies)`);
 }
 
-function checkPython() {
+async function checkPython() {
   const python = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 'python3');
   const only = process.argv.flatMap((value, index, all) => (value === '--python-file' ? [all[index + 1]] : []));
   const files = readdirSync(root).filter((name) => /^requirements-.*\.txt$/.test(name) && (!only.length || only.includes(name))).sort();
   const work = mkdtempSync(join(tmpdir(), 'licenses-'));
   try {
-    for (const file of files) {
+    // Resolving torch-sized trees is slow, so the files are resolved concurrently.
+    const outcomes = await Promise.all(files.map((file) => new Promise((done) => {
       const reportPath = join(work, `${file}.json`);
-      const run = spawnSync(python, [
+      const started = Date.now();
+      execFile(python, [
         '-m', 'pip', 'install', '--dry-run', '--ignore-installed', '--disable-pip-version-check', '--quiet',
         '--report', reportPath, '-r', join(root, file),
-      ], { encoding: 'utf8', cwd: root });
-      if (run.status !== 0 || !existsSync(reportPath)) {
-        results.push({ ecosystem: 'python', name: `(resolve ${file})`, version: '', status: 'violation', class: 'unknown', license: (run.stderr || run.error?.message || 'pip failed').trim().split('\n').pop(), scope: file });
+      ], { cwd: root, timeout: 30 * 60 * 1000, maxBuffer: 64 * 1024 * 1024 }, (error, _stdout, stderr) => {
+        done({ file, reportPath, error, stderr, seconds: Math.round((Date.now() - started) / 1000) });
+      });
+    })));
+    for (const { file, reportPath, error, stderr, seconds } of outcomes) {
+      if (error || !existsSync(reportPath)) {
+        results.push({ ecosystem: 'python', name: `(resolve ${file})`, version: '', status: 'violation', class: 'unknown', license: (stderr || error?.message || 'pip failed').trim().split('\n').pop(), scope: file });
         continue;
       }
       const rows = pythonPackagesFromReport(JSON.parse(readFileSync(reportPath, 'utf8')));
       record(rows, 'python', file);
-      notes.push(`${file}: ${rows.length} resolved packages`);
+      notes.push(`${file}: ${rows.length} resolved packages in ${seconds} s`);
     }
   } finally {
     rmSync(work, { recursive: true, force: true });
@@ -85,7 +91,7 @@ function checkPython() {
 
 checkNpm();
 checkCargo();
-if (args.has('--python')) checkPython();
+if (args.has('--python')) await checkPython();
 else notes.push('Python skipped: pass --python to resolve the requirements files with pip (CI does).');
 
 const violations = results.filter((row) => row.status === 'violation');
