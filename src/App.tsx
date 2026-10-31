@@ -53,7 +53,7 @@ import { createLocalDocumentEngine } from './lib/document-engine';
 import type { DocumentPage } from './lib/document-engine';
 import type { DocumentEngine } from './lib/document-engine';
 import { readJsonResponse } from './lib/response-json';
-import { normalizeServiceBaseUrl } from './lib/service-url';
+import { isLoopbackServiceUrl, LOOPBACK_ONLY_DETAIL, normalizeServiceBaseUrl } from './lib/service-url';
 import { probeSidecar, SidecarHealth } from './lib/sidecar-health';
 import { getManagedSidecarStatus, ManagedSidecarStatus, startManagedSidecars, stopManagedSidecars } from './lib/sidecar-supervisor';
 import { createSourceResource } from './lib/source-ingest';
@@ -1178,8 +1178,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const checkSidecars = async (settings = serviceSettings) => {
     setIsCheckingSidecars(true);
     const [asr, documents, managed] = await Promise.all([
-      probeSidecar(settings.asrUrl),
-      probeSidecar(settings.documentsUrl),
+      probeSidecar(settings.asrUrl, { loopbackOnly: isNativeRuntime() }),
+      probeSidecar(settings.documentsUrl, { loopbackOnly: isNativeRuntime() }),
       getManagedSidecarStatus().catch(() => []),
     ]);
     setSidecarHealth({ asr, documents });
@@ -1191,6 +1191,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
     try {
       if (!settings.llmUrl) throw new Error('Set an LM Studio address.');
+      if (isNativeRuntime() && !isLoopbackServiceUrl(settings.llmUrl)) {
+        setAvailableModels([]);
+        setLlmHealth(`Unavailable. ${LOOPBACK_ONLY_DETAIL}`);
+        setIsCheckingSidecars(false);
+        return;
+      }
       const response = await fetch(`${normalizeServiceBaseUrl(settings.llmUrl)}/models`, { signal: AbortSignal.timeout(3000) });
       if (!response.ok) throw new Error('LM Studio is not responding.');
       const body = await readJsonResponse(response, 'LM Studio');

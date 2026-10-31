@@ -25,4 +25,12 @@ describe('sidecar health probes', () => {
     }));
     await expect(probeSidecar('http://127.0.0.1:8765', { fetchImpl: timeoutFetch, timeoutMs: 1 })).resolves.toEqual({ available: false, detail: 'Health check timed out.' });
   });
+
+  it('does not request an address outside this computer when the packaged app restricts connections', async () => {
+    const fetchImpl = vi.fn();
+    await expect(probeSidecar('http://192.168.1.20:8765', { fetchImpl, loopbackOnly: true })).resolves.toMatchObject({ available: false, detail: expect.stringContaining('on this computer') });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    fetchImpl.mockResolvedValue(new Response(JSON.stringify({ status: 'ready' }), { status: 200 }));
+    await expect(probeSidecar('http://127.0.0.1:8765', { fetchImpl, loopbackOnly: true })).resolves.toMatchObject({ available: true });
+  });
 });
