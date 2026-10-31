@@ -185,40 +185,52 @@ describe('StudentLLM packaged desktop workflow', () => {
     expect(listening).toBe(true);
     const blockedCount = () => browser.execute(() => window.__newWindowBlocked.length);
 
-    await browser.execute(() => {
-      window.open('https://example.com/');
-      window.open('https://example.com/', '_blank', 'popup,width=320,height=240');
-    });
-    await browser.waitUntil(async () => (await blockedCount()) >= 1, { timeout: 15_000, timeoutMsg: 'window.open did not reach the new-window hook' });
-    await browser.pause(2_000);
-    // Engines differ in what they report for a script-opened window (the requested address, or about:blank first), so only the shape is checked.
-    const events = await browser.execute(() => window.__newWindowBlocked);
-    console.log(`Refused new-window requests after window.open: ${JSON.stringify(events)}`);
-    for (const event of events) {
-      expect(typeof event.scheme).toBe('string');
-      expect(typeof event.host).toBe('string');
-    }
+    // A script that opens a window without any user gesture. WebKitGTK refuses these itself, before the shell is asked, so no event is required here.
+    await browser.execute(() => { window.open('https://example.com/'); });
+    await browser.pause(3_000);
+    console.log(`Refused new-window requests after a script-only window.open: ${await blockedCount()}`);
     expect(await browser.getWindowHandles()).toHaveLength(1);
     expect(await browser.getUrl()).toMatch(appOrigin);
-    const blockedAfterScript = await blockedCount();
 
-    // A real click on a link that asks for a new window, the way the recording notice's links behaved before the desktop app stopped rendering them as links.
+    // The same two requests from a real click, which every engine passes on to the shell: a button whose handler calls window.open, and a link with
+    // target="_blank" (the way the recording notice's links behaved before the packaged app stopped rendering them as links).
     await browser.execute(() => {
+      const style = 'position:fixed;left:8px;z-index:2147483647;padding:8px;background:#fff;color:#000;';
+      const button = document.createElement('button');
+      button.id = 'new-window-guard-button';
+      button.type = 'button';
+      button.textContent = 'window.open';
+      button.style.cssText = `${style}top:8px;`;
+      button.addEventListener('click', () => { window.open('https://example.com/', '_blank', 'popup,width=320,height=240'); });
       const link = document.createElement('a');
       link.id = 'new-window-guard-link';
       link.href = 'https://example.com/';
       link.target = '_blank';
       link.textContent = 'Open example.com';
-      link.style.cssText = 'position:fixed;top:8px;left:8px;z-index:2147483647;padding:8px;background:#fff;color:#000;';
-      document.body.append(link);
+      link.style.cssText = `${style}top:64px;`;
+      document.body.append(button, link);
     });
-    await (await visible('#new-window-guard-link')).click();
-    await browser.waitUntil(async () => (await blockedCount()) > blockedAfterScript, { timeout: 15_000, timeoutMsg: 'The link click did not reach the new-window hook' });
-    await browser.pause(2_000);
-    expect(await browser.getWindowHandles()).toHaveLength(1);
-    expect(await browser.getWindowHandle()).toBe(handleBefore);
-    expect(await browser.getUrl()).toMatch(appOrigin);
-    await browser.execute(() => { document.getElementById('new-window-guard-link')?.remove(); });
+    for (const id of ['new-window-guard-button', 'new-window-guard-link']) {
+      const before = await blockedCount();
+      await (await visible(`#${id}`)).click();
+      await browser.waitUntil(async () => (await blockedCount()) > before, { timeout: 15_000, timeoutMsg: `The click on #${id} did not reach the new-window hook` });
+      await browser.pause(2_000);
+      expect(await browser.getWindowHandles()).toHaveLength(1);
+      expect(await browser.getWindowHandle()).toBe(handleBefore);
+      expect(await browser.getUrl()).toMatch(appOrigin);
+    }
+
+    // Engines differ in what they report for a script-opened window (the requested address, or about:blank first), so only the shape is checked.
+    const events = await browser.execute(() => window.__newWindowBlocked);
+    console.log(`Refused new-window requests: ${JSON.stringify(events)}`);
+    for (const event of events) {
+      expect(typeof event.scheme).toBe('string');
+      expect(typeof event.host).toBe('string');
+    }
+    await browser.execute(() => {
+      document.getElementById('new-window-guard-button')?.remove();
+      document.getElementById('new-window-guard-link')?.remove();
+    });
     await expect(await visible('.topbar')).toBeDisplayed();
   });
 
