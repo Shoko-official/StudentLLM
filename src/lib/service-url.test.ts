@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isLoopbackServiceUrl, normalizeServiceBaseUrl } from './service-url';
+import { isLoopbackServiceUrl, isRemoteServiceUrl, normalizeServiceBaseUrl } from './service-url';
 
 describe('service URL validation', () => {
   it('accepts local proxy paths and HTTP(S) endpoints', () => {
@@ -27,5 +27,14 @@ describe('loopback service URLs', () => {
     expect(isLoopbackServiceUrl('http://192.168.1.20:1234/v1')).toBe(false);
     expect(isLoopbackServiceUrl('http://127.0.0.1.example.test/v1')).toBe(false);
     expect(isLoopbackServiceUrl('http://localhost.example.test:1234')).toBe(false);
+  });
+
+  it('flags only well-formed non-loopback addresses as remote', () => {
+    expect(isRemoteServiceUrl('https://api.example.test/v1')).toBe(true);
+    expect(isRemoteServiceUrl('http://192.168.1.20:8765')).toBe(true);
+    expect(isRemoteServiceUrl('http://127.0.0.1:8765')).toBe(false);
+    expect(isRemoteServiceUrl('/lm-studio/v1')).toBe(false);
+    expect(isRemoteServiceUrl('')).toBe(false);
+    expect(isRemoteServiceUrl('not a url')).toBe(false);
   });
 });

@@ -28,4 +28,15 @@ export function isLoopbackServiceUrl(value: string) {
   return hostname === 'localhost' || hostname === '127.0.0.1';
 }
 
+// An invalid or empty address is not "remote": the health check reports it separately.
+export function isRemoteServiceUrl(value: string) {
+  if (!value.trim()) return false;
+  try {
+    return !isLoopbackServiceUrl(value);
+  } catch {
+    return false;
+  }
+}
+
+export const LOOPBACK_HINT = 'The desktop app only connects to localhost or 127.0.0.1.';
 export const LOOPBACK_ONLY_DETAIL = 'The desktop app only connects to services on this computer (localhost or 127.0.0.1).';

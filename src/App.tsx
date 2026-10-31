@@ -53,7 +53,7 @@ import { createLocalDocumentEngine } from './lib/document-engine';
 import type { DocumentPage } from './lib/document-engine';
 import type { DocumentEngine } from './lib/document-engine';
 import { readJsonResponse } from './lib/response-json';
-import { isLoopbackServiceUrl, LOOPBACK_ONLY_DETAIL, normalizeServiceBaseUrl } from './lib/service-url';
+import { isLoopbackServiceUrl, isRemoteServiceUrl, LOOPBACK_HINT, LOOPBACK_ONLY_DETAIL, normalizeServiceBaseUrl } from './lib/service-url';
 import { probeSidecar, SidecarHealth } from './lib/sidecar-health';
 import { getManagedSidecarStatus, ManagedSidecarStatus, startManagedSidecars, stopManagedSidecars } from './lib/sidecar-supervisor';
 import { createSourceResource } from './lib/source-ingest';
@@ -1267,6 +1267,18 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     event.preventDefault();
     if (isRecording || isFinalizingRecording || isStartingRecording) return;
     const settings = Object.fromEntries(Object.entries(serviceDraft).map(([key, value]) => [key, value.trim()])) as ServiceSettings;
+    if (isNativeRuntime()) {
+      // The packaged app's Content Security Policy only allows this computer; refuse a remote address at entry.
+      const remote = [
+        !usesNim(settings) && isRemoteServiceUrl(settings.llmUrl) ? 'LM Studio address' : '',
+        isRemoteServiceUrl(settings.asrUrl) ? 'Speech service address' : '',
+        isRemoteServiceUrl(settings.documentsUrl) ? 'Document service address' : '',
+      ].filter(Boolean);
+      if (remote.length > 0) {
+        notify(`Not saved. ${remote.join(', ')}: ${LOOPBACK_ONLY_DETAIL}`);
+        return;
+      }
+    }
     setServiceSettings(settings);
     setConnectionsEnabled(true);
     try {
@@ -2698,11 +2710,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
             <p className="connection-notice" role="note">While NVIDIA NIM is selected, lecture transcripts, imported document text, notes and your questions are sent to NVIDIA automatically to format notes, answer chat and build study material. The dev server reads the key from NVIDIA_API_KEY on this computer; it never reaches this page.</p>
             <label>NVIDIA model<input value={serviceDraft.nimModel} onChange={(event) => setServiceDraft((current) => ({ ...current, nimModel: event.target.value }))} placeholder={DEFAULT_NIM_MODEL} /></label>
           </> : <>
-            <div className="connection-field"><label htmlFor="local-llm-url">LM Studio address</label><input id="local-llm-url" value={serviceDraft.llmUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, llmUrl: event.target.value }))} placeholder="/lm-studio/v1" /><small>Works with LM Studio, Bionic, and any OpenAI-compatible local server.</small></div>
+            <div className="connection-field"><label htmlFor="local-llm-url">LM Studio address</label><input id="local-llm-url" value={serviceDraft.llmUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, llmUrl: event.target.value }))} placeholder="/lm-studio/v1" /><small>Works with LM Studio, Bionic, and any OpenAI-compatible local server.{isNativeRuntime() && ` ${LOOPBACK_HINT}`}</small></div>
             <label>Model<input value={serviceDraft.model} onChange={(event) => setServiceDraft((current) => ({ ...current, model: event.target.value }))} placeholder="Model identifier in LM Studio" /></label>
           </>}
-          <label>Speech service address<input value={serviceDraft.asrUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, asrUrl: event.target.value }))} placeholder="http://127.0.0.1:8765" /></label>
-          <label>Document service address<input value={serviceDraft.documentsUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, documentsUrl: event.target.value }))} placeholder="http://127.0.0.1:8766" /></label>
+          <div className="connection-field"><label htmlFor="local-asr-url">Speech service address</label><input id="local-asr-url" value={serviceDraft.asrUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, asrUrl: event.target.value }))} placeholder="http://127.0.0.1:8765" />{isNativeRuntime() && <small>{LOOPBACK_HINT}</small>}</div>
+          <div className="connection-field"><label htmlFor="local-documents-url">Document service address</label><input id="local-documents-url" value={serviceDraft.documentsUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, documentsUrl: event.target.value }))} placeholder="http://127.0.0.1:8766" />{isNativeRuntime() && <small>{LOOPBACK_HINT}</small>}</div>
           <button className="primary-submit" disabled={isRecording || isFinalizingRecording || isStartingRecording || isCheckingSidecars} type="submit">Save connections</button>
           <p className="empty-state" role="status">{usesNim(serviceSettings) ? 'NVIDIA NIM' : 'LM Studio / Bionic'}: {isCheckingSidecars ? 'Checking...' : llmHealth}</p>{availableModels.length > 0 && <p className="detected-models">Detected local models: {availableModels.join(', ')}</p>}
         </form><div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>Audio and document sidecars are checked without interrupting any running local model.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>ASR sidecar</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document sidecar</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Animated icons by <a href="https://lordicon.com/" target="_blank" rel="noreferrer">Lordicon</a>.</p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
