@@ -39,7 +39,7 @@ import { folderNameOf, planBatchImport } from './lib/batch-import';
 import { BrandGlyph } from './lib/brand-mark';
 import { textMatchesQuery } from './lib/snippet';
 import { Snippet } from './lib/snippet-view';
-import { requestRecorderSession, RecorderSession } from './lib/recorder';
+import { describeMicrophoneError, requestRecorderSession, RecorderSession } from './lib/recorder';
 import { isNativeRuntime, loadWorkspaceAsync, loadWorkspaceWithStatus, runPackagedIpcSmoke, saveWorkspaceAsync, WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
 import type { WorkspaceStorageError } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
@@ -357,6 +357,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   // Long-running work (transcription, extraction) must read the workspace as it is when it finishes, not as it was when it started.
   const lessonWorkspacesRef = useRef(lessonWorkspaces);
   lessonWorkspacesRef.current = lessonWorkspaces;
+  const toggleRecordingRef = useRef<() => Promise<void>>(async () => undefined);
   const lessonsRef = useRef(lessons);
   lessonsRef.current = lessons;
   const [liveTranscriptionError, setLiveTranscriptionError] = useState('');
@@ -1495,12 +1496,24 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         }
       }
       recorderRef.current = session;
+      session.onProblem?.((problem) => {
+        if (problem === 'storage') {
+          setRecordingError('This browser can no longer store the audio (storage is full). Stop and save now: what was already captured is kept. Free up space before recording again.');
+          return;
+        }
+        // The microphone went away (unplugged, or its permission was withdrawn). Finish the session so what was
+        // captured is saved and the interface does not keep counting time over silence.
+        if (recorderRef.current !== session) return;
+        void toggleRecordingRef.current();
+        setRecordingError('The microphone stopped working, so recording ended. What was captured before that has been saved.');
+      });
       setLiveRecordingLessonId(activeLesson.id);
       setIsRecording(true);
       setRecordingSeconds(0);
       notify('Recording started.');
     } catch (error) {
-      setRecordingError(error instanceof Error ? `Cannot start recording: ${error.message}` : 'The microphone is unavailable. Check permission and try again.');
+      setRecordingError(describeMicrophoneError(error)
+        ?? (error instanceof Error ? `Cannot start recording: ${error.message}` : 'The microphone is unavailable. Check permission and try again.'));
     } finally {
       startingRecorderRef.current = false;
       setIsStartingRecording(false);
@@ -1637,6 +1650,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
     await startRecording();
   };
+
+  toggleRecordingRef.current = toggleRecording;
 
   const acceptRecordingNotice = () => {
     if (!recordingNoticeChecked) return;

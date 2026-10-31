@@ -268,4 +268,61 @@ describe('user journeys', () => {
       await waitFor(() => expect(closeTab()).toBe(false));
     });
   });
+
+  describe('recording problems', () => {
+    const fakeSession = () => {
+      const listeners: Array<(problem: 'interrupted' | 'storage') => void> = [];
+      return {
+        listeners,
+        recordingId: 'journey-recording',
+        stream: {} as MediaStream,
+        durability: 'memory-only' as const,
+        readChunks: vi.fn(async () => []),
+        onProblem: (listener: (problem: 'interrupted' | 'storage') => void) => { listeners.push(listener); },
+        stop: vi.fn(async () => ({ recordingId: 'journey-recording', chunksPersisted: 3, persistenceError: false })),
+      };
+    };
+
+    it('ends the recording and says why when the microphone disappears', async () => {
+      const user = userEvent.setup();
+      const session = fakeSession();
+      render(<App provider={null} speechEngine={null} recorderSessionFactory={async () => session} />);
+
+      await user.click(screen.getByRole('button', { name: 'Start recording' }));
+      await screen.findByRole('button', { name: 'Stop recording' });
+      act(() => session.listeners.forEach((listener) => listener('interrupted')));
+
+      expect(await screen.findByText(/The microphone stopped working, so recording ended/)).toBeInTheDocument();
+      expect(session.stop).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Start recording' })).toBeEnabled());
+    });
+
+    it('warns while recording when audio can no longer be stored, without stopping it', async () => {
+      const user = userEvent.setup();
+      const session = fakeSession();
+      render(<App provider={null} speechEngine={null} recorderSessionFactory={async () => session} />);
+
+      await user.click(screen.getByRole('button', { name: 'Start recording' }));
+      await screen.findByRole('button', { name: 'Stop recording' });
+      act(() => session.listeners.forEach((listener) => listener('storage')));
+
+      expect(await screen.findByText(/can no longer store the audio/)).toBeInTheDocument();
+      expect(session.stop).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Stop recording' })).toBeInTheDocument();
+    });
+
+    it('explains a blocked or missing microphone in plain language', async () => {
+      const user = userEvent.setup();
+      const factory = vi.fn()
+        .mockRejectedValueOnce(new DOMException('Permission denied', 'NotAllowedError'))
+        .mockRejectedValueOnce(new DOMException('Requested device not found', 'NotFoundError'));
+      render(<App provider={null} recorderSessionFactory={factory} />);
+
+      await user.click(screen.getByRole('button', { name: 'Start recording' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Microphone access is blocked.');
+      await user.click(screen.getByRole('button', { name: 'Start recording' }));
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('No microphone was found.'));
+      expect(screen.queryByText(/Permission denied|Requested device/)).not.toBeInTheDocument();
+    });
+  });
 });
