@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Check the tag matches the app version
         run: |
           tauri=$(node -p "require('./src-tauri/tauri.conf.json').version")
@@ -104,6 +106,7 @@ jobs:
           name: release-${{ runner.os }}
           path: release-assets/*
           if-no-files-found: error
+          retention-days: 7
 
   publish:
     needs: build
@@ -123,5 +126,6 @@ jobs:
           merge-multiple: true
       - name: Attach installers to the draft release
         run: |
+          [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = "true" ] || { echo "Release $TAG is not a draft; refusing to upload." >&2; exit 1; }
           ls -l release-assets
           gh release upload "$TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
