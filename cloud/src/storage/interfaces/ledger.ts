@@ -23,10 +23,25 @@ export interface IdempotencyRef {
   keyHash: string;
 }
 
+/**
+ * Where a window comes from. Only `paddle` windows are touched by refunds and chargebacks; an `admin_grant`
+ * window (a complimentary period, no payment) is touched only by the grant operations.
+ */
+export type WindowSource = "paddle" | "admin_grant";
+
+/** Narrows a window operation to one source or one grant. */
+export interface WindowFilter {
+  source?: WindowSource;
+  grantId?: string;
+}
+
 export interface BudgetWindow {
   accountId: string;
   /** Windows are keyed by their start. */
   start: number;
+  source: WindowSource;
+  /** The grant a complimentary window belongs to; null for a paid window. */
+  grantId: string | null;
   end: number;
   limit: number;
   used: number;
@@ -81,12 +96,29 @@ export interface SweepResult {
 }
 
 export interface LedgerStore {
-  /** Creates the window when missing. Never resets `used` or `reserved` of an existing one. */
-  ensureWindow(accountId: string, input: { start: number; end: number; limit: number }): Promise<BudgetWindow>;
+  /**
+   * Creates the window when missing. Never resets `used` or `reserved` of an existing one, never changes its
+   * limit, end or source, and never un-revokes it (replaying a purchase after a refund buys nothing).
+   * `source` defaults to `paddle`.
+   */
+  ensureWindow(
+    accountId: string,
+    input: { start: number; end: number; limit: number; source?: WindowSource; grantId?: string },
+  ): Promise<BudgetWindow>;
   getCurrentWindow(accountId: string, now: number): Promise<BudgetWindow | null>;
   listWindows(accountId: string): Promise<BudgetWindow[]>;
-  /** Refund or chargeback: revokes the current and all future windows (those ending after `now`). */
-  revokeWindows(accountId: string, now: number): Promise<number>;
+  /**
+   * Refund or chargeback: revokes the current and all future windows (those ending after `now`). With a
+   * filter, only the windows of that source (billing passes `paddle`) or grant. Returns how many changed.
+   */
+  revokeWindows(accountId: string, now: number, filter?: WindowFilter): Promise<number>;
+  /**
+   * Ends windows at `at`: a window that contains `at` is cut there (its used credits stay used), a window
+   * that starts at or after `at` is revoked. Nothing moves later, and a window that ended at or before `at`
+   * is untouched. Used for an immediate cancellation, a grant cut by a purchase and a shortened grant.
+   * Returns how many windows changed.
+   */
+  truncateWindows(accountId: string, at: number, filter?: WindowFilter): Promise<number>;
 
   /** Atomic: checks the remaining budget of the current window and reserves `credits` (a positive integer). */
   reserve(

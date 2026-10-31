@@ -38,9 +38,32 @@ export interface NewAccount {
   now: number;
 }
 
+/** What a paid period was bought as. A budget window exists for each period (docs/cloud-plan.md, "Quota design"). */
+export type PaidPeriodKind = "subscription" | "pass";
+
 export interface PaidPeriod {
   start: number;
   end: number;
+  /** Absent on records written before the billing module (read as `subscription`). */
+  kind?: PaidPeriodKind;
+  /**
+   * The Paddle transaction that paid for this period (a pass: the same id on all five of its periods, so a
+   * replay or a second delivery cannot add them twice). Ids only; never a name or an address.
+   */
+  purchaseId?: string;
+  /** Set when a refund or chargeback withdrew the period; the period stays as history and buys nothing. */
+  revokedAt?: number;
+}
+
+/** A cancellation Paddle has not confirmed yet. It is visible, retried with backoff, and never silently dropped. */
+export interface PendingCancel {
+  when: "period_end" | "now";
+  requestedAt: number;
+  attempts: number;
+  /** The scheduled task retries once `now >= nextAttemptAt`. */
+  nextAttemptAt: number;
+  /** True once the operator was alerted for this cancellation (so the alert is not repeated on every retry). */
+  alerted: boolean;
 }
 
 export interface PlanRecord {
@@ -53,6 +76,8 @@ export interface PlanRecord {
   paddleSubscriptionId: string | null;
   /** `occurred_at` of the last applied billing event, for ordering. */
   lastEventAt: number | null;
+  /** Absent or null when no cancellation is waiting for Paddle. */
+  pendingCancel?: PendingCancel | null;
 }
 
 export interface DeletionTombstone {
@@ -87,7 +112,11 @@ export type SavePlanResult =
   | { ok: false; reason: "not_found" };
 
 export type ApplyPlanEventResult =
-  | { applied: true; plan: PlanRecord; planVersion: number }
+  /**
+   * `changed` is false when the reducer produced the same plan (ignoring `lastEventAt`): the event is recorded
+   * as the latest one but the plan version does not move, so a harmless duplicate does not make clients refetch.
+   */
+  | { applied: true; plan: PlanRecord; planVersion: number; changed: boolean }
   | { applied: false; reason: "stale" | "not_found" };
 
 export interface AccountStore {
@@ -125,9 +154,11 @@ export interface AccountStore {
   /**
    * Atomic billing-event application: reads the plan, drops the event when `occurredAt` is older than the
    * plan's `lastEventAt` (`stale`), otherwise runs `reduce`, stores the result with `lastEventAt` set to
-   * `occurredAt`, and bumps the plan version, all in one step. Equal timestamps are applied.
+   * `occurredAt`, and bumps the plan version when the plan changed, all in one step. Equal timestamps are applied.
    */
   applyPlanEvent(accountId: string, occurredAt: number, reduce: PlanReducer): Promise<ApplyPlanEventResult>;
+  /** Accounts whose plan has a `pendingCancel` due at `now` (earliest first, at most `limit`). */
+  listPendingCancels(now: number, limit: number): Promise<string[]>;
   findAccountIdByPaddleSubscription(subscriptionId: string): Promise<string | null>;
   findAccountIdByPaddleCustomer(customerId: string): Promise<string | null>;
 

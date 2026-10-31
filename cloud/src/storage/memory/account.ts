@@ -16,6 +16,17 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const copy = <T>(value: T): T => structuredClone(value);
 
+/** Key-sorted JSON; undefined values and a null `pendingCancel` are dropped so "absent" and "null" compare equal. */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (key, v: unknown) => {
+    if (v === undefined || (key === "pendingCancel" && v === null)) return undefined;
+    if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+      return Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+    }
+    return v;
+  });
+}
+
 /** In-memory AccountStore for tests and local dev. Every method body is synchronous, hence atomic. */
 export class InMemoryAccountStore implements AccountStore {
   private readonly accounts = new Map<string, AccountRecord>();
@@ -152,8 +163,23 @@ export class InMemoryAccountStore implements AccountStore {
     const next = copy(reduce(current ? copy(current) : null));
     if (next.accountId !== accountId) throw new Error("a plan reducer must keep the account id");
     next.lastEventAt = occurredAt;
+    // An identical plan (a duplicate delivery, a metadata-only event) is recorded as the latest event but does
+    // not move the plan version: clients refetch the account only when the version changes.
+    const changed = current === null || canonical({ ...current, lastEventAt: null }) !== canonical({ ...next, lastEventAt: null });
+    if (!changed) {
+      this.plans.set(accountId, copy(next));
+      return { applied: true, plan: copy(next), planVersion: a.planVersion, changed: false };
+    }
     const planVersion = this.store(a, next);
-    return { applied: true, plan: copy(next), planVersion };
+    return { applied: true, plan: copy(next), planVersion, changed: true };
+  }
+
+  async listPendingCancels(now: number, limit: number) {
+    return [...this.plans.values()]
+      .filter((p) => p.pendingCancel != null && p.pendingCancel.nextAttemptAt <= now)
+      .sort((x, y) => x.pendingCancel!.nextAttemptAt - y.pendingCancel!.nextAttemptAt)
+      .slice(0, limit)
+      .map((p) => p.accountId);
   }
 
   async findAccountIdByPaddleSubscription(subscriptionId: string) {

@@ -10,6 +10,8 @@ import type {
   SettleResult,
   SweepRegistry,
   SweepResult,
+  WindowFilter,
+  WindowSource,
 } from "../interfaces";
 
 const copy = <T>(value: T): T => structuredClone(value);
@@ -54,7 +56,17 @@ export class InMemoryLedgerStore implements LedgerStore {
     return undefined;
   }
 
-  async ensureWindow(accountId: string, input: { start: number; end: number; limit: number }) {
+  private matches(w: BudgetWindow, filter: WindowFilter | undefined): boolean {
+    if (!filter) return true;
+    if (filter.source !== undefined && w.source !== filter.source) return false;
+    if (filter.grantId !== undefined && w.grantId !== filter.grantId) return false;
+    return true;
+  }
+
+  async ensureWindow(
+    accountId: string,
+    input: { start: number; end: number; limit: number; source?: WindowSource; grantId?: string },
+  ) {
     assertCredits(input.limit, "limit");
     if (input.end <= input.start) throw new RangeError("window end must be after its start");
     const key = this.wKey(accountId, input.start);
@@ -63,6 +75,8 @@ export class InMemoryLedgerStore implements LedgerStore {
       w = {
         accountId,
         start: input.start,
+        source: input.source ?? "paddle",
+        grantId: input.grantId ?? null,
         end: input.end,
         limit: input.limit,
         used: 0,
@@ -88,13 +102,24 @@ export class InMemoryLedgerStore implements LedgerStore {
       .map(copy);
   }
 
-  async revokeWindows(accountId: string, now: number) {
+  async revokeWindows(accountId: string, now: number, filter?: WindowFilter) {
     let n = 0;
     for (const w of this.windows.values()) {
-      if (w.accountId === accountId && w.revokedAt === null && w.end > now) {
+      if (w.accountId === accountId && w.revokedAt === null && w.end > now && this.matches(w, filter)) {
         w.revokedAt = now;
         n++;
       }
+    }
+    return n;
+  }
+
+  async truncateWindows(accountId: string, at: number, filter?: WindowFilter) {
+    let n = 0;
+    for (const w of this.windows.values()) {
+      if (w.accountId !== accountId || w.revokedAt !== null || w.end <= at || !this.matches(w, filter)) continue;
+      if (w.start >= at) w.revokedAt = at;
+      else w.end = at;
+      n++;
     }
     return n;
   }
