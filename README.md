@@ -18,7 +18,7 @@ StudentLLM is built around three principles:
 - Responsive workspace with a course library and four focused views: Notes, Sources, Chat, and Study.
 - Flat, minimal interface with compact controls and an information-first layout.
 - Course creation, navigation, search, bookmarks, transcript review states, and artifact creation.
-- Quick Start creates a blank course immediately with a provisional human-readable title such as `Study session · 5AB8`; after material is recorded or imported, **Organize material with AI** can propose and apply a reviewed course title and hierarchy.
+- Quick Start creates a blank course immediately with a provisional human-readable title such as `Study course · 5AB8`; after material is recorded or imported, **Organize material with AI** can propose and apply a reviewed course title and hierarchy.
 - Empty library on first launch. Legacy demonstration content is removed with a recoverable backup; user recordings and imports are retained.
 - Real browser microphone capture, with explicit errors when capture is unavailable.
 - Versioned local workspace persistence with course-isolated sources, transcript segments, chat history, and artifacts.
