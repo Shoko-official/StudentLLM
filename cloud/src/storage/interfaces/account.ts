@@ -78,6 +78,17 @@ export interface PlanRecord {
   lastEventAt: number | null;
   /** Absent or null when no cancellation is waiting for Paddle. */
   pendingCancel?: PendingCancel | null;
+  /**
+   * Paddle transaction ids that a refund or chargeback withdrew (the most recent ones, bounded). A period that
+   * arrives later with one of these ids is recorded as already revoked, so an adjustment that is delivered
+   * before its payment cannot leave a free window behind. Ids only.
+   */
+  revokedPurchaseIds?: string[];
+  /**
+   * Subscription ids this account used to have (the most recent ones, bounded). A late event of one of them
+   * can add a period it paid for but never takes the plan back to a subscription that was replaced.
+   */
+  retiredSubscriptionIds?: string[];
 }
 
 export interface DeletionTombstone {

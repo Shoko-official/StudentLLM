@@ -60,6 +60,7 @@ export class InMemoryLedgerStore implements LedgerStore {
     if (!filter) return true;
     if (filter.source !== undefined && w.source !== filter.source) return false;
     if (filter.grantId !== undefined && w.grantId !== filter.grantId) return false;
+    if (filter.start !== undefined && w.start !== filter.start) return false;
     return true;
   }
 

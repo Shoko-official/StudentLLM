@@ -149,6 +149,16 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
       expect(await ledger.truncateWindows("a", at + DAY)).toBe(0); // and never extends
     });
 
+    it("targets exactly one window by its start", async () => {
+      const { ledger } = factory();
+      await ledger.ensureWindow("a", w);
+      await ledger.ensureWindow("a", { start: T0 + 30 * DAY, end: T0 + 60 * DAY, limit: 100 });
+      expect(await ledger.revokeWindows("a", T0, { start: T0 + 30 * DAY })).toBe(1);
+      expect((await ledger.listWindows("a")).map((x) => x.revokedAt !== null)).toEqual([false, true]);
+      expect(await ledger.truncateWindows("a", T0 + 10 * DAY, { start: T0 })).toBe(1);
+      expect((await ledger.listWindows("a"))[0]!.end).toBe(T0 + 10 * DAY);
+    });
+
     it("truncates only the matching source, and a window that starts exactly at the instant is revoked", async () => {
       const { ledger } = factory();
       await ledger.ensureWindow("a", w);

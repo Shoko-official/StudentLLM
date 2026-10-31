@@ -33,6 +33,8 @@ export type WindowSource = "paddle" | "admin_grant";
 export interface WindowFilter {
   source?: WindowSource;
   grantId?: string;
+  /** Exactly the window with this start (windows are keyed by their start). */
+  start?: number;
 }
 
 export interface BudgetWindow {
