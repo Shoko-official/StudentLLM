@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import App from './App';
 import { buildCourseNote } from './lib/course-notes';
 import { listPendingRecordings, RECORDING_RECOVERY_STORAGE_KEY, savePendingRecording } from './lib/recording-recovery';
+import { PENDING_SOURCE_ERASE_STORAGE_KEY } from './lib/pending-source-erase';
 import { SOURCE_REMOVAL_UNDO_MS } from './lib/source-removal';
 import type { SourceBlobStore } from './lib/source-storage';
 import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
@@ -634,7 +635,7 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Start recording' }));
 
     expect(session.stop).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('status')).toHaveTextContent('Recording was not started because interrupted-session recovery is unavailable.');
+    expect(screen.getAllByRole('status').some((region) => region.textContent?.includes('Recording was not started because interrupted-session recovery is unavailable.'))).toBe(true);
     expect(screen.getByRole('button', { name: 'Start recording' })).toBeInTheDocument();
     setItem.mockRestore();
   });
@@ -1482,6 +1483,154 @@ describe('StudentLLM workspace', () => {
 
     await waitFor(() => expect(sourceBlobStore.remove).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+  });
+
+  const memoryBlobStore = (): SourceBlobStore => ({
+    durability: 'memory-only',
+    save: vi.fn(async () => undefined),
+    load: vi.fn(async () => null),
+    remove: vi.fn(async () => undefined),
+  });
+
+  const seedGoneSource = (aiNote: boolean) => {
+    const snapshot = createFixtureWorkspace();
+    const workspace = snapshot.lessonWorkspaces![FIXTURE_LESSON_ID];
+    const lesson = snapshot.lessons.find((item) => item.id === FIXTURE_LESSON_ID)!;
+    const resource = { id: 'gone-md', name: 'gone.md', meta: 'Notes', kind: 'transcript' as const, mimeType: 'text/markdown', sizeBytes: 20 };
+    const segment = { id: 'gone-md:text', sourceId: 'gone-md', timestamp: 'Notes', speaker: 'gone.md', text: 'Unique removable sentence.', status: 'review' as const };
+    const transcript = [...workspace.transcript, segment];
+    const base = buildCourseNote(lesson, transcript);
+    snapshot.lessonWorkspaces![FIXTURE_LESSON_ID] = {
+      ...workspace,
+      resources: [resource, ...workspace.resources],
+      transcript,
+      courseNote: aiNote ? { ...base, detection: { ...base.detection, method: 'LM Studio' as const, basis: 'AI fixture note' } } : base,
+    };
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(snapshot));
+    return snapshot;
+  };
+
+  it('restores the pre-removal AI note verbatim after Undo when the same segments come back', async () => {
+    const user = userEvent.setup();
+    seedGoneSource(true);
+    const generate = vi.fn().mockRejectedValue(new Error('fetch failed'));
+    render(<App provider={{ generate }} sourceBlobStore={memoryBlobStore()} />);
+    await openSources(user);
+
+    await user.click(screen.getByRole('button', { name: 'Remove source gone.md' }));
+    await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.detection.basis).not.toBe('AI fixture note'));
+    generate.mockClear();
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.detection).toMatchObject({ method: 'LM Studio', basis: 'AI fixture note' }));
+    expect(JSON.stringify(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.blocks)).toContain('Unique removable sentence');
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('moves focus to the restored source after Undo', async () => {
+    const user = userEvent.setup();
+    seedGoneSource(false);
+    render(<App sourceBlobStore={memoryBlobStore()} />);
+    await openSources(user);
+
+    await user.click(screen.getByRole('button', { name: 'Remove source gone.md' }));
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^gone\.md/ })).toHaveFocus());
+  });
+
+  it('keeps one persistent live region whose text changes when a source is removed', async () => {
+    const user = userEvent.setup();
+    seedGoneSource(false);
+    render(<App sourceBlobStore={memoryBlobStore()} />);
+    await openSources(user);
+
+    const regions = screen.getAllByRole('status').filter((region) => region.classList.contains('toast-slot'));
+    expect(regions).toHaveLength(2);
+    expect(regions[1]).toBeEmptyDOMElement();
+
+    await user.click(screen.getByRole('button', { name: 'Remove source gone.md' }));
+
+    expect(regions[1]).toBeInTheDocument();
+    expect(regions[1]).toHaveTextContent('gone.md removed from this course.');
+    expect(within(regions[1]).getByRole('button', { name: 'Undo' })).toBeInTheDocument();
+  });
+
+  it('pauses the undo countdown while the toast is hovered or focused', async () => {
+    const user = userEvent.setup();
+    seedGoneSource(false);
+    const sourceBlobStore = memoryBlobStore();
+    render(<App sourceBlobStore={sourceBlobStore} />);
+    await openSources(user);
+
+    const timers = vi.spyOn(window, 'setTimeout');
+    const cleared = vi.spyOn(window, 'clearTimeout');
+    await user.click(screen.getByRole('button', { name: 'Remove source gone.md' }));
+    const armed = () => timers.mock.calls.filter((args) => typeof args[1] === 'number' && args[1] > 1000 && args[1] <= SOURCE_REMOVAL_UNDO_MS).length;
+    const armedBefore = armed();
+    expect(armedBefore).toBeGreaterThan(0);
+
+    const undo = screen.getByRole('button', { name: 'Undo' });
+    const clearedBeforeHover = cleared.mock.calls.length;
+    await user.hover(undo);
+    expect(cleared.mock.calls.length).toBeGreaterThan(clearedBeforeHover);
+    await user.unhover(undo);
+    expect(armed()).toBe(armedBefore + 1);
+
+    const clearedBeforeFocus = cleared.mock.calls.length;
+    act(() => undo.focus());
+    expect(cleared.mock.calls.length).toBeGreaterThan(clearedBeforeFocus);
+    act(() => undo.blur());
+    expect(armed()).toBe(armedBefore + 2);
+    expect(sourceBlobStore.remove).not.toHaveBeenCalled();
+  });
+
+  it('records the pending erase and finalizes it when the app unmounts during the undo window', async () => {
+    const user = userEvent.setup();
+    seedGoneSource(false);
+    const sourceBlobStore = memoryBlobStore();
+    const view = render(<App sourceBlobStore={sourceBlobStore} />);
+    await openSources(user);
+
+    await user.click(screen.getByRole('button', { name: 'Remove source gone.md' }));
+    expect(JSON.parse(localStorage.getItem(PENDING_SOURCE_ERASE_STORAGE_KEY)!)).toEqual([{ id: 'gone-md', kind: 'transcript' }]);
+    expect(sourceBlobStore.remove).not.toHaveBeenCalled();
+
+    view.unmount();
+
+    await waitFor(() => expect(sourceBlobStore.remove).toHaveBeenCalledWith('gone-md'));
+    await waitFor(() => expect(localStorage.getItem(PENDING_SOURCE_ERASE_STORAGE_KEY)).toBeNull());
+  });
+
+  it('finalizes the pending erase when the page is hidden', async () => {
+    const user = userEvent.setup();
+    seedGoneSource(false);
+    const sourceBlobStore = memoryBlobStore();
+    render(<App sourceBlobStore={sourceBlobStore} />);
+    await openSources(user);
+
+    await user.click(screen.getByRole('button', { name: 'Remove source gone.md' }));
+    act(() => { window.dispatchEvent(new Event('pagehide')); });
+
+    await waitFor(() => expect(sourceBlobStore.remove).toHaveBeenCalledWith('gone-md'));
+  });
+
+  it('erases originals left pending by an earlier session at startup', async () => {
+    seedGoneSource(false);
+    localStorage.setItem(PENDING_SOURCE_ERASE_STORAGE_KEY, JSON.stringify([
+      { id: 'orphan-audio', kind: 'audio' },
+      { id: 'gone-md', kind: 'transcript' },
+    ]));
+    const sourceBlobStore = memoryBlobStore();
+    const clear = vi.fn(async () => undefined);
+    render(<App sourceBlobStore={sourceBlobStore} recordingChunkStore={{ durability: 'durable', append: vi.fn(async () => undefined), list: vi.fn(async () => []), count: vi.fn(async () => 0), clear }} />);
+
+    await waitFor(() => expect(sourceBlobStore.remove).toHaveBeenCalledWith('orphan-audio'));
+    expect(clear).toHaveBeenCalledWith('orphan-audio');
+    // A source that is still in the workspace is never erased; its stale ledger entry is just dropped.
+    expect(sourceBlobStore.remove).not.toHaveBeenCalledWith('gone-md');
+    await waitFor(() => expect(localStorage.getItem(PENDING_SOURCE_ERASE_STORAGE_KEY)).toBeNull());
   });
 
   it('finalizes the earlier removal when another source is removed', async () => {

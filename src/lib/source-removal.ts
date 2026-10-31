@@ -24,3 +24,10 @@ export function restoreAtPositions<T extends { id: string }>(list: readonly T[],
   }
   return next;
 }
+
+/** True when both lists hold exactly the same ids, whatever their order. */
+export function sameIdSet(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const left = new Set(a);
+  return left.size === new Set(b).size && b.every((id) => left.has(id));
+}

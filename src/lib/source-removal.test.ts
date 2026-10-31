@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { restoreAtPositions, takeWithPositions } from './source-removal';
+import { restoreAtPositions, sameIdSet, takeWithPositions } from './source-removal';
 
 const items = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id }));
 
@@ -24,5 +24,18 @@ describe('source removal helpers', () => {
   it('does not duplicate an item that is already present', () => {
     const { removed } = takeWithPositions(items, (item) => item.id === 'a');
     expect(restoreAtPositions(items, removed)).toHaveLength(5);
+  });
+});
+
+describe('sameIdSet', () => {
+  it('compares ids regardless of order', () => {
+    expect(sameIdSet(['a', 'b'], ['b', 'a'])).toBe(true);
+    expect(sameIdSet([], [])).toBe(true);
+  });
+
+  it('detects missing, extra and duplicated ids', () => {
+    expect(sameIdSet(['a', 'b'], ['a'])).toBe(false);
+    expect(sameIdSet(['a', 'b'], ['a', 'c'])).toBe(false);
+    expect(sameIdSet(['a', 'a'], ['a', 'b'])).toBe(false);
   });
 });
