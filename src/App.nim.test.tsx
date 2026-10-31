@@ -77,6 +77,27 @@ it('keeps the selected model when the fallback cannot answer either', async () =
   expect(JSON.parse(localStorage.getItem(SERVICES_KEY)!)).toMatchObject({ nimModel: selected });
 });
 
+it('announces a tested model switch even when Settings closes during the probe', async () => {
+  let finishFallback!: (value: Response) => void;
+  const fallback = new Promise<Response>((resolve) => { finishFallback = resolve; });
+  const tested: string[] = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    if (String(input).endsWith('/chat/completions')) {
+      tested.push(modelFrom(init)!);
+      return modelFrom(init) === selected ? new Response('{}', { status: 410 }) : fallback;
+    }
+    return localResponse();
+  });
+  const user = userEvent.setup();
+  render(<App provider={null} />);
+  const panel = await openSettings(user);
+  await waitFor(() => expect(tested).toEqual([selected, DEFAULT_NIM_MODEL]));
+  await user.click(within(panel).getByRole('button', { name: 'Done' }));
+  await act(async () => { finishFallback(answer()); });
+  expect(await screen.findByText(/NVIDIA NIM switched to/)).toBeVisible();
+  expect(JSON.parse(localStorage.getItem(SERVICES_KEY)!)).toMatchObject({ nimModel: DEFAULT_NIM_MODEL });
+});
+
 it.each([401, 429])('does not try another model for credentials or quota errors (HTTP %s)', async (status) => {
   const tested: string[] = [];
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {

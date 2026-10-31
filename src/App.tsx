@@ -1590,6 +1590,8 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     setServiceDraft((current) => sameSelection(current) ? { ...current, nimModel: DEFAULT_NIM_MODEL } : current);
     const reason = result.kind === 'retired' ? 'was no longer available' : 'did not answer in time';
     setLlmHealth(`Connected. Switched from ${model}, which ${reason}, to ${DEFAULT_NIM_MODEL}, which answered the connection test.`);
+    const label = NIM_MODELS.find((entry) => entry.id === DEFAULT_NIM_MODEL)?.label ?? DEFAULT_NIM_MODEL;
+    notify(`NVIDIA NIM switched to ${label}. The previous model failed its connection test.`);
   };
 
   const saveServiceSettings = (event: FormEvent) => {
