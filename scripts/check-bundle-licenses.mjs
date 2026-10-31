@@ -4,7 +4,8 @@
 //   node scripts/check-bundle-licenses.mjs [bundle-directory]
 //
 // Linux: lists the .deb with `dpkg -c`. macOS: looks inside the .app that the dmg is made from. Windows: reads the
-// NSIS script that Tauri generates for the installer, which names every file the installer unpacks.
+// NSIS script that Tauri generates for the installer (next to the bundle directory), which names every file the
+// installer unpacks.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -35,9 +36,21 @@ function listing() {
     if (!files.length) throw new Error(`No .app contents found under ${bundle}`);
     return { source: 'the .app bundle', text: files.join('\n') };
   }
-  const scripts = walk(bundle).filter((path) => path.endsWith('.nsi'));
-  if (!scripts.length) throw new Error(`No NSIS script found under ${bundle}`);
-  return { source: 'the NSIS installer script', text: scripts.map((path) => readFileSync(path, 'utf8')).join('\n') };
+  // Tauri writes the NSIS script next to the bundle directory (target/<profile>/nsis/<arch>/installer.nsi), not inside it.
+  const profile = resolve(bundle, '..');
+  const skip = new Set(['deps', 'build', 'incremental', '.fingerprint', 'examples']);
+  const scripts = [];
+  const search = (directory) => {
+    for (const name of readdirSync(directory)) {
+      const path = join(directory, name);
+      if (statSync(path).isDirectory()) {
+        if (!skip.has(name)) search(path);
+      } else if (path.endsWith('.nsi')) scripts.push(path);
+    }
+  };
+  search(profile);
+  if (!scripts.length) throw new Error(`No NSIS script found under ${profile}; it holds ${readdirSync(profile).join(', ')}`);
+  return { source: `the NSIS script ${scripts[0]}`, text: scripts.map((path) => readFileSync(path, 'utf8')).join('\n') };
 }
 
 const { source, text } = listing();
