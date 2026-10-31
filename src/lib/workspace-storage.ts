@@ -218,7 +218,7 @@ function invokeNative<T>(command: string, args?: Record<string, unknown>) {
 }
 
 /** The empty snapshot the native shell seeds its database with; it is not user data and not damage. */
-function isBootstrapSnapshot(raw: string): boolean {
+export function isBootstrapSnapshot(raw: string): boolean {
   try {
     const parsed: unknown = JSON.parse(raw);
     return isRecord(parsed) && parsed.bootstrap === true && !Array.isArray(parsed.lessons);
@@ -227,7 +227,10 @@ function isBootstrapSnapshot(raw: string): boolean {
   }
 }
 
-function parseWorkspaceDetailed(raw: string | null, fallback: WorkspaceSnapshot): { snapshot: WorkspaceSnapshot; dropped: number } {
+/** What the load and backup helpers need from a store: the browser's `Storage` satisfies it, and so does an in-memory shim. */
+export type KeyValueStorage = Pick<Storage, 'getItem' | 'setItem' | 'length'>;
+
+export function parseWorkspaceDetailed(raw: string | null, fallback: WorkspaceSnapshot): { snapshot: WorkspaceSnapshot; dropped: number } {
   droppedEntries = 0;
   const snapshot = parseWorkspaceUncounted(raw, fallback);
   return { snapshot, dropped: snapshot === fallback ? 0 : droppedEntries };
@@ -245,12 +248,22 @@ function parseWorkspaceUncounted(raw: string | null, fallback: WorkspaceSnapshot
     const activeLessonId = typeof parsed.activeLessonId === 'string' && lessons.some((lesson) => lesson.id === parsed.activeLessonId)
       ? parsed.activeLessonId
       : lessons[0]?.id ?? '';
+    const hasTopLevelLists = [parsed.resources, parsed.transcript, parsed.chat, parsed.artifacts].some(Array.isArray);
+    const lessonWorkspaces = parseLessonWorkspaces(parsed.lessonWorkspaces, lessons);
+    const activeCopy = lessonWorkspaces?.[activeLessonId];
+    if (!hasTopLevelLists && activeCopy) {
+      // Compact shape (see serializeWorkspaceSnapshot): the active course lives only in `lessonWorkspaces`. The in-memory
+      // snapshot still exposes it as the top-level lists, exactly as the older shape did.
+      return {
+        activeLessonId, lessons, resources: activeCopy.resources, transcript: activeCopy.transcript, chat: activeCopy.chat, artifacts: activeCopy.artifacts,
+        lessonWorkspaces,
+      };
+    }
     const resources = keep(parsed.resources, isResource);
     const transcript = keep(parsed.transcript, isTranscriptSegment);
     const chat = keep(parsed.chat, isChatMessage);
     const sourceIds = new Set(resources.map((resource) => resource.id));
     const artifacts = keep(parsed.artifacts, (artifact): artifact is Artifact => isArtifact(artifact, sourceIds));
-    const lessonWorkspaces = parseLessonWorkspaces(parsed.lessonWorkspaces, lessons);
 
     return { activeLessonId, lessons, resources, transcript, chat, artifacts, ...(lessonWorkspaces ? { lessonWorkspaces } : {}) };
   } catch {
@@ -258,7 +271,7 @@ function parseWorkspaceUncounted(raw: string | null, fallback: WorkspaceSnapshot
   }
 }
 
-function backUpBeforeMigration(raw: string, storage: Storage | undefined): boolean {
+function backUpBeforeMigration(raw: string, storage: KeyValueStorage | undefined): boolean {
   if (!storage) return false;
   try {
     // Browser and native snapshots can differ. Keep every distinct original;
@@ -278,7 +291,7 @@ function backUpBeforeMigration(raw: string, storage: Storage | undefined): boole
   return false;
 }
 
-function migrateWithBackup(raw: string | null, snapshot: WorkspaceSnapshot, storage: Storage | undefined): WorkspaceSnapshot {
+export function migrateWithBackup(raw: string | null, snapshot: WorkspaceSnapshot, storage: KeyValueStorage | undefined): WorkspaceSnapshot {
   if (!raw || !storage) return snapshot;
   let pendingLessonIds: Set<string>;
   try {
@@ -320,11 +333,19 @@ export interface WorkspaceLoadIssue {
    * `unreadable`: damaged or truncated data. `newer-version`: written by a newer version of the app.
    * `partial`: some entries could not be read and were left out.
    */
-  kind: 'unreadable' | 'newer-version' | 'partial';
+  kind: 'unreadable' | 'newer-version' | 'partial' | 'older-copy' | 'storage-reset';
   /** Whether a copy of the stored value was kept before it can be replaced. */
   backedUp: boolean;
+  /** An older localStorage value could not be copied aside because the saved-copy limit was reached. */
+  copyLimitReached?: boolean;
   /** Storage key holding that copy. */
   copyKey?: string;
+  /** Where the copy lives when it is not in localStorage (the browser keeps the workspace and its copies in IndexedDB). */
+  copyStore?: 'indexeddb';
+  /** For `storage-reset`: when IndexedDB first held the workspace, i.e. roughly the date of the copy that is shown. */
+  since?: string;
+  /** The unreadable IndexedDB value was replaced for this session by the localStorage copy kept before the upgrade. */
+  restoredFromLegacy?: boolean;
   /**
    * True when the stored value must not be replaced: no copy could be kept, or a newer version owns the data.
    * The app then stops saving and leaves the original where it is.
@@ -334,7 +355,7 @@ export interface WorkspaceLoadIssue {
   raw?: string;
 }
 
-function classifyUnreadable(raw: string): 'unreadable' | 'newer-version' {
+export function classifyUnreadable(raw: string): 'unreadable' | 'newer-version' {
   if (raw.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return 'unreadable';
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -346,7 +367,7 @@ function classifyUnreadable(raw: string): 'unreadable' | 'newer-version' {
 
 // A stored value that cannot be read is replaced by an empty workspace at the next save. Keep the original first, so a
 // damaged, truncated or newer-format workspace is never destroyed without a trace. Returns the key of the copy.
-function keepUnreadableCopy(raw: string, storage: Storage): string | null {
+function keepUnreadableCopy(raw: string, storage: KeyValueStorage): string | null {
   try {
     for (let index = 0; index <= storage.length; index += 1) {
       const key = index === 0 ? WORKSPACE_UNREADABLE_BACKUP_KEY : `${WORKSPACE_UNREADABLE_BACKUP_KEY}.${index}`;
@@ -363,7 +384,7 @@ function keepUnreadableCopy(raw: string, storage: Storage): string | null {
   return null;
 }
 
-function createLoadIssue(raw: string, kind: WorkspaceLoadIssue['kind'], storage: Storage | undefined): WorkspaceLoadIssue {
+export function createLoadIssue(raw: string, kind: WorkspaceLoadIssue['kind'], storage: KeyValueStorage | undefined): WorkspaceLoadIssue {
   const copyKey = storage ? keepUnreadableCopy(raw, storage) : null;
   const backedUp = copyKey !== null;
   return {
@@ -410,17 +431,37 @@ export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | un
   return loadWorkspaceWithStatus(fallback, storage).snapshot;
 }
 
-export function saveWorkspace(snapshot: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): boolean {
-  if (!storage) return false;
+/**
+ * The browser stores the workspace in this shape. The active course used to be written twice, as the top-level
+ * `resources`, `transcript`, `chat` and `artifacts` and again inside `lessonWorkspaces[activeLessonId]`, which about
+ * doubled the size of a large course. When `lessonWorkspaces` is present the top-level copies are left out; the loader
+ * rebuilds them, and still reads the older shape. Without `lessonWorkspaces` (the very old flat shape) nothing is left out.
+ * The native shell keeps writing the full shape: SQLite has no such quota.
+ */
+export function serializeWorkspaceSnapshot(snapshot: WorkspaceSnapshot): string {
+  if (!snapshot.lessonWorkspaces) return JSON.stringify({ version: 1, ...snapshot });
+  const { resources: _resources, transcript: _transcript, chat: _chat, artifacts: _artifacts, ...compact } = snapshot;
+  return JSON.stringify({ version: 1, ...compact });
+}
+
+export type SaveResult = 'saved' | 'too-large' | 'failed';
+
+/** Like `saveWorkspace`, but says why a save did not happen: a workspace over the size limit is not a full browser store. */
+export function saveWorkspaceResult(snapshot: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): SaveResult {
+  if (!storage) return 'failed';
 
   try {
-    const serialized = JSON.stringify({ version: 1, ...snapshot });
-    if (serialized.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return false;
+    const serialized = serializeWorkspaceSnapshot(snapshot);
+    if (serialized.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return 'too-large';
     storage.setItem(WORKSPACE_STORAGE_KEY, serialized);
-    return true;
+    return 'saved';
   } catch {
-    return false;
+    return 'failed';
   }
+}
+
+export function saveWorkspace(snapshot: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): boolean {
+  return saveWorkspaceResult(snapshot, storage) === 'saved';
 }
 
 export async function loadWorkspaceAsync(
