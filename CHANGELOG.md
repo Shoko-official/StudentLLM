@@ -137,3 +137,7 @@
 - the environment example now makes the Windows User source of `NVIDIA_API_KEY` explicit without declaring a file variable;
 - Vitest, Playwright, axe, TypeScript, Vite, and GitHub Actions verification;
 - architecture, provider, benchmark, and contribution documentation.
+
+### Fixed
+
+- Course-note concept schemas keep terms that start with an accented capital (for example `Énergie`) and recognise French relation verbs (`entraîne`, `provoque`, `engendre`, `mène à`, `dépend de/du/des`), including elided articles such as `l'`.
