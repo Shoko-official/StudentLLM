@@ -6,7 +6,7 @@ StudentLLM itself is released under the MIT licence (see `LICENSE`). Components 
 
 Generated from these lockfiles (line endings normalised):
 
-- `package-lock.json`: sha256 `c18b8ef5594c280ef9f9b755cba6134eafa72bfd145a419dfc98cff9eb44940b`
+- `package-lock.json`: sha256 `c3dab1dbd40b9237e98e0df13c4fb68d57a783c461e998d41c1691f964c33326`
 - `cloud/package-lock.json`: sha256 `2613b6b6f54483dcee76a90c99fb6de037b05854b73d08e88f8b4ea8f1e48a38`
 - `src-tauri/Cargo.lock`: sha256 `585fdb20d4d1b3168615537775e95fe28a82d757b71480921e9b02f7815d4672`
 
