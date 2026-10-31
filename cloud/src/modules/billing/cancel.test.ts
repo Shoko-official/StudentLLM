@@ -52,7 +52,7 @@ describe("BillingSeam.cancelSubscription", () => {
 
   it("now: Paddle cancels at once and the running window ends at that instant, keeping the used credits", async () => {
     const app = await subscribed();
-    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", credits: 30, now: T + 1000, expiresAt: T + 60_000, idempotency: null });
+    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", logicalModelId: "studentllm-large", credits: 30, now: T + 1000, expiresAt: T + 60_000, idempotency: null });
     await app.stores.ledger.settle("acc_test", { requestId: "r1", credits: 30, logicalModelId: "m", now: T + 2000 });
     const at = T + 9 * DAY;
     app.clock.set(at);

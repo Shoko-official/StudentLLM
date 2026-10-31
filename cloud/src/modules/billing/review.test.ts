@@ -346,7 +346,7 @@ describe("review 4 and 5: grants are atomic, idempotent, and cut by grant", () =
   it("a replay at a later time returns the windows unchanged instead of recomputing them", async () => {
     const { app, grant } = await grantApp();
     const first = await grant({ grantId: "g", days: 30, startPolicy: "now" });
-    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", credits: 9, now: T + 1000, expiresAt: T + 60_000, idempotency: null });
+    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", logicalModelId: "studentllm-large", credits: 9, now: T + 1000, expiresAt: T + 60_000, idempotency: null });
     await app.stores.ledger.settle("acc_test", { requestId: "r1", credits: 9, logicalModelId: "m", now: T + 2000 });
     app.clock.set(T + 3 * DAY);
     const replay = await grant({ grantId: "g", days: 30, startPolicy: "now" });
@@ -365,7 +365,7 @@ describe("review 4 and 5: grants are atomic, idempotent, and cut by grant", () =
   it("a purchase shortens the WHOLE grant, including windows that do not overlap the paid period, and reports what it cut", async () => {
     const { app, grant } = await grantApp();
     await grant({ grantId: "g", days: 90, creditsPerWindow: 3000, startPolicy: "now" });
-    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", credits: 100, now: T + DAY, expiresAt: T + DAY + 60_000, idempotency: null });
+    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", logicalModelId: "studentllm-large", credits: 100, now: T + DAY, expiresAt: T + DAY + 60_000, idempotency: null });
     await app.stores.ledger.settle("acc_test", { requestId: "r1", credits: 100, logicalModelId: "m", now: T + DAY + 1 });
     const at = T + 10 * DAY;
     await app.webhook(monthly(at));

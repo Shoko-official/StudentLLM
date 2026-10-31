@@ -328,7 +328,7 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
       await ledger.ensureWindow("a", { start: T0 - 30 * DAY, end: T0, limit: 100 }); // already over
       await ledger.ensureWindow("a", w);
       await ledger.ensureWindow("a", { start: T0 + 30 * DAY, end: T0 + 60 * DAY, limit: 100 });
-      await ledger.reserve("a", { requestId: "r1", feature: "chat", credits: 40, now: T0 + 1000, expiresAt: T0 + 100_000, idempotency: null });
+      await ledger.reserve("a", { requestId: "r1", feature: "chat", logicalModelId: "studentllm-large", credits: 40, now: T0 + 1000, expiresAt: T0 + 100_000, idempotency: null });
       await ledger.settle("a", { requestId: "r1", credits: 40, logicalModelId: "m", now: T0 + 2000 });
       const at = T0 + 10 * DAY;
       expect(await ledger.truncateWindows("a", at)).toBe(2);
@@ -357,7 +357,7 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
       it("returns the windows of a grant that already exists, unchanged, whatever the new request says", async () => {
         const { ledger } = factory();
         await ledger.insertGrantWindows("a", "grt_1", [spec(0, 30)]);
-        await ledger.reserve("a", { requestId: "r", feature: "chat", credits: 4, now: T0 + 1000, expiresAt: T0 + 60_000, idempotency: null });
+        await ledger.reserve("a", { requestId: "r", feature: "chat", logicalModelId: "studentllm-large", credits: 4, now: T0 + 1000, expiresAt: T0 + 60_000, idempotency: null });
         await ledger.settle("a", { requestId: "r", credits: 4, logicalModelId: "m", now: T0 + 2000 });
         const again = await ledger.insertGrantWindows("a", "grt_1", [spec(100, 5, 999)]);
         expect(again).toMatchObject({ ok: true, existed: true });
@@ -420,7 +420,7 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
       expect((await ledger.ensureWindow("a", { start: T0 + 30 * DAY, end: T0 + 60 * DAY, limit: 5 })).source).toBe("paddle");
       // A window that already has usage is revoked, not removed.
       await ledger.ensureWindow("a", { start: T0 + 60 * DAY, end: T0 + 90 * DAY, limit: 10, source: "admin_grant", grantId: "grt_2" });
-      await ledger.reserve("a", { requestId: "u1", feature: "chat", credits: 3, now: T0 + 61 * DAY, expiresAt: T0 + 61 * DAY + 60_000, idempotency: null });
+      await ledger.reserve("a", { requestId: "u1", feature: "chat", logicalModelId: "studentllm-large", credits: 3, now: T0 + 61 * DAY, expiresAt: T0 + 61 * DAY + 60_000, idempotency: null });
       await ledger.settle("a", { requestId: "u1", credits: 3, logicalModelId: "m", now: T0 + 61 * DAY + 1 });
       expect(await ledger.truncateWindows("a", T0 + 60 * DAY, { source: "admin_grant" })).toBe(1);
       const last = (await ledger.listWindows("a")).find((x) => x.grantId === "grt_2");

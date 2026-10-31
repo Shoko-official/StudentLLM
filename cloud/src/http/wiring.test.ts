@@ -8,7 +8,7 @@ import { routeMeta } from "./context";
 const DAY = 24 * 60 * 60 * 1000;
 
 async function appWithAccount(lastRequestAt: number | null) {
-  const t = makeTestApp({ allowMissingHooks: true, hooks: { authenticate: fakeAuthenticate(accessPrincipal({ accountId: "acc_1" })) } });
+  const t = makeTestApp({ allowMissingHooks: true, withoutModuleHooks: true, hooks: { authenticate: fakeAuthenticate(accessPrincipal({ accountId: "acc_1" })) } });
   await t.stores.accounts.create({ accountId: "acc_1", email: "a@example.invalid", googleSubject: null, loginMethods: ["email"], termsVersion: "v", now: TEST_START_MS - 90 * DAY });
   if (lastRequestAt !== null) await t.stores.accounts.touchLastRequest("acc_1", lastRequestAt);
   const writes: number[] = [];
@@ -50,7 +50,7 @@ describe("the activity write on the hot path", () => {
 
 describe("cleanup of a streamed response (deferUntilBodyDone)", () => {
   function streamingApp() {
-    const t = makeTestApp({ allowMissingHooks: true });
+    const t = makeTestApp({ allowMissingHooks: true, withoutModuleHooks: true });
     const released: string[] = [];
     let slowCleanupDone = false;
     t.app.router.add(

@@ -252,7 +252,9 @@ describe("checkPlan (plan_required) on a content route", () => {
   };
 
   async function contentApp(options: Parameters<typeof makeBillingTestApp>[0] = {}) {
-    const app = await setup(options);
+    // The inference module's own hooks (consent, rate limit, idempotency, slot) are not what this suite tests.
+    const pass = () => undefined;
+    const app = await setup({ ...options, hooks: { checkConsent: pass, checkRateLimit: pass, lookupIdempotency: pass, acquireConcurrencySlot: pass, ...options.hooks } });
     let handled = 0;
     app.t.app.router.add("POST", "/test/content", () => (handled++, new Response("ok")), routeMeta({ operationId: "test_content", client: true, content: true }));
     const post = () => app.as("/test/content", { method: "POST", headers: CONTENT, body: "{}" });

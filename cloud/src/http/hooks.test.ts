@@ -60,7 +60,13 @@ describe("hooks fail closed (a real handler never runs behind a missing hook)", 
   });
 
   it("reaches the handler only once every hook that applies is installed", async () => {
-    const t = makeTestApp({ hooks: { authenticate: fakeAuthenticate(accessPrincipal(), { account: ACCOUNT, plan: null }), checkPlan: () => undefined }, allowMissingHooks: true });
+    // The inference module provides its own consent, rate-limit, idempotency and slot hooks: this test is about the shared
+    // pipeline with a route of its own, so the modules' hooks are left out.
+    const t = makeTestApp({
+      hooks: { authenticate: fakeAuthenticate(accessPrincipal(), { account: ACCOUNT, plan: null }), checkPlan: () => undefined },
+      allowMissingHooks: true,
+      withoutModuleHooks: true,
+    });
     const calls = addReal(t, "POST", "/test/content", { operationId: "test_content", client: true, content: true });
     const res = await t.request("/test/content", { method: "POST", headers: CONTENT, body: "{}" });
     expect(res.status).toBe(200);
@@ -245,7 +251,7 @@ describe("content headers", () => {
     t.request("/v1/chat/completions", { method: "POST", headers, body: "{}" });
 
   it("maps a missing or invalid consent header to consent_outdated (409)", async () => {
-    const t = makeTestApp({ allowMissingHooks: true, hooks });
+    const t = makeTestApp({ allowMissingHooks: true, stubRoutes: true, withoutModuleHooks: true, hooks });
     for (const value of [undefined, "", "bad value with spaces", "x".repeat(129)]) {
       const headers: Record<string, string> = { ...CONTENT };
       if (value === undefined) delete headers["X-StudentLLM-Consent"];
@@ -257,7 +263,7 @@ describe("content headers", () => {
   });
 
   it("maps a missing or invalid Idempotency-Key to invalid_request (400)", async () => {
-    const t = makeTestApp({ allowMissingHooks: true, hooks });
+    const t = makeTestApp({ allowMissingHooks: true, stubRoutes: true, withoutModuleHooks: true, hooks });
     for (const value of [undefined, "", "not-a-uuid", "6f1c1f0e-3a55-4b0c-9f0a"]) {
       const headers: Record<string, string> = { ...CONTENT };
       if (value === undefined) delete headers["Idempotency-Key"];
@@ -272,6 +278,8 @@ describe("content headers", () => {
     let seen: { consent?: string; key?: string } = {};
     const t = makeTestApp({
       allowMissingHooks: true,
+      stubRoutes: true,
+      withoutModuleHooks: true,
       hooks: { ...hooks, lookupIdempotency: (ctx) => void (seen = { consent: ctx.consentId, key: ctx.idempotencyKey }) },
     });
     await post(t, { ...CONTENT, "Idempotency-Key": UUID.toUpperCase() });
@@ -282,6 +290,8 @@ describe("content headers", () => {
     const trace: string[] = [];
     const t = makeTestApp({
       allowMissingHooks: true,
+      stubRoutes: true,
+      withoutModuleHooks: true,
       hooks: { ...hooks, checkRateLimit: () => void trace.push("rate") },
     });
     const noConsent = { ...CONTENT } as Record<string, string>;
