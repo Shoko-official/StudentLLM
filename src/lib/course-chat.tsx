@@ -22,6 +22,8 @@ interface CourseChatProps {
 /** Presentation and keyboard interaction; the parent owns requests, history and recovery. */
 export function CourseChat({ messages, sourceCount, hasMaterial, providerName, draft, isSending, error, onDraftChange, onSubmit, onOpenSources, onOpenSettings, onOpenCitation }: CourseChatProps) {
   const threadRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<HTMLElement>(null);
+  const headingRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composeAreaRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
@@ -51,13 +53,32 @@ export function CourseChat({ messages, sourceCount, hasMaterial, providerName, d
 
   useLayoutEffect(() => {
     const field = textareaRef.current;
-    if (!field) return;
-    field.style.height = 'auto';
-    field.style.height = `${Math.max(64, Math.min(field.scrollHeight, 200))}px`;
-  }, [draft]);
+    const view = viewRef.current;
+    const heading = headingRef.current;
+    const area = composeAreaRef.current;
+    const thread = threadRef.current;
+    if (!field || !view || !heading || !area || !thread) return;
+    const resizeField = () => {
+      field.style.height = 'auto';
+      const threadStyle = getComputedStyle(thread);
+      // Reserve readable history beyond its padding; longer drafts scroll inside the field.
+      const threadSpace = Math.max(72, parseFloat(threadStyle.paddingTop || '0') + parseFloat(threadStyle.paddingBottom || '0') + 48);
+      const composerChrome = area.getBoundingClientRect().height - field.getBoundingClientRect().height;
+      const available = view.clientHeight - heading.getBoundingClientRect().height - composerChrome - threadSpace;
+      const limit = Math.max(40, Math.min(200, available));
+      field.style.height = `${Math.min(Math.max(64, field.scrollHeight), limit)}px`;
+      if (followingRef.current) thread.scrollTop = thread.scrollHeight;
+    };
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resizeField);
+    observer?.observe(view);
+    observer?.observe(heading);
+    window.addEventListener('resize', resizeField);
+    resizeField();
+    return () => { observer?.disconnect(); window.removeEventListener('resize', resizeField); };
+  }, [draft, error]);
 
-  return <section className="chat-view" id="view-panel-chat" role="tabpanel" aria-labelledby="view-tab-chat">
-    <header className="chat-heading">
+  return <section className="chat-view" id="view-panel-chat" role="tabpanel" aria-labelledby="view-tab-chat" ref={viewRef}>
+    <header className="chat-heading" ref={headingRef}>
       <span className="chat-heading-label">Course conversation</span>
       <details className="chat-context">
         <summary><BookOpen size={14} aria-hidden="true" /><span>{sourceCount} source{sourceCount === 1 ? '' : 's'}</span><ChevronDown size={13} aria-hidden="true" /></summary>

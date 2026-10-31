@@ -71,14 +71,28 @@ test('fits the mobile viewport in dark mode with keyboard-accessible sources', a
   expect(accessibility.violations.filter((violation) => ['critical', 'serious'].includes(violation.impact ?? ''))).toEqual([]);
 });
 
-test('keeps Send reachable in a short window', async ({ page }) => {
-  await page.setViewportSize({ width: 720, height: 500 });
+for (const viewport of [{ width: 720, height: 500 }, { width: 320, height: 568 }]) test(`keeps an expanded composer reachable at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+  await page.setViewportSize(viewport);
   await page.goto('/');
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.getByRole('tab', { name: 'Chat', exact: true }).click();
+  const field = page.getByRole('textbox', { name: 'Ask the course chat' });
+  const draft = Array(14).fill('Synthetic line of long draft').join('\n');
+  await field.fill(draft);
   const send = await page.getByRole('button', { name: 'Send', exact: true }).boundingBox();
-  expect(send!.y + send!.height).toBeLessThanOrEqual(500);
-  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(500);
+  expect(send!.y + send!.height).toBeLessThanOrEqual(viewport.height);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(viewport.height);
+  expect(await field.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  expect((await page.getByRole('region', { name: 'Conversation history' }).boundingBox())!.height).toBeGreaterThanOrEqual(72);
+  await expect(field).toHaveValue(draft);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect.poll(async () => (await field.boundingBox())!.height).toBe(200);
+  await page.setViewportSize(viewport);
+  await expect.poll(async () => {
+    const button = (await page.getByRole('button', { name: 'Send', exact: true }).boundingBox())!;
+    return button.y + button.height;
+  }).toBeLessThanOrEqual(viewport.height);
+  await expect(field).toHaveValue(draft);
 });
 
 test('moves Undo above the composer when a pasted question expands it', async ({ page }) => {
