@@ -15,9 +15,17 @@ export function isStalePendingSourceErase(entry: PendingSourceErase, now = Date.
   return typeof entry.at !== 'number' || now - entry.at >= PENDING_SOURCE_ERASE_MIN_AGE_MS;
 }
 
-export function listPendingSourceErases(): PendingSourceErase[] {
+function getSessionStorage(): Storage | undefined {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(PENDING_SOURCE_ERASE_STORAGE_KEY) ?? '[]');
+    return sessionStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+function readEntries(storage: Storage | undefined): PendingSourceErase[] {
+  try {
+    const parsed: unknown = JSON.parse(storage?.getItem(PENDING_SOURCE_ERASE_STORAGE_KEY) ?? '[]');
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((entry): entry is PendingSourceErase => (
       Boolean(entry) && typeof entry === 'object' && typeof (entry as PendingSourceErase).id === 'string' && typeof (entry as PendingSourceErase).kind === 'string'
@@ -27,13 +35,48 @@ export function listPendingSourceErases(): PendingSourceErase[] {
   }
 }
 
-function write(entries: PendingSourceErase[]) {
+function writeEntries(storage: Storage | undefined, entries: PendingSourceErase[]): boolean {
   try {
-    if (entries.length) localStorage.setItem(PENDING_SOURCE_ERASE_STORAGE_KEY, JSON.stringify(entries));
-    else localStorage.removeItem(PENDING_SOURCE_ERASE_STORAGE_KEY);
+    if (!storage) return false;
+    if (entries.length) storage.setItem(PENDING_SOURCE_ERASE_STORAGE_KEY, JSON.stringify(entries));
+    else storage.removeItem(PENDING_SOURCE_ERASE_STORAGE_KEY);
+    return true;
   } catch {
-    // Best effort: without storage the erase simply cannot be resumed after a reload.
+    return false;
   }
+}
+
+// The ledger lives in localStorage; when that is full (it still holds the pre-IndexedDB copy of the workspace) the
+// entries go to sessionStorage, which survives a reload but not closing the browser. Without either, the original
+// stays on disk: a leak, never a loss.
+function localStorageOrNothing(): Storage | undefined {
+  try {
+    return localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+export function listPendingSourceErases(): PendingSourceErase[] {
+  const primary = readEntries(localStorageOrNothing());
+  const known = new Set(primary.map((entry) => entry.id));
+  return [...primary, ...readEntries(getSessionStorage()).filter((entry) => !known.has(entry.id))];
+}
+
+export function hasSessionOnlyPendingSourceErases(): boolean {
+  const durableIds = new Set(readEntries(localStorageOrNothing()).map((entry) => entry.id));
+  return readEntries(getSessionStorage()).some((entry) => !durableIds.has(entry.id));
+}
+
+function write(entries: PendingSourceErase[]) {
+  const local = localStorageOrNothing();
+  const session = getSessionStorage();
+  if (writeEntries(local, entries)) {
+    // Everything fits in localStorage again; nothing is left to keep in the session copy.
+    writeEntries(session, []);
+    return;
+  }
+  writeEntries(session, entries);
 }
 
 export function addPendingSourceErase(entry: Pick<PendingSourceErase, 'id' | 'kind'>) {

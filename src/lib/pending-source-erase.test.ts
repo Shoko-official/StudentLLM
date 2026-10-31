@@ -65,3 +65,27 @@ describe('pending source erase across tabs', () => {
     expect(PENDING_SOURCE_ERASE_MIN_AGE_MS).toBeGreaterThan(SOURCE_REMOVAL_MAX_MS);
   });
 });
+
+describe('a full localStorage', () => {
+  it('keeps the erase ledger for the browsing session instead of dropping it', () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    const realSet = Storage.prototype.setItem;
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key: string, value: string) {
+      if (this === localStorage) throw new DOMException('full', 'QuotaExceededError');
+      return realSet.call(this, key, value);
+    });
+    addPendingSourceErase({ id: 'source-a', kind: 'document' });
+    expect(listPendingSourceErases().map((entry) => entry.id)).toEqual(['source-a']);
+    expect(localStorage.getItem(PENDING_SOURCE_ERASE_STORAGE_KEY)).toBeNull();
+
+    spy.mockRestore();
+    // With room again, the next write moves everything back to localStorage.
+    addPendingSourceErase({ id: 'source-b', kind: 'audio' });
+    expect(JSON.parse(localStorage.getItem(PENDING_SOURCE_ERASE_STORAGE_KEY)!).map((entry: { id: string }) => entry.id).sort()).toEqual(['source-a', 'source-b']);
+    expect(sessionStorage.getItem(PENDING_SOURCE_ERASE_STORAGE_KEY)).toBeNull();
+    removePendingSourceErase('source-a');
+    removePendingSourceErase('source-b');
+    expect(listPendingSourceErases()).toEqual([]);
+  });
+});

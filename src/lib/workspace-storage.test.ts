@@ -174,7 +174,9 @@ describe('workspace storage', () => {
 
       expect(await load()).toEqual(expected);
       expect(localStorage.getItem(WORKSPACE_MIGRATION_BACKUP_KEY)).toBe(raw);
-      expect(JSON.parse(storedRaw()!)).toEqual({ version: 1, ...expected });
+      // The browser writes the compact shape when a per-lesson map exists; the native shell keeps the full one.
+      const { resources: _r, transcript: _t, chat: _c, artifacts: _a, ...compact } = expected;
+      expect(JSON.parse(storedRaw()!)).toEqual({ version: 1, ...(runtime === 'browser' && withMap ? compact : expected) });
       expect(await load()).toEqual(expected);
       expect(localStorage.getItem(WORKSPACE_MIGRATION_BACKUP_KEY)).toBe(raw);
       expect(localStorage.getItem(`${WORKSPACE_MIGRATION_BACKUP_KEY}.1`)).toBeNull();
@@ -613,6 +615,7 @@ describe('workspace storage', () => {
   });
 
   it('round-trips isolated lesson workspaces', () => {
+    const first = { resources: [], transcript: [{ id: 'one', timestamp: '00:01', speaker: 'Professor', text: 'First course' }], chat: [], artifacts: [] };
     const snapshot: WorkspaceSnapshot = {
       ...fallback,
       activeLessonId: 'lesson-one',
@@ -620,8 +623,10 @@ describe('workspace storage', () => {
         { ...fallback.lessons[0], id: 'lesson-one', title: 'Course one' },
         { ...fallback.lessons[0], id: 'lesson-two', title: 'Course two' },
       ],
+      // The top-level lists always mirror the active course, as the app builds them.
+      ...first,
       lessonWorkspaces: {
-        'lesson-one': { resources: [], transcript: [{ id: 'one', timestamp: '00:01', speaker: 'Professor', text: 'First course' }], chat: [], artifacts: [] },
+        'lesson-one': first,
         'lesson-two': { resources: [], transcript: [{ id: 'two', timestamp: '00:02', speaker: 'Professor', text: 'Second course' }], chat: [], artifacts: [] },
       },
     };

@@ -38,8 +38,14 @@ import { BrandGlyph } from './lib/brand-mark';
 import { foldForSearch, textMatchesQuery } from './lib/snippet';
 import { Snippet } from './lib/snippet-view';
 import { describeMicrophoneError, requestRecorderSession, RecorderSession } from './lib/recorder';
-import { isNativeRuntime, loadWorkspaceAsync, loadWorkspaceWithStatus, readWorkspaceCopy, runPackagedIpcSmoke, saveWorkspaceAsync, WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
-import type { WorkspaceLoadIssue } from './lib/workspace-storage';
+import { isNativeRuntime, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspaceAsync } from './lib/workspace-storage';
+import type { WorkspaceLoadIssue, WorkspaceSnapshot } from './lib/workspace-storage';
+import { openBrowserWorkspace, openLocalStorageWorkspace, shouldUseIndexedDb } from './lib/browser-workspace-store';
+import type { BrowserBootstrap } from './lib/browser-workspace-store';
+import { eraseCourseSources, eraseRemovedSource, isSafeToErase, sweepPendingErases } from './lib/source-erase';
+import type { EraseOperations } from './lib/source-erase';
+import { describeStorageUsage, readPersistentStorage, readStorageEstimate, requestPersistentStorage } from './lib/storage-estimate';
+import type { PersistentStorageState, StorageEstimateInfo } from './lib/storage-estimate';
 import type { WorkspaceStorageError } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import type { LLMProvider } from './lib/llm-provider';
@@ -60,7 +66,7 @@ import { createSourceBlobStore, type SourceBlobStore } from './lib/source-storag
 import { describeAiFailure, describeDocumentFailure, describeSpeechFailure } from './lib/service-errors';
 import { mergeSegments } from './lib/transcript-merge';
 import { AudioChunkStore, createRecordingChunkStore } from './lib/recording-storage';
-import { listPendingRecordings, removePendingRecording, savePendingRecording } from './lib/recording-recovery';
+import { hasSessionOnlyPendingRecordings, listPendingRecordings, removePendingRecording, savePendingRecording, type PendingRecording } from './lib/recording-recovery';
 import { buildCourseExport, describeCourseImportFailure, exportSizeWarning, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocumentsHybrid } from './lib/local-retrieval';
@@ -73,7 +79,7 @@ import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-
 import type { QuickStartProposal } from './lib/quick-start';
 import { Artifact, ArtifactKind, ChatMessage, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from './types';
 import { chooseNoteOnUndo, restoreAtPositions, sameIdSet, SOURCE_REMOVAL_MAX_MS, SOURCE_REMOVAL_UNDO_MS, takeWithPositions, type RemovedEntry } from './lib/source-removal';
-import { addPendingSourceErase, isStalePendingSourceErase, listPendingSourceErases, removePendingSourceErase } from './lib/pending-source-erase';
+import { addPendingSourceErase, hasSessionOnlyPendingSourceErases, isStalePendingSourceErase, listPendingSourceErases, removePendingSourceErase } from './lib/pending-source-erase';
 
 const PdfPreview = lazy(() => import('./lib/pdf-preview').then(({ PdfPreview: Preview }) => ({ default: Preview })));
 
@@ -311,13 +317,30 @@ interface ResourcePreview {
 
 type StorageNotice =
   | { kind: 'load-issue'; issue: WorkspaceLoadIssue }
-  | { kind: 'save-failed' }
-  | { kind: 'changed-elsewhere' };
+  | { kind: 'save-failed'; tooLarge?: boolean }
+  | { kind: 'changed-elsewhere' }
+  /** The browser would not open IndexedDB; the workspace works from the smaller localStorage instead. */
+  | { kind: 'indexeddb-unavailable' }
+  /** IndexedDB holds the workspace but could not be opened now; saving is paused and nothing is overwritten. */
+  | { kind: 'indexeddb-blocked' }
+  /** IndexedDB did not answer in time; the workspace came from the smaller localStorage. */
+  | { kind: 'indexeddb-timeout' };
 
 function storageNoticeText(notice: StorageNotice) {
+  if (notice.kind === 'indexeddb-timeout') return 'The storage for large courses did not answer in time, so StudentLLM is using the smaller fallback for now. Reload to try again. Export anything you want to keep first.';
+  if (notice.kind === 'indexeddb-unavailable') return 'This browser does not let StudentLLM use the storage meant for large courses (a private window can do this), so it is using a smaller fallback. A large course may stop being saved; you would be warned. Use a normal window for long lectures.';
+  if (notice.kind === 'indexeddb-blocked') return 'StudentLLM could not open the storage that holds your workspace, so it is showing the last copy kept before the upgrade. Saving is paused so nothing is overwritten. Close other StudentLLM tabs and reload; export anything you need first.';
+  if (notice.kind === 'save-failed' && notice.tooLarge) return 'Your changes are not being saved: this course workspace is larger than the 16 MB limit StudentLLM can store (your browser still has room). Use More \u2192 Export course to keep a copy of what is on screen, then split the material into smaller courses or delete old ones.';
   if (notice.kind === 'save-failed') return "Your changes are not being saved: this browser's storage is full or blocked. Use More \u2192 Export course to keep a copy of what is on screen, then free up space or clear old courses.";
   if (notice.kind === 'changed-elsewhere') return 'StudentLLM was changed in another tab or window. Reload this page to see the latest version. Changes made here are not saved until you reload, so export anything you want to keep first.';
   const { kind, backedUp, protect } = notice.issue;
+  if (kind === 'storage-reset') {
+    if (!notice.issue.backedUp) return 'Your workspace storage was cleared (the browser may have removed it to free space) and no earlier copy was found, so StudentLLM started empty. Courses you exported can be imported again.';
+    const when = notice.issue.since ? ` from ${new Date(notice.issue.since).toLocaleDateString()}` : '';
+    return `Your workspace storage was reset. StudentLLM is showing the older copy${when}; changes made after it are lost. Download the copy to keep it.`;
+  }
+  if (kind === 'older-copy' && notice.issue.copyLimitReached) return 'StudentLLM already holds 8 recovery copies, so this different older workspace could not be copied again. The current workspace is shown and the older data is still in the fallback storage. Download the older copy now to keep it.';
+  if (kind === 'older-copy') return 'A different copy of your workspace, saved by an older version of StudentLLM or while this browser could not use its large-course storage, was found and kept. The workspace shown is the current one. Download the older copy if it holds work you need.';
   const what = kind === 'partial'
     ? 'Some entries in your saved workspace could not be read and were left out.'
     : kind === 'newer-version'
@@ -326,6 +349,7 @@ function storageNoticeText(notice: StorageNotice) {
   const copy = backedUp
     ? 'A copy of the original data was kept in this browser.'
     : 'A copy of the original data could not be kept because browser storage is full.';
+  if (notice.issue.restoredFromLegacy) return `${what} ${copy} The copy of your workspace from before the storage upgrade is shown instead; changes made since then may be missing. Download the saved copy to keep what could not be read.`;
   if (kind === 'newer-version') return `${what} The saved data was left untouched and saving is paused in this window, so nothing done here is kept. Open it with the newer version of the app, or download it to keep a copy.`;
   if (protect) return `${what} ${copy} To protect your data it was left untouched and saving is paused in this window, so nothing done here is kept. Download the saved data first.`;
   return `${what} ${copy} Download it to keep it elsewhere; courses you export are never affected.`;
@@ -372,6 +396,32 @@ const TranscriptItem = memo(function TranscriptItem({ segment, onToggleReview }:
   );
 });
 
+// Settings: how much of the browser's storage is used, and whether the browser promised to keep it.
+function StorageUsagePanel() {
+  const [estimate, setEstimate] = useState<StorageEstimateInfo | null | undefined>(undefined);
+  const [persistence, setPersistence] = useState<PersistentStorageState | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    void readStorageEstimate().then((value) => { if (!cancelled) setEstimate(value); });
+    void readPersistentStorage().then((value) => { if (!cancelled) setPersistence(value); });
+    return () => { cancelled = true; };
+  }, []);
+  const askToKeep = async () => {
+    let storage: Storage | undefined;
+    try { storage = window.localStorage; } catch { storage = undefined; }
+    setPersistence(await requestPersistentStorage(undefined, { force: true, storage }));
+  };
+  return (
+    <div className="storage-usage" role="group" aria-label="Browser storage">
+      <strong>Browser storage</strong>
+      <p className="empty-state">{estimate === undefined ? 'Checking...' : estimate ? describeStorageUsage(estimate) : 'This browser does not say how much storage is used.'}</p>
+      {estimate?.nearLimit && <p className="action-error" role="alert">Browser storage is almost full. Export the courses you want to keep (More, then Export course), then delete old courses or free up space. When it is full, new work cannot be saved.</p>}
+      {persistence === 'granted' && <p className="empty-state">The browser has promised to keep your data when it runs short of space.</p>}
+      {persistence === 'not-granted' && <p className="empty-state">The browser may clear this site's data when it runs short of space. You can ask it to keep your data; some browsers (Firefox, for instance) then show their own prompt. <button type="button" className="text-action" onClick={() => void askToKeep()}>Ask the browser to keep my data</button></p>}
+    </div>
+  );
+}
+
 // The transcript list is only built while the section is open: a long recording has hundreds of segments, each typeset
 // as Markdown, and most visits to a course never open it.
 function TranscriptDisclosure({ summary, children }: { summary: string; children: [() => ReactNode, ReactNode] }) {
@@ -385,13 +435,72 @@ function TranscriptDisclosure({ summary, children }: { summary: string; children
   );
 }
 
-function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine, recordingChunkStore: recordingChunkStoreOverride, sourceBlobStore: sourceBlobStoreOverride, liveTranscriptionIntervalMs = 3_000 }: AppProps) {
-  const [{ snapshot: workspace, issue: workspaceLoadIssue }] = useState(() => loadWorkspaceWithStatus(initialWorkspace));
+// The browser keeps the workspace in IndexedDB, which opens asynchronously. Nothing of the app is mounted before it has
+// loaded, so there is no flash of an empty workspace and no effect can save an empty state over the real one. Where
+// IndexedDB does not exist (and in the desktop shell, which has its own storage) the workspace is read synchronously, as before.
+function WorkspaceLoading() {
+  // A file dropped while the workspace opens must not make the browser open it and leave the app.
+  useEffect(() => {
+    const keepFilesHere = (event: DragEvent) => {
+      if (Array.from(event.dataTransfer?.types ?? []).includes('Files')) event.preventDefault();
+    };
+    window.addEventListener('dragover', keepFilesHere);
+    window.addEventListener('drop', keepFilesHere);
+    return () => {
+      window.removeEventListener('dragover', keepFilesHere);
+      window.removeEventListener('drop', keepFilesHere);
+    };
+  }, []);
+  // The live region is on screen before it has any text, so that screen readers announce the text once it is added.
+  const [message, setMessage] = useState('');
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setMessage('Opening your workspace...');
+    const timer = window.setTimeout(() => setSlow(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return (
+    <div className="app-shell workspace-loading">
+      <span className="brand-name"><span className="brand-mark" aria-hidden="true"><BrandGlyph size={24} /></span>StudentLLM</span>
+      <p className="empty-state" role="status" aria-live="polite">{message}{slow ? ' This is taking longer than usual. Close other StudentLLM tabs, then reload.' : ''}</p>
+      {slow && <button type="button" className="text-action" onClick={() => window.location.reload()}>Reload</button>}
+    </div>
+  );
+}
+
+function App(props: AppProps) {
+  const [bootstrap, setBootstrap] = useState<BrowserBootstrap | null>(() => (isNativeRuntime() || !shouldUseIndexedDb() ? openLocalStorageWorkspace(initialWorkspace) : null));
+  // One opening per page, even when React runs the effect twice in development.
+  const openingRef = useRef<Promise<BrowserBootstrap> | null>(null);
+  useEffect(() => {
+    if (bootstrap) return undefined;
+    let cancelled = false;
+    openingRef.current ??= openBrowserWorkspace(initialWorkspace).catch(() => openLocalStorageWorkspace(initialWorkspace));
+    void openingRef.current.then((opened) => {
+      if (!cancelled) setBootstrap(opened);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [bootstrap]);
+  return bootstrap ? <WorkspaceApp {...props} bootstrap={bootstrap} /> : <WorkspaceLoading />;
+}
+
+function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine, recordingChunkStore: recordingChunkStoreOverride, sourceBlobStore: sourceBlobStoreOverride, liveTranscriptionIntervalMs = 3_000 }: AppProps & { bootstrap: BrowserBootstrap }) {
+  const [{ snapshot: workspace, issue: workspaceLoadIssue, store: workspaceStore, unavailable: storageUnavailable }] = useState(() => bootstrap);
   // A banner for the problems that must not go unnoticed: the workspace could not be read, saved, or changed in another window.
-  const [storageNotice, setStorageNotice] = useState<StorageNotice | null>(() => workspaceLoadIssue ? { kind: 'load-issue', issue: workspaceLoadIssue } : null);
+  const [storageNotice, setStorageNotice] = useState<StorageNotice | null>(() => workspaceLoadIssue
+    ? { kind: 'load-issue', issue: workspaceLoadIssue }
+    : storageUnavailable ? { kind: storageUnavailable.reason } : null);
   // While paused nothing is written, so a stale tab or a protected original cannot be overwritten.
-  const savingPausedRef = useRef(Boolean(workspaceLoadIssue?.protect));
+  const savingPausedRef = useRef(Boolean(workspaceLoadIssue?.protect || storageUnavailable?.protect));
   const saveFailedRef = useRef(false);
+  // The save in progress, so a stored original is only erased after the workspace that stopped listing it is stored.
+  const lastSaveRef = useRef<Promise<unknown>>(Promise.resolve());
+  // Whether the workspace was read cleanly at the start: when it was not, "not listed" means "not read".
+  const workspaceTrustedRef = useRef(!storageUnavailable && (!workspaceLoadIssue || workspaceLoadIssue.kind === 'older-copy'));
+  // A deliberate reload (from the stale-tab banner) must not ask a second time.
+  const skipUnloadWarningRef = useRef(false);
   const [saveTick, setSaveTick] = useState(0);
   // Imports whose file is already being stored but not yet listed in a course ("lessonId|resourceId").
   const inFlightImportsRef = useRef(new Set<string>());
@@ -501,12 +610,16 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const resourcePreviewRequest = useRef(0);
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
-  const [importQueue, setImportQueue] = useState<Array<{ file: File; lessonId: string }>>([]);
+  // A folder import creates each course when its file starts importing, not all up front: a reload or crash in the middle
+  // then leaves no empty courses for the files that were never reached.
+  const [importQueue, setImportQueue] = useState<Array<{ file: File; lesson: Lesson }>>([]);
+  const batchLessonIdsRef = useRef(new Set<string>());
+  const activateNextBatchLessonRef = useRef(false);
   const [importTotals, setImportTotals] = useState<{ done: number; total: number } | null>(null);
   const importRunningRef = useRef(false);
   const courseActionsRef = useRef<HTMLDetailsElement | null>(null);
   const courseActionsSummaryRef = useRef<HTMLElement | null>(null);
-  const startedImportRef = useRef<{ file: File; lessonId: string } | null>(null);
+  const startedImportRef = useRef<{ file: File; lesson: Lesson } | null>(null);
   const rebuiltDocumentSourceIds = useRef(new Set<string>());
   // Pages already extracted at import, so the AI rewrite does not OCR the same scan again.
   const extractedDocumentPages = useRef(new Map<string, DocumentPage[]>());
@@ -535,6 +648,29 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     setToast(error.operation === 'load'
       ? 'Native workspace storage unavailable. Using local fallback.'
       : 'Native workspace save failed. Changes remain in local fallback.');
+  };
+
+  // Stores the workspace and keeps the alerts honest: a full or blocked store used to lose everything since the last good save.
+  const persistWorkspace = (snapshot: WorkspaceSnapshot): Promise<boolean> => {
+    const saving = (isNativeRuntime()
+      ? saveWorkspaceAsync(snapshot, undefined, { onError: reportStorageError })
+      : workspaceStore.save(snapshot)
+    ).then((saved) => {
+      saveFailedRef.current = !saved;
+      setStorageNotice((current) => saved
+        ? (current?.kind === 'save-failed' ? null : current)
+        : (current?.kind === 'changed-elsewhere' ? current : { kind: 'save-failed', ...(!isNativeRuntime() && workspaceStore.lastFailure === 'too-large' ? { tooLarge: true } : {}) }));
+      return saved;
+    });
+    lastSaveRef.current = saving;
+    return saving;
+  };
+
+  const eraseOperations: EraseOperations = {
+    removeBlob: (sourceId) => sourceBlobStore.remove(sourceId),
+    clearChunks: (recordingId) => recordingChunkStore.clear(recordingId),
+    forget: removePendingSourceErase,
+    remember: addPendingSourceErase,
   };
 
   const activeLesson = lessons.find((lesson) => lesson.id === activeLessonId) ?? lessons[0] ?? emptyLesson;
@@ -880,21 +1016,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const stale = listPendingSourceErases().filter((entry) => isStalePendingSourceErase(entry) && entry.id !== pendingSourceRemovalRef.current?.resource.id);
     if (!stale.length) return;
     const referenced = new Set(Object.values(lessonWorkspaces).flatMap((item) => item.resources.map((resource) => resource.id)));
-    void (async () => {
-      for (const entry of stale) {
-        if (referenced.has(entry.id)) {
-          removePendingSourceErase(entry.id);
-          continue;
-        }
-        try {
-          await sourceBlobStore.remove(entry.id);
-          if (entry.kind === 'audio') await recordingChunkStore.clear(entry.id);
-          removePendingSourceErase(entry.id);
-        } catch {
-          // Keep the entry; the next start retries.
-        }
-      }
-    })();
+    // A workspace that was not read cleanly lists nothing it did not manage to read: erase nothing, keep every entry.
+    void sweepPendingErases(stale, { referencedIds: referenced, workspaceTrusted: workspaceTrustedRef.current && !savingPausedRef.current }, eraseOperations);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nativeStorageReady, sourceBlobStore, recordingChunkStore]);
 
@@ -1054,40 +1177,53 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   useEffect(() => {
     if (!nativeStorageReady || savingPausedRef.current) return;
-    void saveWorkspaceAsync(
-      { activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces },
-      undefined,
-      { onError: reportStorageError },
-    ).then((saved) => {
-      // Never claim "saved" silently: a full or blocked browser store used to lose everything since the last good save.
-      saveFailedRef.current = !saved;
-      setStorageNotice((current) => saved
-        ? (current?.kind === 'save-failed' ? null : current)
-        : (current?.kind === 'changed-elsewhere' ? current : { kind: 'save-failed' }));
-    });
+    void persistWorkspace({ activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nativeStorageReady, activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces, saveTick]);
 
   // Another tab or window wrote the workspace (or the browser data was cleared). Saving from this stale copy would
-  // overwrite that work, so stop saving here and ask for a reload.
+  // overwrite that work, so stop saving here and ask for a reload. Where the workspace is in IndexedDB the store tells
+  // the tabs through a BroadcastChannel and refuses a stale save itself; on the localStorage path it is the `storage` event.
   useEffect(() => {
     if (isNativeRuntime()) return undefined;
-    const onStorage = (event: StorageEvent) => {
-      if (event.key !== null && event.key !== WORKSPACE_STORAGE_KEY) return;
+    return workspaceStore.onChangedElsewhere(() => {
       savingPausedRef.current = true;
       setStorageNotice({ kind: 'changed-elsewhere' });
+    });
+  }, [workspaceStore]);
+
+  // The last state is handed to the store when the page is hidden or closed: the write is asynchronous, so this closes the
+  // window between a change and its effect. It is a best effort; a state that was already stored is not written again.
+  const latestSnapshotRef = useRef<WorkspaceSnapshot>({ activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces });
+  latestSnapshotRef.current = { activeLessonId, lessons, resources, transcript, chat, artifacts, lessonWorkspaces };
+  const persistWorkspaceRef = useRef(persistWorkspace);
+  persistWorkspaceRef.current = persistWorkspace;
+  useEffect(() => {
+    if (isNativeRuntime()) return undefined;
+    const flush = () => {
+      if (nativeStorageReady && !savingPausedRef.current) void persistWorkspaceRef.current(latestSnapshotRef.current);
     };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, []);
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [nativeStorageReady]);
 
   // Closing the tab during an import, a transcription or a recording is the one way to lose work in progress.
   // The same goes for changes that are not being saved: a stale tab, a full store, or a protected original.
-  const changesAtRisk = storageNotice?.kind === 'save-failed' || storageNotice?.kind === 'changed-elsewhere'
+  const changesAtRisk = storageNotice?.kind === 'save-failed' || storageNotice?.kind === 'changed-elsewhere' || storageNotice?.kind === 'indexeddb-blocked'
     || (storageNotice?.kind === 'load-issue' && storageNotice.issue.protect && lessons.length > 0);
   const workInProgress = importQueue.length > 0 || transcribingResourceIds.size > 0 || isRecording || isFinalizingRecording || changesAtRisk;
   useEffect(() => {
     if (!workInProgress) return undefined;
-    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    const warn = (event: BeforeUnloadEvent) => {
+      if (skipUnloadWarningRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [workInProgress]);
@@ -1113,6 +1249,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     // While saving is paused or failing, this tab's workspace is not the saved one: a manifest whose course "does not exist"
     // here may belong to a workspace that could not be loaded, and a recovered source would not be written down.
     if (!nativeStorageReady || savingPausedRef.current || saveFailedRef.current) return undefined;
+    // While the workspace has a load problem (unreadable, partly read, copy kept) a course "that does not exist" may only
+    // be one that was not read. The manifests wait until the student has decided what to do.
+    if (storageNotice?.kind === 'load-issue') return undefined;
 
     let cancelled = false;
     const pendingRecordings = listPendingRecordings();
@@ -1122,7 +1261,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       for (const pending of pendingRecordings) {
         const lesson = lessons.find((item) => item.id === pending.lessonId);
         if (!lesson) {
-          removePendingRecording(pending.recordingId);
+          // The course is not in this workspace. That is normal for a deleted course, but also for a workspace that was
+          // replaced by an empty one (an unreadable copy kept, "Start empty anyway"). A manifest is only forgotten when no
+          // audio is left to recover, so the recording can still be found from the saved copy.
+          try {
+            if (await recordingChunkStore.count(pending.recordingId) === 0) removePendingRecording(pending.recordingId);
+          } catch {
+            // Keep the manifest.
+          }
           continue;
         }
 
@@ -1163,7 +1309,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     return () => {
       cancelled = true;
     };
-  }, [lessons, nativeStorageReady, recordingChunkStore]);
+  }, [lessons, nativeStorageReady, recordingChunkStore, storageNotice?.kind === 'load-issue']);
 
   useEffect(() => () => {
     void recorderRef.current?.stop();
@@ -2257,26 +2403,22 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       file,
       lesson: { id: `lesson-${crypto.randomUUID()}`, subject, chapter, title, teacher: '', duration: '00:00:00', date, progress: 0 } satisfies Lesson,
     }));
-    setLessons((current) => [...planned.map(({ lesson }) => lesson), ...current]);
-    setLessonWorkspaces((current) => ({ ...current, ...Object.fromEntries(planned.map(({ lesson }) => [lesson.id, emptyLessonWorkspace])) }));
     setExpandedSubjects((expanded) => ({ ...expanded, [subject]: true }));
-    setActiveLessonId(planned[0].lesson.id);
-    setSelectedArtifactId(null);
+    activateNextBatchLessonRef.current = true;
     setView('course');
     setActionError('');
-    setImportQueue((current) => [...current, ...planned.map(({ file, lesson }) => ({ file, lessonId: lesson.id }))]);
+    setImportQueue((current) => [...current, ...planned]);
     setImportTotals((current) => ({ done: current?.done ?? 0, total: (current?.total ?? 0) + planned.length }));
     const skipped = files.length - plan.length;
-    notify(`${planned.length} lessons created in ${subject}${skipped ? `, ${skipped} unsupported file${skipped === 1 ? '' : 's'} skipped` : ''}. Importing them one by one.`);
+    notify(`Importing ${planned.length} file${planned.length === 1 ? '' : 's'} into ${subject}, one lesson each${skipped ? `, ${skipped} unsupported file${skipped === 1 ? '' : 's'} skipped` : ''}.`);
   };
 
   const stopBatchImport = () => {
-    const dropped = new Set(importQueue.slice(1).map(({ lessonId }) => lessonId));
+    // Courses are only created when their file starts, so the files that are still waiting have nothing to clean up.
+    const dropped = Math.max(0, importQueue.length - 1);
     setImportQueue((current) => current.slice(0, 1));
     setImportTotals((current) => current && { ...current, total: current.done + 1 });
-    setLessons((current) => current.filter((lesson) => !dropped.has(lesson.id)));
-    setLessonWorkspaces((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !dropped.has(id))));
-    notify(`Import stopped. ${dropped.size} remaining file${dropped.size === 1 ? ' was' : 's were'} not added.`);
+    notify(`Import stopped. ${dropped} remaining file${dropped === 1 ? ' was' : 's were'} not added.`);
   };
 
   const importFolder = (event: ChangeEvent<HTMLInputElement>) => {
@@ -2290,6 +2432,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   useEffect(() => {
     if (importRunningRef.current) return;
     if (!importQueue.length) {
+      // The next folder starts afresh: its courses go to the top and its first course is the one shown.
+      batchLessonIdsRef.current.clear();
+      activateNextBatchLessonRef.current = false;
       if (importTotals) {
         notify(`${importTotals.total} source${importTotals.total === 1 ? '' : 's'} imported.`);
         setImportTotals(null);
@@ -2300,7 +2445,25 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     // A passive effect from a render that predates the finished file can still run after
     // `finally` resets the running flag; it sees the old queue head and must not restart it.
     if (startedImportRef.current === next) return;
-    const lesson = lessons.find((candidate) => candidate.id === next.lessonId);
+    const lesson = lessons.find((candidate) => candidate.id === next.lesson.id);
+    if (!lesson && !batchLessonIdsRef.current.has(next.lesson.id)) {
+      // This file's turn has come: create its course now and start the import on the next render, when it exists.
+      batchLessonIdsRef.current.add(next.lesson.id);
+      const planned = next.lesson;
+      setLessons((current) => {
+        // Keep the courses of a folder in the order of the folder: each one goes after the ones created before it.
+        let at = 0;
+        current.forEach((item, index) => { if (batchLessonIdsRef.current.has(item.id)) at = index + 1; });
+        return [...current.slice(0, at), planned, ...current.slice(at)];
+      });
+      setLessonWorkspaces((current) => ({ ...current, [planned.id]: emptyLessonWorkspace }));
+      if (activateNextBatchLessonRef.current) {
+        activateNextBatchLessonRef.current = false;
+        setActiveLessonId(planned.id);
+        setSelectedArtifactId(null);
+      }
+      return;
+    }
     startedImportRef.current = next;
     importRunningRef.current = true;
     void (lesson ? importSourceFile(next.file, lesson, false) : Promise.resolve()).finally(() => {
@@ -2400,11 +2563,14 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
 
   const commitSourceRemoval = async (pending: PendingSourceRemoval) => {
     try {
-      if (!isSourceUsedElsewhere(pending.resource.id)) {
-        await sourceBlobStore.remove(pending.resource.id);
-        if (pending.resource.kind === 'audio') await recordingChunkStore.clear(pending.resource.id);
-      }
-      removePendingSourceErase(pending.resource.id);
+      // The original is only erased once the workspace that no longer lists it is stored. While saving is paused (another
+      // tab, a protected original) or failing (a full store) the saved workspace may still list the source: the erase waits
+      // in the pending-erase ledger, and the startup sweep, which checks references, finishes it later.
+      await lastSaveRef.current;
+      await eraseRemovedSource(pending.resource, {
+        safety: { savingPaused: savingPausedRef.current, saveFailed: saveFailedRef.current },
+        usedElsewhere: isSourceUsedElsewhere(pending.resource.id),
+      }, eraseOperations);
     } catch {
       // The ledger entry stays, so the erase is retried the next time the app starts.
       notify(`${pending.resource.name} could not be fully removed.`);
@@ -2529,44 +2695,82 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setShowDeleteCourse(false);
       return;
     }
+    if (savingPausedRef.current) {
+      // Nothing done in this window is stored, so the course would be back after a reload. Do not pretend otherwise.
+      notify('Saving is paused in this window, so the course was not deleted. Reload the page, then delete it.');
+      setShowDeleteCourse(false);
+      return;
+    }
 
     flushPendingSourceRemoval();
     const lessonId = activeLesson.id;
     const lessonTitle = activeLesson.title;
+    const deletedResources = resources;
+    // Read before the course leaves the screen: once it is gone, the recovery effect no longer finds its lesson.
+    const interruptedRecordings = listPendingRecordings().filter((entry) => entry.lessonId === lessonId);
+    const nextLessons = lessons.filter((lesson) => lesson.id !== lessonId);
+    const nextLesson = nextLessons[0];
+    const nextWorkspaces = Object.fromEntries(Object.entries(lessonWorkspacesRef.current).filter(([id]) => id !== lessonId));
+    const nextActive = nextWorkspaces[nextLesson?.id ?? ''] ?? emptyLessonWorkspace;
+    // Remembered before anything else happens: if the page dies from here on, the startup sweep (which checks references,
+    // so it keeps whatever the saved workspace still lists) finishes the job.
+    for (const resource of deletedResources) if (!isSourceUsedElsewhere(resource.id, lessonId)) eraseOperations.remember(resource);
+    // Functional updates: an import for another course that was queued a moment ago must not be undone.
+    setLessons((current) => current.filter((lesson) => lesson.id !== lessonId));
+    setLessonWorkspaces((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== lessonId)));
+    setActiveLessonId(nextLesson?.id ?? '');
+    setSelectedArtifactId(nextLesson ? lessonWorkspaces[nextLesson.id]?.artifacts[0]?.id ?? null : null);
+    setView('course');
+    setShowAllResources(false);
+    setShowDeleteCourse(false);
     try {
-      const pendingRecordings = listPendingRecordings().filter((pending) => pending.lessonId === lessonId);
-      for (const resource of resources) {
-        if (isSourceUsedElsewhere(resource.id, lessonId)) continue;
-        await sourceBlobStore.remove(resource.id);
-        await recordingChunkStore.clear(resource.id);
-      }
-      for (const pending of pendingRecordings) {
-        await recordingChunkStore.clear(pending.recordingId);
-        if (!removePendingRecording(pending.recordingId)) throw new Error('Unable to remove interrupted recording state.');
-      }
-      const nextLessons = lessons.filter((lesson) => lesson.id !== lessonId);
-      const nextLesson = nextLessons[0];
-      setLessons(nextLessons);
-      setLessonWorkspaces((current) => {
-        const next = { ...current };
-        delete next[lessonId];
-        return next;
+      // The deletion is stored first; only then are the originals erased. If saving fails, the saved workspace may still
+      // list this course, so its files stay.
+      const stored = await persistWorkspace({
+        activeLessonId: nextLesson?.id ?? '', lessons: nextLessons, ...nextActive, lessonWorkspaces: nextWorkspaces,
       });
-      setActiveLessonId(nextLesson?.id ?? '');
-      setSelectedArtifactId(nextLesson ? lessonWorkspaces[nextLesson.id]?.artifacts[0]?.id ?? null : null);
-      setView('course');
-      setShowAllResources(false);
-      setShowDeleteCourse(false);
-      notify(`${lessonTitle} deleted.`);
+      const safety = { savingPaused: savingPausedRef.current, saveFailed: !stored };
+      await eraseCourseSources(deletedResources, { safety, usedElsewhere: (resourceId) => isSourceUsedElsewhere(resourceId, lessonId) }, eraseOperations);
+      if (isSafeToErase(safety)) {
+        for (const pending of interruptedRecordings) {
+          await recordingChunkStore.clear(pending.recordingId);
+          if (!removePendingRecording(pending.recordingId)) throw new Error('Unable to remove interrupted recording state.');
+        }
+      }
+      notify(isSafeToErase(safety) ? `${lessonTitle} deleted.` : `${lessonTitle} was removed here, but the change could not be saved, so it comes back after a reload. Its files are kept.`);
     } catch {
-      notify(`${lessonTitle} could not be deleted.`);
+      notify(`${lessonTitle} was deleted, but some of its files could not be removed yet. They are removed the next time StudentLLM starts.`);
     }
   };
 
-  // The raw saved workspace is not a course export (it cannot be imported); it is a copy to keep and to restore from.
-  const downloadSavedCopy = (issue: WorkspaceLoadIssue) => {
+  // A missing course is only meaningful in a trusted, current workspace. Recent manifests may belong to another live tab.
+  const [orphanTick, setOrphanTick] = useState(0);
+  const canDiscardRecording = (entry: PendingRecording) => nativeStorageReady && workspaceTrustedRef.current
+    && !savingPausedRef.current && !saveFailedRef.current
+    && Date.now() - entry.startedAt >= 24 * 60 * 60 * 1000
+    && !lessons.some((lesson) => lesson.id === entry.lessonId)
+    && !Object.values(lessonWorkspaces).some((workspace) => workspace.resources.some((resource) => resource.id === entry.recordingId));
+  const orphanRecordings = showSettingsPanel ? listPendingRecordings().filter(canDiscardRecording) : [];
+  const sessionOnlyRecovery = hasSessionOnlyPendingRecordings() || hasSessionOnlyPendingSourceErases();
+  void orphanTick;
+  const discardUnrecoveredRecording = async (entry: PendingRecording) => {
+    if (!canDiscardRecording(entry)) return;
+    if (!window.confirm(`Permanently erase the recording from "${entry.lessonTitle}" and its recovery information? First check that no other StudentLLM tab or window is still recording or needs this audio. This cannot be undone.`)) return;
+    const current = listPendingRecordings().find((item) => item.recordingId === entry.recordingId);
+    if (!current || !canDiscardRecording(current) || current.startedAt !== entry.startedAt || current.lessonId !== entry.lessonId) return;
     try {
-      const raw = readWorkspaceCopy(issue);
+      await recordingChunkStore.clear(entry.recordingId);
+      if (!removePendingRecording(entry.recordingId)) throw new Error('Unable to remove recovery information.');
+    } catch {
+      notify('The recording could not be removed.');
+    }
+    setOrphanTick((tick) => tick + 1);
+  };
+
+  // The raw saved workspace is not a course export (it cannot be imported); it is a copy to keep and to restore from.
+  const downloadSavedCopy = async (issue: WorkspaceLoadIssue) => {
+    try {
+      const raw = await workspaceStore.readCopy(issue);
       if (!raw) {
         notify('The saved copy could not be read from this browser.');
         return;
@@ -2586,6 +2790,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const startEmptyAnyway = () => {
     if (!window.confirm('Start with an empty workspace? The saved data will be replaced by what you do from now on. Download it first if you want to keep it.')) return;
     savingPausedRef.current = false;
+    workspaceStore.setProtected(false);
     setStorageNotice(null);
     setSaveTick((tick) => tick + 1);
   };
@@ -2816,10 +3021,12 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         <button className="icon-button" aria-label="Settings" onClick={() => setShowSettingsPanel(true)}><Settings2 size={19} /></button>
       </header>
 
+      {sessionOnlyRecovery && <div className="action-error storage-banner" role="status"><p>Recovery information is saved only for this browser session because local storage is full or blocked. Finish and save any recording before closing this tab or browser. Interrupted audio may otherwise be hard to find, and pending file cleanup information may be lost.</p></div>}
       {storageNotice && <div className="action-error storage-banner" role="alert"><p>{storageNoticeText(storageNotice)}</p><span className="storage-banner-actions">
-        {storageNotice.kind === 'changed-elsewhere' && <button className="text-action" onClick={() => window.location.reload()}>Reload</button>}
-        {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'save-failed') && hasCourse && <button className="text-action" onClick={() => void exportCourse()}>Export this course</button>}
-        {storageNotice.kind === 'load-issue' && <button className="text-action" onClick={() => downloadSavedCopy(storageNotice.issue)}>{storageNotice.issue.protect ? 'Download saved data' : 'Download saved copy'}</button>}
+        {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'indexeddb-blocked' || storageNotice.kind === 'indexeddb-timeout') && <button className="text-action" onClick={() => { skipUnloadWarningRef.current = true; window.location.reload(); }}>Reload</button>}
+        {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'save-failed' || storageNotice.kind === 'indexeddb-blocked' || storageNotice.kind === 'indexeddb-timeout') && hasCourse && <button className="text-action" onClick={() => void exportCourse()}>Export this course</button>}
+        {storageNotice.kind === 'load-issue' && (storageNotice.issue.copyKey !== undefined || storageNotice.issue.raw !== undefined) && <button className="text-action" onClick={() => void downloadSavedCopy(storageNotice.issue)}>{storageNotice.issue.kind === 'older-copy' ? 'Download older copy' : storageNotice.issue.protect ? 'Download saved data' : 'Download saved copy'}</button>}
+        {(storageNotice.kind === 'indexeddb-unavailable' || storageNotice.kind === 'indexeddb-timeout') && <button className="text-action" onClick={() => setStorageNotice(null)}>Dismiss</button>}
         {storageNotice.kind === 'load-issue' && storageNotice.issue.protect && storageNotice.issue.kind !== 'newer-version' && <button className="text-action" onClick={startEmptyAnyway}>Start empty anyway</button>}
         {storageNotice.kind === 'load-issue' && !storageNotice.issue.protect && <button className="text-action" onClick={() => setStorageNotice(null)}>Dismiss</button>}
       </span></div>}
@@ -2974,7 +3181,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           <div className="connection-field"><label htmlFor="local-documents-url">Document service address</label><input id="local-documents-url" value={serviceDraft.documentsUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, documentsUrl: event.target.value }))} placeholder="http://127.0.0.1:8766" />{isNativeRuntime() && <small>{LOOPBACK_HINT}</small>}</div>
           <button className="primary-submit" disabled={isRecording || isFinalizingRecording || isStartingRecording || isCheckingSidecars} type="submit">Save connections</button>
           <p className="empty-state" role="status">{usesNim(serviceSettings) ? 'NVIDIA NIM' : 'LM Studio / Bionic'}: {isCheckingSidecars ? 'Checking...' : llmHealth}</p>{availableModels.length > 0 && <p className="detected-models">Detected local models: {availableModels.join(', ')}</p>}
-        </form><div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>These optional helpers run on this computer. Recordings and imported files are always saved first; a helper that is not running only postpones transcription or text extraction.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>Speech service (transcription)</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document service (PDF, images, Office)</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Icons by Lucide (ISC). <button type="button" className="link-button" onClick={() => setShowLicenses(true)}>Open-source licences</button></p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
+        </form>{!isNativeRuntime() && <StorageUsagePanel />}{orphanRecordings.length > 0 && <div className="storage-usage" role="group" aria-label="Unrecovered recordings"><strong>Unrecovered recordings</strong><p className="empty-state">These recordings were interrupted and their course is not in this workspace. The audio is kept in case the course comes back. Remove one only if you do not need it.</p>{orphanRecordings.map((entry) => <p className="empty-state" key={entry.recordingId}>{entry.lessonTitle || 'Untitled course'} <button type="button" className="text-action" onClick={() => void discardUnrecoveredRecording(entry)}>Remove recording</button></p>)}</div>}<div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>These optional helpers run on this computer. Recordings and imported files are always saved first; a helper that is not running only postpones transcription or text extraction.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>Speech service (transcription)</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document service (PDF, images, Office)</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Icons by Lucide (ISC). <button type="button" className="link-button" onClick={() => setShowLicenses(true)}>Open-source licences</button></p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
       {showLicenses && <LicensesDialog onClose={() => setShowLicenses(false)} />}
       {isNativeRuntime() && <div className="managed-sidecar-tray" aria-label="Managed local services"><span>Managed services</span><span aria-live="polite">{managedSidecars.filter((sidecar) => sidecar.running).length}/2 running</span><button type="button" onClick={() => void startConfiguredSidecars()}>Start</button><button type="button" onClick={() => void stopConfiguredSidecars()}>Stop</button></div>}
       <div className="toast-stack">
