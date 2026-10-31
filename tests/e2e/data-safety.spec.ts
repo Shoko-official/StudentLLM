@@ -1,9 +1,8 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { createFixtureWorkspace } from '../../src/test/workspace-fixture';
+import { readStoredValue, savedWorkspace, WORKSPACE_KEY } from './workspace-store';
 
-// Real-browser checks for the ways a student could lose work without noticing.
-const WORKSPACE_KEY = 'studentllm.workspace.v1';
-const savedWorkspace = (page: Page) => page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), WORKSPACE_KEY);
+// Real-browser checks for the ways a student could lose work without noticing. The workspace lives in IndexedDB.
 
 test.describe('data safety', () => {
   test.beforeEach(async ({ page }) => {
@@ -15,11 +14,14 @@ test.describe('data safety', () => {
 
   test('alerts instead of claiming success when the browser storage is full', async ({ page }) => {
     await page.goto('/');
+    await expect(page.getByRole('button', { name: 'Self-attention and Context' })).toBeVisible();
+    // The browser reports a full store when the write is committed: the transaction aborts.
     await page.evaluate((key) => {
-      const original = Storage.prototype.setItem;
-      Storage.prototype.setItem = function (name: string, value: string) {
-        if (name === key) throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
-        return original.call(this, name, value);
+      const original = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (value: unknown, name?: IDBValidKey) {
+        const request = original.call(this, value, name);
+        if (name === key) this.transaction.abort();
+        return request;
       };
     }, WORKSPACE_KEY);
 
@@ -35,7 +37,9 @@ test.describe('data safety', () => {
 
     await expect(page.getByRole('alert')).toContainText('could not be read');
     await expect(page.getByRole('alert')).toContainText('A copy of the original data was kept');
-    expect(await page.evaluate(() => localStorage.getItem('studentllm.workspace.v1.unreadable-backup'))).toBe(damaged);
+    // The copy is kept next to the workspace, in IndexedDB, and the damaged value itself is left in localStorage.
+    expect(await readStoredValue(page, 'studentllm.workspace.v1.unreadable-backup')).toBe(damaged);
+    expect(await page.evaluate(() => localStorage.getItem('studentllm.workspace.v1'))).toBe(damaged);
     await page.getByRole('button', { name: 'Dismiss' }).click();
     await expect(page.getByRole('alert')).toHaveCount(0);
   });

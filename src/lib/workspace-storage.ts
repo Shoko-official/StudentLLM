@@ -218,7 +218,7 @@ function invokeNative<T>(command: string, args?: Record<string, unknown>) {
 }
 
 /** The empty snapshot the native shell seeds its database with; it is not user data and not damage. */
-function isBootstrapSnapshot(raw: string): boolean {
+export function isBootstrapSnapshot(raw: string): boolean {
   try {
     const parsed: unknown = JSON.parse(raw);
     return isRecord(parsed) && parsed.bootstrap === true && !Array.isArray(parsed.lessons);
@@ -227,7 +227,10 @@ function isBootstrapSnapshot(raw: string): boolean {
   }
 }
 
-function parseWorkspaceDetailed(raw: string | null, fallback: WorkspaceSnapshot): { snapshot: WorkspaceSnapshot; dropped: number } {
+/** What the load and backup helpers need from a store: the browser's `Storage` satisfies it, and so does an in-memory shim. */
+export type KeyValueStorage = Pick<Storage, 'getItem' | 'setItem' | 'length'>;
+
+export function parseWorkspaceDetailed(raw: string | null, fallback: WorkspaceSnapshot): { snapshot: WorkspaceSnapshot; dropped: number } {
   droppedEntries = 0;
   const snapshot = parseWorkspaceUncounted(raw, fallback);
   return { snapshot, dropped: snapshot === fallback ? 0 : droppedEntries };
@@ -268,7 +271,7 @@ function parseWorkspaceUncounted(raw: string | null, fallback: WorkspaceSnapshot
   }
 }
 
-function backUpBeforeMigration(raw: string, storage: Storage | undefined): boolean {
+function backUpBeforeMigration(raw: string, storage: KeyValueStorage | undefined): boolean {
   if (!storage) return false;
   try {
     // Browser and native snapshots can differ. Keep every distinct original;
@@ -288,7 +291,7 @@ function backUpBeforeMigration(raw: string, storage: Storage | undefined): boole
   return false;
 }
 
-function migrateWithBackup(raw: string | null, snapshot: WorkspaceSnapshot, storage: Storage | undefined): WorkspaceSnapshot {
+export function migrateWithBackup(raw: string | null, snapshot: WorkspaceSnapshot, storage: KeyValueStorage | undefined): WorkspaceSnapshot {
   if (!raw || !storage) return snapshot;
   let pendingLessonIds: Set<string>;
   try {
@@ -330,11 +333,15 @@ export interface WorkspaceLoadIssue {
    * `unreadable`: damaged or truncated data. `newer-version`: written by a newer version of the app.
    * `partial`: some entries could not be read and were left out.
    */
-  kind: 'unreadable' | 'newer-version' | 'partial';
+  kind: 'unreadable' | 'newer-version' | 'partial' | 'older-copy';
   /** Whether a copy of the stored value was kept before it can be replaced. */
   backedUp: boolean;
   /** Storage key holding that copy. */
   copyKey?: string;
+  /** Where the copy lives when it is not in localStorage (the browser keeps the workspace and its copies in IndexedDB). */
+  copyStore?: 'indexeddb';
+  /** The unreadable IndexedDB value was replaced for this session by the localStorage copy kept before the upgrade. */
+  restoredFromLegacy?: boolean;
   /**
    * True when the stored value must not be replaced: no copy could be kept, or a newer version owns the data.
    * The app then stops saving and leaves the original where it is.
@@ -344,7 +351,7 @@ export interface WorkspaceLoadIssue {
   raw?: string;
 }
 
-function classifyUnreadable(raw: string): 'unreadable' | 'newer-version' {
+export function classifyUnreadable(raw: string): 'unreadable' | 'newer-version' {
   if (raw.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return 'unreadable';
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -356,7 +363,7 @@ function classifyUnreadable(raw: string): 'unreadable' | 'newer-version' {
 
 // A stored value that cannot be read is replaced by an empty workspace at the next save. Keep the original first, so a
 // damaged, truncated or newer-format workspace is never destroyed without a trace. Returns the key of the copy.
-function keepUnreadableCopy(raw: string, storage: Storage): string | null {
+function keepUnreadableCopy(raw: string, storage: KeyValueStorage): string | null {
   try {
     for (let index = 0; index <= storage.length; index += 1) {
       const key = index === 0 ? WORKSPACE_UNREADABLE_BACKUP_KEY : `${WORKSPACE_UNREADABLE_BACKUP_KEY}.${index}`;
@@ -373,7 +380,7 @@ function keepUnreadableCopy(raw: string, storage: Storage): string | null {
   return null;
 }
 
-function createLoadIssue(raw: string, kind: WorkspaceLoadIssue['kind'], storage: Storage | undefined): WorkspaceLoadIssue {
+export function createLoadIssue(raw: string, kind: WorkspaceLoadIssue['kind'], storage: KeyValueStorage | undefined): WorkspaceLoadIssue {
   const copyKey = storage ? keepUnreadableCopy(raw, storage) : null;
   const backedUp = copyKey !== null;
   return {

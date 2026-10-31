@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { readFile } from 'node:fs/promises';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from '../../src/test/workspace-fixture';
+import { savedWorkspace } from './workspace-store';
 
 async function openTranscript(page: Page) {
   await page.getByRole('tab', { name: 'Notes', exact: true }).click();
@@ -15,7 +16,6 @@ async function openCourseActions(page: Page) {
 }
 
 const openSources = (page: Page) => page.getByRole('tab', { name: /^Sources/ }).click();
-const savedWorkspace = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getItem('studentllm.workspace.v1')!));
 
 function minimalPdf() {
   const objects = [
@@ -1207,7 +1207,7 @@ test.describe('StudentLLM workspace', () => {
       await page.reload();
       await page.getByRole('tab', { name: 'Study' }).click();
       await expect(page.getByRole('heading', { name: 'Saved materials' })).toHaveCount(0);
-      expect((await savedWorkspace(page)).artifacts).toEqual([]);
+      expect((await savedWorkspace(page)).artifacts ?? []).toEqual([]);
     });
   }
 
@@ -1258,7 +1258,7 @@ test.describe('StudentLLM empty workspace', () => {
     await expect(page.getByRole('heading', { name: 'A place for your courses.' })).toBeVisible();
     await expect(page.getByRole('tablist')).toHaveCount(0);
     await expect(page.getByText('Attention & Scaled Dot-Product')).toHaveCount(0);
-    expect(await savedWorkspace(page)).toMatchObject({ activeLessonId: '', lessons: [], resources: [], transcript: [], chat: [], artifacts: [] });
+    expect(await savedWorkspace(page)).toMatchObject({ activeLessonId: '', lessons: [] });
 
     await page.getByRole('button', { name: 'Create your first course' }).click();
     await page.getByLabel('Course title').fill('Probability notes');
@@ -1287,7 +1287,7 @@ test.describe('StudentLLM empty workspace', () => {
     await page.getByRole('button', { name: 'Delete course', exact: true }).click();
     await page.getByRole('button', { name: 'Delete course permanently' }).click();
     await expect(page.getByRole('heading', { name: 'A place for your courses.' })).toBeVisible();
-    expect(await savedWorkspace(page)).toMatchObject({ activeLessonId: '', lessons: [], resources: [], transcript: [], chat: [], artifacts: [], lessonWorkspaces: {} });
+    expect(await savedWorkspace(page)).toMatchObject({ activeLessonId: '', lessons: [], lessonWorkspaces: {} });
 
     await page.reload();
     await expect(page.getByRole('heading', { name: 'A place for your courses.' })).toBeVisible();

@@ -233,6 +233,10 @@ html { scroll-padding-top: 72px; }
 .storage-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 8px 16px; }
 .storage-banner .text-action { font-weight: 600; text-decoration: underline; }
 .storage-banner-actions { display: inline-flex; flex-wrap: wrap; gap: 8px 16px; }
+.workspace-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 100vh; padding: 16px; text-align: center; }
+.workspace-loading .empty-state { margin: 0; }
+.storage-usage { display: grid; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.storage-usage p { margin: 0; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 .file-label:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 .modal-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(0 0 0 / .45); backdrop-filter: blur(3px); }

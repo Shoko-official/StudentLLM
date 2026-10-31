@@ -1932,7 +1932,8 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByRole('heading', { name: 'A place for your courses.' })).toBeInTheDocument();
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(screen.queryByText('Attention & Scaled Dot-Product')).not.toBeInTheDocument();
-    expect(savedWorkspace()).toMatchObject({ lessons: [], activeLessonId: '', resources: [], transcript: [], chat: [], artifacts: [] });
+    // The browser snapshot keeps each course once, under `lessonWorkspaces`.
+    expect(savedWorkspace()).toMatchObject({ lessons: [], activeLessonId: '', lessonWorkspaces: {} });
 
     await user.click(screen.getByRole('button', { name: 'Create your first course' }));
     await user.type(screen.getByLabelText('Course title'), 'Probability notes');
@@ -2055,7 +2056,7 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Delete course' }));
     await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
     expect(await screen.findByRole('heading', { name: 'A place for your courses.' })).toBeInTheDocument();
-    expect(savedWorkspace()).toMatchObject({ activeLessonId: '', lessons: [], resources: [], transcript: [], chat: [], artifacts: [], lessonWorkspaces: {} });
+    expect(savedWorkspace()).toMatchObject({ activeLessonId: '', lessons: [], lessonWorkspaces: {} });
     firstRender.unmount();
 
     render(<App provider={null} />);
@@ -2080,7 +2081,7 @@ describe('StudentLLM workspace', () => {
     render(<App provider={null} />);
     await user.click(screen.getByRole('tab', { name: 'Study' }));
     expect(screen.queryByRole('heading', { name: 'Saved materials' })).not.toBeInTheDocument();
-    expect(savedWorkspace().artifacts).toEqual([]);
+    expect(savedWorkspace().artifacts ?? []).toEqual([]);
   });
 
   it.each([
@@ -2102,7 +2103,7 @@ describe('StudentLLM workspace', () => {
     render(<App provider={null} />);
     await user.click(screen.getByRole('tab', { name: 'Study' }));
     expect(screen.queryByRole('heading', { name: 'Saved materials' })).not.toBeInTheDocument();
-    expect(savedWorkspace().artifacts).toEqual([]);
+    expect(savedWorkspace().artifacts ?? []).toEqual([]);
   });
 
   it('does not save an artifact until generation has succeeded', async () => {
