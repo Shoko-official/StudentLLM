@@ -1,6 +1,6 @@
 # Project status
 
-Last validated: 2026-10-31
+Last validated: 2026-10-31 (the release-candidate checks only; the provider and benchmark sections below keep their own dates)
 
 StudentLLM is an active local-first learning workspace. The application workflow is covered by automated tests and live integration checks. Public benchmark coverage is growing, but the evidence below is intentionally separated by scope.
 
@@ -15,13 +15,13 @@ Version `0.1.0` is prepared for its first tagged release. `main` carries the fix
 | Production build | `npm run build` passed; Vite emitted only the large-chunk advisory |
 | Browser E2E | 48 scenarios passed, 1 skipped, in 3.1 minutes |
 | Python server checks | `python -m unittest tests.test_local_asr_server tests.test_local_server_contract` ran 24 tests, all passed |
-| Dependency audit | `npm audit --omit=dev --audit-level=high` exited 0; only low-severity advisories remain, in a nested KaTeX copy used by `rehype-katex` |
+| Dependency audit | `npm audit --omit=dev --audit-level=high` exited 0; only low-severity advisories remain, in nested KaTeX copies pulled in by `rehype-katex` and `remark-math` (GHSA-238p-pmpm-9mq7) |
 
 Known limits of this release: the installers are not code signed, the macOS build targets Apple Silicon only, and the optional Python speech and document services are not bundled. The Tauri content security policy is still unset. The provider and benchmark evidence below was not re-run for this release.
 
 ## 2026-09-16 completion baseline
 
-The current `main` is `f4f54ef`, the squash merge of PRs [#321](https://github.com/Shoko-official/StudentLLM/pull/321) and [#322](https://github.com/Shoko-official/StudentLLM/pull/322). These deliveries separate general educational requests from course-specific evidence requirements, preserve extracted math structure, and make chat and Study citations open the original local source.
+At that date `main` was `f4f54ef`, the squash merge of PRs [#321](https://github.com/Shoko-official/StudentLLM/pull/321) and [#322](https://github.com/Shoko-official/StudentLLM/pull/322). These deliveries separate general educational requests from course-specific evidence requirements, preserve extracted math structure, and make chat and Study citations open the original local source.
 
 Fresh local evidence for this baseline:
 
