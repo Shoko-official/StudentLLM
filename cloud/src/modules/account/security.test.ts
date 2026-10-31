@@ -132,9 +132,13 @@ describe("the AuthSeam", () => {
 });
 
 describe("the other modules' seams", () => {
-  it("fall back to inert defaults until the billing and inference modules provide theirs", async () => {
-    const t = await makeAuthApp();
+  it("fall back to inert defaults when a module provides none (the billing module now does; inference does not yet)", async () => {
+    const t = await makeAuthApp({ extraDeps: { billing: {} as never } });
     expect(billingSeam(t.deps)).toBe(defaultBillingSeam);
+    // With the real billing deps the seam is the module's own.
+    const real = await makeAuthApp();
+    expect(billingSeam(real.deps)).toBe(real.deps.billing);
+    expect(billingSeam(real.deps)).not.toBe(defaultBillingSeam);
     expect(inferenceSeam(t.deps)).toBe(defaultInferenceSeam);
     expect(await defaultBillingSeam.cancelSubscription("a", "now")).toEqual({ state: "none" });
     expect(await defaultInferenceSeam.usageSnapshot("a")).toEqual({ creditsUsed: 0, windowStart: null, windowEnd: null });

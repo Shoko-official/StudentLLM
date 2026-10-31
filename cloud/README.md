@@ -6,9 +6,9 @@ The optional cloud gateway described in [docs/cloud-plan.md](../docs/cloud-plan.
 own `package.json`, lockfile and `tsconfig`, and is not a workspace of the app. The contract is the source of
 truth; this code follows it and never changes it.
 
-Status: phase 2 in progress. Every route in the contract is registered. The **auth and account modules are
+Status: phase 2 in progress (the billing module is described under [The billing module](#the-billing-module)). Every route in the contract is registered. The **auth and account modules are
 implemented** (Google and email sign-in, tokens, refresh, devices, account, export, deletion, terms, link and
-unlink, provider sets, consent) against the in-memory stores; the routes of the inference and billing modules and
+unlink, provider sets, consent) against the in-memory stores; the **billing module is implemented** (checkout, portal, Paddle webhook, plan windows, cancel seam) against an injected Paddle client; the routes of the inference module and
 `GET /v1/status` still answer a 501 error envelope until their modules replace the `notImplemented` stub (the
 contract has no such code, so the stub reuses `internal_error`). Real today: the request id, the client-version handshake, body size limits enforced while the body streams in,
 `Content-Type` checks, the consent and idempotency header checks, the one-time account load, the fresh sign-in
@@ -66,7 +66,7 @@ src/testing/          test-only: makeTestApp(), fixtures, contract validator, ru
 | auth | auth | `src/modules/auth/index.ts`, `config.ts` | `authenticate`, `checkAuthRateLimit` | `/auth/*`, `/.well-known/jwks.json` |
 | account | auth/account | `src/modules/account/index.ts`, `config.ts` | `checkTermsAndStatus` | devices, account, terms, link, provider sets, consent |
 | inference | inference | `src/modules/inference/index.ts`, `config.ts` | `checkConsent`, `checkRateLimit`, `lookupIdempotency`, `acquireConcurrencySlot` | models, usage, chat, transcription, OCR |
-| billing | billing | `src/modules/billing/index.ts`, `config.ts` | `checkPlan` | checkout, portal, Paddle webhook |
+| billing | billing | `src/modules/billing/**` | `checkPlan` (real) | checkout, portal, Paddle webhook (real) |
 | ops | ops | `src/modules/ops/index.ts`, `config.ts`, `wrangler.toml`, `src/durable-objects.ts`, `src/storage/memory/*` and the adapters | none yet | `/v1/status` |
 
 Each module's `index.ts` exports `registerXRoutes(router, deps)`, `XDeps` and `createXDeps(core)`,
@@ -76,6 +76,12 @@ interface it mostly uses (auth: `auth-challenge`, `session`, `device`; account: 
 `ledger`, `idempotency`, `rate-limit`, `switch`; billing: `webhook-event`), but a change to an interface goes in
 its own commit so the others see it. The shared files (`app.ts`, `deps.ts`, `http/*`, `config.ts`, `index.ts`)
 change rarely; say so in the PR when you must touch one.
+
+### Cross-module calls (seams)
+
+`src/modules/seams.ts` declares what one module calls on another: `AuthSeam`, `BillingSeam` and `InferenceSeam`.
+Each module implements its own and puts it on its deps object, so a caller writes
+`deps.billing.cancelSubscription(accountId, "now")`. The billing module implements `BillingSeam`.
 
 ### Registering routes
 
@@ -219,6 +225,61 @@ table can use `makeTestApp({ stubRoutes: true, withoutModuleHooks: true })`.
 
 Until the inference module provides `checkRateLimit` the Worker refuses to start with these real handlers (the strict
 startup check of the pipeline, by design); the tests use `allowMissingHooks`.
+
+## The billing module
+
+`src/modules/billing/` implements `POST /v1/billing/checkout`, `GET /v1/billing/portal`, `POST /webhooks/paddle`, the
+`checkPlan` hook and `BillingSeam`. It runs against the in-memory stores and an injected Paddle client; no test makes a
+network call and no key is real.
+
+| File | What it holds |
+| --- | --- |
+| `index.ts` | The four module exports and `BillingDeps` (the seam, `settings`, `paddle`, `notifier`); `createBillingDeps(core, overrides)` takes a fake Paddle client and notifier |
+| `webhook.ts`, `signature.ts`, `events.ts` | Receiver: HMAC over the raw bytes (current and previous secret, bounded timestamp), claim, apply, quarantine; the allowlist of event fields |
+| `plan-model.ts`, `windows.ts` | The plan and window rules as pure functions (UTC instants only): periods, passes, queueing, `already_subscribed`, past_due, refunds, the public `Plan` view |
+| `plan-store.ts` | CAS plan updates and `syncWindows`, which makes the ledger windows match the plan (idempotent, so a replay repairs a crash) |
+| `checkout.ts`, `hooks.ts` | Checkout and portal handlers; `checkPlan` (`plan_required` unless a window that is not revoked contains now) |
+| `cancel.ts`, `tasks.ts` | `cancelSubscription` (`cancelled`, `pending` or `none`), the backoff retry and the ledger pruning, as scheduled tasks |
+| `paddle-client.ts`, `notifier.ts`, `settings.ts` | Paddle API adapter (interface plus HTTP adapter), operator alerts and the cancellation mail behind an interface, configuration |
+| `grants.ts` | Groundwork for the admin interface: complimentary windows (see below). No route |
+
+How it fits the rest:
+
+- **Order of events.** Each webhook is claimed by event id (the fencing token comes from `WebhookEventStore`), applied through
+  `accounts.applyPlanEvent` (an event older than the newest applied one is dropped) and followed by `syncWindows`. An event that
+  is older than the newest one still adds what does not depend on order (a paid period, a pass, a refund) through a
+  compare-and-set merge, so a late payment event cannot lose a window. Windows are keyed by start; nothing resets used credits.
+- **Mapping.** Checkout creates the Paddle customer on the server (from the verified email) and always passes it, so the
+  stored customer id is known before the first payment; a first event with another customer id is quarantined. The first
+  event of a purchase is bound to its account by `custom_data.account_id`; later events are mapped by the payment they name
+  (adjustments), the subscription id, then the customer id; the ids an account ever used keep resolving. Unknown accounts are
+  quarantined (200) and the operator is alerted; a refund or chargeback that arrived before its purchase is replayed when the
+  purchase is applied (only an adjustment that names a transaction is replayed, found through an index). A deleted
+  account has no plan row: `cancelSubscription` cancels every id of its tombstone (billing keeps its retry state there), a
+  webhook for it only confirms a cancel, and a subscription paid during the deletion is appended to the tombstone and canceled.
+- **Refunds.** A full refund or a chargeback withdraws the windows the refunded payment bought (and cancels the subscription
+  now, with a retry record); a partial refund changes nothing and alerts the operator; a chargeback also raises an owner review.
+- **Duplicates.** A second subscription is quarantined and canceled at Paddle now (`PlanRecord.extraCancels`, retried by the
+  scheduled task); deleting an account cancels every subscription it ever had. A short per-account lock narrows the checkout race.
+- **Persisted and logged.** Only `WEBHOOK_FIELD_NAMES` (ids, status, period, price id, currency). The request log has no
+  body, no header and no event field. Failures log a fixed line without text from the request.
+- **Configuration.** `PADDLE_PRICE_PLUS_MONTHLY`, `PADDLE_PRICE_PLUS_SEMESTER` (required outside development, never a
+  `PLACEHOLDER` value), `PLUS_MONTHLY_WINDOW_CREDITS` and `PLUS_SEMESTER_WINDOW_CREDITS` (placeholder default 12500, **verify
+  before launch**), and `PADDLE_CHECKOUT_HOSTS` (the checkout URL must be on one of them). `config.variable(name)` reads a non-secret variable. A Paddle API key of the other environment (by its
+  prefix) is refused.
+- **Cancel seam.** `deps.billing.cancelSubscription(accountId, when)` is idempotent. `pending` leaves a `pendingCancel` on the
+  plan (attempts, next try) and the Paddle ids in the plan and the tombstone; the scheduled task retries with backoff and alerts
+  the operator once. The deletion flow keeps its tombstone until it gets `cancelled` or `none`. The cancellation mail goes through
+  `BillingNotifier` (`defaultNotifier` does nothing yet: TODO(owner: auth), back it with the `EmailSender`).
+- **Tests.** `src/testing/billing-test-app.ts` has the fake Paddle, the event builders, the signer and `makeBillingTestApp()`.
+  `src/testing/billing-store-contract.ts` is the billing part of the store behavior (`runBillingStoreContract`).
+- **Complimentary windows (groundwork).** `grants.ts` has `createGrantWindows`, `shortenGrantWindows`, `revokeGrantWindows` and
+  `planGrantWindows` for the admin service of docs/cloud-admin.md: a window with source `admin_grant`, no payment, its own budget.
+  A grant never counts as an active plan; a purchase cuts the whole grant (`syncWindows` returns what it cut); billing events revoke only
+  `paddle` windows. The windows go in through one conditional ledger insert (all or none, no overlap with a live or queued window), a
+  replay with the same `grantId` returns them unchanged, and the ceilings derive from the standard window W (at most W per window, 3W
+  per grant). `toPublicPlan(plan, now, window)` reports a grant-only account as `COMPLIMENTARY_PLAN_ID` (`free` until the public
+  contract has `plus_complimentary`).
 
 ## Choices where the contract was silent
 

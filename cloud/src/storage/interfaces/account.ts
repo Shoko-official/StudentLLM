@@ -38,9 +38,47 @@ export interface NewAccount {
   now: number;
 }
 
+/** What a paid period was bought as. A budget window exists for each period (docs/cloud-plan.md, "Quota design"). */
+export type PaidPeriodKind = "subscription" | "pass";
+
 export interface PaidPeriod {
   start: number;
   end: number;
+  /** Absent on records written before the billing module (read as `subscription`). */
+  kind?: PaidPeriodKind;
+  /**
+   * The Paddle transaction that paid for this period (a pass: the same id on all five of its periods, so a
+   * replay or a second delivery cannot add them twice). Ids only; never a name or an address.
+   */
+  purchaseId?: string;
+  /** Set when a refund or chargeback withdrew the period; the period stays as history and buys nothing. */
+  revokedAt?: number;
+}
+
+/**
+ * A subscription that must be canceled at Paddle although it is not the plan's current one: a duplicate bought by
+ * a parallel checkout, or a replaced subscription whose own cancellation was still pending. Retried like
+ * `pendingCancel`, by subscription id, always immediately. Ids only.
+ */
+export interface ExtraCancel {
+  subscriptionId: string;
+  customerId: string | null;
+  reason: "duplicate" | "retired";
+  requestedAt: number;
+  attempts: number;
+  nextAttemptAt: number;
+  alerted: boolean;
+}
+
+/** A cancellation Paddle has not confirmed yet. It is visible, retried with backoff, and never silently dropped. */
+export interface PendingCancel {
+  when: "period_end" | "now";
+  requestedAt: number;
+  attempts: number;
+  /** The scheduled task retries once `now >= nextAttemptAt`. */
+  nextAttemptAt: number;
+  /** True once the operator was alerted for this cancellation (so the alert is not repeated on every retry). */
+  alerted: boolean;
 }
 
 export interface PlanRecord {
@@ -53,12 +91,69 @@ export interface PlanRecord {
   paddleSubscriptionId: string | null;
   /** `occurred_at` of the last applied billing event, for ordering. */
   lastEventAt: number | null;
+  /** Absent or null when no cancellation is waiting for Paddle. */
+  pendingCancel?: PendingCancel | null;
+  /**
+   * Paddle transaction ids that a refund or chargeback withdrew (the most recent ones, bounded). A period that
+   * arrives later with one of these ids is recorded as already revoked, so an adjustment that is delivered
+   * before its payment cannot leave a free window behind. Ids only.
+   */
+  revokedPurchaseIds?: string[];
+  /**
+   * Subscription ids this account used to have (the most recent ones, bounded). A late event of one of them
+   * can add a period it paid for but never takes the plan back to a subscription that was replaced.
+   */
+  retiredSubscriptionIds?: string[];
+  /** Every customer id this account has used besides the current one (events keep resolving through them). */
+  retiredCustomerIds?: string[];
+  /** Subscriptions that still have to be canceled at Paddle (see ExtraCancel). */
+  extraCancels?: ExtraCancel[];
+}
+
+/**
+ * The cancellation of every Paddle subscription of a deleted account, kept on the tombstone because the plan row is
+ * gone by then. The store keeps one invariant, in every operation that touches it:
+ *
+ *   pendingIds = (every subscription id of the tombstone) minus `confirmedIds`, and state = done exactly when
+ *   `pendingIds` is empty.
+ *
+ * So `done` means every id the account ever had was confirmed canceled (or found already gone) at Paddle, and an id
+ * that is added later re-opens it. The scheduled task retries the pending ids with backoff. Ids only.
+ */
+export interface TombstoneCancel {
+  state: "pending" | "done";
+  pendingIds: string[];
+  confirmedIds: string[];
+  attempts: number;
+  nextAttemptAt: number;
+  alerted: boolean;
+}
+
+/** What one cancel attempt learned, applied to the tombstone's cancel state in one atomic step. */
+export interface TombstoneCancelUpdate {
+  now: number;
+  /** Subscription ids Paddle confirmed canceled (or already gone). Ids that are not the tombstone's are ignored. */
+  confirmed?: readonly string[];
+  /**
+   * At least one cancel did not go through: counts an attempt and schedules the next one at `nextAttemptAt`; once
+   * the attempts reach `alertAfter` the state is marked `alerted` (reported back once, as `newlyAlerted`).
+   */
+  failedAttempt?: { nextAttemptAt: number; alertAfter: number };
 }
 
 export interface DeletionTombstone {
   accountId: string;
   paddleCustomerId: string | null;
   paddleSubscriptionId: string | null;
+  /**
+   * Billing: every subscription id the account has seen (current, replaced, duplicate) when that is more than
+   * `paddleSubscriptionId`; absent otherwise. All of them must be canceled before the purge.
+   */
+  paddleSubscriptionIds?: string[];
+  /** Billing: every customer id the account has used, when that is more than `paddleCustomerId`; absent otherwise. */
+  paddleCustomerIds?: string[];
+  /** Absent until the first cancellation attempt of the deletion. */
+  cancel?: TombstoneCancel | null;
   createdAt: number;
 }
 
@@ -87,7 +182,11 @@ export type SavePlanResult =
   | { ok: false; reason: "not_found" };
 
 export type ApplyPlanEventResult =
-  | { applied: true; plan: PlanRecord; planVersion: number }
+  /**
+   * `changed` is false when the reducer produced the same plan (ignoring `lastEventAt`): the event is recorded
+   * as the latest one but the plan version does not move, so a harmless duplicate does not make clients refetch.
+   */
+  | { applied: true; plan: PlanRecord; planVersion: number; changed: boolean }
   | { applied: false; reason: "stale" | "not_found" };
 
 export interface AccountStore {
@@ -125,11 +224,28 @@ export interface AccountStore {
   /**
    * Atomic billing-event application: reads the plan, drops the event when `occurredAt` is older than the
    * plan's `lastEventAt` (`stale`), otherwise runs `reduce`, stores the result with `lastEventAt` set to
-   * `occurredAt`, and bumps the plan version, all in one step. Equal timestamps are applied.
+   * `occurredAt`, and bumps the plan version when the plan changed, all in one step. Equal timestamps are applied.
    */
   applyPlanEvent(accountId: string, occurredAt: number, reduce: PlanReducer): Promise<ApplyPlanEventResult>;
+  /**
+   * Bumps the plan version without touching the plan or `lastEventAt` (a change that lives in the ledger, such as a
+   * complimentary window, still makes clients refetch the account). Returns the new version, or null for an unknown account.
+   */
+  touchPlanVersion(accountId: string): Promise<number | null>;
+  /**
+   * Accounts with a cancellation due at `now` (earliest first, at most `limit`): a plan's `pendingCancel` or extra
+   * cancellation, or the pending cancellation on the tombstone of a deleted account.
+   */
+  listPendingCancels(now: number, limit: number): Promise<string[]>;
+  /**
+   * Resolves through every subscription id the account has used (current, replaced, duplicate): the index never
+   * forgets an id while the account exists.
+   */
   findAccountIdByPaddleSubscription(subscriptionId: string): Promise<string | null>;
+  /** As above for customer ids (current and retired): a refund keeps resolving after a customer id changed. */
   findAccountIdByPaddleCustomer(customerId: string): Promise<string | null>;
+  /** The account whose plan holds this Paddle transaction as the purchase of a period, or remembers it as refunded. */
+  findAccountIdByPurchase(transactionId: string): Promise<string | null>;
 
   /**
    * Erases the account at once and keeps only a tombstone with the Paddle ids (and the retry bookkeeping): the
@@ -153,6 +269,20 @@ export interface AccountStore {
   listDueDeletions(now: number, limit: number): Promise<DeletionJob[]>;
   /** Counts a cancel attempt that did not finish and schedules the next one. Returns the job, or null. */
   recordCancelAttempt(accountId: string, nextAttemptAt: number): Promise<DeletionJob | null>;
+  /**
+   * A subscription (and its customer) that appeared after the deletion started: appends the ids to the tombstone and to
+   * the Paddle indexes, so the cancel covers it and its later events resolve to the tombstone. Idempotent. Null when
+   * there is no tombstone.
+   */
+  addTombstoneSubscription(accountId: string, subscriptionId: string, customerId: string | null, now: number): Promise<DeletionTombstone | null>;
+  /**
+   * Atomically applies what a cancel attempt learned to the tombstone's cancel state: removes the confirmed ids from
+   * the pending list, counts a failed attempt, and recomputes `state` (see TombstoneCancel). It never overwrites ids
+   * it was not told about: an id added or confirmed by a concurrent step stays as that step left it, so a slow
+   * attempt cannot erase a newer one. When no cancel state exists yet it is created with EVERY tombstone id pending.
+   * Null when there is no tombstone.
+   */
+  updateTombstoneCancel(accountId: string, update: TombstoneCancelUpdate): Promise<{ tombstone: DeletionTombstone; newlyAlerted: boolean } | null>;
   /** Removes the account (if any), its plan, its tombstone and the Paddle indexes. */
   purgeAccount(accountId: string): Promise<void>;
 }

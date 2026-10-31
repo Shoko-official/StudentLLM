@@ -60,7 +60,7 @@ describe("hooks fail closed (a real handler never runs behind a missing hook)", 
   });
 
   it("reaches the handler only once every hook that applies is installed", async () => {
-    const t = makeTestApp({ hooks: { authenticate: fakeAuthenticate(accessPrincipal(), { account: ACCOUNT, plan: null }) }, allowMissingHooks: true });
+    const t = makeTestApp({ hooks: { authenticate: fakeAuthenticate(accessPrincipal(), { account: ACCOUNT, plan: null }), checkPlan: () => undefined }, allowMissingHooks: true });
     const calls = addReal(t, "POST", "/test/content", { operationId: "test_content", client: true, content: true });
     const res = await t.request("/test/content", { method: "POST", headers: CONTENT, body: "{}" });
     expect(res.status).toBe(200);
@@ -240,7 +240,7 @@ describe("account and plan are loaded once after authentication", () => {
 });
 
 describe("content headers", () => {
-  const hooks = { authenticate: fakeAuthenticate(accessPrincipal(), { account: ACCOUNT, plan: null }) };
+  const hooks = { authenticate: fakeAuthenticate(accessPrincipal(), { account: ACCOUNT, plan: null }), checkPlan: () => undefined };
   const post = (t: TestApp, headers: Record<string, string>) =>
     t.request("/v1/chat/completions", { method: "POST", headers, body: "{}" });
 

@@ -23,10 +23,27 @@ export interface IdempotencyRef {
   keyHash: string;
 }
 
+/**
+ * Where a window comes from. Only `paddle` windows are touched by refunds and chargebacks; an `admin_grant`
+ * window (a complimentary period, no payment) is touched only by the grant operations.
+ */
+export type WindowSource = "paddle" | "admin_grant";
+
+/** Narrows a window operation to one source or one grant. */
+export interface WindowFilter {
+  source?: WindowSource;
+  grantId?: string;
+  /** Exactly the window with this start (windows are keyed by their start). */
+  start?: number;
+}
+
 export interface BudgetWindow {
   accountId: string;
   /** Windows are keyed by their start. */
   start: number;
+  source: WindowSource;
+  /** The grant a complimentary window belongs to; null for a paid window. */
+  grantId: string | null;
   end: number;
   limit: number;
   used: number;
@@ -81,12 +98,46 @@ export interface SweepResult {
 }
 
 export interface LedgerStore {
-  /** Creates the window when missing. Never resets `used` or `reserved` of an existing one. */
-  ensureWindow(accountId: string, input: { start: number; end: number; limit: number }): Promise<BudgetWindow>;
+  /**
+   * Creates the window when missing. Never resets `used` or `reserved` of an existing one, never changes its
+   * limit, end or source, and never un-revokes it (replaying a purchase after a refund buys nothing).
+   * `source` defaults to `paddle`.
+   */
+  ensureWindow(
+    accountId: string,
+    input: { start: number; end: number; limit: number; source?: WindowSource; grantId?: string },
+  ): Promise<BudgetWindow>;
+  /**
+   * The conditional insert of a grant: ALL of `windows` or none, atomically.
+   * - If windows of `grantId` already exist (not revoked), they are returned unchanged (`existed: true`): a replay
+   *   creates nothing and resets nothing.
+   * - Otherwise it rejects with `overlap` (naming the first conflicting window) when any new window overlaps a window
+   *   of the account that is not revoked, whatever its source, live or queued; and with `start_taken` when a window
+   *   (even a revoked one) already uses the exact start of one of them. Nothing is inserted in either case.
+   */
+  insertGrantWindows(
+    accountId: string,
+    grantId: string,
+    windows: ReadonlyArray<{ start: number; end: number; limit: number }>,
+  ): Promise<
+    | { ok: true; existed: boolean; windows: BudgetWindow[] }
+    | { ok: false; reason: "overlap"; conflict: BudgetWindow }
+    | { ok: false; reason: "start_taken" }
+  >;
   getCurrentWindow(accountId: string, now: number): Promise<BudgetWindow | null>;
   listWindows(accountId: string): Promise<BudgetWindow[]>;
-  /** Refund or chargeback: revokes the current and all future windows (those ending after `now`). */
-  revokeWindows(accountId: string, now: number): Promise<number>;
+  /**
+   * Refund or chargeback: revokes the current and all future windows (those ending after `now`). With a
+   * filter, only the windows of that source (billing passes `paddle`) or grant. Returns how many changed.
+   */
+  revokeWindows(accountId: string, now: number, filter?: WindowFilter): Promise<number>;
+  /**
+   * Ends windows at `at`: a window that contains `at` is cut there (its used credits stay used), a window
+   * that starts at or after `at` is removed when it was never used (so its start is free again) and revoked
+   * otherwise. Nothing moves later, and a window that ended at or before `at` is untouched. Used for an immediate cancellation, a grant cut by a purchase and a shortened grant.
+   * Returns how many windows changed.
+   */
+  truncateWindows(accountId: string, at: number, filter?: WindowFilter): Promise<number>;
 
   /** Atomic: checks the remaining budget of the current window and reserves `credits` (a positive integer). */
   reserve(

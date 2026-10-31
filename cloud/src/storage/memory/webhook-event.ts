@@ -31,6 +31,16 @@ export class InMemoryWebhookEventStore implements WebhookEventStore {
   private readonly events = new Map<string, WebhookEventRecord>();
   /** Last attempt number per event id; survives `release` so a fencing token is never reused. */
   private readonly lastAttempt = new Map<string, number>();
+  /** transaction id -> ids of the quarantined events that name it (the index behind findQuarantinedByTransaction). */
+  private readonly quarantinedByTransaction = new Map<string, Set<string>>();
+
+  private unindex(eventId: string, fields: WebhookFields): void {
+    const txn = fields.transaction_id;
+    if (typeof txn !== "string") return;
+    const set = this.quarantinedByTransaction.get(txn);
+    set?.delete(eventId);
+    if (set?.size === 0) this.quarantinedByTransaction.delete(txn);
+  }
 
   private nextAttempt(eventId: string): number {
     const n = (this.lastAttempt.get(eventId) ?? 0) + 1;
@@ -75,6 +85,11 @@ export class InMemoryWebhookEventStore implements WebhookEventStore {
     e.state = state;
     e.fields = copy(fields);
     e.updatedAt = now;
+    if (state === "quarantined" && typeof fields.transaction_id === "string") {
+      const set = this.quarantinedByTransaction.get(fields.transaction_id) ?? new Set<string>();
+      set.add(eventId);
+      this.quarantinedByTransaction.set(fields.transaction_id, set);
+    }
     return copy(e);
   }
 
@@ -90,6 +105,26 @@ export class InMemoryWebhookEventStore implements WebhookEventStore {
     return e ? copy(e) : null;
   }
 
+  async markReplayed(eventId: string, now: number) {
+    const e = this.events.get(eventId);
+    if (!e || e.state !== "quarantined") return false;
+    e.state = "processed";
+    e.updatedAt = now;
+    this.unindex(eventId, e.fields);
+    return true;
+  }
+
+  async findQuarantinedByTransaction(transactionIds: readonly string[]) {
+    const out: WebhookEventRecord[] = [];
+    for (const txn of new Set(transactionIds)) {
+      for (const id of this.quarantinedByTransaction.get(txn) ?? []) {
+        const e = this.events.get(id);
+        if (e?.state === "quarantined") out.push(copy(e));
+      }
+    }
+    return out;
+  }
+
   async listQuarantined() {
     return [...this.events.values()].filter((e) => e.state === "quarantined").map(copy);
   }
@@ -98,6 +133,7 @@ export class InMemoryWebhookEventStore implements WebhookEventStore {
     let n = 0;
     for (const [id, e] of [...this.events]) {
       if (e.state !== "processing" && e.updatedAt < beforeMs) {
+        this.unindex(id, e.fields);
         this.events.delete(id);
         n++;
       }

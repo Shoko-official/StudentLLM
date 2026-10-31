@@ -476,6 +476,8 @@ paths:
               schema: { $ref: "#/components/schemas/CheckoutResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /v1/billing/portal:
     get:
       tags: [billing]
@@ -489,6 +491,7 @@ paths:
               schema: { $ref: "#/components/schemas/PortalResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /webhooks/paddle:
     post:
       tags: [billing]
