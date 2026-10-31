@@ -37,7 +37,7 @@ import { useDialogFocus, useDismissibleMenu } from './lib/focus-management';
 import { AnimatedIcon, EmptyStateIcon } from './lib/animated-icon';
 import { folderNameOf, planBatchImport } from './lib/batch-import';
 import { BrandGlyph } from './lib/brand-mark';
-import { textMatchesQuery } from './lib/snippet';
+import { foldForSearch, textMatchesQuery } from './lib/snippet';
 import { Snippet } from './lib/snippet-view';
 import { describeMicrophoneError, requestRecorderSession, RecorderSession } from './lib/recorder';
 import { isNativeRuntime, loadWorkspaceAsync, loadWorkspaceWithStatus, runPackagedIpcSmoke, saveWorkspaceAsync, WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
@@ -623,9 +623,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   };
 
   const visibleLessons = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+    const normalizedQuery = foldForSearch(searchQuery.trim());
     if (!normalizedQuery) return lessons;
-    return lessons.filter((lesson) => `${lesson.subject} ${lesson.chapter} ${lesson.title}`.toLocaleLowerCase().includes(normalizedQuery));
+    return lessons.filter((lesson) => foldForSearch(`${lesson.subject} ${lesson.chapter} ${lesson.title}`).includes(normalizedQuery));
   }, [lessons, searchQuery]);
 
   const courseTree = useMemo<CourseTreeSubject[]>(() => buildCourseTree(visibleLessons), [visibleLessons]);
@@ -644,21 +644,21 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       .map((segment) => ({ lesson, segment }))), [lessons, lessonWorkspaces]);
 
   const globalSearchResults = useMemo(() => {
-    const query = globalSearchValue.trim().toLocaleLowerCase();
+    const query = foldForSearch(globalSearchValue.trim());
     if (!query) return [];
     return lessons.flatMap((lesson) => {
       const lessonWorkspace = lessonWorkspaces[lesson.id] ?? emptyLessonWorkspace;
       const results: { id: string; lessonId: string; title: string; detail: string }[] = [];
-      if (`${lesson.title} ${lesson.subject} ${lesson.chapter}`.toLocaleLowerCase().includes(query)) {
+      if (foldForSearch(`${lesson.title} ${lesson.subject} ${lesson.chapter}`).includes(query)) {
         results.push({ id: lesson.id, lessonId: lesson.id, title: lesson.title, detail: `${lesson.subject} · ${lesson.chapter}` });
       }
       lessonWorkspace.transcript.forEach((segment) => {
-        if (`${segment.speaker} ${segment.timestamp}`.toLocaleLowerCase().includes(query) || textMatchesQuery(segment.text, query)) {
+        if (foldForSearch(`${segment.speaker} ${segment.timestamp}`).includes(query) || textMatchesQuery(segment.text, query)) {
           results.push({ id: segment.id, lessonId: lesson.id, title: segment.text, detail: `${lesson.title} · ${segment.timestamp}` });
         }
       });
       lessonWorkspace.resources.forEach((resource) => {
-        if (`${resource.name} ${resource.meta}`.toLocaleLowerCase().includes(query)) {
+        if (foldForSearch(`${resource.name} ${resource.meta}`).includes(query)) {
           results.push({ id: resource.id, lessonId: lesson.id, title: resource.name, detail: `${lesson.title} · ${resource.meta}` });
         }
       });
