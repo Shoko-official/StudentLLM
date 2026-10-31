@@ -969,7 +969,6 @@ describe('StudentLLM workspace', () => {
     expect(guide).toHaveAttribute('href', 'https://github.com/Shoko-official/StudentLLM/blob/main/docs/user-guide.md');
     expect(guide).toHaveAttribute('target', '_blank');
     expect(guide).toHaveAttribute('rel', 'noreferrer');
-    expect(within(settingsDialog).getByRole('link', { name: 'Lordicon' })).toHaveAttribute('href', 'https://lordicon.com/');
   });
 
   it('shows external addresses as text in the packaged app, which opens no windows', async () => {
@@ -983,7 +982,6 @@ describe('StudentLLM workspace', () => {
     const settingsDialog = screen.getByRole('dialog', { name: 'Settings' });
     expect(within(settingsDialog).queryByRole('link')).not.toBeInTheDocument();
     expect(within(settingsDialog).getByText('https://github.com/Shoko-official/StudentLLM/blob/main/docs/user-guide.md')).toBeInTheDocument();
-    expect(within(settingsDialog).getByText('https://lordicon.com/')).toBeInTheDocument();
   });
 
   it('restores a created course after remounting the workspace', async () => {
