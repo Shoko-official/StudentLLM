@@ -62,9 +62,10 @@ Good to know:
 
 - **The original is always kept first.** Even if reading it fails, the file appears in **Sources** and you can try again later, for example after starting the missing service. Nothing is thrown away.
 - **Empty files are refused**, and importing the same file twice into one course is refused (it would only duplicate the notes). The same file in two different courses is fine.
-- **Password-protected or damaged PDFs** are saved but cannot be read. Remove the password and import a fresh copy.
+- **Password-protected or damaged files** are saved but may not be readable: try a fresh copy without a password.
 - **Size limits**: 250 MB for audio, 100 MB for documents, 50 MB for images and 10 MB for text files.
-- **Closing the window during an import** asks you to confirm, because a running import or transcription would be interrupted.
+- **Closing the browser tab during an import, a transcription or a recording** asks you to confirm, because the work would be interrupted. The desktop app may close without asking (not verified).
+- **Drag and drop** (dropping files onto the page) works in the browser. On the desktop app use **Import file** instead: the desktop window may handle dropped files itself (not verified).
 - To get rid of a source, use **Remove** in Sources. You have a few seconds to click **Undo**. After that the stored original is erased.
 
 ## 4. Recording a lecture
@@ -116,7 +117,15 @@ The desktop app only talks to services on your own computer (`localhost` or `127
 Your data is stored **on this computer only**:
 
 - In a browser, in that browser's storage for this address. A different browser, a private window, or another address (for example another port) sees an empty workspace. Clearing the site's data in your browser **deletes all your courses**.
-- In the desktop app, the course text is in a database file in the app's data folder, and the original files and recordings are in the app's own browser storage. Typical locations are `%APPDATA%\com.shoko.studentllm` on Windows, `~/Library/Application Support/com.shoko.studentllm` on macOS and `~/.local/share/com.shoko.studentllm` on Linux. These paths were not verified on every system.
+- In the desktop app there are two places. The course text and notes are in a database file in the app's data folder. The original files, the recordings and the copies described below are in the app's embedded browser storage, in a second folder. Typical locations, **not verified on every system**:
+
+  | System | App data folder (course text) | Embedded browser storage (originals, recordings, saved copies) |
+  | --- | --- | --- |
+  | Windows | `%APPDATA%\com.shoko.studentllm` | `%LOCALAPPDATA%\com.shoko.studentllm` (the `EBWebView` folder inside) |
+  | macOS | `~/Library/Application Support/com.shoko.studentllm` | `~/Library/WebKit/com.shoko.studentllm` |
+  | Linux | `~/.local/share/com.shoko.studentllm` | `~/.local/share/com.shoko.studentllm` and `~/.cache/com.shoko.studentllm` |
+
+**If StudentLLM cannot read your saved workspace.** It says so at the top of the window and never silently throws the data away. When the data is damaged it keeps a copy inside the browser storage above. When no copy can be kept (the browser storage is full), or a newer version of the app wrote the data, it leaves the saved data untouched and **pauses saving in that window**, so nothing you do there is kept: use **Download saved data**, or open the data with a newer version. **Download saved copy** or **Download saved data** gives you a `studentllm-workspace-saved-copy.json` file. It is a raw copy of the workspace, not a course export, so **Import course** cannot read it; keep it safe and send it to the maintainers if you need help restoring it (see section 10, and do not post it publicly because it contains your course text).
 
 **Back up with Export.** Open the course, choose **More → Export course**. You get one `.studentllm.json` file containing the notes, the original files and the audio. Keep it somewhere safe (not only on the same computer). To restore it, click **Import course** (bottom of the left column). Do this for every course you care about, especially before reinstalling, cleaning your browser or changing computers. A course larger than 256 MB can be exported but cannot be imported back; the app warns you.
 
@@ -130,11 +139,11 @@ Your data is stored **on this computer only**:
 | --- | --- | --- |
 | "The AI model is not reachable" | LM Studio is closed, has no model loaded, or its server is off. | Start LM Studio, load a model, switch on the local server (and CORS for the desktop app). Open Settings to check. |
 | A PDF or image is saved but "could not be read" with "The document service is offline" | The document service is not running. | Start it, open Settings, click **Refresh local services**. Existing files stay in Sources. |
-| The same, with "damaged or protected by a password" | The file itself cannot be read. | Remove the password or export a fresh copy, then import it again. |
+| The same, with "could not process this file" | The file may be damaged or password-protected, or the service lacks a component such as OCR (the service reports both the same way). | Try a fresh copy without a password. If other files fail too, look at the service window for an error message. |
 | A recording is in Sources but has no text | The speech service was not running. | Start it, then click **Transcribe** on the recording. |
 | "Your changes are not being saved" | The browser's storage is full or blocked. | Click **Export this course** to keep a copy, then free up space or delete old courses. In a private window, storage is often blocked. |
 | "StudentLLM was changed in another tab or window" | You have it open twice. | Click **Reload**. Close the extra tab. |
-| "Your saved workspace could not be read" | The stored data was damaged, or written by a newer version. | A copy was kept in the browser's storage. Courses you exported are unaffected: import them. Report it (below) before clearing the browser's data. |
+| "Your saved workspace could not be read", "...left out" or "...newer version" | The stored data was damaged, partly unreadable, or written by a newer version. | Click **Download saved copy** or **Download saved data** and keep the file. Courses you exported are unaffected: import them. Do not clear the browser's data before you have the file. See section 8. |
 | "Microphone access is blocked" | Permission was refused. | Allow the microphone for StudentLLM in your browser or system settings. |
 | "No microphone was found" | No input device. | Plug one in or pick one in your system sound settings. |
 | Search misses a word | Search ignores accents and capital letters, but not different words. | Try a shorter or different word. |
