@@ -149,15 +149,22 @@ function weakCopyleftAllowed(policy, choice) {
   });
 }
 
-/** Find the policy exception for a package, if any. `scope` narrows by lockfile or requirements file. */
-export function findException(policy, ecosystem, name, scope) {
+/**
+ * Find the policy exception for a package, if any.
+ * An exception with a `scope` applies only when the caller names a scope that is in the list. One with `licenses`
+ * applies only when the package declares exactly one of them (an empty string stands for "no licence declared"), so
+ * it cannot hide a different licence under the same name.
+ */
+export function findException(policy, ecosystem, name, scope, declared) {
   return (policy.exceptions ?? []).find((entry) => {
     if (entry.ecosystem !== ecosystem) return false;
     const matchesName = entry.namePattern
       ? new RegExp(`^(?:${entry.namePattern})$`, 'i').test(name)
       : entry.name?.toLowerCase() === name.toLowerCase();
     if (!matchesName) return false;
-    return !entry.scope || !scope || entry.scope.includes(scope);
+    if (entry.scope && !(scope && entry.scope.includes(scope))) return false;
+    if (entry.licenses && !entry.licenses.some((id) => id.toLowerCase() === String(declared ?? '').trim().toLowerCase())) return false;
+    return true;
   });
 }
 
@@ -181,7 +188,7 @@ export function evaluatePackage(policy, { ecosystem, name, version, declared, sc
   if (kind === 'permissive') return { ...row, status: 'ok' };
   // Only the weak-copyleft licences listed in `allowedWeakCopyleft` (MPL-2.0) pass without an exception; LGPL needs one.
   if (kind === 'weak-copyleft' && weakCopyleftAllowed(policy, choice)) return { ...row, status: 'ok' };
-  const exception = findException(policy, ecosystem, name, scope);
+  const exception = findException(policy, ecosystem, name, scope, declared);
   if (exception) return { ...row, status: 'excepted', reason: exception.reason };
   return { ...row, status: 'violation' };
 }

@@ -108,6 +108,25 @@ test('the NVIDIA CUDA wheels are excepted for the two torch requirement files on
   assert.equal(cuda('nvidiafoo', 'requirements-bfcl.txt').status, 'violation');
 });
 
+test('the NVIDIA exception cannot hide another licence under a similar name', () => {
+  const row = (name, declared, scope = 'requirements-bfcl.txt') => evaluatePackage(policy, { ecosystem: 'python', name, version: '1', declared, scope });
+  assert.equal(row('nvidia-sneaky-package', 'GPL-3.0-or-later').status, 'violation');
+  assert.equal(row('nvidia-sneaky-package', 'AGPL-3.0-only').status, 'violation');
+  assert.equal(row('nvidia-unlicensed-thing', '').status, 'violation');
+  assert.equal(row('nvidia-whatever', 'Proprietary').status, 'violation');
+  assert.equal(row('cuda-evil', '').status, 'violation');
+  assert.equal(row('cuda-toolkit', 'GPL-3.0-only').status, 'violation');
+  assert.equal(row('nvidia-cudnn-cu99', 'LicenseRef-NVIDIA-Proprietary').status, 'excepted'); // a new CUDA wheel under the NVIDIA licence still passes
+});
+
+test('a scoped exception is refused when no scope is passed', () => {
+  assert.equal(evaluatePackage(policy, { ecosystem: 'python', name: 'html2text', version: '1', declared: 'GPL-3.0-or-later' }).status, 'violation');
+  assert.equal(evaluatePackage(policy, { ecosystem: 'python', name: 'chardet', version: '1', declared: 'LGPL-2.1-or-later' }).status, 'violation');
+  assert.equal(evaluatePackage(policy, { ecosystem: 'python', name: 'nvidia-cublas', version: '1', declared: 'LicenseRef-NVIDIA-Proprietary' }).status, 'violation');
+  const unscoped = { ...policy, exceptions: [{ ecosystem: 'npm', name: 'example', reason: 'Reviewed and documented in docs/licensing.md for this package.' }] };
+  assert.equal(evaluatePackage(unscoped, { ecosystem: 'npm', name: 'example', version: '1', declared: 'LGPL-2.1-or-later' }).status, 'excepted');
+});
+
 test('chardet (LGPL) is excepted for the lm-eval requirement files only', () => {
   const chardet = (scope) => evaluatePackage(policy, { ecosystem: 'python', name: 'chardet', version: '6.0.0.post1', declared: 'LGPL-2.1-or-later', scope });
   assert.equal(chardet('requirements-humaneval.txt').status, 'excepted');

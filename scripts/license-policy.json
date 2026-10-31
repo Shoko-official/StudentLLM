@@ -67,12 +67,28 @@
     },
     {
       "ecosystem": "python",
-      "namePattern": "nvidia-[a-z0-9-]+|cuda-[a-z0-9-]+",
+      "namePattern": "nvidia-[a-z0-9-]+",
+      "licenses": [
+        "LicenseRef-NVIDIA-Proprietary",
+        "NVIDIA Proprietary Software"
+      ],
       "scope": [
         "requirements-bfcl.txt",
         "requirements-embeddings.txt"
       ],
       "reason": "NVIDIA CUDA runtime wheels (LicenseRef-NVIDIA-Proprietary, or no licence field for the cuda-toolkit meta package) that pip resolves for torch on Linux when sentence-transformers or bfcl-eval is installed. Benchmark and embedding-evaluation tooling that runs on a developer machine; these wheels are never imported by, bundled with or distributed alongside the application or its sidecars, and are not in any other requirements file."
+    },
+    {
+      "ecosystem": "python",
+      "name": "cuda-toolkit",
+      "licenses": [
+        ""
+      ],
+      "scope": [
+        "requirements-bfcl.txt",
+        "requirements-embeddings.txt"
+      ],
+      "reason": "The cuda-toolkit meta package declares no licence; it only pulls in the NVIDIA CUDA wheels excepted above. NVIDIA CUDA runtime wheels (LicenseRef-NVIDIA-Proprietary, or no licence field for the cuda-toolkit meta package) that pip resolves for torch on Linux when sentence-transformers or bfcl-eval is installed. Benchmark and embedding-evaluation tooling that runs on a developer machine; these wheels are never imported by, bundled with or distributed alongside the application or its sidecars, and are not in any other requirements file."
     }
   ]
 }
