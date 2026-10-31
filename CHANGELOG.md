@@ -2,12 +2,19 @@
 
 ## Unreleased
 
+## 0.1.0 - 2026-10-31
+
 ### Fixed
 
 - Removing a source is no longer instant and irreversible: an Undo toast (a live region, keyboard reachable, paused while hovered or focused) restores the source, its transcript and its note for 8 seconds, and the stored original is only erased afterwards, including after a reload.
+- Course-note concept schemas keep terms that start with an accented capital (for example `Énergie`) and recognise French relation verbs (`entraîne`, `provoque`, `engendre`, `mène à`, `dépend de/du/des`), including elided articles such as `l'`.
+- Course search results and the per-keystroke filter strip Markdown and LaTeX through a linear-time pattern and a bounded cache, instead of a quadratic whitespace pattern and repeated stripping.
+- Importing a course export clears the error banner left over from the previous course.
+- Interface wording is consistent: "course" replaces "session", the create-course button no longer shows a microphone, and the AI organizer has one name.
 
 ### Added
 
+- A `Release` workflow turns a `v*` tag into a draft GitHub release with unsigned Windows, macOS (Apple Silicon), and Linux installers and per-platform SHA-256 checksums.
 - Live course notes now turn the incremental transcript into a persisted, routed document with formulas, code, schemas, and compact data visualizations when appropriate; LM Studio can refine the detected subject, chapter, title, and Markdown filename.
 - Course metadata can be edited after creation from the compact More menu; title, subject, chapter, and sublesson changes update the course tree and persisted note path together.
 - Course chat now wraps retrieved passages in explicit evidence boundaries and requires a grounded answer or a clear insufficient-evidence response; the live LM Studio smoke also checks for concepts present in the source.
@@ -141,7 +148,3 @@
 - the environment example now makes the Windows User source of `NVIDIA_API_KEY` explicit without declaring a file variable;
 - Vitest, Playwright, axe, TypeScript, Vite, and GitHub Actions verification;
 - architecture, provider, benchmark, and contribution documentation.
-
-### Fixed
-
-- Course-note concept schemas keep terms that start with an accented capital (for example `Énergie`) and recognise French relation verbs (`entraîne`, `provoque`, `engendre`, `mène à`, `dépend de/du/des`), including elided articles such as `l'`.
