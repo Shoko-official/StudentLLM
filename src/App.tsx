@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, memo, ReactNode, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AlignLeft,
   Archive,
@@ -323,6 +323,60 @@ function storageNoticeText(notice: StorageNotice) {
   return notice.kind === 'newer-version'
     ? `Your saved workspace was written by a newer version of StudentLLM that this version cannot read, so it started empty. ${copy} Update the app to get your courses back.`
     : `Your saved workspace could not be read, so StudentLLM started empty. ${copy} Courses you export are never affected.`;
+}
+
+// Module-level and memoized: a keystroke in the search field or the chat composer re-renders App, and without this every
+// block of a long note (hundreds after an hour-long lecture) was rebuilt each time.
+const CourseNoteBlockView = memo(function CourseNoteBlockView({ block }: { block: CourseNoteBlock }) {
+  if (block.type === 'heading') {
+    if (block.id === 'note-title') return null;
+    const Heading = block.level === 1 ? 'h2' : 'h3';
+    return <Heading key={block.id}>{block.text}</Heading>;
+  }
+  if (block.type === 'markdown') {
+    return <section className="course-note-markdown" key={block.id}><RichText content={block.markdown} /></section>;
+  }
+  if (block.type === 'paragraph') {
+    return <div className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp}{speakerLabel(block.speaker) ? ` · ${speakerLabel(block.speaker)}` : ''}</span>}<RichText content={block.text} highlightExtractedMath={!isMarkdownImport(block)} /></div>;
+  }
+  if (block.type === 'formula') {
+    return <div className="course-note-formula" key={block.id}><RichText content={block.latex} />{block.caption && <small>{block.caption}</small>}</div>;
+  }
+  if (block.type === 'formula-image') {
+    return <figure className="course-note-formula-image" key={block.id}><img src={block.imageData} alt={`Formula from ${block.sourceName}: ${block.alt}`} /></figure>;
+  }
+  if (block.type === 'code') {
+    return <pre className="course-note-code" key={block.id}><code><span className="course-note-code-language">{block.language}</span>{block.code}</code></pre>;
+  }
+  if (block.type === 'schema') {
+    return <div className="course-note-schema" key={block.id} aria-label="Course concept schema">{block.edges.map((edge) => <span key={`${block.id}-${edge.from}-${edge.to}`}><b>{edge.from}</b><span aria-hidden="true"> → </span><b>{edge.to}</b></span>)}</div>;
+  }
+  if (block.type === 'visual') return <VisualBlockView key={block.id} visual={block.visual} />;
+  const maximum = Math.max(...block.values.map((item) => Math.abs(item.value)), 1);
+  return <figure className="course-note-chart" key={block.id}><figcaption>{block.label}</figcaption>{block.values.map((item, index) => <div className="course-note-chart-row" key={`${block.id}-${index}-${item.label}`}><span>{item.label}</span><i><em style={{ width: `${Math.max(4, Math.round(Math.abs(item.value) / maximum * 100))}%` }} /></i><strong>{item.value}</strong></div>)}</figure>;
+});
+
+const TranscriptItem = memo(function TranscriptItem({ segment, onToggleReview }: { segment: TranscriptSegment; onToggleReview: (segmentId: string) => void }) {
+  return (
+  <article className={`transcript-item ${segment.status === 'review' ? 'needs-review' : ''}`}>
+    <div className="transcript-time">{segment.timestamp}</div>
+    <div className="transcript-body"><div className="speaker-line">{speakerLabel(segment.speaker) && <strong>{speakerLabel(segment.speaker)}</strong>}{segment.provisional ? <span className="review-badge">Live preview</span> : segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><div className="transcript-text"><RichText content={segment.text} /></div></div>
+    {!segment.provisional && <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => onToggleReview(segment.id)}>...</button>}
+  </article>
+  );
+});
+
+// The transcript list is only built while the section is open: a long recording has hundreds of segments, each typeset
+// as Markdown, and most visits to a course never open it.
+function TranscriptDisclosure({ summary, children }: { summary: string; children: [() => ReactNode, ReactNode] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="transcript-disclosure" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>{summary}</summary>
+      {open ? children[0]() : null}
+      {children[1]}
+    </details>
+  );
 }
 
 function App({ provider, recorderSessionFactory = requestRecorderSession, speechEngine, documentEngine, recordingChunkStore: recordingChunkStoreOverride, sourceBlobStore: sourceBlobStoreOverride, liveTranscriptionIntervalMs = 3_000 }: AppProps) {
@@ -1689,6 +1743,11 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     notify(nextStatus === 'verified' ? 'Transcript segment verified.' : 'Transcript segment marked for review.');
   };
 
+  // The segment list is memoized, so it needs a callback whose identity never changes.
+  const toggleTranscriptReviewRef = useRef(toggleTranscriptReview);
+  toggleTranscriptReviewRef.current = toggleTranscriptReview;
+  const onToggleReview = useCallback((segmentId: string) => toggleTranscriptReviewRef.current(segmentId), []);
+
   const submitComposer = async (event: FormEvent) => {
     event.preventDefault();
     const message = composerValue.trim();
@@ -2615,42 +2674,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     notify('Course details saved.');
   };
 
-  const renderTranscriptSegment = (segment: TranscriptSegment) => (
-    <article className={`transcript-item ${segment.status === 'review' ? 'needs-review' : ''}`} key={segment.id}>
-      <div className="transcript-time">{segment.timestamp}</div>
-      <div className="transcript-body"><div className="speaker-line">{speakerLabel(segment.speaker) && <strong>{speakerLabel(segment.speaker)}</strong>}{segment.provisional ? <span className="review-badge">Live preview</span> : segment.status === 'review' ? <span className="review-badge">Needs review</span> : <span className="verified-badge"><Check size={11} /> verified</span>}</div><div className="transcript-text"><RichText content={segment.text} /></div></div>
-      {!segment.provisional && <button className="transcript-more" aria-label={segment.status === 'review' ? `Mark segment ${segment.timestamp} verified` : `Mark segment ${segment.timestamp} for review`} onClick={() => toggleTranscriptReview(segment.id)}>...</button>}
-    </article>
-  );
+  const renderTranscriptSegment = (segment: TranscriptSegment) => <TranscriptItem key={segment.id} segment={segment} onToggleReview={onToggleReview} />;
 
-  const renderCourseNoteBlock = (block: CourseNoteBlock) => {
-    if (block.type === 'heading') {
-      if (block.id === 'note-title') return null;
-      const Heading = block.level === 1 ? 'h2' : 'h3';
-      return <Heading key={block.id}>{block.text}</Heading>;
-    }
-    if (block.type === 'markdown') {
-      return <section className="course-note-markdown" key={block.id}><RichText content={block.markdown} /></section>;
-    }
-    if (block.type === 'paragraph') {
-      return <div className="course-note-paragraph" key={block.id}>{block.timestamp && <span className="course-note-meta">{block.timestamp}{speakerLabel(block.speaker) ? ` · ${speakerLabel(block.speaker)}` : ''}</span>}<RichText content={block.text} highlightExtractedMath={!isMarkdownImport(block)} /></div>;
-    }
-    if (block.type === 'formula') {
-      return <div className="course-note-formula" key={block.id}><RichText content={block.latex} />{block.caption && <small>{block.caption}</small>}</div>;
-    }
-    if (block.type === 'formula-image') {
-      return <figure className="course-note-formula-image" key={block.id}><img src={block.imageData} alt={`Formula from ${block.sourceName}: ${block.alt}`} /></figure>;
-    }
-    if (block.type === 'code') {
-      return <pre className="course-note-code" key={block.id}><code><span className="course-note-code-language">{block.language}</span>{block.code}</code></pre>;
-    }
-    if (block.type === 'schema') {
-      return <div className="course-note-schema" key={block.id} aria-label="Course concept schema">{block.edges.map((edge) => <span key={`${block.id}-${edge.from}-${edge.to}`}><b>{edge.from}</b><span aria-hidden="true"> → </span><b>{edge.to}</b></span>)}</div>;
-    }
-    if (block.type === 'visual') return <VisualBlockView key={block.id} visual={block.visual} />;
-    const maximum = Math.max(...block.values.map((item) => Math.abs(item.value)), 1);
-    return <figure className="course-note-chart" key={block.id}><figcaption>{block.label}</figcaption>{block.values.map((item, index) => <div className="course-note-chart-row" key={`${block.id}-${index}-${item.label}`}><span>{item.label}</span><i><em style={{ width: `${Math.max(4, Math.round(Math.abs(item.value) / maximum * 100))}%` }} /></i><strong>{item.value}</strong></div>)}</figure>;
-  };
+  const renderCourseNoteBlock = (block: CourseNoteBlock) => <CourseNoteBlockView key={block.id} block={block} />;
 
   return (
     <div className="app-shell">
@@ -2760,11 +2786,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
                 <div className="live-transcript-header"><strong>Live transcript</strong><span>Original speech, separate from the notes. The latest words may change. Speaker identification is not enabled by the local speech service.</span></div>
                 <div ref={liveTranscriptFeedRef} aria-live="polite">{visibleLiveTranscript.length ? groupTranscript(visibleLiveTranscript).map(renderTranscriptSegment) : <p className="empty-state">Waiting for the first transcribed passage.</p>}</div>
               </section>}
-              {(transcript.length > 0 || isRecording) && <details className="transcript-disclosure">
-                <summary>Transcript {isRecording ? '(recording)' : `(${transcript.length})`}</summary>
-                <div className={`transcript-list ${compactTranscript ? 'compact' : ''}`} role="region" aria-label="Transcript preview">{courseTranscript.map(renderTranscriptSegment)}</div>
+              {(transcript.length > 0 || isRecording) && <TranscriptDisclosure key={activeLesson.id} summary={`Transcript ${isRecording ? '(recording)' : `(${transcript.length})`}`}>
+                {() => <div className={`transcript-list ${compactTranscript ? 'compact' : ''}`} role="region" aria-label="Transcript preview">{courseTranscript.map(renderTranscriptSegment)}</div>}
                 <button className="text-action" onClick={() => setShowTranscriptPanel(true)}>View all <ArrowUpRight size={13} /></button>
-              </details>}
+              </TranscriptDisclosure>}
             </div>}
             {view === 'sources' && <section className="sources-view" id="view-panel-sources" role="tabpanel" aria-labelledby="view-tab-sources">
               <div className="section-toolbar"><h2>Sources</h2><button className="secondary-action" onClick={() => openSourcePicker(sourceAccept)}><Plus size={16} /> Import file</button></div>

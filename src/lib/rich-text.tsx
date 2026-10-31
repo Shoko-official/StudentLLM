@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, memo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
@@ -198,7 +198,9 @@ interface RichTextProps {
   className?: string;
 }
 
-export function RichText({ content, highlightExtractedMath = false, className }: RichTextProps) {
+// Memoized: parsing Markdown and typesetting KaTeX is the expensive part of a render, and the workspace re-renders on
+// every keystroke in a search field or the chat composer. The props are plain strings, so a shallow compare is exact.
+export const RichText = memo(function RichText({ content, highlightExtractedMath = false, className }: RichTextProps) {
   const classes = ['rich-text', className].filter(Boolean).join(' ');
   if (highlightExtractedMath) return <div className={classes}>{renderExtractedText(content)}</div>;
 
@@ -216,4 +218,4 @@ export function RichText({ content, highlightExtractedMath = false, className }:
       </ReactMarkdown>
     </div>
   );
-}
+});
