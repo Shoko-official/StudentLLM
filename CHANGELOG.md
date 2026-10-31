@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security
+
+- The packaged desktop app now enforces a Content Security Policy instead of running with none (`csp: null`): scripts only from the app itself (no `eval`, no inline code), no plugins, no framing, no form posts, and requests only to the app, Tauri IPC and loopback services (`127.0.0.1` and `localhost`). Inline style attributes are the one allowance, for KaTeX. A browser test serves the production build with this exact policy and fails on any violation. Because of it, the packaged app no longer connects to remote or LAN model and service addresses, and Settings says so instead of reporting a missing server. See [docs/desktop.md](docs/desktop.md#content-security-policy).
+
 ## 0.1.0 - 2026-10-31
 
 ### Fixed

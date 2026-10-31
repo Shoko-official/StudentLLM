@@ -30,6 +30,44 @@ The desktop shell can own optional local sidecars when their commands are config
 
 This supervisor is intentionally opt-in because the current unsigned package does not bundle Python runtimes or the optional sidecar dependencies. Use absolute script paths for packaged desktop experiments, and configure the matching `VITE_LOCAL_ASR_BASE_URL` or `VITE_LOCAL_DOCUMENT_BASE_URL` endpoint so the health probe can verify readiness after launch.
 
+## Content Security Policy
+
+The webview runs with the policy below, set in `src-tauri/tauri.conf.json` (`app.security.csp`). It replaces the former `null` policy and is a prerequisite for the optional cloud tier in [cloud-plan.md](./cloud-plan.md): imported documents and model output reach the webview, which must not be able to load remote script or send data to arbitrary hosts.
+
+```text
+default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline';
+img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; worker-src 'self';
+frame-src blob:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*;
+object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+```
+
+| Directive | Decision |
+| --- | --- |
+| `script-src 'self'` | No `unsafe-eval`, no `unsafe-inline`, no remote script. The production bundle, the pdf.js worker and the audio worklet are all same-origin files. |
+| `style-src 'self'` and `style-src-attr 'unsafe-inline'` | Style sheets and `<style>` elements must come from the app. Inline style **attributes** are allowed because KaTeX renders formulas as HTML with `style="..."` attributes (strut heights, spacing, vertical alignment) that cannot be expressed as classes; without it, formulas lose their layout. This is the one allowance and it never applies to scripts. An attribute cannot run code, and the only thing it can reference, `url(...)`, is limited by `img-src` and `font-src`. |
+| `img-src`, `font-src` | `'self' data: blob:` and `'self' data:`. The bundled KaTeX and Fraunces fonts and the imported images and PDF pages work; a remote image in model output or in a document cannot load, which also closes image-beacon exfiltration. |
+| `media-src 'self' blob:`, `frame-src blob:` | The audio source preview and the preview of a document that is not a PDF use `blob:` URLs of the locally stored original. Blob documents inherit this policy. `worker-src` needs no `blob:`: pdf.js loads its worker from a bundled file. |
+| `connect-src` | The app itself, Tauri IPC (`ipc:` and `http://ipc.localhost`, the two transports Tauri uses on its platforms) and **loopback only**: `http://127.0.0.1:*` and `http://localhost:*`, for LM Studio (default `127.0.0.1:1234`), the speech service (`:8765`) and the document service (`:8766`). Ports stay open because Settings lets the user pick them. IPv6 loopback (`[::1]`) is not allowed; use `127.0.0.1`. The cloud gateway origin is **not** allowed; the cloud client will make its calls from Rust or add its origin deliberately. |
+| `object-src`, `base-uri`, `form-action`, `frame-ancestors` | All `'none'`. |
+
+### Remote model endpoints in the packaged app
+
+Settings accepts any `http(s)` address for the model and the two local services, and the browser or development app can still use a remote OpenAI-compatible endpoint when it allows CORS. The packaged app cannot: a strict `connect-src` cannot name hosts the user has not entered yet, and the only way to support arbitrary endpoints is `connect-src https:` (or `*`), which would let any script or injected markup in the webview send course content and tokens anywhere. The decision is to keep the webview on this computer. Settings reports "The desktop app only connects to services on this computer (localhost or 127.0.0.1)" for any other address instead of the misleading "start the server" message.
+
+To use a remote or LAN model from the packaged app, run it behind a loopback address: LM Studio's own server, or a local proxy or SSH tunnel listening on `127.0.0.1`. Remote providers selected by the user in a later release (bring-your-own key, the cloud tier) are called from the Rust shell, where the key also stays out of the webview. A narrower alternative, listing individual hosts in `connect-src`, would need a rebuild or a runtime-configurable policy for every new host and is not offered.
+
+### Development policy
+
+`app.security.devCsp` is used by `tauri dev` and differs in only three ways that Vite needs: `'unsafe-inline'` for scripts and styles (the React refresh preamble is an inline module script and Vite injects `<style>` elements), `blob:` workers, and `ws://127.0.0.1:1420` and `ws://localhost:1420` for hot reload. It is never used in a packaged build. Tauri may not apply it to a page loaded from `devUrl`; the unit test only guarantees that it stays strict elsewhere (`object-src`, `base-uri`, `form-action`, `frame-ancestors`, no `eval`).
+
+### How it is tested
+
+- `src/test/tauri-csp.test.ts` parses the policy from `tauri.conf.json` and fails on `unsafe-eval`, `unsafe-inline` in `script-src`, a missing `object-src 'none'`, a wildcard or non-loopback host in `connect-src`, or the cloud gateway origin.
+- `tests/e2e/csp.spec.ts` (the `csp` Playwright project) builds the production bundle into `dist-csp/`, serves it with `vite preview` and the exact policy from `tauri.conf.json` as the `Content-Security-Policy` header, and runs the core flows: create a course, import text with formulas (KaTeX and its fonts), Settings with the loopback services, search, chat with and without the local model, Study, and previews of PDF, image, audio and document sources. It fails on any `securitypolicyviolation` event or console report, and a canary test confirms that `eval`, remote scripts, remote requests and inline scripts are actually blocked. Run it with `npx playwright test --project=csp`.
+- The packaged `Desktop UI` and `Desktop package` jobs run the real webview with the policy.
+
+When a feature needs a new origin, add it to the narrowest directive, update this section and the test, and do not widen `script-src`.
+
 ## Validation
 
 The GitHub Actions quality job runs both `npm run desktop:check` and `npm run desktop:test` in addition to the frontend typecheck, benchmark adapter checks, unit tests, and production build. Browser workflow coverage remains available through `npm run test:e2e`. The dedicated `desktop-ui` job also builds the debug binary and drives the packaged Tauri window through external `tauri-driver` WebDriver on Linux and Windows.

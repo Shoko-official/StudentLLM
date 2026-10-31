@@ -6,6 +6,7 @@
 - `NVIDIA_API_KEY` is read from the Windows User environment and is never read from a repository file.
 - Credential values are not written to logs, fixtures, screenshots, or benchmark artifacts.
 - Local mode does not make an implicit network request.
+- The desktop webview enforces a Content Security Policy: no remote or inline script, no `eval`, and requests only to the app, Tauri IPC and `127.0.0.1` or `localhost`. See [docs/desktop.md](docs/desktop.md#content-security-policy).
 - Course data is private by default.
 
 ## Reporting a vulnerability
