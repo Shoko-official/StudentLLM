@@ -1,10 +1,10 @@
 # Enterprise readiness: assessment and backlog
 
-Status: assessment as of 2026-10-31, revised the same day against `main` at commit `ec94e6f`, which includes the Tauri content security policy (#379), the release workflow (#374) and the cloud gateway scaffold (#378). It is a planning document, not a promise, not a compliance statement and not legal advice. Anything marked "verify" was not checked against an official source and must be before it is relied on. Anything marked "unverified" could not be confirmed from this repository or from the tools available when this was written.
+Status: assessment as of 2026-10-31, revised the same day against `main` at commit `ec94e6f`, which includes the Tauri content security policy (#379), the release workflow (#374) and the cloud gateway scaffold (#378); the later docs-only admin design merge (#380) does not change the measured figures. It is a planning document, not a promise, not a compliance statement and not legal advice. Anything marked "verify" was not checked against an official source and must be before it is relied on. Anything marked "unverified" could not be confirmed from this repository or from the tools available when this was written.
 
 The founder's goal is to sell StudentLLM to enterprises and institutions (universities, training organisations, corporate learning teams). This document says what stands between the repository today and a product that an enterprise procurement, security and legal team would approve, which of that engineers (and AI agents working under review) can do in code and docs, and which of it only the company can do.
 
-Related documents: [status.md](./status.md) (verified coverage), [architecture.md](./architecture.md), [desktop.md](./desktop.md), [providers.md](./providers.md), [cloud-plan.md](./cloud-plan.md), [cloud-api.md](./cloud-api.md), [legal/](./legal/) (consumer-oriented drafts), [../SECURITY.md](../SECURITY.md), [../cloud/README.md](../cloud/README.md). The cloud admin design (`docs/cloud-admin.md`) is on the unmerged branch `docs/cloud-admin` (PR #380) and is cited as "the admin design"; its status is "planned, not implemented". Work that is open but not merged is listed in [In progress](#in-progress).
+Related documents: [status.md](./status.md) (verified coverage), [architecture.md](./architecture.md), [desktop.md](./desktop.md), [providers.md](./providers.md), [cloud-plan.md](./cloud-plan.md), [cloud-api.md](./cloud-api.md), [legal/](./legal/) (consumer-oriented drafts), [../SECURITY.md](../SECURITY.md), [../cloud/README.md](../cloud/README.md). The cloud admin design ([cloud-admin.md](./cloud-admin.md), merged in #380 while this document was being revised) is cited as "the admin design"; its status is "planned, not implemented". Work that is open but not merged is listed in [In progress](#in-progress).
 
 ## Contents
 
@@ -53,10 +53,10 @@ In the order a buyer's teams are most likely to stop a deal, not the order of ef
 
 ### In progress
 
-Open pull requests at the time of this revision. None of this is merged, so none of it is counted as done anywhere else in this document.
+State of open and just-merged work at the time of this revision. The cloud gateway modules are not merged, so none of them is counted as done anywhere else in this document.
 
 - **Cloud gateway modules:** auth and account (#391), billing (#392), inference, quota and ops (#393). Each is reported by its description to run against the **in-memory stores** and injected fakes: no Durable Object or D1 adapter exists, no real inference, transcription or OCR provider is wired (no transcription or OCR provider has been chosen), the billing client is a fake, and nothing is deployed. Independent security reviews are under way and fixes are being made on those branches. They should be read as implementation of the contract against test doubles, not as a production-ready service. Production readiness still requires the storage adapters, provider contracts, a staging environment, the load and chaos work in B14, and the review and test exit criteria of `cloud-plan.md` phases 2 and 3.
-- **Admin interface design** (#380): documentation and a contract validator only, no admin code. It is an operator console design (owner role only in the first cut), not a customer-facing organisation admin.
+- **Admin interface design** (#380): it merged to `main` while this document was being revised, so it is now `docs/cloud-admin.md` and `docs/cloud-admin.openapi.yaml`. It is documentation and an extended contract validator only; there is no admin code, and it is not production-ready or implemented. It is an operator console design (owner role only in the first cut), not a customer-facing organisation admin.
 - **Dependabot updates** (#381 to #390): version-bump pull requests for Actions and npm dependencies, not yet merged.
 
 ### Valuation, bluntly
