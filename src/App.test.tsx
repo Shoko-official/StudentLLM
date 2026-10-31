@@ -155,6 +155,27 @@ describe('StudentLLM workspace', () => {
     expect(transcriptPreview().getByText('Without this normalization, dot products grow with the key dimension.')).toBeInTheDocument();
   });
 
+  it('opens the open-source licences from Settings with focus inside, and Escape closes only that dialog', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Settings/ }));
+    const opener = within(screen.getByRole('dialog', { name: 'Settings' })).getByRole('button', { name: 'Open-source licences' });
+    await user.click(opener);
+
+    const licences = await screen.findByRole('dialog', { name: 'Open-source licences' });
+    expect(await within(licences).findByText(/Permission is hereby granted, free of charge/)).toBeInTheDocument();
+    expect(licences).toContainElement(document.activeElement as HTMLElement);
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Open-source licences' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
+    expect(opener).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+  });
+
   it('restores transcript display preferences from local storage', async () => {
     const user = userEvent.setup();
     const firstRender = render(<App />);
