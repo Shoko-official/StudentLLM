@@ -84,7 +84,7 @@ async function quarantine(env: BillingEnv, ev: NormalizedEvent, reason: string):
   };
 }
 
-async function process(env: BillingEnv, ev: NormalizedEvent): Promise<Outcome> {
+async function processEvent(env: BillingEnv, ev: NormalizedEvent): Promise<Outcome> {
   const { accounts } = env.stores;
   const fields = ledgerFields(ev);
   if (ev.kind === "other") return { state: "processed", fields, after: [] };
@@ -168,7 +168,7 @@ export async function handlePaddleWebhook(ctx: RequestContext): Promise<Response
 
   let outcome: Outcome;
   try {
-    outcome = await process(env, ev);
+    outcome = await processEvent(env, ev);
   } catch {
     // Name only: an error message could carry event text.
     console.error("billing: webhook processing failed");
