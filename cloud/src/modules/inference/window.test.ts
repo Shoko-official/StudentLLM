@@ -63,6 +63,11 @@ describe("planWindow", () => {
     expect(planWindow(p, D(2027, 6, 5), 7)).toEqual({ start: D(2027, 6, 1), end: D(2027, 7, 1), limit: 7 });
   });
 
+  it("ignores a paid period the billing module marked revoked", () => {
+    const revoked = { start: D(2026, 11, 1), end: D(2026, 12, 1), revokedAt: D(2026, 11, 10) } as PlanRecord["paidPeriods"][number];
+    expect(planWindow(plan([revoked]), D(2026, 11, 20), 1)).toBeNull();
+  });
+
   it("is null for a free account, a revoked plan or no covering period", () => {
     expect(planWindow(null, D(2026, 11, 20), 1)).toBeNull();
     expect(planWindow(plan([{ start: D(2026, 11, 1), end: D(2026, 12, 1) }], "revoked"), D(2026, 11, 20), 1)).toBeNull();

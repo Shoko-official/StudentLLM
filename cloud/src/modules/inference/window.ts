@@ -31,6 +31,8 @@ function entitled(plan: PlanRecord): boolean {
 }
 
 function windowOfPeriod(period: PaidPeriod, now: number): { start: number; end: number } | null {
+  // The billing module may mark a period revoked (a refund, a cut): it buys nothing any more.
+  if ((period as { revokedAt?: number | null }).revokedAt != null) return null;
   if (!(period.start <= now && now < period.end)) return null;
   // One window per month of the period (one for a monthly subscription, five for a semester pass).
   const count = Math.max(1, Math.round((period.end - period.start) / MONTH_MS));
