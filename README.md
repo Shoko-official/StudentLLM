@@ -73,6 +73,8 @@ npm run build
 npm run preview
 ```
 
+Tagged releases publish unsigned desktop installers for Windows, macOS, and Linux as draft GitHub releases; see [docs/desktop.md](docs/desktop.md#releases).
+
 To create a local unsigned desktop bundle:
 
 ```bash
