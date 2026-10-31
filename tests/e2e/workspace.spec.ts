@@ -698,7 +698,7 @@ test.describe('StudentLLM workspace', () => {
     await page.getByRole('button', { name: 'Remove source Attention & Scaled Dot-Product audio.webm' }).click();
     await expect(page.getByText('Attention & Scaled Dot-Product audio.webm removed from this course.')).toBeVisible();
 
-    const storedChunkCount = await page.evaluate(() => new Promise<number>((resolve, reject) => {
+    const storedChunkCount = () => page.evaluate(() => new Promise<number>((resolve, reject) => {
       const request = indexedDB.open('studentllm-recordings', 1);
       request.onerror = () => reject(request.error);
       request.onsuccess = () => {
@@ -708,7 +708,8 @@ test.describe('StudentLLM workspace', () => {
       };
     }));
 
-    expect(storedChunkCount).toBe(0);
+    // The chunks stay on disk while the undo window is open, then are erased.
+    await expect.poll(storedChunkCount, { timeout: 15000 }).toBe(0);
   });
 
   test('recovers durable audio after an interrupted browser session', async ({ page }) => {
@@ -983,7 +984,7 @@ test.describe('StudentLLM workspace', () => {
     await expect(page.getByText('remove-me.md removed from this course.')).toBeVisible();
     await expect(source).toBeHidden();
 
-    const storedSourceCount = await page.evaluate(() => new Promise<number>((resolve, reject) => {
+    const storedSourceCount = () => page.evaluate(() => new Promise<number>((resolve, reject) => {
       const request = indexedDB.open('studentllm-sources', 1);
       request.onerror = () => reject(request.error);
       request.onsuccess = () => {
@@ -993,7 +994,42 @@ test.describe('StudentLLM workspace', () => {
       };
     }));
 
-    expect(storedSourceCount).toBe(0);
+    // The blob stays on disk while the undo window is open, then is erased.
+    await expect.poll(storedSourceCount, { timeout: 15000 }).toBe(0);
+  });
+
+  test('undoes a source removal from the keyboard and keeps the stored original', async ({ page }) => {
+    await page.goto('/');
+    await page.setInputFiles('input[aria-label="Select course source"]', {
+      name: 'undo-me.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('keep these notes'),
+    });
+
+    await openSources(page);
+    const source = page.getByRole('button', { name: /^undo-me\.md/ });
+    await expect(source).toBeVisible();
+    await page.getByRole('button', { name: 'Remove source undo-me.md' }).click();
+    await expect(source).toBeHidden();
+    await expect(page.getByRole('status').filter({ hasText: 'undo-me.md removed from this course.' })).toBeVisible();
+
+    const undo = page.getByRole('button', { name: 'Undo', exact: true });
+    await undo.focus();
+    await page.keyboard.press('Enter');
+
+    await expect(source).toBeVisible();
+    await expect(undo).toBeHidden();
+    await page.waitForTimeout(500);
+    const storedSourceCount = await page.evaluate(() => new Promise<number>((resolve, reject) => {
+      const request = indexedDB.open('studentllm-sources', 1);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const countRequest = request.result.transaction('source-blobs', 'readonly').objectStore('source-blobs').count();
+        countRequest.onsuccess = () => resolve(countRequest.result);
+        countRequest.onerror = () => reject(countRequest.error);
+      };
+    }));
+    expect(storedSourceCount).toBe(1);
   });
 
   test('deletes a course and clears its source blob', async ({ page }) => {
