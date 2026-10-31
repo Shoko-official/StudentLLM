@@ -51,5 +51,7 @@ export function describeSpeechFailure(error: unknown) {
   const message = error instanceof Error ? error.message.trim() : '';
   if (isNetworkFailure(error)) return 'The speech service is not running, so the audio was kept but not transcribed. Start it, then use Transcribe on the recording in Sources.';
   if (/timed out/i.test(message)) return 'The speech service took too long. The audio was kept: try Transcribe again, or use a smaller speech model.';
+  // The service answered and refused this audio, so starting it again will not help.
+  if (/\((?:400|415|422)\)/.test(message)) return 'The speech service could not read this audio: it may be silent, empty, damaged or in a format it does not support. The original was kept.';
   return message || 'Transcription failed. The audio was kept: check the speech service and try again.';
 }

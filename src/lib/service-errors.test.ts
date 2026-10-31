@@ -44,5 +44,8 @@ describe('service error messages', () => {
     expect(describeSpeechFailure(new TypeError('Failed to fetch'))).toMatch(/audio was kept/);
     expect(describeSpeechFailure(new Error('Local transcription timed out.'))).toMatch(/too long/);
     expect(describeSpeechFailure(new Error('No speech was detected in this recording.'))).toBe('No speech was detected in this recording.');
+    const refused = describeSpeechFailure(new Error('Local transcription failed (422): Transcription failed.'));
+    expect(refused).toMatch(/silent, empty, damaged/);
+    expect(refused).not.toMatch(/422/);
   });
 });
