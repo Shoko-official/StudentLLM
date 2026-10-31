@@ -77,6 +77,7 @@ import { parseStudyArtifactResponse, studyArtifactResponseFormat } from './lib/s
 import { buildCourseNote, composeDocumentSourcesNote, courseNoteMarkdown, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider, hasDocumentSourceNote } from './lib/course-notes';
 import { analyzeQuickStart } from './lib/quick-start';
 import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-routing';
+import { NimDocumentEngine } from './lib/nim-document-engine';
 import type { QuickStartProposal } from './lib/quick-start';
 import { Artifact, ArtifactKind, ChatMessage, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from './types';
 import { chooseNoteOnUndo, restoreAtPositions, sameIdSet, SOURCE_REMOVAL_MAX_MS, SOURCE_REMOVAL_UNDO_MS, takeWithPositions, type RemovedEntry } from './lib/source-removal';
@@ -176,6 +177,8 @@ type ServiceSettings = { llmProvider: string; llmUrl: string; model: string; nim
 const USER_GUIDE_URL = 'https://github.com/Shoko-official/StudentLLM/blob/main/docs/user-guide.md';
 const NIM_AVAILABLE = import.meta.env.DEV;
 const usesNim = (settings: ServiceSettings) => NIM_AVAILABLE && settings.llmProvider === 'nvidia-nim';
+const hasVisionDocumentNote = (note: { blocks: { id: string }[] } | undefined, sourceId: string) =>
+  note?.blocks.some((block) => block.id.startsWith(`${sourceId}:document-vision-`)) ?? false;
 const llmConnection = (settings: ServiceSettings) => usesNim(settings)
   ? { baseUrl: NIM_PROXY_BASE_URL, model: settings.nimModel || DEFAULT_NIM_MODEL }
   : { baseUrl: settings.llmUrl, model: settings.model };
@@ -639,6 +642,16 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   }, [provider, serviceSettings, connectionsEnabled]);
   const localSpeechEngine = useMemo(() => speechEngine === undefined ? createLocalSpeechEngine({ VITE_LOCAL_ASR_BASE_URL: serviceSettings.asrUrl, VITE_LOCAL_ASR_LANGUAGE: import.meta.env.VITE_LOCAL_ASR_LANGUAGE }) : speechEngine, [speechEngine, serviceSettings]);
   const localDocumentEngine = useMemo(() => documentEngine === undefined ? createLocalDocumentEngine({ VITE_LOCAL_DOCUMENT_BASE_URL: serviceSettings.documentsUrl }) : documentEngine, [documentEngine, serviceSettings]);
+  const [visionProgress, setVisionProgress] = useState<{ lessonId: string; resourceId: string; name: string; completed: number; total: number } | null>(null);
+  const visionControllerRef = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    const controller = visionControllerRef.current;
+    visionControllerRef.current = null;
+    controller?.abort();
+  }, []);
+  useEffect(() => {
+    if (visionProgress && !lessonWorkspaces[visionProgress.lessonId]?.resources.some((resource) => resource.id === visionProgress.resourceId)) visionControllerRef.current?.abort();
+  }, [lessonWorkspaces, visionProgress]);
   const sourceBlobStore = useMemo(() => sourceBlobStoreOverride ?? createSourceBlobStore(), [sourceBlobStoreOverride]);
   const recordingChunkStore = useMemo(() => recordingChunkStoreOverride ?? createRecordingChunkStore(), [recordingChunkStoreOverride]);
   const hasOpenDialog = Boolean(resourcePreview || showNewCourse || showDeleteCourse || showGlobalSearch || showReviewPanel || showTranscriptPanel || showSettingsPanel || showLicenses || showQuickStart || showEditCourse);
@@ -1131,7 +1144,8 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       return workspace.resources.flatMap((resource) => {
         const isExtractable = isExtractableDocument(resource);
         const hasLayout = hasDocumentSourceNote(workspace.courseNote, resource.id);
-        const hasSemantic = workspace.courseNote?.blocks.some((block) => block.id === `${resource.id}:document-semantic-markdown`);
+        const hasSemantic = hasVisionDocumentNote(workspace.courseNote, resource.id)
+          || workspace.courseNote?.blocks.some((block) => block.id === `${resource.id}:document-semantic-markdown`);
         const noteNeedsSemanticReview = Boolean(localProvider && hasLayout && !hasSemantic);
         if (hasLayout && !noteNeedsSemanticReview) return [];
         const pending = noteNeedsSemanticReview || !rebuiltDocumentSourceIds.current.has(resource.id);
@@ -1164,7 +1178,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           if (!currentLesson) return current;
           const workspace = current[candidate.lesson.id] ?? emptyLessonWorkspace;
           const hasResource = workspace.resources.some((resource) => resource.id === candidate.resource.id);
-          if (!hasResource) return current;
+          if (!hasResource || hasVisionDocumentNote(workspace.courseNote, candidate.resource.id)) return current;
           return {
             ...current,
             [candidate.lesson.id]: {
@@ -2278,6 +2292,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           // Show the extracted note right away; the background review rewrites it with the model.
           const documentCourseNote = await formatDocumentCourseNoteWithProvider(targetLesson, extraction.pages, resource.name, null);
           updateLessonWorkspace(lessonId, (current) => {
+            if (hasVisionDocumentNote(current.courseNote, resource.id)) return current;
             const transcript = mergeSegments(current.transcript, pageSegments);
             return {
               ...current,
@@ -2373,6 +2388,53 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   useEffect(() => {
     folderInputRef.current?.setAttribute('webkitdirectory', '');
   }, []);
+
+  const analyzeDocumentWithNvidia = async (resource: Resource) => {
+    if (!NIM_AVAILABLE || visionControllerRef.current || (!isPdfResource(resource) && resource.kind !== 'image')) return;
+    if (!window.confirm(`Analyze ${resource.name} with NVIDIA? Page images from this file will be sent to NVIDIA to read handwriting, formulas, tables and diagrams. The result will be marked for review. Local extraction remains the default.`)) return;
+    setActionError('');
+    const lessonId = activeLessonId;
+    const controller = new AbortController();
+    visionControllerRef.current = controller;
+    setVisionProgress({ lessonId, resourceId: resource.id, name: resource.name, completed: 0, total: 0 });
+    try {
+      const source = await sourceBlobStore.load(resource.id);
+      if (!source) throw new Error('The original file is unavailable on this device. Import it again before analysis.');
+      if (controller.signal.aborted) return;
+      const file = new File([source], resource.name, { type: resource.mimeType || (isPdfResource(resource) ? 'application/pdf' : source.type) });
+      const extraction = await new NimDocumentEngine({
+        consent: true, signal: controller.signal,
+        onProgress: (completed, total) => {
+          if (visionControllerRef.current === controller && !controller.signal.aborted) setVisionProgress({ lessonId, resourceId: resource.id, name: resource.name, completed, total });
+        },
+      }).extract(file);
+      if (controller.signal.aborted || visionControllerRef.current !== controller) return;
+      const currentLesson = lessonsRef.current.find((lesson) => lesson.id === lessonId);
+      if (!currentLesson || !lessonWorkspacesRef.current[lessonId]?.resources.some((item) => item.id === resource.id)) return;
+      const note = await formatDocumentCourseNoteWithProvider(currentLesson, extraction.pages, resource.name, null);
+      // Persist the explicit vision review so a later local rewrite or a reload cannot replace it.
+      note.blocks = note.blocks.map((block, index) => block.type === 'markdown' ? { ...block, id: `document-vision-${index}` } : block);
+      const segments = extraction.pages.filter((page) => page.text.trim()).map((page) => ({
+        id: `${resource.id}:page-${page.pageNumber}`, sourceId: resource.id, timestamp: `Page ${page.pageNumber}`,
+        speaker: resource.name, text: page.text, status: 'review' as const,
+      }));
+      if (controller.signal.aborted || visionControllerRef.current !== controller) return;
+      semanticReviewAttemptedIds.current.add(`${resource.id}:model`);
+      updateLessonWorkspace(lessonId, (current) => {
+        if (controller.signal.aborted || !current.resources.some((item) => item.id === resource.id)) return current;
+        const transcript = [...current.transcript.filter((segment) => segment.sourceId !== resource.id), ...segments];
+        const lesson = lessonsRef.current.find((item) => item.id === lessonId) ?? currentLesson;
+        return { ...current, transcript, courseNote: composeDocumentSourcesNote(lesson, transcript, current.resources, current.courseNote, { resourceId: resource.id, note }) };
+      });
+      notify(`${resource.name}: NVIDIA transcription added. Check it against the original in Sources.`);
+    } catch (error) {
+      if (visionControllerRef.current !== controller) return;
+      if (controller.signal.aborted) notify('NVIDIA analysis cancelled. The original and previous notes are kept.');
+      else setActionError(error instanceof Error ? error.message : 'NVIDIA document analysis failed. The original and previous notes are kept.');
+    } finally {
+      if (visionControllerRef.current === controller) { visionControllerRef.current = null; setVisionProgress(null); }
+    }
+  };
 
   const transcribeSource = async (resource: Resource) => {
     if (transcribingResourceIds.has(resource.id)) return;
@@ -2990,10 +3052,13 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
             {view === 'sources' && <section className="sources-view" id="view-panel-sources" role="tabpanel" aria-labelledby="view-tab-sources">
               <div className="section-toolbar"><h2>Sources</h2><button className="secondary-action" onClick={() => openSourcePicker(sourceAccept)}><Plus size={16} /> Import file</button></div>
               {!resources.length && <div className="empty-panel"><EmptyStateIcon name="folder" /><p className="empty-state">Add audio, a PDF, an image or text notes to this course.</p></div>}
+              {NIM_AVAILABLE && resources.some((resource) => isPdfResource(resource) || resource.kind === 'image') && <p className="muted">Files are read locally by default. For complex scans, handwriting or diagrams, choose Read with NVIDIA on one source to send its page images for analysis.</p>}
+              {visionProgress && <div className="action-notice" role="status"><p>{visionProgress.name}: {visionProgress.total ? `NVIDIA analysis ${visionProgress.completed} / ${visionProgress.total} pages` : 'Preparing page images for NVIDIA...'}</p><button type="button" className="text-action" onClick={() => visionControllerRef.current?.abort()} aria-label="Cancel NVIDIA analysis">Cancel analysis</button></div>}
               <div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}>
                 <button className="resource-open" data-resource-id={resource.id} onClick={() => void openResource(resource)}>{resourceIcon(resource.kind)}<span><strong>{resource.name}</strong><small>{transcribingResourceIds.has(resource.id) ? 'Transcribing...' : resource.meta}</small></span><ChevronRight size={16} /></button>
                 {resource.kind === 'audio' && <button className="text-action" aria-label={`Transcribe ${resource.name}`} disabled={transcribingResourceIds.has(resource.id)} onClick={() => void transcribeSource(resource)}>{transcribingResourceIds.has(resource.id) ? 'Transcribing...' : 'Transcribe'}</button>}
-                <button className="icon-button" aria-label={`Remove source ${resource.name}`} disabled={transcribingResourceIds.has(resource.id)} onClick={() => removeSource(resource)}><X size={16} /></button>
+                {NIM_AVAILABLE && (isPdfResource(resource) || resource.kind === 'image') && <button type="button" className="text-action" aria-label={`Analyze ${resource.name} with NVIDIA`} disabled={Boolean(visionProgress)} onClick={() => void analyzeDocumentWithNvidia(resource)}>Read with NVIDIA</button>}
+                <button className="icon-button" aria-label={`Remove source ${resource.name}`} disabled={transcribingResourceIds.has(resource.id) || visionProgress?.resourceId === resource.id} onClick={() => removeSource(resource)}><X size={16} /></button>
               </div>)}</div>
               {resources.length > 3 && <button className="text-action" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`}</button>}
             </section>}

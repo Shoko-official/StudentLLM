@@ -45,6 +45,16 @@ Importing a supported document saves the original file first. If extraction succ
 
 Open Settings and choose `Refresh local services` to check the configured document sidecar `/health` endpoint without interrupting the service. The UI reports readiness, the advertised engine, or the failure detail.
 
+## Analyze a source with NVIDIA
+
+Local extraction remains the default. In the development web app, open **Sources** and choose **Read with NVIDIA** on a PDF or image. The confirmation names the file and explains that its page images will be sent to NVIDIA. Cancelling the confirmation sends nothing. Choosing NIM for course chat does not opt a file into image analysis.
+
+The action uses [Nemotron 3.5 Super VL](https://build.nvidia.com/nvidia/nemotron-3.5-super-vl-120b-a12b) through the existing fixed-host credential proxy. The credential stays on the server. Images are prepared locally and sent one page at a time, with thinking disabled. The result preserves Markdown, tables, LaTeX and described diagram relations, and each page is marked for review beside the original source. It stays in the same course and does not replace other sources' notes. A later local rewrite cannot replace an explicit vision transcription.
+
+This path accepts images up to 20 MB and PDFs up to 100 MB / 100 pages. Page images have at most 1800 pixels on their longest side; very small symbols can lose detail, so compare them with the original. Page requests are sequential and spaced by at least two seconds within one analysis. Each request has a 60-second timeout and the whole action a five-minute budget. **Cancel analysis** stops further requests. A quota, unavailable model, pending response or incomplete transcription leaves the original and previous notes intact; no key rotation, model switching or hidden cloud retry is performed. The packaged desktop app does not offer this development proxy.
+
+Synthetic live checks on 2026-11-01 verified a diagram's arrow order, a two-column transcription, and actual browser rendering/transcription of a two-page PDF. A public handwritten line still contained mistakes. This is evidence for the tested workflow, not complete document understanding or a general accuracy guarantee. See [NVIDIA's multimodal request example](https://github.com/NVIDIA-NeMo/Nemotron/blob/main/usage-cookbook/Nemotron-3.5-Super-VL/visual-investigation-agent/investigator/endpoint.py) for the image contract. Hosted use remains subject to the existing NIM trial terms described in [Provider configuration](providers.md).
+
 ## Observed live check
 
 On 2026-08-27, the browser path was exercised with the public [Attention Is All You Need PDF](https://arxiv.org/abs/1706.03762). The sidecar, then PyMuPDF-based, returned HTTP 200 with model `pymupdf` and 15 pages; the UI stored `attention-public.pdf`, indexed all 15 pages, rendered the `Page 1` review segment, and reported no page errors. The original PDF remains a local ignored test artifact.

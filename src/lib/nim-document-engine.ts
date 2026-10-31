@@ -71,7 +71,7 @@ export class NimDocumentEngine implements DocumentEngine {
         controller.signal.throwIfAborted();
         const choices = Array.isArray(result.choices) ? result.choices : [];
         const choice = choices[0] as { finish_reason?: unknown; message?: { content?: unknown } } | undefined;
-        if (choice?.finish_reason === 'length') throw new Error('NVIDIA returned a truncated transcription. The original file is still saved.');
+        if (choice?.finish_reason !== 'stop') throw new Error('NVIDIA returned an incomplete transcription. The original file is still saved.');
         const raw = choice?.message?.content;
         const text = typeof raw === 'string' ? raw.replace(/<think\b[^>]*>[\s\S]*?(?:<\/think\s*>|$)/gi, '').trim() : '';
         if (!text) throw new Error('NVIDIA returned no final transcription. The original file is still saved.');

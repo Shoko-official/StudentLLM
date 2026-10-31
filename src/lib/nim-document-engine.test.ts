@@ -46,9 +46,10 @@ describe('explicit NVIDIA document analysis', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it.each([['<think>reasoning only', 'stop'], ['', 'stop'], ['unfinished transcription', 'length']])('rejects incomplete final output', async (text, finish) => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(response(text, finish));
+  it.each([['<think>reasoning only', 'stop'], ['', 'stop'], ['unfinished transcription', 'length'], ['filtered partial text', 'content_filter'], ['partial tool output', 'tool_calls']])('rejects incomplete final output', async (text, finish) => {
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => response(text, finish));
     await expect(new NimDocumentEngine({ ...options(), fetchImpl }).extract(document)).rejects.toThrow(/final|incomplete|truncated/i);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('never fetches if already cancelled and aborts a body that ignores its signal within the total budget', async () => {
