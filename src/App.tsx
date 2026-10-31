@@ -2552,17 +2552,24 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       resources: restoreAtPositions(workspace.resources, [pending.resourceEntry]),
       transcript: restoreAtPositions(workspace.transcript, pending.segmentEntries),
     });
+    const documentSection = hasDocumentSourceNote(pending.courseNote, pending.resource.id)
+      ? takeWithPositions(pending.courseNote!.blocks, (block) => block.id.startsWith(`${pending.resource.id}:`)).removed : [];
     if (noteChoice === 'rebuild') {
       updateLessonWorkspace(pending.lessonId, restoreInto);
       formatExistingCourseNote(pending.lessonId, restoredTranscript);
     } else {
       // 'snapshot': the same segments are back, so the pre-removal note (possibly AI-written) is still right.
-      // 'keep': the note changed during the window; do not overwrite it, but ask the provider to refresh it.
+      // 'keep': restore only this original's section; retain newer imports and edits verbatim.
       setLessonWorkspaces((current) => {
         const workspace = restoreInto(current[pending.lessonId] ?? emptyLessonWorkspace);
-        return { ...current, [pending.lessonId]: noteChoice === 'snapshot' ? { ...workspace, courseNote: pending.courseNote } : workspace };
+        const keptNote = workspace.courseNote && documentSection.length ? {
+          ...workspace.courseNote,
+          updatedAt: new Date().toISOString(),
+          blocks: restoreAtPositions(workspace.courseNote.blocks, documentSection),
+        } : workspace.courseNote;
+        return { ...current, [pending.lessonId]: { ...workspace, courseNote: noteChoice === 'snapshot' ? pending.courseNote : keptNote } };
       });
-      if (noteChoice === 'keep') formatExistingCourseNote(pending.lessonId, restoredTranscript);
+      if (noteChoice === 'keep' && !documentSection.length) formatExistingCourseNote(pending.lessonId, restoredTranscript);
     }
     setFocusRestoredSourceId(pending.resource.id);
     notify(`${pending.resource.name} restored.`);

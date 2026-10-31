@@ -541,9 +541,23 @@ export function composeDocumentSourcesNote(
     blocks: [...fallback.blocks.filter((block) => block.id.startsWith('note-')), ...baseNote.blocks.filter((block) => !block.id.startsWith('note-'))],
   } : fallback;
   if (!sections.size) return base;
-  const sourceOrder = [...new Set(transcript.flatMap((segment) => segment.sourceId ? [segment.sourceId] : []))];
-  const documentBlocks = [...sourceOrder, ...resources.map((resource) => resource.id).filter((id) => !sourceOrder.includes(id))]
-    .flatMap((id) => sections.get(id) ?? []);
+  const segmentOrder = new Map(transcript.map((segment, index) => [segment.id, { segment, index }]));
+  const sourceOrder = new Map<string, number>();
+  transcript.forEach((segment, index) => {
+    if (segment.sourceId && !sourceOrder.has(segment.sourceId)) sourceOrder.set(segment.sourceId, index);
+  });
+  const blockOrder = (block: CourseNoteBlock) => {
+    const sourceId = 'sourceId' in block ? block.sourceId : undefined;
+    if (sourceId && sourceOrder.has(sourceId)) return sourceOrder.get(sourceId)!;
+    const rawId = block.id.startsWith(`${block.type}-`) ? block.id.slice(block.type.length + 1) : '';
+    const entry = segmentOrder.get(sourceId ?? rawId);
+    return entry ? (entry.segment.sourceId ? sourceOrder.get(entry.segment.sourceId)! : entry.index) : Infinity;
+  };
+  const orderedBlocks = [
+    ...base.blocks.filter((block) => !block.id.startsWith('note-')).map((block) => ({ block, order: blockOrder(block) })),
+    ...[...sections].flatMap(([sourceId, blocks]) => blocks.map((block) => ({ block, order: sourceOrder.get(sourceId) ?? Infinity }))),
+  ].sort((a, b) => a.order - b.order).map(({ block }) => block);
+  const documentBlocks = [...sections.values()].flat();
   const semantic = base.detection.method === 'LM Studio' || documentBlocks.some((block) => block.id.endsWith(':document-semantic-markdown'));
   return {
     ...base,
@@ -551,7 +565,7 @@ export function composeDocumentSourcesNote(
       method: semantic ? 'LM Studio' : 'active course', confidence: semantic ? 0.88 : 1,
       basis: `Source-scoped document notes and remaining course passages (${DOCUMENT_NOTE_LAYOUT_VERSION}).`,
     },
-    blocks: [...base.blocks, ...documentBlocks],
+    blocks: [...base.blocks.filter((block) => block.id.startsWith('note-')), ...orderedBlocks],
   };
 }
 

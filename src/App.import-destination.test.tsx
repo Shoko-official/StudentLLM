@@ -78,3 +78,66 @@ it('deduplicates identical files within one selected batch instead of creating c
   expect(workspace.lessonWorkspaces[FIXTURE_LESSON_ID].resources.filter((resource: { name: string }) => /chapter-one|copy/.test(resource.name))).toHaveLength(1);
   expect(workspace.lessonWorkspaces[FIXTURE_LESSON_ID].transcript.filter((segment: { text: string }) => segment.text === 'Identical source content.')).toHaveLength(1);
 });
+
+it('restores a removed document section after another import changes the note, including after reload', async () => {
+  const extract = vi.fn(async (file: Blob) => ({
+    model: 'fixture-extractor',
+    pages: [{ pageNumber: 1, text: `Evidence from ${(file as File).name}.`, blocks: [] }],
+  }));
+  const user = userEvent.setup();
+  const view = render(<App provider={null} documentEngine={{ extract }} />);
+  await user.upload(screen.getByLabelText('Select course source'), [pdf('alpha.pdf'), pdf('beta.pdf')]);
+  await screen.findByText('Import finished. 2 files processed.');
+  const original = saved().lessonWorkspaces[FIXTURE_LESSON_ID];
+  const alphaId = original.resources.find((resource: { name: string }) => resource.name === 'alpha.pdf').id;
+  const alphaPrefix = `${alphaId}:`;
+  const alphaBlocks = original.courseNote.blocks.filter((block: { id: string }) => block.id.startsWith(alphaPrefix));
+  expect(alphaBlocks.length).toBeGreaterThan(0);
+  await user.click(screen.getByRole('tab', { name: /^Sources/ }));
+  await user.click(screen.getByRole('button', { name: 'Remove source alpha.pdf' }));
+  await user.hover(screen.getByRole('button', { name: 'Undo' }));
+  await user.upload(screen.getByLabelText('Select course source'), pdf('gamma.pdf'));
+  await screen.findByText('gamma.pdf indexed 1 page locally.');
+  const changedBlocks = saved().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.blocks;
+  expect(JSON.stringify(changedBlocks)).toContain('Evidence from gamma.pdf.');
+  expect(JSON.stringify(changedBlocks)).not.toContain('Evidence from alpha.pdf.');
+  await user.click(screen.getByRole('button', { name: 'Undo' }));
+  await user.click(screen.getByRole('tab', { name: 'Notes' }));
+  for (const name of ['alpha.pdf', 'beta.pdf', 'gamma.pdf']) expect(textOfNote()).toHaveTextContent(`Evidence from ${name}.`);
+  const restored = saved().lessonWorkspaces[FIXTURE_LESSON_ID];
+  expect(restored.courseNote.blocks.filter((block: { id: string }) => block.id.startsWith(alphaPrefix))).toEqual(alphaBlocks);
+  expect(restored.courseNote.blocks.filter((block: { id: string }) => !block.id.startsWith(alphaPrefix))).toEqual(changedBlocks);
+  expect(restored.resources.some((resource: { id: string }) => resource.id === alphaId)).toBe(true);
+  expect(restored.transcript.some((segment: { sourceId: string }) => segment.sourceId === alphaId)).toBe(true);
+  view.unmount();
+  render(<App provider={null} documentEngine={{ extract }} />);
+  for (const name of ['alpha.pdf', 'beta.pdf', 'gamma.pdf']) expect(textOfNote()).toHaveTextContent(`Evidence from ${name}.`);
+  expect(extract).toHaveBeenCalledTimes(3);
+});
+
+it('keeps mixed PDF and text sources in first-appearance order after the initial transcript and reload', async () => {
+  const extract = vi.fn(async (file: Blob) => ({
+    model: 'fixture-extractor',
+    pages: [{ pageNumber: 1, text: `Evidence from ${(file as File).name}.`, blocks: [] }],
+  }));
+  const user = userEvent.setup();
+  const view = render(<App provider={null} documentEngine={{ extract }} />);
+  await user.upload(screen.getByLabelText('Select course source'), [
+    pdf('TD.pdf'),
+    new File(['Middle text material.'], 'Notes.md', { type: 'text/markdown' }),
+    pdf('Intro.pdf'),
+  ]);
+  await screen.findByText('Import finished. 3 files processed.');
+  const ordered = ['The square-root factor', 'Evidence from Intro.pdf.', 'Middle text material.', 'Evidence from TD.pdf.'];
+  const expectOrder = (text: string) => {
+    const indexes = ordered.map((part) => text.indexOf(part));
+    expect(indexes.every((index) => index >= 0)).toBe(true);
+    expect(indexes).toEqual(indexes.slice().sort((a, b) => a - b));
+  };
+  expectOrder(textOfNote().textContent!);
+  expectOrder(JSON.stringify(saved().lessonWorkspaces[FIXTURE_LESSON_ID].courseNote.blocks));
+  view.unmount();
+  render(<App provider={null} documentEngine={{ extract }} />);
+  expectOrder(textOfNote().textContent!);
+  expect(extract).toHaveBeenCalledTimes(2);
+});
