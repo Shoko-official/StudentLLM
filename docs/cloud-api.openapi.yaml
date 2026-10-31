@@ -306,14 +306,19 @@ paths:
       operationId: deleteAccount
       summary: Delete the account
       description: |
-        Requires a fresh sign-in (`auth_time` within 5 minutes, otherwise `reauth_required`). Sets the
-        account to a `deleting` tombstone that keeps only the Paddle ids, cancels the subscription (retry
-        with backoff and an operator alert on failure), and purges everything once the cancel succeeded.
-        Sends a notification email to the account address. Naturally idempotent: repeating the call while
-        deleting returns the same 202.
+        Requires a fresh sign-in (`auth_time` within 5 minutes, otherwise `reauth_required`). Sends the
+        final notification email to the account address, then **erases all personal data at once**: the
+        account becomes a tombstone that keeps only the Paddle ids (and what is needed to retry the cancel),
+        and the email, the Google subject, the login methods, the terms acceptance, the sessions, the
+        devices, the consents and the pending sign-ins are gone when the 202 is returned. The subscription is
+        then cancelled (retried with backoff for a bounded period, with an operator alert on failure and a
+        manual-review state when the period ran out), and the tombstone is removed once the cancel
+        succeeded. The sessions die with the account, so a repeated call answers 401 `session_revoked`,
+        which the client treats as "already deleted". The address and the Google identity can be used to
+        sign up again straight away.
       responses:
         "202":
-          description: Deletion started.
+          description: Personal data erased; the subscription cancel, if any, continues in the background.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DeletionResponse" }
