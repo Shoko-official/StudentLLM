@@ -33,6 +33,7 @@ import {
   X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { useDialogFocus, useDismissibleMenu } from './lib/focus-management';
 import { AnimatedIcon, EmptyStateIcon } from './lib/animated-icon';
 import { folderNameOf, planBatchImport } from './lib/batch-import';
 import { BrandGlyph } from './lib/brand-mark';
@@ -358,8 +359,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [importQueue, setImportQueue] = useState<Array<{ file: File; lessonId: string }>>([]);
   const [importTotals, setImportTotals] = useState<{ done: number; total: number } | null>(null);
   const importRunningRef = useRef(false);
+  const courseActionsRef = useRef<HTMLDetailsElement | null>(null);
+  const courseActionsSummaryRef = useRef<HTMLElement | null>(null);
   const startedImportRef = useRef<{ file: File; lessonId: string } | null>(null);
-  const lastFocusedElementRef = useRef<HTMLElement | null>(null);
   const rebuiltDocumentSourceIds = useRef(new Set<string>());
   // Pages already extracted at import, so the AI rewrite does not OCR the same scan again.
   const extractedDocumentPages = useRef(new Map<string, DocumentPage[]>());
@@ -701,38 +703,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  useEffect(() => {
-    if (!hasOpenDialog) return undefined;
-
-    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
-    if (!dialog) return undefined;
-    lastFocusedElementRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
-    const focusableElements = () => Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector));
-    const autofocusElement = dialog.querySelector<HTMLElement>('[autofocus]');
-    (autofocusElement ?? focusableElements()[0])?.focus();
-    const onDialogKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Tab') return;
-      const elements = focusableElements();
-      if (!elements.length) return;
-      const first = elements[0];
-      const last = elements[elements.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    dialog.addEventListener('keydown', onDialogKeyDown);
-
-    return () => {
-      dialog.removeEventListener('keydown', onDialogKeyDown);
-      if (lastFocusedElementRef.current?.isConnected) lastFocusedElementRef.current.focus();
-      lastFocusedElementRef.current = null;
-    };
-  }, [hasOpenDialog]);
+  useDialogFocus(hasOpenDialog);
+  useDismissibleMenu(courseActionsOpen, courseActionsRef, () => setCourseActionsOpen(false), courseActionsSummaryRef, hasOpenDialog);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -2384,8 +2356,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           ) : <>
             <div className="main-header">
               <div className="main-heading" key={activeLesson.id}><p>{activeLesson.subject}{activeLesson.chapter !== 'General notes' ? ` / ${activeLesson.chapter}` : ''}</p><h1>{activeLesson.title}</h1></div>
-              <details className="course-actions" open={courseActionsOpen} onToggle={(event) => setCourseActionsOpen(event.currentTarget.open)}>
-                <summary aria-label="Course actions">More <ChevronDown size={15} /></summary>
+              <details className="course-actions" ref={courseActionsRef} open={courseActionsOpen} onToggle={(event) => setCourseActionsOpen(event.currentTarget.open)}>
+                <summary aria-label="Course actions" ref={courseActionsSummaryRef}>More <ChevronDown size={15} /></summary>
                 <div className="course-actions-menu" onClick={() => setCourseActionsOpen(false)}>
                   <button onClick={openEditCourse}><AnimatedIcon name="pencil" size={17} target="button" fallback={<Pencil size={15} />} /> Edit course</button>
                   <button onClick={openAiOrganizer}><Sparkles size={15} /> Organize material with AI</button>
