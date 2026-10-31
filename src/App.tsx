@@ -38,7 +38,7 @@ import { BrandGlyph } from './lib/brand-mark';
 import { foldForSearch, textMatchesQuery } from './lib/snippet';
 import { Snippet } from './lib/snippet-view';
 import { describeMicrophoneError, requestRecorderSession, RecorderSession } from './lib/recorder';
-import { isNativeRuntime, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspaceAsync } from './lib/workspace-storage';
+import { hasTauriBridge, isNativeRuntime, loadWorkspaceAsync, runPackagedIpcSmoke, saveWorkspaceAsync } from './lib/workspace-storage';
 import type { WorkspaceLoadIssue, WorkspaceSnapshot } from './lib/workspace-storage';
 import { openBrowserWorkspace, openLocalStorageWorkspace, shouldUseIndexedDb } from './lib/browser-workspace-store';
 import type { BrowserBootstrap } from './lib/browser-workspace-store';
@@ -429,9 +429,23 @@ function StorageUsagePanel() {
  * docs/desktop.md, "Navigation guard"), and the app ships no vetted way to open the system browser, so there the address is
  * shown as text that can be selected and copied.
  */
-function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
-  if (!isNativeRuntime()) return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
-  return <span className="external-link-text">{children} (<span className="external-link-address">{href}</span>)</span>;
+function ExternalLink({ href, children }: { href: string; children: string }) {
+  // Only inside a Tauri webview (not for `file:` or a production build served from localhost, which still are browsers).
+  if (!hasTauriBridge()) return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
+  // A read-only input, so that the address is reachable with the keyboard, is announced, and is selected in one step to copy.
+  return (
+    <span className="external-link-text">
+      {children}{' '}
+      <input
+        className="external-link-address"
+        readOnly
+        value={href}
+        size={Math.min(href.length, 48)}
+        aria-label={`Address of ${children}`}
+        onFocus={(event) => event.currentTarget.select()}
+      />
+    </span>
+  );
 }
 
 function TranscriptDisclosure({ summary, children }: { summary: string; children: [() => ReactNode, ReactNode] }) {

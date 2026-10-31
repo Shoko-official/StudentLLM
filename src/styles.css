@@ -264,7 +264,8 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .recording-notice-copy strong { color: var(--text); }
 .recording-notice-links { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
 .recording-notice-links a { color: var(--text); text-underline-offset: 3px; }
-.external-link-address { overflow-wrap: anywhere; user-select: text; text-decoration: underline dotted; text-underline-offset: 3px; }
+.external-link-address { max-width: 100%; padding: 2px 6px; border: 1px solid var(--field-border); border-radius: var(--radius-sm); background: var(--field-surface); color: var(--text); font-family: var(--mono); font-size: 12px; text-overflow: ellipsis; }
+.external-link-address:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .recording-notice-links .external-link-text { color: var(--text); }
 .consent-checkbox { display: flex !important; grid-template-columns: none !important; align-items: flex-start; gap: 10px !important; margin-top: 22px; padding: 14px; border-radius: 12px; background: var(--surface-2); line-height: 1.5; }
 .consent-checkbox input { width: 18px; min-height: 18px; height: 18px; margin-top: 2px; flex: 0 0 auto; accent-color: var(--accent); }
