@@ -578,12 +578,16 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   const resourcePreviewRequest = useRef(0);
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
-  const [importQueue, setImportQueue] = useState<Array<{ file: File; lessonId: string }>>([]);
+  // A folder import creates each course when its file starts importing, not all up front: a reload or crash in the middle
+  // then leaves no empty courses for the files that were never reached.
+  const [importQueue, setImportQueue] = useState<Array<{ file: File; lesson: Lesson }>>([]);
+  const batchLessonIdsRef = useRef(new Set<string>());
+  const activateNextBatchLessonRef = useRef(false);
   const [importTotals, setImportTotals] = useState<{ done: number; total: number } | null>(null);
   const importRunningRef = useRef(false);
   const courseActionsRef = useRef<HTMLDetailsElement | null>(null);
   const courseActionsSummaryRef = useRef<HTMLElement | null>(null);
-  const startedImportRef = useRef<{ file: File; lessonId: string } | null>(null);
+  const startedImportRef = useRef<{ file: File; lesson: Lesson } | null>(null);
   const rebuiltDocumentSourceIds = useRef(new Set<string>());
   // Pages already extracted at import, so the AI rewrite does not OCR the same scan again.
   const extractedDocumentPages = useRef(new Map<string, DocumentPage[]>());
@@ -2349,26 +2353,22 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       file,
       lesson: { id: `lesson-${crypto.randomUUID()}`, subject, chapter, title, teacher: '', duration: '00:00:00', date, progress: 0 } satisfies Lesson,
     }));
-    setLessons((current) => [...planned.map(({ lesson }) => lesson), ...current]);
-    setLessonWorkspaces((current) => ({ ...current, ...Object.fromEntries(planned.map(({ lesson }) => [lesson.id, emptyLessonWorkspace])) }));
     setExpandedSubjects((expanded) => ({ ...expanded, [subject]: true }));
-    setActiveLessonId(planned[0].lesson.id);
-    setSelectedArtifactId(null);
+    activateNextBatchLessonRef.current = true;
     setView('course');
     setActionError('');
-    setImportQueue((current) => [...current, ...planned.map(({ file, lesson }) => ({ file, lessonId: lesson.id }))]);
+    setImportQueue((current) => [...current, ...planned]);
     setImportTotals((current) => ({ done: current?.done ?? 0, total: (current?.total ?? 0) + planned.length }));
     const skipped = files.length - plan.length;
-    notify(`${planned.length} lessons created in ${subject}${skipped ? `, ${skipped} unsupported file${skipped === 1 ? '' : 's'} skipped` : ''}. Importing them one by one.`);
+    notify(`Importing ${planned.length} file${planned.length === 1 ? '' : 's'} into ${subject}, one lesson each${skipped ? `, ${skipped} unsupported file${skipped === 1 ? '' : 's'} skipped` : ''}.`);
   };
 
   const stopBatchImport = () => {
-    const dropped = new Set(importQueue.slice(1).map(({ lessonId }) => lessonId));
+    // Courses are only created when their file starts, so the files that are still waiting have nothing to clean up.
+    const dropped = Math.max(0, importQueue.length - 1);
     setImportQueue((current) => current.slice(0, 1));
     setImportTotals((current) => current && { ...current, total: current.done + 1 });
-    setLessons((current) => current.filter((lesson) => !dropped.has(lesson.id)));
-    setLessonWorkspaces((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !dropped.has(id))));
-    notify(`Import stopped. ${dropped.size} remaining file${dropped.size === 1 ? ' was' : 's were'} not added.`);
+    notify(`Import stopped. ${dropped} remaining file${dropped === 1 ? ' was' : 's were'} not added.`);
   };
 
   const importFolder = (event: ChangeEvent<HTMLInputElement>) => {
@@ -2392,7 +2392,25 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     // A passive effect from a render that predates the finished file can still run after
     // `finally` resets the running flag; it sees the old queue head and must not restart it.
     if (startedImportRef.current === next) return;
-    const lesson = lessons.find((candidate) => candidate.id === next.lessonId);
+    const lesson = lessons.find((candidate) => candidate.id === next.lesson.id);
+    if (!lesson && !batchLessonIdsRef.current.has(next.lesson.id)) {
+      // This file's turn has come: create its course now and start the import on the next render, when it exists.
+      batchLessonIdsRef.current.add(next.lesson.id);
+      const planned = next.lesson;
+      setLessons((current) => {
+        // Keep the courses of a folder in the order of the folder: each one goes after the ones created before it.
+        let at = 0;
+        current.forEach((item, index) => { if (batchLessonIdsRef.current.has(item.id)) at = index + 1; });
+        return [...current.slice(0, at), planned, ...current.slice(at)];
+      });
+      setLessonWorkspaces((current) => ({ ...current, [planned.id]: emptyLessonWorkspace }));
+      if (activateNextBatchLessonRef.current) {
+        activateNextBatchLessonRef.current = false;
+        setActiveLessonId(planned.id);
+        setSelectedArtifactId(null);
+      }
+      return;
+    }
     startedImportRef.current = next;
     importRunningRef.current = true;
     void (lesson ? importSourceFile(next.file, lesson, false) : Promise.resolve()).finally(() => {
