@@ -8,10 +8,10 @@
 import { ApiError, jsonResponse } from "../../http/envelope";
 import type { RequestContext } from "../../http/context";
 import { Attempt, setCreditHeaders, type SettleSummary } from "./attempt";
-import { assertAvailable } from "./availability";
+import { assertAvailable, recordUnknownOutcome } from "./availability";
 import { audioSettlementCredits } from "./credits";
 import { IdempotencyGuard } from "./guard";
-import { assertConsentCoversModel } from "./hooks";
+import { assertConsentCoversModel, assertConsentStillActive } from "./hooks";
 import { classifyFetchError, UpstreamError, type UpstreamProvider } from "./provider";
 import { validateOcr, validateTranscription } from "./media";
 import type { ModelRoute, ModelTarget } from "./routing";
@@ -53,6 +53,7 @@ async function forwardMedia<T>(
       } catch (error) {
         const failed = error instanceof UpstreamError ? error : classifyFetchError(error, abort.signal);
         if (failed.definitive) continue;
+        await recordUnknownOutcome(ctx.deps, failed.kind, ctx.deps.clock.now());
         abort.abort();
         throw providerUnavailable(ctx, await attempt.settle(attempt.reservedCredits));
       }
@@ -69,7 +70,8 @@ export async function transcribeAudio(ctx: RequestContext): Promise<Response> {
   try {
     const input = await validateTranscription(await ctx.body.formData(), deps.inference.routing);
     assertConsentCoversModel(ctx, input.route.providerSetId, "transcription");
-    const targets = await assertAvailable(deps, input.route, deps.clock.now());
+    const targets = await assertAvailable(deps, input.route, deps.clock.now(), input.reservedCredits);
+    await assertConsentStillActive(ctx, input.route.providerSetId, "transcription");
     const attempt = await Attempt.open(ctx, { route: input.route, credits: input.reservedCredits });
     guard.attempt = attempt;
 
@@ -89,7 +91,7 @@ export async function transcribeAudio(ctx: RequestContext): Promise<Response> {
       {
         text: result.text,
         language: result.language ?? input.language ?? "und",
-        duration_seconds: result.durationSeconds ?? input.reservedSeconds,
+        duration_seconds: result.durationSeconds ?? input.fallbackSeconds,
         segments: result.segments,
       },
       ctx.requestId,
@@ -107,7 +109,8 @@ export async function ocrImage(ctx: RequestContext): Promise<Response> {
   try {
     const input = await validateOcr(await ctx.body.formData(), deps.inference.routing);
     assertConsentCoversModel(ctx, input.route.providerSetId, "ocr");
-    const targets = await assertAvailable(deps, input.route, deps.clock.now());
+    const targets = await assertAvailable(deps, input.route, deps.clock.now(), input.reservedCredits);
+    await assertConsentStillActive(ctx, input.route.providerSetId, "ocr");
     const attempt = await Attempt.open(ctx, { route: input.route, credits: input.reservedCredits });
     guard.attempt = attempt;
 

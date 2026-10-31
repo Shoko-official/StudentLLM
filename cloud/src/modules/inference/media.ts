@@ -51,31 +51,42 @@ const ascii = (bytes: Uint8Array, offset: number, text: string): boolean => [...
 
 type AudioKind = "mpeg" | "mp4" | "wav" | "webm" | "ogg" | "flac";
 
-const AUDIO_TYPES: Record<string, AudioKind> = {
-  "audio/mpeg": "mpeg",
-  "audio/mp4": "mp4",
-  "audio/wav": "wav",
-  "audio/x-wav": "wav",
-  "audio/wave": "wav",
-  "audio/webm": "webm",
-  "audio/ogg": "ogg",
-  "audio/flac": "flac",
-};
+// A Map, not an object: the declared type is client text, and `{}["constructor"]` is a function, not undefined.
+const AUDIO_TYPES: ReadonlyMap<string, AudioKind> = new Map<string, AudioKind>([
+  ["audio/mpeg", "mpeg"],
+  ["audio/mp4", "mp4"],
+  ["audio/wav", "wav"],
+  ["audio/x-wav", "wav"],
+  ["audio/wave", "wav"],
+  ["audio/webm", "webm"],
+  ["audio/ogg", "ogg"],
+  ["audio/flac", "flac"],
+]);
 
 const AUDIO_EXTENSION: Record<AudioKind, string> = { mpeg: "mp3", mp4: "m4a", wav: "wav", webm: "webm", ogg: "ogg", flac: "flac" };
 
 /**
- * Plausible bitrates in bytes per second. A file of N bytes lasts at least N / max and at most N / min seconds. The
- * lower bound rejects a file that is certainly longer than the cap; the upper bound sizes the reservation, so
- * that an under-declared duration cannot reserve less than the file could cost.
+ * The highest plausible bytes per second of each container. A file of N bytes lasts AT LEAST N / max seconds, so a
+ * file that is certainly longer than the cap is refused up front. There is no matching "lowest rate" for the
+ * compressed containers: a low-bitrate or silence-suppressed stream (Opus DTX, a few kbit/s) can last far longer than
+ * its size suggests, and the container header is client-controlled. Their reservation is therefore the route's whole
+ * `maxAudioSeconds` price, and settlement on the provider-reported duration refunds the difference.
  */
-const BYTE_RATE: Record<Exclude<AudioKind, "wav">, { min: number; max: number }> = {
-  mpeg: { min: 4000, max: 40_000 },
-  mp4: { min: 2000, max: 40_000 },
-  webm: { min: 1000, max: 40_000 },
-  ogg: { min: 1000, max: 40_000 },
-  flac: { min: 8000, max: 600_000 },
+const MAX_BYTE_RATE: Record<AudioKind, number> = {
+  mpeg: 40_000,
+  mp4: 40_000,
+  webm: 40_000,
+  ogg: 40_000,
+  flac: 600_000,
+  wav: 1_536_000, // 192 kHz, 32-bit, stereo
 };
+
+/**
+ * The lowest byte rate a WAV can plausibly have (8-bit PCM at 4 kHz, or ADPCM). The duration the WAV header states
+ * is client-controlled (a forged byte rate of 0xfffffff0 makes any file "last" a few milliseconds), so the
+ * reservation is `max(header duration, bytes / WAV_MIN_BYTE_RATE)`: never the header alone.
+ */
+export const WAV_MIN_BYTE_RATE = 4000;
 
 function sniffAudio(head: Uint8Array): AudioKind | null {
   if (ascii(head, 0, "RIFF") && ascii(head, 8, "WAVE")) return "wav";
@@ -115,9 +126,14 @@ export interface AudioInput {
   mime: string;
   extension: string;
   language?: string;
-  /** Seconds the reservation is sized on: `max(declared, bound from the bytes)`, never above the cap. */
+  /**
+   * Seconds the reservation is sized on, never above the cap. WAV: `max(declared, header duration, bytes / lowest
+   * plausible rate)`. Any other container: the route's whole `maxAudioSeconds`.
+   */
   reservedSeconds: number;
   reservedCredits: number;
+  /** What `duration_seconds` says when the provider reports none: the WAV header, else the declared hint, else the reservation. */
+  fallbackSeconds: number;
 }
 
 export async function validateTranscription(form: FormData, routing: RoutingTable): Promise<AudioInput> {
@@ -128,7 +144,7 @@ export async function validateTranscription(form: FormData, routing: RoutingTabl
   if (!route || route.feature !== "transcription") throw invalid("Unknown model.");
 
   const file = filePart(form);
-  const kind = AUDIO_TYPES[mediaTypeOf(file)];
+  const kind = AUDIO_TYPES.get(mediaTypeOf(file));
   if (!kind) throw new ApiError("unsupported_media_type");
   if (file.size > route.maxAudioBytes) throw new ApiError("payload_too_large", { message: "The audio exceeds the size limit." });
 
@@ -148,19 +164,19 @@ export async function validateTranscription(form: FormData, routing: RoutingTabl
   // The content must be what the part claims: a mislabeled file is refused, not guessed at.
   if (sniffAudio(bytes.subarray(0, 16)) !== kind) throw new ApiError("unsupported_media_type");
 
-  let lower: number;
-  let upper: number;
+  // A file that is certainly longer than the cap, whatever its header says.
+  let longest = bytes.length / MAX_BYTE_RATE[kind];
+  let reservedSeconds = route.maxAudioSeconds;
+  let fallbackSeconds = declared > 0 ? declared : reservedSeconds;
   if (kind === "wav") {
-    const exact = wavDurationSeconds(bytes);
-    if (exact === null) throw invalid("The WAV header is unreadable.");
-    lower = upper = exact;
-  } else {
-    lower = bytes.length / BYTE_RATE[kind].max;
-    upper = bytes.length / BYTE_RATE[kind].min;
+    const header = wavDurationSeconds(bytes);
+    if (header === null) throw invalid("The WAV header is unreadable.");
+    longest = Math.max(longest, header); // a header that claims more than the cap is refused too
+    reservedSeconds = Math.min(route.maxAudioSeconds, Math.max(declared, header, bytes.length / WAV_MIN_BYTE_RATE));
+    fallbackSeconds = Math.min(route.maxAudioSeconds, Math.max(declared, header));
   }
-  if (lower > route.maxAudioSeconds) throw new ApiError("payload_too_large", { message: "The audio exceeds the duration limit." });
+  if (longest > route.maxAudioSeconds) throw new ApiError("payload_too_large", { message: "The audio exceeds the duration limit." });
 
-  const reservedSeconds = Math.min(route.maxAudioSeconds, Math.max(declared, upper));
   const result: AudioInput = {
     route,
     bytes,
@@ -168,6 +184,7 @@ export async function validateTranscription(form: FormData, routing: RoutingTabl
     extension: AUDIO_EXTENSION[kind],
     reservedSeconds,
     reservedCredits: atLeastOne(audioCost(route.price.perMinute, reservedSeconds)),
+    fallbackSeconds,
   };
   if (language !== undefined) result.language = language;
   return result;
@@ -178,7 +195,11 @@ export async function validateTranscription(form: FormData, routing: RoutingTabl
 // ---------------------------------------------------------------------------------------------------
 
 type ImageKind = "png" | "jpeg" | "webp";
-const IMAGE_TYPES: Record<string, ImageKind> = { "image/png": "png", "image/jpeg": "jpeg", "image/webp": "webp" };
+const IMAGE_TYPES: ReadonlyMap<string, ImageKind> = new Map<string, ImageKind>([
+  ["image/png", "png"],
+  ["image/jpeg", "jpeg"],
+  ["image/webp", "webp"],
+]);
 
 function sniffImage(head: Uint8Array): ImageKind | null {
   if (at(head, 0) === 0x89 && ascii(head, 1, "PNG")) return "png";
@@ -203,7 +224,7 @@ export async function validateOcr(form: FormData, routing: RoutingTable): Promis
   if (!route || route.feature !== "ocr") throw invalid("Unknown model.");
 
   const file = filePart(form);
-  const kind = IMAGE_TYPES[mediaTypeOf(file)];
+  const kind = IMAGE_TYPES.get(mediaTypeOf(file));
   if (!kind) throw new ApiError("unsupported_media_type");
   if (file.size > route.maxImageBytes) throw new ApiError("payload_too_large", { message: "The image exceeds the size limit." });
   const language = string(form, "language");
