@@ -1592,7 +1592,7 @@ describe('StudentLLM workspace', () => {
     });
     render(<App provider={{ generate }} />);
 
-    await user.click(screen.getByRole('button', { name: 'Organize notes with AI' }));
+    await user.click(screen.getByRole('button', { name: 'Organize material with AI' }));
     const dialog = screen.getByRole('dialog', { name: 'Organize material with AI' });
     await user.type(within(dialog).getByLabelText('Lecture excerpt or course description'), 'Attention scales QK before applying softmax to V.');
     await user.click(within(dialog).getByRole('button', { name: 'Analyze structure' }));
