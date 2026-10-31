@@ -935,7 +935,7 @@ components:
             code: { type: string, const: device_limit_reached }
             message: { type: string }
             request_id: { type: string }
-        manage_token: { type: string, pattern: "^mt_", description: Opaque random token starting with mt_, 5 minutes, devices routes only }
+        manage_token: { type: string, pattern: "^mt_", description: "Opaque random token starting with mt_, 5 minutes, devices routes only" }
         manage_token_expires_in: { type: integer, const: 300 }
     TokenRequest:
       type: object
@@ -1086,7 +1086,7 @@ components:
         consent_records: { type: array, items: { $ref: "#/components/schemas/ConsentRecord" } }
         terms_acceptance: { type: object, additionalProperties: true }
         plan: { type: object, additionalProperties: true }
-        sessions: { type: array, items: { type: object, additionalProperties: true }, description: Device labels and dates only, no tokens }
+        sessions: { type: array, items: { type: object, additionalProperties: true }, description: "Device labels and dates only, no tokens" }
         usage_totals: { type: array, items: { type: object, additionalProperties: true } }
     TermsAcceptance:
       type: object
