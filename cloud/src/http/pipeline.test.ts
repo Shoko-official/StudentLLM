@@ -73,7 +73,7 @@ describe("client version handshake", () => {
   });
 
   it("applies to the content routes before anything else and only to the routes that need it", async () => {
-    const t = makeTestApp({ allowMissingHooks: true });
+    const t = makeTestApp({ allowMissingHooks: true, stubRoutes: true, withoutModuleHooks: true });
     const outdated = await t.request("/v1/chat/completions", {
       method: "POST",
       headers: { "X-StudentLLM-Client": "studentllm-desktop/0.0.1", "Content-Type": "application/json" },

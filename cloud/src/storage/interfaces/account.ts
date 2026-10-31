@@ -62,6 +62,20 @@ export interface DeletionTombstone {
   createdAt: number;
 }
 
+/**
+ * Retry bookkeeping of a deletion, kept beside the tombstone (not in it: the tombstone holds only the Paddle ids).
+ * Not account data; it goes away with the tombstone.
+ */
+export interface DeletionJob {
+  tombstone: DeletionTombstone;
+  /** How many times the subscription cancel was tried and did not finish (retry with backoff, operator alert). */
+  cancelAttempts: number;
+  /** Earliest time of the next cancel attempt (backoff). */
+  nextAttemptAt: number;
+  /** The retry period ran out: no more automatic attempts, an operator has to finish this one. */
+  manualReview: boolean;
+}
+
 export type AccountPatch = Partial<Pick<AccountRecord, "status" | "lastSignInAt">>;
 
 /** Pure and synchronous: it runs inside the store's atomic step, so it must not await or do I/O. */
@@ -117,9 +131,28 @@ export interface AccountStore {
   findAccountIdByPaddleSubscription(subscriptionId: string): Promise<string | null>;
   findAccountIdByPaddleCustomer(customerId: string): Promise<string | null>;
 
-  /** Sets status `deleting` and keeps only the Paddle ids in a tombstone. Idempotent. */
+  /**
+   * Erases the account at once and keeps only a tombstone with the Paddle ids (and the retry bookkeeping): the
+   * account row, the email and Google indexes, the plan and everything in it are gone when this returns, so
+   * `getById` and `getByEmail` answer null and the address can sign up again. The Paddle subscription and
+   * customer ids keep resolving to the account id (`findAccountIdByPaddle*`) until the tombstone is purged.
+   * Idempotent: a second call returns the same tombstone. Null when there is no such account.
+   */
   markDeleting(accountId: string, now: number): Promise<DeletionTombstone | null>;
   getTombstone(accountId: string): Promise<DeletionTombstone | null>;
-  /** Removes the account, its plan and its tombstone. */
+  /**
+   * Atomically claims the right to delete an account for `leaseMs`: true for exactly one of several parallel
+   * callers, false for the others and for any caller while the lease runs. The claim ends with the lease, or with
+   * `purgeAccount`. It makes the start of a deletion (the final email, the cancel) happen once; a caller that
+   * lost the claim answers like a repeated request.
+   */
+  claimDeletion(accountId: string, now: number, leaseMs: number): Promise<boolean>;
+  /** Stops the automatic retries of a deletion (the retry period ran out). Idempotent. */
+  markDeletionManual(accountId: string): Promise<DeletionJob | null>;
+  /** Deletions whose `nextAttemptAt` has passed and that are not in manual review, oldest first, at most `limit`. */
+  listDueDeletions(now: number, limit: number): Promise<DeletionJob[]>;
+  /** Counts a cancel attempt that did not finish and schedules the next one. Returns the job, or null. */
+  recordCancelAttempt(accountId: string, nextAttemptAt: number): Promise<DeletionJob | null>;
+  /** Removes the account (if any), its plan, its tombstone and the Paddle indexes. */
   purgeAccount(accountId: string): Promise<void>;
 }

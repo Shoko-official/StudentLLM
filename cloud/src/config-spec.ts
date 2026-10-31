@@ -20,6 +20,11 @@ export interface VarSpec {
    * start with `PLACEHOLDER`, so a template value from wrangler.toml cannot ship.
    */
   readonly deployChecked?: boolean;
+  /**
+   * Checked at config load for a non-empty value (in every environment): returning false fails closed with a
+   * ConfigError that names the variable and never shows the value.
+   */
+  readonly valid?: (value: string) => boolean;
 }
 
 export interface ModuleConfig {

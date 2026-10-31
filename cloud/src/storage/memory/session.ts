@@ -56,6 +56,17 @@ export class InMemorySessionStore implements SessionStore {
     if (s) s.graceSuccessor = null;
   }
 
+  async clearExpiredGrace(now: number, graceMs: number) {
+    let n = 0;
+    for (const s of this.sessions.values()) {
+      if (s.graceSuccessor !== null && s.rotatedAt !== null && s.rotatedAt + graceMs <= now) {
+        s.graceSuccessor = null;
+        n++;
+      }
+    }
+    return n;
+  }
+
   async revokeFamily(familyId: string, now: number) {
     const s = this.sessions.get(familyId);
     if (!s || s.revokedAt !== null) return false;

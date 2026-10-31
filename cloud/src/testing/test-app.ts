@@ -1,10 +1,12 @@
 // Test-only wiring: the app with in-memory stores, a manual clock, deterministic request ids and a
 // recording logger. No network call is possible unless a test injects `fetch`.
 
-import { createApp, type App, type AppOptions } from "../app";
+import { createApp, registerRoutes as registerModuleRoutes, type App, type AppOptions } from "../app";
 import { loadConfig, OPTIONAL_SECRETS, REQUIRED_SECRETS, type Config, type Env } from "../config";
 import { createDeps, type Deps, type ModuleDeps, type RequestLogEntry } from "../deps";
 import type { Principal, Step } from "../http/context";
+import { Router } from "../http/router";
+import { notImplemented } from "../http/stub";
 import type { ExecutionContext } from "../platform";
 import type { AccountRecord, PlanRecord, Stores } from "../storage";
 import { createInMemoryStores } from "../storage";
@@ -46,7 +48,19 @@ export function testEnv(overrides: Partial<Env> = {}): Env {
   return { ...env, ...overrides };
 }
 
+/**
+ * Registers every route of the modules with the `notImplemented` handler and the modules' own route meta. For
+ * pipeline tests that want the contract's route table without any module logic behind it.
+ */
+export function registerStubRoutes(router: Router, deps: Deps): void {
+  const real = new Router();
+  registerModuleRoutes(real, deps);
+  for (const route of real.routes()) router.add(route.method, route.pattern, notImplemented, route.meta);
+}
+
 export interface TestAppOptions extends AppOptions {
+  /** Serve every module route as the 501 stub (see `registerStubRoutes`). Ignored when `registerRoutes` is set. */
+  stubRoutes?: boolean;
   env?: Partial<Env>;
   config?: Config;
   stores?: Stores;
@@ -92,7 +106,8 @@ export function makeTestApp(options: TestAppOptions = {}): TestApp {
   const app = createApp(deps, {
     hooks: options.hooks,
     allowMissingHooks: options.allowMissingHooks,
-    registerRoutes: options.registerRoutes,
+    withoutModuleHooks: options.withoutModuleHooks,
+    registerRoutes: options.registerRoutes ?? (options.stubRoutes ? registerStubRoutes : undefined),
   });
   return {
     app,

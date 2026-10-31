@@ -43,7 +43,7 @@ function addReal(t: TestApp, method: "GET" | "POST" | "DELETE", path: string, me
 
 describe("hooks fail closed (a real handler never runs behind a missing hook)", () => {
   it("never reaches a content handler without a token when no authenticate hook is installed", async () => {
-    const t = makeTestApp(); // strict: no allowMissingHooks
+    const t = makeTestApp({ stubRoutes: true, withoutModuleHooks: true }); // strict: no allowMissingHooks
     const calls = addReal(t, "POST", "/test/content", { operationId: "test_content", client: true, content: true });
     const res = await t.request("/test/content", { method: "POST", headers: CONTENT, body: "{}" });
     expect(res.status).toBe(500);
@@ -68,7 +68,7 @@ describe("hooks fail closed (a real handler never runs behind a missing hook)", 
   });
 
   it("lets only the stubs through the default hooks", async () => {
-    const t = makeTestApp();
+    const t = makeTestApp({ stubRoutes: true, withoutModuleHooks: true });
     const res = await t.request("/v1/chat/completions", { method: "POST", headers: CONTENT, body: "{}" });
     expect(res.status).toBe(501);
   });
@@ -78,11 +78,11 @@ describe("hooks fail closed (a real handler never runs behind a missing hook)", 
     const registerRoutes = (router: Router) => {
       router.add("POST", "/real", () => new Response("x"), routeMeta({ operationId: "real", content: true, client: true }));
     };
-    expect(() => createApp(t.deps, { registerRoutes })).toThrow(/pipeline hooks are missing[\s\S]*authenticate/);
+    expect(() => createApp(t.deps, { registerRoutes, withoutModuleHooks: true })).toThrow(/pipeline hooks are missing[\s\S]*authenticate/);
     // The same wiring is fine when the hooks are provided or the opt-out is explicit.
     const all = Object.fromEntries(Object.keys(defaultHooks()).map((n) => [n, () => undefined])) as unknown as PipelineHooks;
-    expect(() => createApp(t.deps, { registerRoutes, hooks: all })).not.toThrow();
-    expect(() => createApp(t.deps, { registerRoutes, allowMissingHooks: true })).not.toThrow();
+    expect(() => createApp(t.deps, { registerRoutes, withoutModuleHooks: true, hooks: all })).not.toThrow();
+    expect(() => createApp(t.deps, { registerRoutes, withoutModuleHooks: true, allowMissingHooks: true })).not.toThrow();
   });
 
   it("marks default hooks as missing and lets two modules not claim one hook", () => {
@@ -144,6 +144,8 @@ describe("fresh sign-in (freshAuthStep)", () => {
   function appWith(authTime: number, extra: Partial<PipelineHooks> = {}) {
     return makeTestApp({
       allowMissingHooks: true,
+      stubRoutes: true,
+      withoutModuleHooks: true,
       hooks: { authenticate: fakeAuthenticate(accessPrincipal({ authTime }), { account: ACCOUNT, plan: null }), ...extra },
     });
   }
@@ -206,6 +208,7 @@ describe("account and plan are loaded once after authentication", () => {
   it("loads them from the stores, sets the Plan-Version header and touches activity once per day", async () => {
     const t = makeTestApp({
       allowMissingHooks: true,
+      withoutModuleHooks: true,
       hooks: { authenticate: fakeAuthenticate(accessPrincipal({ accountId: "acc_1" })) },
     });
     await t.stores.accounts.create({ accountId: "acc_1", email: "a@example.invalid", googleSubject: null, loginMethods: ["email"], termsVersion: "v", now: TEST_START_MS });
@@ -304,7 +307,7 @@ describe("hook split: account rate limit and connection rate limit", () => {
       },
     });
     await t.request("/auth/start");
-    await t.request("/v1/account");
+    await t.request("/v1/usage"); // an inference route: the account routes choose their own window
     await t.request("/webhooks/paddle", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     expect(trace).toEqual(["connection", "account"]); // the webhook route has no rate limit
   });

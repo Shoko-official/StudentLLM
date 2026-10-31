@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { runAuthStoreContract } from "../../testing/auth-store-contract";
 import { chaosStores, runStoreContract } from "../../testing/store-contract";
 import { createInMemoryStores } from "./index";
 
@@ -6,6 +7,8 @@ import { createInMemoryStores } from "./index";
 // random yields. The Durable Object / D1 adapters will add their own `runStoreContract(...)` line.
 runStoreContract("in-memory", () => createInMemoryStores());
 runStoreContract("in-memory with chaos", () => chaosStores(createInMemoryStores()));
+runAuthStoreContract("in-memory", () => createInMemoryStores());
+runAuthStoreContract("in-memory with chaos", () => chaosStores(createInMemoryStores()));
 
 describe("chaosStores", () => {
   it("returns the same results and keeps every store method asynchronous", async () => {

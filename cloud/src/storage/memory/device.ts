@@ -1,12 +1,16 @@
 import { MAX_DEVICES, MAX_MANAGE_TOKENS_PER_CODE, type DeviceRecord, type DeviceStore, type ManageTokenRecord } from "../interfaces";
 
+/** The life of an email sign-in code (10 minutes): a manage token never outlives its code's counter. */
+const SIGN_IN_CODE_TTL_MS = 10 * 60_000;
+
 const copy = <T>(value: T): T => structuredClone(value);
 
 export class InMemoryDeviceStore implements DeviceStore {
   private readonly devices = new Map<string, DeviceRecord>(); // key: deviceId (globally unique)
   private readonly newSessions = new Map<string, number>(); // key: accountId|dayKey
   private readonly manageTokens = new Map<string, ManageTokenRecord>();
-  private readonly mintedPerCode = new Map<string, number>();
+  /** Manage tokens minted per sign-in code. Kept for as long as the code can live (10 minutes past the last token's expiry), then pruned. */
+  private readonly mintedPerCode = new Map<string, { count: number; accountId: string; expiresAt: number }>();
 
   async register(input: { accountId: string; deviceId: string; label: string; now: number; limit?: number }) {
     const limit = input.limit ?? MAX_DEVICES;
@@ -79,9 +83,13 @@ export class InMemoryDeviceStore implements DeviceStore {
   }
 
   async mintManageToken(record: Omit<ManageTokenRecord, "uses">, _now: number) {
-    const minted = this.mintedPerCode.get(record.codeId) ?? 0;
-    if (minted >= MAX_MANAGE_TOKENS_PER_CODE || this.manageTokens.has(record.tokenHash)) return false;
-    this.mintedPerCode.set(record.codeId, minted + 1);
+    const entry = this.mintedPerCode.get(record.codeId);
+    if ((entry?.count ?? 0) >= MAX_MANAGE_TOKENS_PER_CODE || this.manageTokens.has(record.tokenHash)) return false;
+    this.mintedPerCode.set(record.codeId, {
+      count: (entry?.count ?? 0) + 1,
+      accountId: record.accountId,
+      expiresAt: Math.max(entry?.expiresAt ?? 0, record.expiresAt + SIGN_IN_CODE_TTL_MS),
+    });
     this.manageTokens.set(record.tokenHash, { ...record, uses: 0 });
     return true;
   }
@@ -96,6 +104,18 @@ export class InMemoryDeviceStore implements DeviceStore {
     if (t) t.uses += 1;
   }
 
+  async revokeManageTokens(accountId: string) {
+    let n = 0;
+    for (const [hash, t] of [...this.manageTokens]) {
+      // The per-code mint counter is kept: a revoked token must not make room for a fourth one.
+      if (t.accountId === accountId) {
+        this.manageTokens.delete(hash);
+        n++;
+      }
+    }
+    return n;
+  }
+
   async deleteExpiredManageTokens(now: number) {
     let n = 0;
     for (const [hash, t] of [...this.manageTokens]) {
@@ -104,6 +124,7 @@ export class InMemoryDeviceStore implements DeviceStore {
         n++;
       }
     }
+    for (const [codeId, entry] of [...this.mintedPerCode]) if (entry.expiresAt <= now) this.mintedPerCode.delete(codeId);
     return n;
   }
 
@@ -113,8 +134,8 @@ export class InMemoryDeviceStore implements DeviceStore {
     for (const [hash, t] of [...this.manageTokens]) {
       if (t.accountId === accountId) {
         this.manageTokens.delete(hash);
-        this.mintedPerCode.delete(t.codeId);
       }
     }
+    for (const [codeId, entry] of [...this.mintedPerCode]) if (entry.accountId === accountId) this.mintedPerCode.delete(codeId);
   }
 }

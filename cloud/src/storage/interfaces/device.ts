@@ -54,6 +54,8 @@ export interface DeviceStore {
   mintManageToken(record: Omit<ManageTokenRecord, "uses">, now: number): Promise<boolean>;
   getManageToken(tokenHash: string, now: number): Promise<ManageTokenRecord | null>;
   recordManageTokenUse(tokenHash: string): Promise<void>;
+  /** Deletes every manage token of the account (a successful sign-in, account deletion). Returns how many. */
+  revokeManageTokens(accountId: string): Promise<number>;
   deleteExpiredManageTokens(now: number): Promise<number>;
   purgeAccount(accountId: string): Promise<void>;
 }
