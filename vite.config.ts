@@ -9,6 +9,7 @@ declare const process: {
 
 export default defineConfig(({ mode }) => {
   const env = { ...loadEnv(mode, process.cwd(), ''), ...process.env };
+  const watchRoot = process.cwd().replace(/\\/g, '/');
   const configuredBaseUrl = env.LM_STUDIO_BASE_URL?.trim() || 'http://127.0.0.1:1234/v1';
   let proxyTarget = 'http://127.0.0.1:1234';
 
@@ -21,6 +22,8 @@ export default defineConfig(({ mode }) => {
     base: './',
     plugins: [react(), nvidiaNimProxy()],
     server: {
+      // Anchor these below this checkout; its own parent may also be a worktree.
+      watch: { ignored: [`${watchRoot}/.claude/worktrees/**`, `${watchRoot}/.worktrees/**`] },
       proxy: {
         '/lm-studio': {
           target: proxyTarget,
@@ -37,7 +40,7 @@ export default defineConfig(({ mode }) => {
       globals: true,
       css: true,
       // scripts/ holds node:test files (run by npm run licenses:test) that vitest must not collect.
-      exclude: ['tests/e2e/**', 'tests/desktop-ui/**', 'node_modules/**', 'dist/**', 'cloud/**', 'scripts/**'],
+      exclude: ['tests/e2e/**', 'tests/desktop-ui/**', 'node_modules/**', 'dist/**', 'cloud/**', 'scripts/**', '.claude/worktrees/**', '.worktrees/**'],
     },
   };
 });
