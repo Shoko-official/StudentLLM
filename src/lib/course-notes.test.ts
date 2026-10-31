@@ -36,10 +36,38 @@ describe('course notes', () => {
 
   it('handles an accented capital at the start of a sentence and of a line', () => {
     const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
-    expect(schemaOf('Élasticité -> Œdème\nÇa entraîne Équilibre')).toMatchObject({
-      edges: [{ from: 'Élasticité', to: 'Œdème' }, { from: 'Ça', to: 'Équilibre' }],
+    expect(schemaOf('Élasticité -> Œdème\nÉtat entraîne Équilibre')).toMatchObject({
+      edges: [{ from: 'Élasticité', to: 'Œdème' }, { from: 'État', to: 'Équilibre' }],
     });
     expect(schemaOf('Écart provoque Ténacité.')).toMatchObject({ edges: [{ from: 'Écart', to: 'Ténacité' }] });
+  });
+
+  it('keeps elided articles with straight and curly apostrophes on both sides', () => {
+    const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
+    expect(schemaOf('La chaleur entraîne l\'augmentation de la pression')).toMatchObject({ edges: [{ from: 'La chaleur', to: 'l\'augmentation de la pression' }] });
+    expect(schemaOf('Les nuages provoquent l’orage')).toMatchObject({ edges: [{ from: 'Les nuages', to: 'l’orage' }] });
+    expect(schemaOf('Le froid engendre l\'ennui')).toMatchObject({ edges: [{ from: 'Le froid', to: 'l\'ennui' }] });
+    expect(schemaOf('L\'énergie entraîne travail')).toMatchObject({ edges: [{ from: 'L\'énergie', to: 'travail' }] });
+    expect(schemaOf('L’eau provoque d’autres effets')).toMatchObject({ edges: [{ from: 'L’eau', to: 'd’autres effets' }] });
+  });
+
+  it('accepts de, du, des and d\' after dépend(ent)', () => {
+    const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
+    expect(schemaOf('Le prix dépend du marché')).toMatchObject({ edges: [{ from: 'Le prix', to: 'marché' }] });
+    expect(schemaOf('Les prix dépendent des taux')).toMatchObject({ edges: [{ from: 'Les prix', to: 'taux' }] });
+    expect(schemaOf('Le prix dépend de la demande')).toMatchObject({ edges: [{ from: 'Le prix', to: 'la demande' }] });
+    expect(schemaOf('Le prix dépend d\'offre')).toMatchObject({ edges: [{ from: 'Le prix', to: 'offre' }] });
+    expect(schemaOf('Le prix dépend d’une règle')).toMatchObject({ edges: [{ from: 'Le prix', to: 'une règle' }] });
+    expect(schemaOf('Le prix dépendu marché est vague')).toBeUndefined();
+  });
+
+  it('drops bare pronoun and negated sources', () => {
+    const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
+    expect(schemaOf('Cela ne provoque rien du tout')).toBeUndefined();
+    expect(schemaOf('Il provoque la panique générale')).toBeUndefined();
+    expect(schemaOf('Ça entraîne une perte')).toBeUndefined();
+    expect(schemaOf('On pense que la chaleur ne provoque rien')).toBeUndefined();
+    expect(schemaOf('La chaleur entraîne la dilatation')).toBeDefined();
   });
 
   it('mixes English and French relations in one text', () => {
