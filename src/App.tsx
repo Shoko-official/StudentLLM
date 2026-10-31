@@ -58,6 +58,7 @@ import { probeSidecar, SidecarHealth } from './lib/sidecar-health';
 import { getManagedSidecarStatus, ManagedSidecarStatus, startManagedSidecars, stopManagedSidecars } from './lib/sidecar-supervisor';
 import { createSourceResource } from './lib/source-ingest';
 import { createSourceBlobStore, type SourceBlobStore } from './lib/source-storage';
+import { describeAiFailure } from './lib/service-errors';
 import { AudioChunkStore, createRecordingChunkStore } from './lib/recording-storage';
 import { listPendingRecordings, removePendingRecording, savePendingRecording } from './lib/recording-recovery';
 import { buildCourseExport, readCourseExport } from './lib/course-transfer';
@@ -330,6 +331,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [isSending, setIsSending] = useState(false);
   const [generatingArtifact, setGeneratingArtifact] = useState<ArtifactKind | null>(null);
   const [actionError, setActionError] = useState('');
+  const [chatError, setChatError] = useState('');
+  const activeLessonIdRef = useRef(activeLessonId);
+  activeLessonIdRef.current = activeLessonId;
   const [liveTranscriptionError, setLiveTranscriptionError] = useState('');
   const [liveSettledThrough, setLiveSettledThrough] = useState(0);
   const startingRecorderRef = useRef(false);
@@ -1040,7 +1044,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setQuickStartProposal(proposal);
       setQuickStartPlacement(proposal.targetCourseId ?? 'new');
     } catch (error) {
-      setQuickStartError(error instanceof Error ? error.message : 'Quick Start could not analyze this material.');
+      setQuickStartError(describeAiFailure(error, 'Quick Start could not analyze this material.'));
     } finally {
       setIsAnalyzingQuickStart(false);
     }
@@ -1121,6 +1125,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const selectLesson = (lessonId: string) => {
     if (isRecording || isFinalizingRecording || isStartingRecording) { notify('Stop and save the recording before switching courses.'); return; }
     setActionError('');
+    setChatError('');
     if (window.innerWidth <= 900) setShowLeftSidebar(false);
     setActiveLessonId(lessonId);
     setView('course');
@@ -1615,6 +1620,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const message = composerValue.trim();
     if (!message || isSending || !hasCourse) return;
     setView('chat');
+    setChatError('');
+    const chatLessonId = activeLessonId;
     const userMessageId = `user-${Date.now()}`;
     const assistantMessageId = `assistant-${Date.now() + 1}`;
     updateActiveWorkspace((current) => ({
@@ -1702,14 +1709,17 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         }],
       }));
     } catch (error) {
-      updateActiveWorkspace((current) => ({
-        ...current,
-        chat: [...current.chat, {
-          id: assistantMessageId,
-          role: 'assistant',
-          content: error instanceof Error ? error.message : 'The local provider could not answer this question.',
-        }],
-      }));
+      // A failed request is not an answer: keep it out of the saved history, show it as an alert, and hand
+      // the question back to the composer so it can be sent again with one key press.
+      // If the student moved to another course in the meantime, the question simply stays in the history it was asked in.
+      if (activeLessonIdRef.current === chatLessonId) {
+        setChatError(describeAiFailure(error, 'The local provider could not answer this question.'));
+        updateLessonWorkspace(chatLessonId, (current) => ({
+          ...current,
+          chat: current.chat.filter((item) => item.id !== userMessageId),
+        }));
+        setComposerValue((current) => current || message);
+      }
     } finally {
       setIsSending(false);
     }
@@ -1781,7 +1791,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setSelectedArtifactId(artifact.id);
       notify(`${definition.label} saved.`);
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Generation failed. Check LM Studio in Settings and try again.');
+      setActionError(describeAiFailure(error, 'Generation failed. Check LM Studio in Settings and try again.'));
     } finally {
       setGeneratingArtifact(null);
     }
@@ -2681,7 +2691,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               {!resources.length && !transcript.length && <p className="empty-state">Import material or record a lecture before asking a question.</p>}
                <div className="chat-list" aria-live="polite">{chat.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}><header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header><div className="message-content"><RichText content={message.content} className="chat-markdown" /></div>{message.citations && <div className="citation-list" aria-label="Response sources">{message.citations.map((citation, index) => message.citationTargets?.[index] ? <button type="button" className="citation-chip" title="Open original source" key={citation} onClick={() => openCitation(message.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button> : <span className={citation.startsWith('LM Studio') ? 'citation-model' : 'citation-context'} key={citation}>{citation}</span>)}</div>}</article>)}</div>
               {isSending && <div className="chat-typing" aria-hidden="true"><span /><span /><span /></div>}
-              <form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => setComposerValue(event.target.value)} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
+              {chatError && <div className="action-error chat-error" role="alert"><p>{chatError}</p><button type="button" className="text-action" onClick={() => setShowSettingsPanel(true)}>Open Settings</button></div>}<form className="chat-composer" onSubmit={submitComposer}><input aria-label="Ask the course chat" value={composerValue} onChange={(event) => { setComposerValue(event.target.value); if (chatError) setChatError(''); }} placeholder="Ask a question about your course" disabled={isSending} /><button className="primary-action" type="submit" aria-label="Send" disabled={isSending || !composerValue.trim()}>{isSending ? 'Thinking...' : <Send size={17} />}</button></form>
             </section>}
             {view === 'study' && <section className="study-view" id="view-panel-study" role="tabpanel" aria-labelledby="view-tab-study">
               <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>
@@ -2717,7 +2727,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           <div className="connection-field"><label htmlFor="local-documents-url">Document service address</label><input id="local-documents-url" value={serviceDraft.documentsUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, documentsUrl: event.target.value }))} placeholder="http://127.0.0.1:8766" />{isNativeRuntime() && <small>{LOOPBACK_HINT}</small>}</div>
           <button className="primary-submit" disabled={isRecording || isFinalizingRecording || isStartingRecording || isCheckingSidecars} type="submit">Save connections</button>
           <p className="empty-state" role="status">{usesNim(serviceSettings) ? 'NVIDIA NIM' : 'LM Studio / Bionic'}: {isCheckingSidecars ? 'Checking...' : llmHealth}</p>{availableModels.length > 0 && <p className="detected-models">Detected local models: {availableModels.join(', ')}</p>}
-        </form><div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>Audio and document sidecars are checked without interrupting any running local model.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>ASR sidecar</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document sidecar</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Animated icons by <a href="https://lordicon.com/" target="_blank" rel="noreferrer">Lordicon</a>.</p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
+        </form><div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>These optional helpers run on this computer. Recordings and imported files are always saved first; a helper that is not running only postpones transcription or text extraction.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>Speech service (transcription)</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document service (PDF, images, Office)</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Animated icons by <a href="https://lordicon.com/" target="_blank" rel="noreferrer">Lordicon</a>.</p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
       {isNativeRuntime() && <div className="managed-sidecar-tray" aria-label="Managed local services"><span>Managed services</span><span aria-live="polite">{managedSidecars.filter((sidecar) => sidecar.running).length}/2 running</span><button type="button" onClick={() => void startConfiguredSidecars()}>Start</button><button type="button" onClick={() => void stopConfiguredSidecars()}>Stop</button></div>}
       <div className="toast-stack">
         <div className="toast-slot" role="status" aria-atomic="true">{toast && <div className="toast">{toast}</div>}</div>

@@ -547,7 +547,7 @@ describe('StudentLLM workspace', () => {
     await user.type(screen.getByLabelText('Ask the course chat'), 'Explain why normalization matters.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByText('Provider request timed out.')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('The AI model took too long to answer.');
     expect(generate).toHaveBeenCalledTimes(1);
   });
 
