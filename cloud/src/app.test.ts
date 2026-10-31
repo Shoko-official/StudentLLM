@@ -10,6 +10,19 @@ const CONTENT_HEADERS = {
 };
 const key = (method: string, path: string) => `${method} ${path}`;
 
+/**
+ * Operations a module has replaced with a real handler. One line per module (edit only your own), so the
+ * modules can land in any order. Everything else must still be the 501 stub.
+ */
+const IMPLEMENTED: Record<string, readonly string[]> = {
+  account: [],
+  auth: [],
+  billing: ["createCheckout", "getPortal", "paddleWebhook"],
+  inference: [],
+  ops: [],
+};
+const implemented = new Set(Object.values(IMPLEMENTED).flat());
+
 describe("route table", () => {
   const { app } = makeTestApp({ allowMissingHooks: true });
   const routes = app.router.routes();
@@ -112,6 +125,7 @@ describe("stubs and routing", () => {
   it("serves every stub with a valid envelope", async () => {
     const t = makeTestApp({ allowMissingHooks: true, stubRoutes: true, withoutModuleHooks: true });
     for (const route of t.app.router.routes()) {
+      if (implemented.has(route.meta.operationId)) continue;
       const path = route.pattern.replace("{device_id}", "dev_1").replace("{method}", "google");
       const res = await t.request(path, {
         method: route.method,

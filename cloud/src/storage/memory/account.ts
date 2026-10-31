@@ -5,6 +5,7 @@ import type {
   ApplyPlanEventResult,
   DeletionJob,
   DeletionTombstone,
+  TombstoneCancelUpdate,
   LoginMethod,
   NewAccount,
   PlanReducer,
@@ -16,6 +17,28 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const copy = <T>(value: T): T => structuredClone(value);
 
+/** Every subscription id of a tombstone: the current one and the others billing recorded. */
+function tombstoneSubscriptionIds(t: DeletionTombstone): string[] {
+  return [...new Set([...(t.paddleSubscriptionId ? [t.paddleSubscriptionId] : []), ...(t.paddleSubscriptionIds ?? [])])];
+}
+
+/** The earliest time a cancellation of this plan (the plan's own or an extra one) is due, or null when none waits. */
+function dueAt(plan: PlanRecord): number | null {
+  const times = [plan.pendingCancel?.nextAttemptAt, ...(plan.extraCancels ?? []).map((e) => e.nextAttemptAt)].filter((t): t is number => typeof t === "number");
+  return times.length === 0 ? null : Math.min(...times);
+}
+
+/** Key-sorted JSON; undefined values and a null `pendingCancel` are dropped so "absent" and "null" compare equal. */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (key, v: unknown) => {
+    if (v === undefined || (key === "pendingCancel" && v === null)) return undefined;
+    if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+      return Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+    }
+    return v;
+  });
+}
+
 /** In-memory AccountStore for tests and local dev. Every method body is synchronous, hence atomic. */
 export class InMemoryAccountStore implements AccountStore {
   private readonly accounts = new Map<string, AccountRecord>();
@@ -24,6 +47,7 @@ export class InMemoryAccountStore implements AccountStore {
   private readonly plans = new Map<string, PlanRecord>();
   private readonly bySubscription = new Map<string, string>();
   private readonly byCustomer = new Map<string, string>();
+  private readonly byPurchase = new Map<string, string>();
   private readonly tombstones = new Map<string, DeletionTombstone>();
   private readonly deletionClaims = new Map<string, number>();
   private readonly retries = new Map<string, { cancelAttempts: number; nextAttemptAt: number; manualReview: boolean }>();
@@ -125,12 +149,19 @@ export class InMemoryAccountStore implements AccountStore {
   }
 
   private store(a: AccountRecord, plan: PlanRecord): number {
-    const previous = this.plans.get(plan.accountId);
-    if (previous?.paddleSubscriptionId) this.bySubscription.delete(previous.paddleSubscriptionId);
-    if (previous?.paddleCustomerId) this.byCustomer.delete(previous.paddleCustomerId);
     this.plans.set(plan.accountId, copy(plan));
-    if (plan.paddleSubscriptionId) this.bySubscription.set(plan.paddleSubscriptionId, plan.accountId);
-    if (plan.paddleCustomerId) this.byCustomer.set(plan.paddleCustomerId, plan.accountId);
+    // The indexes only grow while the account exists: an id the account used stays resolvable after the plan
+    // moved on (a refund names a customer or a payment from an earlier purchase). The first owner of an id keeps it.
+    const claim = (index: Map<string, string>, id: string | null | undefined): void => {
+      if (id && !index.has(id)) index.set(id, plan.accountId);
+    };
+    claim(this.bySubscription, plan.paddleSubscriptionId);
+    for (const id of plan.retiredSubscriptionIds ?? []) claim(this.bySubscription, id);
+    for (const e of plan.extraCancels ?? []) claim(this.bySubscription, e.subscriptionId);
+    claim(this.byCustomer, plan.paddleCustomerId);
+    for (const id of plan.retiredCustomerIds ?? []) claim(this.byCustomer, id);
+    for (const period of plan.paidPeriods) claim(this.byPurchase, period.purchaseId);
+    for (const id of plan.revokedPurchaseIds ?? []) claim(this.byPurchase, id);
     a.planVersion += 1;
     return a.planVersion;
   }
@@ -152,8 +183,86 @@ export class InMemoryAccountStore implements AccountStore {
     const next = copy(reduce(current ? copy(current) : null));
     if (next.accountId !== accountId) throw new Error("a plan reducer must keep the account id");
     next.lastEventAt = occurredAt;
+    // An identical plan (a duplicate delivery, a metadata-only event) is recorded as the latest event but does
+    // not move the plan version: clients refetch the account only when the version changes.
+    const changed = current === null || canonical({ ...current, lastEventAt: null }) !== canonical({ ...next, lastEventAt: null });
+    if (!changed) {
+      this.plans.set(accountId, copy(next));
+      return { applied: true, plan: copy(next), planVersion: a.planVersion, changed: false };
+    }
     const planVersion = this.store(a, next);
-    return { applied: true, plan: copy(next), planVersion };
+    return { applied: true, plan: copy(next), planVersion, changed: true };
+  }
+
+  async touchPlanVersion(accountId: string) {
+    const a = this.accounts.get(accountId);
+    if (!a) return null;
+    a.planVersion += 1;
+    return a.planVersion;
+  }
+
+  async listPendingCancels(now: number, limit: number) {
+    const due = new Map<string, number>();
+    for (const p of this.plans.values()) {
+      const at = dueAt(p);
+      if (at !== null) due.set(p.accountId, at);
+    }
+    for (const t of this.tombstones.values()) {
+      if (t.cancel?.state === "pending") due.set(t.accountId, Math.min(due.get(t.accountId) ?? Infinity, t.cancel.nextAttemptAt));
+    }
+    return [...due]
+      .filter(([, at]) => at <= now)
+      .sort((x, y) => x[1] - y[1])
+      .slice(0, limit)
+      .map(([id]) => id);
+  }
+
+  async addTombstoneSubscription(accountId: string, subscriptionId: string, customerId: string | null, now: number) {
+    const t = this.tombstones.get(accountId);
+    if (!t) return null;
+    const known = tombstoneSubscriptionIds(t).includes(subscriptionId);
+    t.paddleSubscriptionIds = [...new Set([...tombstoneSubscriptionIds(t), subscriptionId])];
+    if (customerId !== null) {
+      t.paddleCustomerIds = [...new Set([...(t.paddleCustomerIds ?? []), ...(t.paddleCustomerId ? [t.paddleCustomerId] : []), customerId])];
+      if (!this.byCustomer.has(customerId)) this.byCustomer.set(customerId, accountId);
+    }
+    if (!this.bySubscription.has(subscriptionId)) this.bySubscription.set(subscriptionId, accountId);
+    if (!known && t.cancel) {
+      // A new unconfirmed id re-opens a finished cancel, with a fresh attempt count, due at once.
+      const reopened = t.cancel.state === "done";
+      t.cancel = {
+        ...t.cancel,
+        state: "pending",
+        pendingIds: tombstoneSubscriptionIds(t).filter((id) => !t.cancel!.confirmedIds.includes(id)),
+        attempts: reopened ? 0 : t.cancel.attempts,
+        alerted: reopened ? false : t.cancel.alerted,
+        nextAttemptAt: reopened ? now : Math.min(t.cancel.nextAttemptAt, now),
+      };
+    }
+    return copy(t);
+  }
+
+  async updateTombstoneCancel(accountId: string, update: TombstoneCancelUpdate) {
+    // Synchronous from the read to the write, so it is atomic (an adapter does this in one step).
+    const t = this.tombstones.get(accountId);
+    if (!t) return null;
+    const all = tombstoneSubscriptionIds(t);
+    const previous = t.cancel ?? { state: "pending" as const, pendingIds: [], confirmedIds: [], attempts: 0, nextAttemptAt: update.now, alerted: false };
+    const confirmed = new Set(previous.confirmedIds.filter((id) => all.includes(id)));
+    for (const id of update.confirmed ?? []) if (all.includes(id)) confirmed.add(id);
+    const pending = all.filter((id) => !confirmed.has(id));
+    let { attempts, nextAttemptAt, alerted } = previous;
+    let newlyAlerted = false;
+    if (update.failedAttempt && pending.length > 0) {
+      attempts += 1;
+      nextAttemptAt = update.failedAttempt.nextAttemptAt;
+      if (!alerted && attempts >= update.failedAttempt.alertAfter) {
+        alerted = true;
+        newlyAlerted = true;
+      }
+    }
+    t.cancel = { state: pending.length === 0 ? "done" : "pending", pendingIds: pending, confirmedIds: [...confirmed], attempts, nextAttemptAt, alerted };
+    return { tombstone: copy(t), newlyAlerted };
   }
 
   async findAccountIdByPaddleSubscription(subscriptionId: string) {
@@ -164,18 +273,29 @@ export class InMemoryAccountStore implements AccountStore {
     return this.byCustomer.get(customerId) ?? null;
   }
 
+  async findAccountIdByPurchase(transactionId: string) {
+    return this.byPurchase.get(transactionId) ?? null;
+  }
+
   async markDeleting(accountId: string, now: number) {
     const existing = this.tombstones.get(accountId);
     if (existing) return copy(existing);
     const a = this.accounts.get(accountId);
     if (!a) return null;
     const plan = this.plans.get(accountId);
+    const subscriptionIds = new Set<string>();
+    for (const id of [plan?.paddleSubscriptionId, ...(plan?.retiredSubscriptionIds ?? []), ...(plan?.extraCancels ?? []).map((e) => e.subscriptionId)]) if (id) subscriptionIds.add(id);
+    const customerIds = new Set<string>();
+    for (const id of [plan?.paddleCustomerId, ...(plan?.retiredCustomerIds ?? [])]) if (id) customerIds.add(id);
     const tombstone: DeletionTombstone = {
       accountId,
       paddleCustomerId: plan?.paddleCustomerId ?? null,
       paddleSubscriptionId: plan?.paddleSubscriptionId ?? null,
       createdAt: now,
     };
+    // Billing: every other subscription and customer id the account used, so the deletion can cancel all of them.
+    if (subscriptionIds.size > (plan?.paddleSubscriptionId ? 1 : 0)) tombstone.paddleSubscriptionIds = [...subscriptionIds];
+    if (customerIds.size > (plan?.paddleCustomerId ? 1 : 0)) tombstone.paddleCustomerIds = [...customerIds];
     this.tombstones.set(accountId, tombstone);
     this.retries.set(accountId, { cancelAttempts: 0, nextAttemptAt: now, manualReview: false });
     // Erase: the account row, its plan and the email and Google indexes. The Paddle indexes stay with the tombstone.
@@ -236,9 +356,9 @@ export class InMemoryAccountStore implements AccountStore {
       this.byEmail.delete(a.email);
       if (a.googleSubject !== null) this.byGoogle.delete(a.googleSubject);
     }
-    const p = this.plans.get(accountId);
-    if (p?.paddleSubscriptionId) this.bySubscription.delete(p.paddleSubscriptionId);
-    if (p?.paddleCustomerId) this.byCustomer.delete(p.paddleCustomerId);
+    for (const index of [this.bySubscription, this.byCustomer, this.byPurchase]) {
+      for (const [id, owner] of [...index]) if (owner === accountId) index.delete(id);
+    }
     this.accounts.delete(accountId);
     this.plans.delete(accountId);
     this.tombstones.delete(accountId);
