@@ -1,0 +1,23 @@
+{
+  "name": "studentllm-cloud-gateway",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Optional StudentLLM cloud gateway (Cloudflare Worker). A separate npm project, not a workspace of the app.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "types:generate": "node scripts/generate-types.mjs",
+    "types:check": "node scripts/generate-types.mjs --check"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5",
+    "yaml": "2.9.1"
+  }
+}

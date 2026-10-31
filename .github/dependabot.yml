@@ -5,6 +5,13 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /cloud
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 14
   - package-ecosystem: github-actions
     directory: /
     schedule:
