@@ -87,6 +87,7 @@ describe("route table", () => {
         "DELETE /v1/devices/{device_id}",
         "GET /v1/billing/portal",
         "POST /v1/account/terms",
+        "POST /v1/consent",
       ].sort(),
     );
   });

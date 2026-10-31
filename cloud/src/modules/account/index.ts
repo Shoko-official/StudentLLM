@@ -47,5 +47,6 @@ export function registerAccountRoutes(router: Router, deps: Deps): void {
   router.add("POST", "/v1/account/link", linkLoginMethodHandler(deps), routeMeta({ operationId: "linkLoginMethod", freshAuth: true, body: json }));
   router.add("DELETE", "/v1/account/login-methods/{method}", unlinkLoginMethodHandler(deps), routeMeta({ operationId: "unlinkLoginMethod", freshAuth: true }));
   router.add("GET", "/v1/provider-sets", listProviderSetsHandler(deps), routeMeta({ operationId: "listProviderSets" }));
-  router.add("POST", "/v1/consent", recordConsentHandler(deps), routeMeta({ operationId: "recordConsent", body: json }));
+  // Exempt from the gating so that a withdrawal always works; the handler gates a grant itself (see hooks.ts).
+  router.add("POST", "/v1/consent", recordConsentHandler(deps), routeMeta({ operationId: "recordConsent", ...exempt, body: json }));
 }

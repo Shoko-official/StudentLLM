@@ -24,7 +24,8 @@ describe("checkTermsAndStatus", () => {
   ];
   const GATED: Array<[string, string, unknown?]> = [
     ["GET", "/v1/provider-sets"],
-    ["POST", "/v1/consent", {}],
+    // A grant: POST /v1/consent is exempt from the gating for withdrawals, but the handler gates a grant like any gated route.
+    ["POST", "/v1/consent", { provider_set: "ps1", provider_set_version: 1, features: ["chat"], text_version: "2026-11-01", granted: true }],
     ["POST", "/v1/account/link", { method: "google" }],
     ["DELETE", "/v1/account/login-methods/google"],
   ];
@@ -521,13 +522,68 @@ describe("POST /v1/consent and GET /v1/provider-sets", () => {
     expect((await res.json()).error.details).toMatchObject({ consent_text_version: "2026-11-01", provider_set_version: 1 });
   });
 
-  it("lets a withdrawal through whatever versions the client holds", async () => {
+  it("lets a withdrawal through whatever versions the client holds, recording the server's versions and the withdrawn features", async () => {
+    const wide = { list: () => [{ id: "ps1", version: 1, providers: ["P"], regions: ["R"], consentTextVersion: "2026-11-01", features: ["chat", "ocr"] as const }] };
+    const t = await makeAuthApp({ accountDeps: { providerSets: wide } });
+    const { auth, accountId } = await signedIn(t);
+    const granted = await (await post(t, auth, grant({ features: ["chat", "ocr"] }))).json();
+    t.clock.advance(1000);
+    // The client lies about everything it is allowed to send.
+    const res = await post(t, auth, grant({ granted: false, text_version: "2020-01-01", provider_set_version: 99, features: ["chat"] }));
+    expect(res.status).toBe(200);
+    const record = await res.json();
+    expect(record).toMatchObject({ granted: false, provider_set: "ps1", provider_set_version: 1, text_version: "2026-11-01", features: ["chat", "ocr"] });
+    expect(record.consent_id).not.toBe(granted.consent_id);
+    expect(await t.stores.consents.getActive(accountId, "ps1")).toBeNull();
+    // Repeating it is idempotent.
+    const again = await (await post(t, auth, grant({ granted: false, text_version: "1999-01-01" }))).json();
+    expect(again.consent_id).toBe(record.consent_id);
+  });
+
+  it("lets a withdrawal through for a suspended account and for one with outdated terms, but not a grant", async () => {
+    const t = await makeAuthApp();
+    const { auth, accountId } = await signedIn(t);
+    await post(t, auth, grant());
+    await t.stores.accounts.update(accountId, { status: "suspended" });
+    t.clock.advance(1000);
+    const grantRes = await post(t, auth, grant({ features: ["chat"], granted: true, text_version: "2026-11-01" }));
+    expect(await code(grantRes)).toBe("account_suspended");
+    expect((await post(t, auth, grant({ granted: false }))).status).toBe(200);
+    expect(await t.stores.consents.getActive(accountId, "ps1")).toBeNull();
+
+    await t.stores.accounts.update(accountId, { status: "active" });
+    await post(t, auth, grant());
+    await t.stores.accounts.acceptTerms(accountId, "2025-06-01", t.clock.now());
+    t.clock.advance(1000);
+    expect(await code(await post(t, auth, grant()))).toBe("terms_required");
+    expect((await post(t, auth, grant({ granted: false }))).status).toBe(200);
+    expect(await t.stores.consents.getActive(accountId, "ps1")).toBeNull();
+  });
+
+  it("lets a withdrawal through for a provider set that was retired, with the versions of the withdrawn record", async () => {
+    let sets = [{ id: "ps1", version: 3, providers: ["P"], regions: ["R"], consentTextVersion: "2026-11-01", features: ["chat"] as const }];
+    const t = await makeAuthApp({ accountDeps: { providerSets: { list: () => sets } } });
+    const { auth, accountId } = await signedIn(t);
+    expect((await post(t, auth, grant({ provider_set_version: 3 }))).status).toBe(200);
+    sets = [];
+    t.clock.advance(1000);
+    const res = await post(t, auth, grant({ granted: false, provider_set_version: 1, text_version: "x" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ granted: false, provider_set_version: 3, text_version: "2026-11-01", features: ["chat"] });
+    expect(await t.stores.consents.getActive(accountId, "ps1")).toBeNull();
+    // A grant for the retired set, or a withdrawal for a set the account never saw, is a 400.
+    expect((await post(t, auth, grant({ provider_set_version: 3 }))).status).toBe(400);
+    expect((await post(t, auth, grant({ granted: false, provider_set: "never-existed" }))).status).toBe(400);
+  });
+
+  it("uses 400 for a malformed or impossible request and 409 only for an outdated text or set version of a grant", async () => {
     const t = await makeAuthApp();
     const { auth } = await signedIn(t);
-    await post(t, auth, grant());
-    t.clock.advance(1000);
-    const res = await post(t, auth, grant({ granted: false, text_version: "2020-01-01", provider_set_version: 1 }));
-    expect(res.status).toBe(200);
+    expect((await post(t, auth, grant({ provider_set: "ps9" }))).status).toBe(400);
+    expect((await post(t, auth, grant({ features: ["ocr"] }))).status).toBe(400);
+    expect((await post(t, auth, grant({ text_version: "2020-01-01" }))).status).toBe(409);
+    expect((await post(t, auth, grant({ provider_set_version: 2 }))).status).toBe(409);
+    expect((await post(t, auth, grant({ text_version: "2020-01-01", provider_set: "ps9" }))).status).toBe(400); // the set is checked first
   });
 
   it("rejects an unknown provider set, an unoffered feature, an empty grant, duplicates and unknown fields", async () => {
