@@ -378,7 +378,7 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
   describe(`${label}: LedgerStore`, () => {
     const win = { start: T0, end: T0 + 30 * DAY, limit: 100 };
     const reserve = (requestId: string, credits: number, now = T0 + 1000, idempotency: { route: string; keyHash: string } | null = null) =>
-      ({ requestId, feature: "chat" as const, credits, now, expiresAt: now + 120_000, idempotency });
+      ({ requestId, feature: "chat" as const, logicalModelId: "studentllm-large", credits, now, expiresAt: now + 120_000, idempotency });
 
     it("reserves against the remaining budget and refuses an overspend", async () => {
       const { ledger } = factory();
@@ -529,7 +529,7 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
         expect(await sweeps.due(T0 + 500_000, 10)).toEqual(["a"]);
         expect(await ledger.sweep("a", T0 + 500)).toMatchObject({ settled: 0, released: 0 }); // nothing expired yet
         const swept = await ledger.sweep("a", T0 + 500_000);
-        expect(swept).toEqual({ settled: 1, released: 1, nextDueAt: T0 + 10 * DAY });
+        expect(swept).toEqual({ settled: 1, released: 1, settledCredits: 30, nextDueAt: T0 + 10 * DAY });
 
         expect(await ledger.getReservation("a", "fwd")).toMatchObject({ state: "settled" });
         expect(await ledger.getReservation("a", "idle")).toMatchObject({ state: "released" });
@@ -542,8 +542,9 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
         expect(await sweeps.due(T0 + 10 * DAY, 10)).toEqual(["a"]);
 
         // Repeating the sweep is harmless.
-        expect(await ledger.sweep("a", T0 + 500_000)).toEqual({ settled: 0, released: 0, nextDueAt: T0 + 10 * DAY });
-        expect(await ledger.getLedgerEntry("a", "fwd")).toMatchObject({ credits: 30, logicalModelId: "unknown_outcome" });
+        expect(await ledger.sweep("a", T0 + 500_000)).toEqual({ settled: 0, released: 0, settledCredits: 0, nextDueAt: T0 + 10 * DAY });
+        // The reservation remembers its logical model, so the swept row is a real ledger row.
+        expect(await ledger.getLedgerEntry("a", "fwd")).toMatchObject({ credits: 30, logicalModelId: "studentllm-large" });
       });
 
       it("only touches the swept account and clears the registry when nothing is left", async () => {
@@ -553,7 +554,7 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
         await ledger.reserve("a", reserve("ra", 5));
         await ledger.reserve("b", reserve("rb", 5));
         expect((await sweeps.due(T0 + DAY, 10)).sort()).toEqual(["a", "b"]);
-        expect(await ledger.sweep("a", T0 + DAY)).toEqual({ settled: 0, released: 1, nextDueAt: null });
+        expect(await ledger.sweep("a", T0 + DAY)).toEqual({ settled: 0, released: 1, settledCredits: 0, nextDueAt: null });
         expect(await sweeps.due(T0 + DAY, 10)).toEqual(["b"]);
         expect((await ledger.getReservation("b", "rb"))!.state).toBe("reserved");
         expect(await sweeps.due(T0 + DAY, 0)).toEqual([]);
@@ -641,7 +642,18 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
     it("stores nothing derived from content", async () => {
       const { idempotency } = factory();
       const { record } = await idempotency.begin(key, "r1", T0);
-      expect(Object.keys(record).sort()).toEqual(["accountId", "createdAt", "creditsCharged", "expiresAt", "keyHash", "requestId", "route", "state"]);
+      expect(Object.keys(record).sort()).toEqual([
+        "accountId",
+        "createdAt",
+        "creditsCharged",
+        "expiresAt",
+        "keyHash",
+        "leaseExpiresAt",
+        "requestId",
+        "reserved",
+        "route",
+        "state",
+      ]);
     });
   });
 
@@ -913,11 +925,12 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
       await stores.devices.register({ accountId: "acc_1", deviceId: "d1", label: "x", now: T0 });
       await stores.consents.record({ consentId: "c1", accountId: "acc_1", providerSetId: "ps1", providerSetVersion: 1, features: ["chat"], textVersion: "t", granted: true }, T0);
       await stores.ledger.ensureWindow("acc_1", { start: T0, end: T0 + DAY, limit: 10 });
-      await stores.ledger.reserve("acc_1", { requestId: "r", feature: "chat", credits: 1, now: T0, expiresAt: T0 + 1000, idempotency: null });
+      await stores.ledger.reserve("acc_1", { requestId: "r", feature: "chat", logicalModelId: "m", credits: 1, now: T0, expiresAt: T0 + 1000, idempotency: null });
       await stores.idempotency.begin({ accountId: "acc_1", route: "/r", keyHash: "k" }, "r1", T0);
       await stores.concurrency.acquire("acc_1", 2, 1000, T0);
       await stores.sessions.create({ familyId: "f", accountId: "acc_1", deviceId: "d1", currentHash: "h", prevHash: null, rotatedAt: null, graceSuccessor: null, authTime: 1, createdAt: T0, lastUsedAt: T0, idleExpiresAt: T0 + DAY, absoluteExpiresAt: T0 + DAY, revokedAt: null });
-      for (const s of [stores.accounts, stores.sessions, stores.devices, stores.consents, stores.ledger, stores.idempotency, stores.authChallenges, stores.concurrency]) {
+      await stores.rateLimits.hitAccount("acc_1", "content", 5, 60_000, T0);
+      for (const s of [stores.accounts, stores.sessions, stores.devices, stores.consents, stores.ledger, stores.idempotency, stores.authChallenges, stores.concurrency, stores.rateLimits]) {
         await s.purgeAccount("acc_1");
       }
       expect(await stores.accounts.getById("acc_1")).toBeNull();
@@ -927,6 +940,7 @@ export function runStoreContract(label: string, factory: StoreFactory): void {
       expect(await stores.ledger.getReservation("acc_1", "r")).toBeNull();
       expect(await stores.idempotency.get({ accountId: "acc_1", route: "/r", keyHash: "k" }, T0)).toBeNull();
       expect(await stores.concurrency.activeCount("acc_1", T0)).toBe(0);
+      expect((await stores.rateLimits.hitAccount("acc_1", "content", 1, 60_000, T0 + 1)).allowed).toBe(true); // the old hit is gone
       expect(await stores.sessions.getByFamily("f")).toBeNull();
       expect(await stores.sweeps.due(T0 + DAY, 10)).toEqual([]);
     });

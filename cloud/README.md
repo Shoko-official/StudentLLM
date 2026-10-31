@@ -8,9 +8,10 @@ truth; this code follows it and never changes it.
 
 Status: phase 2 in progress (the billing module is described under [The billing module](#the-billing-module)). Every route in the contract is registered. The **auth and account modules are
 implemented** (Google and email sign-in, tokens, refresh, devices, account, export, deletion, terms, link and
-unlink, provider sets, consent) against the in-memory stores; the **billing module is implemented** (checkout, portal, Paddle webhook, plan windows, cancel seam) against an injected Paddle client; the routes of the inference module and
-`GET /v1/status` still answer a 501 error envelope until their modules replace the `notImplemented` stub (the
-contract has no such code, so the stub reuses `internal_error`). Real today: the request id, the client-version handshake, body size limits enforced while the body streams in,
+unlink, provider sets, consent) against the in-memory stores; the **billing module is implemented** (checkout, portal, Paddle webhook, plan windows, cancel seam) against an injected Paddle client; and so are **the inference and ops modules**, the whole inference path against the in-memory stores: `GET /v1/models`, `/v1/usage`, `GET /v1/status`,
+`POST /v1/chat/completions` (streaming and not), and `POST /v1/audio/transcriptions` and `/v1/ocr` against an
+injected provider interface (no transcription or OCR provider is chosen yet, so the default table offers none).
+No route is left as the 501 `notImplemented` stub (the contract has no such code, so the stub reused `internal_error`). Real today: the request id, the client-version handshake, body size limits enforced while the body streams in,
 `Content-Type` checks, the consent and idempotency header checks, the one-time account load, the fresh sign-in
 check, response cleanup for streams, and fail-closed hooks. Storage has interfaces and in-memory
 implementations only; the Durable Object and D1 adapters come later.
@@ -56,7 +57,9 @@ src/storage/interfaces/<store>.ts   one file per store (the data tables of the p
 src/storage/memory/<store>.ts       in-memory implementations
 src/crypto/           constant-time compare, SHA-256, HMAC, random tokens and codes, base64url, keyed hashes
 src/types/            types generated from the OpenAPI file
-src/testing/          test-only: makeTestApp(), fixtures, contract validator, runStoreContract() (uses node:fs)
+src/testing/          test-only: makeTestApp(), fixtures, contract validator, runStoreContract(),
+                      runInferenceStoreContract(), makeInferenceHarness() (uses node:fs)
+src/modules/seams.ts  the cross-module calls (AuthSeam, BillingSeam, InferenceSeam), used through Deps
 ```
 
 ### What each module owner edits
@@ -65,9 +68,9 @@ src/testing/          test-only: makeTestApp(), fixtures, contract validator, ru
 | --- | --- | --- | --- | --- |
 | auth | auth | `src/modules/auth/index.ts`, `config.ts` | `authenticate`, `checkAuthRateLimit` | `/auth/*`, `/.well-known/jwks.json` |
 | account | auth/account | `src/modules/account/index.ts`, `config.ts` | `checkTermsAndStatus` | devices, account, terms, link, provider sets, consent |
-| inference | inference | `src/modules/inference/index.ts`, `config.ts` | `checkConsent`, `checkRateLimit`, `lookupIdempotency`, `acquireConcurrencySlot` | models, usage, chat, transcription, OCR |
+| inference | inference | `src/modules/inference/**` | `checkConsent`, `checkRateLimit`, `lookupIdempotency`, `acquireConcurrencySlot` | models, usage, chat, transcription, OCR |
 | billing | billing | `src/modules/billing/**` | `checkPlan` (real) | checkout, portal, Paddle webhook (real) |
-| ops | ops | `src/modules/ops/index.ts`, `config.ts`, `wrangler.toml`, `src/durable-objects.ts`, `src/storage/memory/*` and the adapters | none yet | `/v1/status` |
+| ops | ops | `src/modules/ops/**`, `wrangler.toml`, `src/durable-objects.ts`, `src/platform.ts`, `src/storage/memory/*` and the adapters | none yet | `/v1/status` |
 
 Each module's `index.ts` exports `registerXRoutes(router, deps)`, `XDeps` and `createXDeps(core)`,
 `createXHooks(deps)` and `createXScheduledTasks(deps)`. Its `config.ts` exports `secrets`, `vars` and `limits`:
@@ -82,6 +85,71 @@ change rarely; say so in the PR when you must touch one.
 `src/modules/seams.ts` declares what one module calls on another: `AuthSeam`, `BillingSeam` and `InferenceSeam`.
 Each module implements its own and puts it on its deps object, so a caller writes
 `deps.billing.cancelSubscription(accountId, "now")`. The billing module implements `BillingSeam`.
+
+### The inference module
+
+`src/modules/inference/` (the file list is at the top of its `index.ts`). In one paragraph per concern:
+
+- **Routing table** (`routing.ts`, configuration, validated at startup): a logical model id maps to an ordered list of
+  providers inside ONE provider set, an upstream model id, integer prices (credits per million tokens, per minute of
+  audio, per MiB of image) and limits (context window, output tokens, duration, images, audio bytes and seconds). The
+  client never supplies a URL, host, path, header or provider name. The first production entry is Groq
+  `gpt-oss-120b`; its prices, region and the whole provider set are placeholders to verify before launch. Tunable
+  numbers (rate limits, concurrency, spend caps) are in `settings.ts` and are placeholders too. `GET /v1/provider-sets`
+  and `POST /v1/consent` belong to the account module, which reads the provider sets from this table through
+  `providerSetViews(deps.inference.routing)` (`catalog.ts`), so `/v1/provider-sets`, `/v1/models` and the consent check
+  can only agree.
+- **Upstream proxy** (`provider.ts`): an OpenAI-compatible `UpstreamProvider` with the injected `fetch`. It builds the
+  request body field by field, sends a fixed path and a fixed header set, uses `redirect: "manual"`, never reads a
+  provider error body, and sends the per-account HMAC pseudonym as `user`. `UpstreamError.definitive` is the strict
+  `failed_no_usage` (an explicit error response, a redirect, or a connection failure whose cause names a connect-time
+  error); anything else is an unknown outcome and settles at the full reservation.
+- **Quota** (`attempt.ts`, `credits.ts`, `window.ts`): `Attempt.open` reserves after the body was validated (TTL =
+  route max duration + 60 s, extended by a stream heartbeat, lazy `ensureWindow` from the paid period with the limit
+  `deps.billing.settings.windowCredits[plan.planId]`, so a lazy window and the one the webhook creates are the same, an
+  on-access sweep before `budget_exhausted`), `markForwarded` precedes the upstream call, `settle` is first-wins and capped at
+  the reservation. Credits are integers rounded up once per request; reasoning tokens count as output; a missing or
+  doubtful usage is the full reservation.
+- **Streams** (`stream.ts`): chunks are rebuilt from an allowlist and the model id is rewritten; the end is one
+  `event: usage` and `data: [DONE]`, a failure after the first byte is one `event: error` and no `[DONE]`. The
+  cleanup of a cancelled stream runs under `waitUntil`.
+- **Rate limits** (`hooks.ts`): `checkRateLimit` gives a content route (chat, transcription, OCR) the `content` window
+  (`acct:<id>:content`) and any other route that still declares `rateLimit: "account"` (models, usage, checkout) the
+  `read` window. The account routes declare `rateLimit: "none"` and spend their own `acct:<id>:account-api` window, so
+  neither can starve the other (a test checks both directions).
+- **Idempotency** (`hooks.ts`, `guard.ts`): the four states, a lease for an `in_flight` record that owns no reservation,
+  and a guard that moves the record whatever fails after the hook started it.
+- **Unknown outcomes** are counted per kind and day (`upstream_unknown_network`, `upstream_unknown_timeout`,
+  `upstream_unknown_billable_error`, ...). A Workers `fetch` rejection carries no reliable cause, so any rejection with
+  no response is charged in full (the conservative reading of the contract's strict `failed_no_usage`); the counters show
+  how often that happens. A provider whose 4xx answers may be billed sets `clientErrorMayBeBilled` in its routing entry,
+  and its 4xx then counts as an unknown outcome too.
+- **The input estimate is a hard upper bound** (a token per UTF-8 byte of the messages, `stop` and `json_schema`,
+  capped at the context window), so the reservation covers whatever a tokenizer does with hostile text; settlement uses
+  the provider's usage and is capped at the reservation. A stream that fails in the middle is settled on a tighter count
+  (two bytes a token, rounded once over the whole text). A usage above the context window is a provider failure.
+  The price of the bound: a large prompt reserves a lot even though it usually costs far less (about 190 credits for
+  100 KiB of text with the default output limit, at most about 240 at the context window), released at settlement.
+  The reservation also carries a flat allowance (`TEMPLATE_FRAMING_TOKENS`, 64) for the chat template the provider wraps
+  around the messages (gpt-oss: the Harmony system header and role/channel markers), which the byte bound does not
+  count; at the default price it is about a tenth of a credit, so it is also absorbed by the one-credit minimum.
+  Settlement never exceeds the reservation, whatever the provider reports: that cap is deliberate.
+- **Audio**: only PCM-style WAVs are accepted, and only when the header agrees with itself (format tag 1, 3 or
+  0xFFFE; 8, 16, 24 or 32 bits; at least 8000 Hz; `blockAlign = channels x bits / 8`; `byteRate = sampleRate x
+  blockAlign`), because a decoder honours the sample rate and the format tag, not the gateway's guess. Then the header
+  duration is the real one and a WAV is reserved on `max(declared, header duration, bytes / 8000)`. Any other container
+  (Opus, MP3, AAC, FLAC, WebM) is reserved at the route's whole `maxAudioSeconds` price and refunded on the
+  provider-reported duration.
+  **Residual risk**: the gateway cannot read the duration of a compressed container, and a low-bitrate or
+  silence-suppressed file can hold more audio than `maxAudioSeconds`. The charge is capped at the reservation, so what
+  lies above the cap is not recovered. The counter `audio_duration_above_cap` counts every provider answer above the
+  cap, and `maxAudioBytes` must stay small before audio is enabled: that byte cap is what bounds the exposure.
+- **Kill switches and the spend cap** (`availability.ts`; the cap stops new requests once the settled spend plus the
+  request's own reservation would pass it, and may be overshot by the reservations in flight at that moment), **the reconciler** (`sweeper.ts`, an on-access sweep and the
+  cron tasks `inference-sweep` and `inference-expire`) and **the seam** (`seam.ts`: `usageSnapshot`, `purgeLedger`).
+
+`deps.inference` implements `InferenceSeam`, so another module calls `deps.inference.purgeLedger(accountId)` on account
+deletion and `deps.inference.usageSnapshot(accountId)` for export and billing.
 
 ### Registering routes
 
@@ -147,6 +215,12 @@ The in-memory implementations back the tests and local development.
   compare-and-set on the plan version. `authChallenges.verifyEmailCode` compares the code inside the store and
   holds the attempt cap under parallel guesses. `webhookEvents.claim` returns a fencing token that `complete` and
   `release` require.
+- One Durable Object per account will hold the ledger, the idempotency records, the per-account rate-limit buckets
+  (`rateLimits.hitAccount`) and the concurrency leases; `src/durable-objects.ts` lists the operations and a test checks
+  that no call names two accounts. A reservation stores its logical model id (a sweep writes a real ledger row); a
+  swept reservation moves its record from `in_flight` or `failed_before_forward` to `failed_no_usage`; an `in_flight`
+  record without a reservation has a lease (the route max duration + 60 s), after which `begin` treats it as
+  `failed_before_forward`. `runInferenceStoreContract` covers these and the atomic operations under parallel callers.
 - The account Durable Object must run `DeviceStore.register` (the 3-device limit check and the insert) as one
   atomic step. `runStoreContract(name, factory)` in `src/testing/store-contract.ts` is the behavior suite; the
   adapters run it against their own factory, and `chaosStores()` wraps any store to reorder concurrent callers.
@@ -281,6 +355,14 @@ How it fits the rest:
   per grant). `toPublicPlan(plan, now, window)` reports a grant-only account as `COMPLIMENTARY_PLAN_ID` (`free` until the public
   contract has `plus_complimentary`).
 
+`makeInferenceHarness()` (`src/testing/inference-harness.ts`) seeds a Plus account with a paid period and a consent
+record, fakes the other modules' hooks and gives the test a fake upstream (`completion()`, `sseResponse()`,
+`manualSse()`); a test that sends a request and ignores the body should know that the response body is buffered unless
+the request streams (an unread body keeps its concurrency slot, as for a real client). The inference module provides its
+own four hooks, so a shared-pipeline test that registers its own content route passes `withoutModuleHooks: true` to
+`makeTestApp` (or overrides the hooks). `src/modules/inference/integration.test.ts` builds the full app with every
+module and no opt-out: the fail-closed startup check passes, also through the Worker entry.
+
 ## Choices where the contract was silent
 
 The gaps found while scaffolding were settled in the contract itself (strict-semver client header and a 400 on
@@ -322,3 +404,11 @@ under "Contract questions"; none changes the contract):
   which is how an expired session frees its slot.
 - The session keeps one previous token hash (as the plan's data table says), so only that generation can be detected as
   reuse; an older token is `session_revoked` without revoking the family.
+
+The inference module settled these without a contract change; each is listed under "Contract questions" in its pull
+request: the consent record is checked in the hook, but the match with the routed model's provider set needs the body
+and happens right after validation (same `consent_outdated`); a mid-stream explicit provider error or malformed
+events settle on the tokens counted on the gateway, while a timeout, reset, truncation or client abort settles in
+full; `n: 1` is accepted (the contract now says so: `n` is `const 1`) and any other `n` rejected; a text-only model rejects any image part; the semester pass window
+is one month from the pass start; the Workers `fetch` does not say whether a request was accepted, so a network error
+counts as "before acceptance" only when its cause names a connect-time failure.

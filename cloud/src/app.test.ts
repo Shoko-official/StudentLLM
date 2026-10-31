@@ -113,7 +113,8 @@ describe("route table", () => {
 
 describe("stubs and routing", () => {
   it("answers a registered route with the 501 error envelope and X-Request-Id", async () => {
-    const t = makeTestApp({ allowMissingHooks: true });
+    // Every route is served as the stub here, so the check does not depend on which modules have real handlers.
+    const t = makeTestApp({ allowMissingHooks: true, stubRoutes: true, withoutModuleHooks: true });
     const res = await t.request("/v1/status", { headers: { "X-StudentLLM-Client": "studentllm-desktop/0.2.0" } });
     expect(res.status).toBe(501);
     expect(res.headers.get("X-Request-Id")).toBe("req_test_000001");

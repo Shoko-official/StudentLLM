@@ -86,7 +86,7 @@ describe("creating a grant", () => {
   it("is idempotent for a replay at the same instant: it finds its own windows and creates none", async () => {
     const { app, grant } = await setup();
     const first = await grant({ grantId: "grt_1", days: 45, startPolicy: "now" });
-    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", credits: 10, now: T + 1000, expiresAt: T + 60_000, idempotency: null });
+    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", logicalModelId: "studentllm-large", credits: 10, now: T + 1000, expiresAt: T + 60_000, idempotency: null });
     await app.stores.ledger.settle("acc_test", { requestId: "r1", credits: 10, logicalModelId: "m", now: T + 2000 });
     const again = await grant({ grantId: "grt_1", days: 45, startPolicy: "now" });
     expect(again.ok && first.ok && again.windows.map((w) => w.start)).toEqual(first.ok ? first.windows.map((w) => w.start) : []);
@@ -168,7 +168,7 @@ describe("composition with the plan rules", () => {
   it("an active grant does not count as an active plan: a purchase is allowed and cuts the grant at the purchase instant", async () => {
     const { app, grant } = await setup();
     await grant({ grantId: "g", days: 30, creditsPerWindow: 5000, startPolicy: "now" });
-    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", credits: 700, now: T + DAY, expiresAt: T + DAY + 60_000, idempotency: null });
+    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", logicalModelId: "studentllm-large", credits: 700, now: T + DAY, expiresAt: T + DAY + 60_000, idempotency: null });
     await app.stores.ledger.settle("acc_test", { requestId: "r1", credits: 700, logicalModelId: "m", now: T + DAY + 1 });
 
     app.clock.set(T + 5 * DAY);
@@ -225,7 +225,7 @@ describe("composition with the plan rules", () => {
     const { app, grant } = await setup();
     await grant({ grantId: "g", days: 10, startPolicy: "now" });
     await subscribe(app, T + 2 * DAY);
-    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", credits: 50, now: T + 3 * DAY, expiresAt: T + 3 * DAY + 60_000, idempotency: null });
+    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", logicalModelId: "studentllm-large", credits: 50, now: T + 3 * DAY, expiresAt: T + 3 * DAY + 60_000, idempotency: null });
     await app.stores.ledger.settle("acc_test", { requestId: "r1", credits: 50, logicalModelId: "m", now: T + 3 * DAY + 1 });
     await app.webhook(subscriptionEvent({ subscriptionId: "sub_1", occurredAt: T + 4 * DAY, periodStart: T + 2 * DAY, periodEnd: addMonthsUTC(T + 2 * DAY, 1), customerId: "ctm_1" }));
     expect((await app.stores.ledger.getCurrentWindow("acc_test", T + 4 * DAY))!.used).toBe(50);
@@ -237,7 +237,7 @@ describe("shortening and revoking a grant", () => {
   it("shortens: windows after the new end are removed, the one that contains it is cut, used credits stay", async () => {
     const { app, env, grant } = await setup();
     await grant({ grantId: "g", days: 90, creditsPerWindow: 1000, startPolicy: "now" });
-    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", credits: 40, now: T + 35 * DAY, expiresAt: T + 35 * DAY + 60_000, idempotency: null });
+    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", logicalModelId: "studentllm-large", credits: 40, now: T + 35 * DAY, expiresAt: T + 35 * DAY + 60_000, idempotency: null });
     await app.stores.ledger.settle("acc_test", { requestId: "r1", credits: 40, logicalModelId: "m", now: T + 35 * DAY + 1 });
     const before = await version(app);
     app.clock.set(T + 36 * DAY);
@@ -263,7 +263,7 @@ describe("shortening and revoking a grant", () => {
     const { app, env, grant } = await setup();
     await grant({ grantId: "g1", days: 10, startPolicy: "now" });
     await grant({ grantId: "g2", days: 10, startPolicy: "after_current_windows" });
-    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", credits: 5, now: T + DAY, expiresAt: T + DAY + 60_000, idempotency: null });
+    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", logicalModelId: "studentllm-large", credits: 5, now: T + DAY, expiresAt: T + DAY + 60_000, idempotency: null });
     await app.stores.ledger.settle("acc_test", { requestId: "r1", credits: 5, logicalModelId: "m", now: T + DAY + 1 });
     app.clock.set(T + 2 * DAY);
     const before = await version(app);
@@ -324,7 +324,7 @@ describe("invariants under a mix of purchases, grants and refunds", () => {
           const w = await app.stores.ledger.getCurrentWindow("acc_test", now);
           if (w && w.limit - w.used - w.reserved >= 3) {
             const id = `r${n}`;
-            await app.stores.ledger.reserve("acc_test", { requestId: id, feature: "chat", credits: 3, now, expiresAt: now + 60_000, idempotency: null });
+            await app.stores.ledger.reserve("acc_test", { requestId: id, feature: "chat", logicalModelId: "studentllm-large", credits: 3, now, expiresAt: now + 60_000, idempotency: null });
             await app.stores.ledger.settle("acc_test", { requestId: id, credits: 3, logicalModelId: "m", now });
             used += 3;
           }

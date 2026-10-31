@@ -29,6 +29,12 @@ export interface RateLimitStore {
    * denied client does not extend its own lockout).
    */
   hit(key: RateLimitKey, limit: number, windowMs: number, now: number): Promise<RateLimitResult>;
+  /**
+   * The same limiter for a per-account bucket (`content`, `read`). Unlike `hit` the account is an explicit argument, so
+   * a Durable Object adapter routes the call to that account's object without parsing a key. The window is
+   * `acct:<accountId>:<bucket>`, which `purgeAccount` removes with the others.
+   */
+  hitAccount(accountId: string, bucket: string, limit: number, windowMs: number, now: number): Promise<RateLimitResult>;
   deleteExpired(now: number): Promise<number>;
   /** Removes every per-account window: the key `acct:<accountId>` and every `acct:<accountId>:<purpose>` (account deletion). */
   purgeAccount(accountId: string): Promise<void>;

@@ -5,6 +5,7 @@ const targetKey = (t: SwitchTarget): string => (t.scope === "global" ? "global" 
 export class InMemorySwitchStore implements SwitchStore {
   private readonly disabled = new Map<string, SwitchTarget & { since: number }>();
   private readonly spend = new Map<string, number>();
+  private readonly counters = new Map<string, number>();
 
   async setDisabled(target: SwitchTarget, disabled: boolean, now: number) {
     const key = targetKey(target);
@@ -36,5 +37,17 @@ export class InMemorySwitchStore implements SwitchStore {
 
   async getSpend(period: SpendPeriod) {
     return this.spend.get(period) ?? 0;
+  }
+
+  async incrementCounter(name: string, period: SpendPeriod) {
+    if (!/^[a-z][a-z0-9_]{0,63}$/.test(name)) throw new RangeError("invalid counter name");
+    const key = `${name}|${period}`;
+    const total = (this.counters.get(key) ?? 0) + 1;
+    this.counters.set(key, total);
+    return total;
+  }
+
+  async getCounter(name: string, period: SpendPeriod) {
+    return this.counters.get(`${name}|${period}`) ?? 0;
   }
 }
