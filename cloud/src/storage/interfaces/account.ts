@@ -168,6 +168,11 @@ export interface AccountStore {
    * `occurredAt`, and bumps the plan version when the plan changed, all in one step. Equal timestamps are applied.
    */
   applyPlanEvent(accountId: string, occurredAt: number, reduce: PlanReducer): Promise<ApplyPlanEventResult>;
+  /**
+   * Bumps the plan version without touching the plan or `lastEventAt` (a change that lives in the ledger, such as a
+   * complimentary window, still makes clients refetch the account). Returns the new version, or null for an unknown account.
+   */
+  touchPlanVersion(accountId: string): Promise<number | null>;
   /** Accounts whose plan has a `pendingCancel` due at `now` (earliest first, at most `limit`). */
   listPendingCancels(now: number, limit: number): Promise<string[]>;
   findAccountIdByPaddleSubscription(subscriptionId: string): Promise<string | null>;

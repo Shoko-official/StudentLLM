@@ -88,6 +88,25 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
     });
   });
 
+  describe(`${label}: billing, plan version touch`, () => {
+    it("bumps the plan version without changing the plan or its event ordering", async () => {
+      const stores = await accountWith();
+      await stores.accounts.applyPlanEvent("acc_1", T0 + 1, () => plan());
+      const before = await stores.accounts.getPlan("acc_1");
+      expect(await stores.accounts.touchPlanVersion("acc_1")).toBe(2);
+      expect(await stores.accounts.touchPlanVersion("acc_1")).toBe(3);
+      expect(await stores.accounts.getPlan("acc_1")).toEqual(before);
+      expect((await stores.accounts.getById("acc_1"))!.planVersion).toBe(3);
+      expect(await stores.accounts.touchPlanVersion("ghost")).toBeNull();
+      // Parallel touches each count once.
+      await Promise.all(Array.from({ length: 5 }, () => stores.accounts.touchPlanVersion("acc_1")));
+      expect((await stores.accounts.getById("acc_1"))!.planVersion).toBe(8);
+      // An account that never had a plan can be touched too.
+      const fresh = await accountWith("acc_2");
+      expect(await fresh.accounts.touchPlanVersion("acc_2")).toBe(1);
+    });
+  });
+
   describe(`${label}: billing, LedgerStore window provisioning`, () => {
     const w = { start: T0, end: T0 + 30 * DAY, limit: 100 };
 
@@ -127,7 +146,7 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
       expect(await ledger.revokeWindows("a", T0 + DAY)).toBe(1); // no filter: whatever is left
     });
 
-    it("truncates: cuts the window that contains the instant, revokes later ones, leaves earlier ones and keeps usage", async () => {
+    it("truncates: cuts the window that contains the instant, removes unused later ones, leaves earlier ones and keeps usage", async () => {
       const { ledger } = factory();
       await ledger.ensureWindow("a", { start: T0 - 30 * DAY, end: T0, limit: 100 }); // already over
       await ledger.ensureWindow("a", w);
@@ -140,8 +159,7 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
       expect(windows.map((x) => [x.start - T0, x.end - T0, x.revokedAt !== null])).toEqual([
         [-30 * DAY, 0, false],
         [0, 10 * DAY, false],
-        [30 * DAY, 60 * DAY, true],
-      ]);
+      ]); // the unused later window is gone, so its start is free again
       expect(windows[1]!.used).toBe(40);
       expect(await ledger.getCurrentWindow("a", at - 1)).toMatchObject({ used: 40 });
       expect(await ledger.getCurrentWindow("a", at)).toBeNull();
@@ -159,14 +177,22 @@ export function runBillingStoreContract(label: string, factory: StoreFactory): v
       expect((await ledger.listWindows("a"))[0]!.end).toBe(T0 + 10 * DAY);
     });
 
-    it("truncates only the matching source, and a window that starts exactly at the instant is revoked", async () => {
+    it("truncates only the matching source; a window starting exactly at the instant is removed when unused and revoked when used", async () => {
       const { ledger } = factory();
       await ledger.ensureWindow("a", w);
       await ledger.ensureWindow("a", { start: T0 + 30 * DAY, end: T0 + 60 * DAY, limit: 10, source: "admin_grant", grantId: "grt_1" });
       expect(await ledger.truncateWindows("a", T0 + 30 * DAY, { source: "admin_grant" })).toBe(1);
-      const [paid, grant] = await ledger.listWindows("a");
-      expect(paid).toMatchObject({ end: T0 + 30 * DAY, revokedAt: null });
-      expect(grant!.revokedAt).toBe(T0 + 30 * DAY);
+      expect((await ledger.listWindows("a")).map((x) => x.source)).toEqual(["paddle"]);
+      expect((await ledger.listWindows("a"))[0]).toMatchObject({ end: T0 + 30 * DAY + 0 * DAY, revokedAt: null });
+      // A start that was freed can be used by a window of another source.
+      expect((await ledger.ensureWindow("a", { start: T0 + 30 * DAY, end: T0 + 60 * DAY, limit: 5 })).source).toBe("paddle");
+      // A window that already has usage is revoked, not removed.
+      await ledger.ensureWindow("a", { start: T0 + 60 * DAY, end: T0 + 90 * DAY, limit: 10, source: "admin_grant", grantId: "grt_2" });
+      await ledger.reserve("a", { requestId: "u1", feature: "chat", credits: 3, now: T0 + 61 * DAY, expiresAt: T0 + 61 * DAY + 60_000, idempotency: null });
+      await ledger.settle("a", { requestId: "u1", credits: 3, logicalModelId: "m", now: T0 + 61 * DAY + 1 });
+      expect(await ledger.truncateWindows("a", T0 + 60 * DAY, { source: "admin_grant" })).toBe(1);
+      const last = (await ledger.listWindows("a")).find((x) => x.grantId === "grt_2");
+      expect(last).toMatchObject({ revokedAt: T0 + 60 * DAY, used: 3 });
     });
   });
 }

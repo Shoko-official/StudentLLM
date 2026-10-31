@@ -174,6 +174,13 @@ export class InMemoryAccountStore implements AccountStore {
     return { applied: true, plan: copy(next), planVersion, changed: true };
   }
 
+  async touchPlanVersion(accountId: string) {
+    const a = this.accounts.get(accountId);
+    if (!a) return null;
+    a.planVersion += 1;
+    return a.planVersion;
+  }
+
   async listPendingCancels(now: number, limit: number) {
     return [...this.plans.values()]
       .filter((p) => p.pendingCancel != null && p.pendingCancel.nextAttemptAt <= now)

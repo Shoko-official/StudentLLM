@@ -116,8 +116,8 @@ export interface LedgerStore {
   revokeWindows(accountId: string, now: number, filter?: WindowFilter): Promise<number>;
   /**
    * Ends windows at `at`: a window that contains `at` is cut there (its used credits stay used), a window
-   * that starts at or after `at` is revoked. Nothing moves later, and a window that ended at or before `at`
-   * is untouched. Used for an immediate cancellation, a grant cut by a purchase and a shortened grant.
+   * that starts at or after `at` is removed when it was never used (so its start is free again) and revoked
+   * otherwise. Nothing moves later, and a window that ended at or before `at` is untouched. Used for an immediate cancellation, a grant cut by a purchase and a shortened grant.
    * Returns how many windows changed.
    */
   truncateWindows(accountId: string, at: number, filter?: WindowFilter): Promise<number>;

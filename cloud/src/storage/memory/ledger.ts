@@ -116,10 +116,11 @@ export class InMemoryLedgerStore implements LedgerStore {
 
   async truncateWindows(accountId: string, at: number, filter?: WindowFilter) {
     let n = 0;
-    for (const w of this.windows.values()) {
+    for (const [key, w] of [...this.windows]) {
       if (w.accountId !== accountId || w.revokedAt !== null || w.end <= at || !this.matches(w, filter)) continue;
-      if (w.start >= at) w.revokedAt = at;
-      else w.end = at;
+      if (w.start < at) w.end = at;
+      else if (w.used === 0 && w.reserved === 0 && w.requests === 0) this.windows.delete(key);
+      else w.revokedAt = at;
       n++;
     }
     return n;
