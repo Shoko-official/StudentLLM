@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { expectFixtureConformance, loadFixture, validateAgainst } from "../../testing";
 import { bearer, makeAuthApp, pkcePair, type AuthHarness } from "../../testing/auth-app";
-import { dumpStores } from "../../testing/dump-stores";
+import { dumpStore, dumpStores } from "../../testing/dump-stores";
+import { createInMemoryStores } from "../../storage";
+import { chaosStores } from "../../testing/store-contract";
 import type { TokenResponse } from "../../types";
 import type { BillingSeam, InferenceSeam } from "../seams";
 import { ALERT_AFTER_ATTEMPTS, DELETION_RETRY_PERIOD_MS, backoffMs } from "./deletion";
@@ -339,6 +341,86 @@ describe("DELETE /v1/account", () => {
     const fresh = await t.googleSignIn({ sub: "google-sub-1", email: ADDRESS });
     expect(fresh.status).toBe(200);
     expect(((await fresh.json()) as TokenResponse).account.account_id).not.toBe(accountId);
+  });
+
+  it("lets the billing seam cancel from the tombstone alone, because the plan is already erased", async () => {
+    const cancelled: string[] = [];
+    let planWhenCalled: unknown = "unset";
+    let tombstoneWhenCalled: unknown = null;
+    let t: AuthHarness;
+    // A seam that does what the seam documents: it reads ONLY the tombstone (getPlan would find nothing).
+    const billing: BillingSeam = {
+      async cancelSubscription(accountId) {
+        planWhenCalled = await t.stores.accounts.getPlan(accountId);
+        const tombstone = await t.stores.accounts.getTombstone(accountId);
+        tombstoneWhenCalled = tombstone;
+        if (!tombstone) return { state: "none" };
+        for (const id of [tombstone.paddleSubscriptionId, tombstone.paddleCustomerId]) if (id) cancelled.push(id);
+        return { state: cancelled.length > 0 ? "cancelled" : "none" };
+      },
+    };
+    t = await makeAuthApp({ extraDeps: { billing: billing as never } });
+    const { auth, accountId } = await signedIn(t);
+    await t.stores.accounts.savePlan(
+      { accountId, planId: "plus_monthly", status: "active", paidPeriods: [], cancelAtPeriodEnd: false, paddleCustomerId: "ctm_1", paddleSubscriptionId: "sub_1", lastEventAt: null },
+      { expectedPlanVersion: 0 },
+    );
+    expect((await t.del("/v1/account", auth)).status).toBe(202);
+    expect(planWhenCalled).toBeNull(); // the plan row was erased before the seam ran
+    expect(tombstoneWhenCalled).toMatchObject({ paddleSubscriptionId: "sub_1", paddleCustomerId: "ctm_1" });
+    expect(cancelled.sort()).toEqual(["ctm_1", "sub_1"]);
+    expect(await t.stores.accounts.getTombstone(accountId)).toBeNull(); // purged only because the cancel ran
+  });
+
+  it("removes the per-account rate-limit windows with the rest of the account's state", async () => {
+    const t = await makeAuthApp();
+    const { auth, accountId } = await signedIn(t);
+    await t.get("/v1/account/export", auth); // the export window
+    await t.get("/v1/devices", auth); // the account-routes window
+    await t.stores.rateLimits.hit(`acct:${accountId}`, 20, 60_000, t.clock.now()); // the chat window of the inference module
+    expect(dumpStore(t.stores.rateLimits)).toContain(accountId);
+    expect((await t.del("/v1/account", auth)).status).toBe(202);
+    expect(dumpStore(t.stores.rateLimits)).not.toContain(accountId);
+  });
+
+  it("starts the deletion once when two DELETEs arrive together from the same session (chaos)", async () => {
+    const seam = await aliveBilling("cancelled");
+    const t = await makeAuthApp({ stores: chaosStores(createInMemoryStores(), 41), extraDeps: { billing: seam.billing as never } });
+    const { auth, accountId } = await signedIn(t);
+    const results = await Promise.all([t.del("/v1/account", auth), t.del("/v1/account", auth), t.del("/v1/account", auth)]);
+    expect(results.map((r) => r.status).sort()).toEqual([202, 401, 401]);
+    const loser = results.find((r) => r.status === 401)!;
+    expect(await code(loser)).toBe("session_revoked"); // answers like a repeat
+    expect(seam.calls).toHaveLength(1); // one cancel
+    expect(t.email.ofKind("account_deletion_started")).toHaveLength(1); // one email
+    expect(await t.stores.accounts.getById(accountId)).toBeNull();
+  });
+
+  it("does not wait for a hanging email provider, and logs the failure by name only", async () => {
+    const t = await makeAuthApp({ accountDeps: { deletionEmailTimeoutMs: 20 } });
+    const { auth, accountId } = await signedIn(t);
+    t.deps.auth.email.send = () => new Promise<void>(() => undefined); // never settles
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => void lines.push(args.map(String).join(" ")));
+    const started = Date.now();
+    const res = await t.del("/v1/account", auth);
+    spy.mockRestore();
+    expect(res.status).toBe(202);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(await t.stores.accounts.getById(accountId)).toBeNull();
+    expect(lines).toEqual(["deletion email failed: timeout"]);
+    expect(lines.join(" ")).not.toContain(ADDRESS);
+  });
+
+  it("logs a failing email provider by name only", async () => {
+    const t = await makeAuthApp();
+    const { auth } = await signedIn(t);
+    t.email.failing = true;
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => void lines.push(args.map(String).join(" ")));
+    expect((await t.del("/v1/account", auth)).status).toBe(202);
+    spy.mockRestore();
+    expect(lines).toEqual(["deletion email failed: error"]);
   });
 
   it("sends the final email before the address is erased", async () => {

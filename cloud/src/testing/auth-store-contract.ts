@@ -46,6 +46,26 @@ export function runAuthStoreContract(label: string, factory: StoreFactory): void
       expect(await devices.mintManageToken(mk(4), T0)).toBe(false);
     });
 
+    it("claims a deletion for exactly one of several parallel callers, until the lease ends", async () => {
+      const { accounts } = factory();
+      await accounts.create({ accountId: "a", email: "a@example.invalid", googleSubject: null, loginMethods: ["email"], termsVersion: "v1", now: T0 });
+      const claims = await Promise.all(Array.from({ length: 8 }, () => accounts.claimDeletion("a", T0, 60_000)));
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      expect(await accounts.claimDeletion("a", T0 + 59_999, 60_000)).toBe(false);
+      expect(await accounts.claimDeletion("a", T0 + 60_000, 60_000)).toBe(true); // a crashed attempt can be repeated
+      expect(await accounts.claimDeletion("nobody", T0, 60_000)).toBe(false);
+      await accounts.purgeAccount("a");
+      expect(await accounts.claimDeletion("a", T0 + 1e6, 60_000)).toBe(false);
+    });
+
+    it("removes every per-account rate-limit window and nobody else's", async () => {
+      const { rateLimits } = factory();
+      for (const key of ["acct:a", "acct:a:export", "acct:a:account-api", "acct:ab", "acct:b:export"] as const) await rateLimits.hit(key, 1, 60_000, T0);
+      await rateLimits.purgeAccount("a");
+      for (const key of ["acct:a", "acct:a:export", "acct:a:account-api"] as const) expect((await rateLimits.hit(key, 1, 60_000, T0)).allowed, key).toBe(true);
+      for (const key of ["acct:ab", "acct:b:export"] as const) expect((await rateLimits.hit(key, 1, 60_000, T0)).allowed, key).toBe(false);
+    });
+
     it("forgets the per-code manage token counter once the code is dead, and not before", async () => {
       const { devices } = factory();
       const mk = (n: number) => ({ tokenHash: `pt${n}`, accountId: "a", expiresAt: T0 + 300_000, codeId: "code_p" });

@@ -18,3 +18,8 @@ function plain(value: unknown, seen = new WeakSet<object>()): unknown {
 export function dumpStores(stores: Stores): string {
   return JSON.stringify(plain(stores));
 }
+
+/** The same for one store (or any object). */
+export function dumpStore(store: object): string {
+  return JSON.stringify(plain(store));
+}

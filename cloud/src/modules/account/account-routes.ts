@@ -8,7 +8,7 @@ import type { ConsentRow, PlanRecord } from "../../storage";
 import type { Account, AccountExport, ConsentRecord, Credits, DeletionResponse, TermsAcceptance } from "../../types";
 import { planObject, toIso } from "../auth/plan";
 import { parseShape } from "../auth/validate";
-import { attemptDeletion, deletionId, erasePendingSignIn } from "./deletion";
+import { DELETION_CLAIM_LEASE_MS, attemptDeletion, deletionId, erasePendingSignIn, sendFinalEmail } from "./deletion";
 import { inferenceSeam } from "./seams";
 
 export function consentRecord(row: ConsentRow): ConsentRecord {
@@ -64,12 +64,11 @@ export function deleteAccountHandler(deps: Deps): Handler {
   return async (ctx) => {
     const { account } = loaded(ctx);
     const now = deps.clock.now();
-    // The final notification goes out BEFORE the address is erased. A provider failure never blocks the deletion.
-    try {
-      await deps.auth.email.send({ kind: "account_deletion_started", to: account.email });
-    } catch {
-      console.error("email send failed");
-    }
+    // Two parallel DELETEs from the same session: only one starts the deletion (one email, one cancel). The other
+    // answers like a repeated request, which is what it is.
+    if (!(await deps.stores.accounts.claimDeletion(account.accountId, now, DELETION_CLAIM_LEASE_MS))) throw new ApiError("session_revoked");
+    // The final notification goes out BEFORE the address is erased, bounded by a timeout.
+    await sendFinalEmail(deps, account.email);
     await erasePendingSignIn(deps, account.email);
     // From here the account holds no personal data: only the tombstone with the Paddle ids remains.
     const tombstone = await deps.stores.accounts.markDeleting(account.accountId, now);

@@ -50,6 +50,31 @@ export async function eraseAccountData(deps: Deps, accountId: string): Promise<v
     await store.purgeAccount(accountId);
   }
   await stores.sweeps.clear(accountId);
+  // The per-account rate-limit windows (the chat window, the export window, the account-routes window).
+  await stores.rateLimits.purgeAccount(accountId);
+}
+
+/** How long one DELETE holds the claim on the deletion; a crashed attempt can be repeated after this. */
+export const DELETION_CLAIM_LEASE_MS = 60_000;
+
+/**
+ * Sends the final notification email, bounded by a timeout: a provider that hangs or fails never blocks the
+ * deletion. Failures are logged by name only (no address, no message).
+ */
+export async function sendFinalEmail(deps: Deps, to: string): Promise<void> {
+  const timeoutMs = deps.account.deletionEmailTimeoutMs;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), timeoutMs);
+  });
+  try {
+    const outcome = await Promise.race([deps.auth.email.send({ kind: "account_deletion_started", to }).then(() => "sent" as const), timeout]);
+    if (outcome === "timeout") console.error("deletion email failed: timeout");
+  } catch {
+    console.error("deletion email failed: error");
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Drops the pending email sign-in of an address (it is keyed by a hash of the address, not by the account id). */

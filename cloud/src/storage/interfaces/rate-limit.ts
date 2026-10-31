@@ -30,6 +30,8 @@ export interface RateLimitStore {
    */
   hit(key: RateLimitKey, limit: number, windowMs: number, now: number): Promise<RateLimitResult>;
   deleteExpired(now: number): Promise<number>;
+  /** Removes every per-account window: the key `acct:<accountId>` and every `acct:<accountId>:<purpose>` (account deletion). */
+  purgeAccount(accountId: string): Promise<void>;
 }
 
 export interface ConcurrencyLease {

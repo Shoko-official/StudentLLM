@@ -140,6 +140,13 @@ export interface AccountStore {
    */
   markDeleting(accountId: string, now: number): Promise<DeletionTombstone | null>;
   getTombstone(accountId: string): Promise<DeletionTombstone | null>;
+  /**
+   * Atomically claims the right to delete an account for `leaseMs`: true for exactly one of several parallel
+   * callers, false for the others and for any caller while the lease runs. The claim ends with the lease, or with
+   * `purgeAccount`. It makes the start of a deletion (the final email, the cancel) happen once; a caller that
+   * lost the claim answers like a repeated request.
+   */
+  claimDeletion(accountId: string, now: number, leaseMs: number): Promise<boolean>;
   /** Stops the automatic retries of a deletion (the retry period ran out). Idempotent. */
   markDeletionManual(accountId: string): Promise<DeletionJob | null>;
   /** Deletions whose `nextAttemptAt` has passed and that are not in manual review, oldest first, at most `limit`. */

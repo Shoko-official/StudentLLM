@@ -25,6 +25,7 @@ export class InMemoryAccountStore implements AccountStore {
   private readonly bySubscription = new Map<string, string>();
   private readonly byCustomer = new Map<string, string>();
   private readonly tombstones = new Map<string, DeletionTombstone>();
+  private readonly deletionClaims = new Map<string, number>();
   private readonly retries = new Map<string, { cancelAttempts: number; nextAttemptAt: number; manualReview: boolean }>();
 
   async create(input: NewAccount) {
@@ -212,6 +213,13 @@ export class InMemoryAccountStore implements AccountStore {
     return this.job(accountId);
   }
 
+  async claimDeletion(accountId: string, now: number, leaseMs: number) {
+    if (!this.accounts.has(accountId) && !this.tombstones.has(accountId)) return false;
+    if ((this.deletionClaims.get(accountId) ?? 0) > now) return false;
+    this.deletionClaims.set(accountId, now + leaseMs);
+    return true;
+  }
+
   async markDeletionManual(accountId: string) {
     const retry = this.retries.get(accountId);
     if (!retry) return null;
@@ -235,5 +243,6 @@ export class InMemoryAccountStore implements AccountStore {
     this.plans.delete(accountId);
     this.tombstones.delete(accountId);
     this.retries.delete(accountId);
+    this.deletionClaims.delete(accountId);
   }
 }
