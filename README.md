@@ -55,6 +55,8 @@ StudentLLM is built around three principles:
 
 ## Quick start
 
+New to StudentLLM? The [user guide](docs/user-guide.md) explains installation (including the unsigned-installer warnings), importing, recording, which optional service does what, privacy, backups and troubleshooting, in plain language.
+
 Requirements: Node.js 22.13+ and npm 10+.
 
 ```bash
@@ -73,7 +75,7 @@ npm run build
 npm run preview
 ```
 
-Tagged releases publish unsigned desktop installers for Windows, macOS (Apple Silicon), and Linux as draft GitHub releases; see [docs/desktop.md](docs/desktop.md#releases).
+Tagged releases publish unsigned desktop installers for Windows, macOS (Apple Silicon), and Linux as draft GitHub releases; see [docs/desktop.md](docs/desktop.md#releases). The first launch of an unsigned installer shows a Windows SmartScreen or macOS Gatekeeper warning; the [user guide](docs/user-guide.md#the-warning-on-first-launch) shows how to proceed.
 
 To create a local unsigned desktop bundle:
 
@@ -153,6 +155,7 @@ docs/
   providers.md               provider setup and runtime configuration
   local-asr.md               local transcription sidecar setup
   local-documents.md         local PDF and image extraction setup
+  user-guide.md              plain-language guide for students: install, first course, services, privacy, backups
   desktop.md                 Tauri desktop runtime setup and validation
   course-notes.md             live note lifecycle and rich-block provider contract
   cloud-plan.md              planned optional cloud tier: architecture, quotas, rollout
