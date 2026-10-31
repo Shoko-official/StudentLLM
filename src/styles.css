@@ -223,7 +223,7 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .chat-compose-area { flex: 0 0 auto; padding-top: 8px; background: var(--page); }
 .chat-composer { display: grid; gap: 8px; padding: 14px 16px 10px; border: 1px solid var(--field-border); border-radius: 14px; background: var(--surface); }
 .chat-composer:focus-within { border-color: var(--focus); }
-.chat-composer textarea { min-width: 0; width: 100%; min-height: 64px; max-height: 200px; resize: none; border: 0; padding: 2px 0; color: var(--text); font-size: 16px; line-height: 1.6; background: transparent; outline: 0; }
+.chat-composer textarea { min-width: 0; width: 100%; min-height: 40px; max-height: 200px; resize: none; border: 0; padding: 2px 0; color: var(--text); font-size: 16px; line-height: 1.6; background: transparent; outline: 0; }
 .chat-composer textarea::placeholder { color: var(--muted); }
 .chat-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .chat-provider { color: var(--muted); font-size: 12px; }
@@ -471,6 +471,12 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 @media (max-width: 1100px) {
   .workspace-grid.with-navigation { grid-template-columns: 210px minmax(0, 1fr); }
   .main-panel { padding: 32px 28px 48px; }
+}
+@media (max-height: 650px) {
+  .main-panel.chat-main-panel { padding-top: 16px; padding-bottom: 10px; }
+  .chat-main-panel > .main-header { margin-bottom: 10px; }
+  .chat-main-panel > .view-tabs { margin-bottom: 8px; }
+  .chat-scroll { padding-top: 12px; padding-bottom: 12px; }
 }
 @media (max-width: 900px) {
   .workspace-grid.with-navigation { grid-template-columns: minmax(0, 1fr); }
