@@ -1,0 +1,30 @@
+{
+  "name": "status.client_outdated",
+  "operation": "getStatus",
+  "description": "Below the minimum client version. The app has no updater; it tells the user to install a newer build and falls back to local.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/status",
+    "headers": {
+      "X-StudentLLM-Client": "studentllm-desktop/0.1.0"
+    }
+  },
+  "response": {
+    "status": 426,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001",
+      "X-StudentLLM-Min-Client": "0.2.0"
+    },
+    "body": {
+      "error": {
+        "code": "client_outdated",
+        "message": "This version of the app is too old for cloud features.",
+        "request_id": "req_01EXAMPLE0000000000000001",
+        "details": {
+          "min_client_version": "0.2.0"
+        }
+      }
+    }
+  },
+  "response_schema": "Error"
+}

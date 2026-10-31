@@ -1,0 +1,38 @@
+{
+  "name": "provider-sets.list.success",
+  "operation": "listProviderSets",
+  "description": "Provider names and regions shown on the consent screen.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/provider-sets",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "provider_sets": [
+        {
+          "id": "ps1",
+          "version": 1,
+          "providers": [
+            "EXAMPLE PROVIDER"
+          ],
+          "regions": [
+            "EXAMPLE REGION"
+          ],
+          "consent_text_version": "2026-11-01",
+          "features": [
+            "chat"
+          ]
+        }
+      ]
+    }
+  },
+  "response_schema": "ProviderSetList"
+}

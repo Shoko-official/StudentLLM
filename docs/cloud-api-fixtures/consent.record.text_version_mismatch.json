@@ -1,0 +1,40 @@
+{
+  "name": "consent.record.text_version_mismatch",
+  "operation": "recordConsent",
+  "description": "The client bundles an old consent text. It cannot collect consent, falls back to local and shows an update-required message.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/consent",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "provider_set": "ps1",
+      "provider_set_version": 1,
+      "features": [
+        "chat"
+      ],
+      "text_version": "2026-01-01",
+      "granted": true
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "consent_outdated",
+        "message": "The consent text is outdated.",
+        "request_id": "req_01EXAMPLE0000000000000001",
+        "details": {
+          "consent_text_version": "2026-11-01"
+        }
+      }
+    }
+  },
+  "response_schema": "Error"
+}

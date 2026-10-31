@@ -1,0 +1,28 @@
+{
+  "name": "account-link.ticket.success",
+  "operation": "linkLoginMethod",
+  "description": "Needs auth_time within 5 minutes. The second method must complete its own sign-in with the ticket.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/account/link",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "method": "google"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "link_ticket": "lt_EXAMPLE_NOT_A_REAL_TICKET",
+      "expires_in": 300
+    }
+  },
+  "response_schema": "LinkTicket"
+}

@@ -1,0 +1,27 @@
+{
+  "name": "account.get.insufficient_scope",
+  "operation": "getAccount",
+  "description": "A manage_token presented to any route other than the devices routes is rejected.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/account",
+    "headers": {
+      "Authorization": "Bearer mt_EXAMPLE_NOT_A_REAL_TOKEN",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    }
+  },
+  "response": {
+    "status": 403,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "insufficient_scope",
+        "message": "This token is only valid for managing devices.",
+        "request_id": "req_01EXAMPLE0000000000000001"
+      }
+    }
+  },
+  "response_schema": "Error"
+}

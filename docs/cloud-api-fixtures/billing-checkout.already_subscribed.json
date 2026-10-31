@@ -1,0 +1,31 @@
+{
+  "name": "billing-checkout.already_subscribed",
+  "operation": "createCheckout",
+  "description": "An active subscription exists, including one that cancels at period end; use the portal.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/billing/checkout",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "plan": "plus_monthly"
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "already_subscribed",
+        "message": "An active subscription already exists.",
+        "request_id": "req_01EXAMPLE0000000000000001"
+      }
+    }
+  },
+  "response_schema": "Error"
+}

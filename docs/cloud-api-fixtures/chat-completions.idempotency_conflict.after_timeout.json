@@ -1,0 +1,50 @@
+{
+  "name": "chat-completions.idempotency_conflict.after_timeout",
+  "operation": "chatCompletions",
+  "description": "The first attempt timed out (gateway abort, or a reset after bytes were sent): an unknown outcome, so it settled at the FULL reservation (700 credits here, not the 42 an answer would have cost), not as failed_no_usage. The same-key retry therefore gets idempotency_conflict with state=settled. Only an explicit upstream error response or a connection failure before the request was accepted is failed_no_usage.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "headers": {
+      "Authorization": "Bearer eyJhbGciOiJFZERTQSIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0",
+      "X-StudentLLM-Consent": "cns_01EXAMPLE",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a11",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "model": "studentllm-large",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Answer from the provided course passages."
+        },
+        {
+          "role": "user",
+          "content": "EXAMPLE QUESTION AND PASSAGES"
+        }
+      ],
+      "stream": false,
+      "max_tokens": 512
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "idempotency_conflict",
+        "message": "A request with this key was already settled.",
+        "request_id": "req_01EXAMPLE0000000000000001",
+        "details": {
+          "state": "settled",
+          "request_id": "req_01EXAMPLE0000000000000000",
+          "credits_charged": 700
+        }
+      }
+    }
+  },
+  "response_schema": "Error"
+}

@@ -1,0 +1,32 @@
+{
+  "name": "auth-email-verify.invalid_code",
+  "operation": "authEmailVerify",
+  "description": "One generic error for wrong, expired, used or over-attempted codes.",
+  "request": {
+    "method": "POST",
+    "path": "/auth/email/verify",
+    "headers": {
+      "Content-Type": "application/json",
+      "X-StudentLLM-Client": "studentllm-desktop/0.2.0"
+    },
+    "body": {
+      "email": "student@example.invalid",
+      "code": "AAAAAAAA",
+      "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001"
+    },
+    "body": {
+      "error": {
+        "code": "invalid_code",
+        "message": "The code is not valid.",
+        "request_id": "req_01EXAMPLE0000000000000001"
+      }
+    }
+  },
+  "response_schema": "Error"
+}
