@@ -45,11 +45,11 @@ When you open StudentLLM for the first time the library is empty. That is normal
    - **Study**: generate a summary, guide, quiz, flashcards, concept map or glossary.
 4. Rename and file the course later: **More → Edit course**, or **More → Organize material with AI** to get a suggested name and place (this one needs the AI model, see [section 5](#5-what-needs-which-service)).
 
-To import a whole folder of course files at once (one course per file, grouped by chapter), use **Import folder** in the left column. Each course appears when its file starts importing, so a file that was not reached yet has no course; if the import is interrupted, look at which courses exist before importing the folder again, because a file imported twice makes a second course.
+To import a whole folder, open the course that should receive it and use **Import folder** in the left column. All supported files are added as sources of that one course, in reading order. An empty library creates one course named after the folder. Imports run one file at a time; **Stop after this file** leaves the remaining files untouched. After an interruption, import the folder again: files already in that course are detected by their content and skipped.
 
 ## 3. Importing material
 
-Click **Import file** and choose one or several files. What happens depends on the type:
+Click **Import file** and choose one or several files. All selected files stay in the open course, including if you browse another course while they are being processed. Ordinary imports and retranscription never let AI create or choose another course; use **More > Organize material with AI** when you want to review a placement proposal. What happens depends on the type:
 
 | You import | What you get | Needs |
 | --- | --- | --- |

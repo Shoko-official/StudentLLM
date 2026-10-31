@@ -214,7 +214,7 @@ test.describe('StudentLLM workspace', () => {
     ]));
   });
 
-  test('preserves a course created while imported material is being classified', async ({ page }) => {
+  test('preserves a course created while imported material is being formatted', async ({ page }) => {
     await page.goto('/');
     let releaseClassification!: () => void;
     const classificationGate = new Promise<void>((resolve) => { releaseClassification = resolve; });
