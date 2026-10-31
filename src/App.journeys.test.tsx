@@ -353,4 +353,57 @@ describe('user journeys', () => {
       await waitFor(() => expect(notes).toHaveTextContent('# not a heading'));
     });
   });
+
+  describe('files that arrive in other ways', () => {
+    const dropFiles = (files: File[]) => {
+      const event = new Event('drop', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', { value: { types: ['Files'], files } });
+      act(() => { window.dispatchEvent(event); });
+      return event;
+    };
+
+    it('imports a file dropped on the window instead of letting the browser leave the app', async () => {
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+
+      const event = dropFiles([new File(['Dropped notes.'], 'dropped.md', { type: 'text/markdown' })]);
+      expect(event.defaultPrevented).toBe(true);
+      expect(await screen.findByText(/dropped\.md added to course sources/)).toBeInTheDocument();
+      expect(savedWorkspace().lessonWorkspaces[FIXTURE_LESSON_ID].resources.map((resource: { name: string }) => resource.name)).toContain('dropped.md');
+    });
+
+    it('ignores drags that carry no files, such as selected text', () => {
+      render(<App provider={null} />);
+      const event = new Event('drop', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', { value: { types: ['text/plain'], files: [] } });
+      act(() => { window.dispatchEvent(event); });
+      expect(event.defaultPrevented).toBe(false);
+    });
+
+    it('asks for a course first when nothing is open', () => {
+      localStorage.clear();
+      render(<App provider={null} />);
+      const event = dropFiles([new File(['Notes.'], 'notes.md', { type: 'text/markdown' })]);
+      expect(event.defaultPrevented).toBe(true);
+      expect(screen.getByText('Create a course first, then drop the files onto it.')).toBeInTheDocument();
+    });
+
+    it('keeps a file of an unreadable type as an original and says so', async () => {
+      // The file picker's own filter would normally hide such a file; "All files" or a drop still delivers it.
+      const user = userEvent.setup({ applyAccept: false });
+      render(<App provider={null} sourceBlobStore={memoryBlobStore()} />);
+      await user.upload(screen.getByLabelText('Select course source'), new File(['MZ'], 'setup.exe', { type: 'application/x-msdownload' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('setup.exe was saved as an original in Sources, but StudentLLM cannot read this type of file.');
+    });
+
+    it('says why a truncated course export cannot be imported and changes nothing', async () => {
+      const user = userEvent.setup();
+      render(<App provider={null} />);
+      const lessonsBefore = savedWorkspace().lessons.length;
+      await user.upload(screen.getByLabelText('Import course export'), new File(['{"format":"studentllm-course","version":1,"lesson":{'], 'physics.studentllm.json', { type: 'application/json' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('physics.studentllm.json could not be imported. The file is damaged or cut short');
+      expect(screen.getByRole('alert')).toHaveTextContent('Nothing was changed.');
+      expect(savedWorkspace().lessons).toHaveLength(lessonsBefore);
+    });
+  });
 });

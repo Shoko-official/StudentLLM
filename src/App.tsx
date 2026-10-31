@@ -62,7 +62,7 @@ import { describeAiFailure, describeDocumentFailure, describeSpeechFailure } fro
 import { mergeSegments } from './lib/transcript-merge';
 import { AudioChunkStore, createRecordingChunkStore } from './lib/recording-storage';
 import { listPendingRecordings, removePendingRecording, savePendingRecording } from './lib/recording-recovery';
-import { buildCourseExport, exportSizeWarning, readCourseExport } from './lib/course-transfer';
+import { buildCourseExport, describeCourseImportFailure, exportSizeWarning, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
 import { RetrievalDocument, searchDocumentsHybrid } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
@@ -167,6 +167,7 @@ const RECORDING_NOTICE_VERSION = 1;
 const SERVICES_STORAGE_KEY = 'studentllm.services.v1';
 type ServiceSettings = { llmProvider: string; llmUrl: string; model: string; nimModel: string; asrUrl: string; documentsUrl: string };
 // NVIDIA NIM goes through the dev server's credential proxy, so it is only offered in development builds.
+const USER_GUIDE_URL = 'https://github.com/Shoko-official/StudentLLM/blob/main/docs/user-guide.md';
 const NIM_AVAILABLE = import.meta.env.DEV;
 const NIM_PROXY_BASE_URL = '/nvidia-nim/v1';
 const NIM_PROXY_ERROR_HEADER = 'x-studentllm-proxy-error';
@@ -1992,10 +1993,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     }
   };
 
-  const importSource = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    event.target.value = '';
-    event.target.accept = sourceAccept;
+  const importFiles = (files: File[]) => {
     if (files.length > 1) {
       enqueueBatchImport(files);
       return;
@@ -2003,6 +2001,47 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     if (!files[0] || !hasCourse) return;
     void importSourceFile(files[0], activeLesson);
   };
+
+  const importSource = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    event.target.accept = sourceAccept;
+    importFiles(files);
+  };
+
+  // Without this, a file dropped anywhere on the page makes the browser open it and leave the app, which would also
+  // cut a running recording or import. Dropped files are imported into the open course instead.
+  const importDroppedFilesRef = useRef<(files: File[]) => void>(() => undefined);
+  importDroppedFilesRef.current = (files) => {
+    if (!hasCourse) {
+      notify('Create a course first, then drop the files onto it.');
+      return;
+    }
+    if (hasOpenDialog) {
+      notify('Close the open window, then drop the files again.');
+      return;
+    }
+    importFiles(files);
+  };
+  useEffect(() => {
+    const hasFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes('Files');
+    const onDragOver = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    };
+    const onDrop = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      importDroppedFilesRef.current(Array.from(event.dataTransfer?.files ?? []));
+    };
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, []);
 
   const importSourceFile = async (file: File, targetLesson: Lesson, routeMaterial = true) => {
     setActionError('');
@@ -2102,6 +2141,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
         }
       }
       const extractableResource = isExtractableDocument(resource);
+      if (resource.kind === 'document' && !extractableResource) {
+        setActionError(`${resource.name} was saved as an original in Sources, but StudentLLM cannot read this type of file. Use PDF, Word, PowerPoint, text, Markdown, image or audio files to get notes from it.`);
+      }
       if (!localDocumentEngine && extractableResource) {
         setActionError(`${resource.name} is saved. Connect the document service in Settings to extract its text.`);
       }
@@ -2537,8 +2579,8 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       setActionError('');
       setShowAllResources(false);
       notify(`${imported.lesson.title} imported.`);
-    } catch {
-      notify('The course import could not be completed.');
+    } catch (error) {
+      setActionError(`${file.name} could not be imported. ${describeCourseImportFailure(error)} Nothing was changed.`);
     } finally {
       input.value = '';
     }
@@ -2825,7 +2867,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       {showGlobalSearch && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowGlobalSearch(false)}><section className="modal search-modal" role="dialog" aria-modal="true" aria-labelledby="global-search-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace index</span><h2 id="global-search-title">Search all course content</h2></div><button className="icon-button" aria-label="Close search" onClick={() => setShowGlobalSearch(false)}><X size={17} /></button></div><label className="modal-search"><Search size={15} /><input autoFocus aria-label="Search all course content" value={globalSearchValue} onChange={(event) => setGlobalSearchValue(event.target.value)} placeholder="Search courses, transcripts, and sources" /></label>{globalSearchValue.trim() && <div className="search-results" aria-live="polite">{globalSearchResults.length ? globalSearchResults.map((result) => <button className="search-result" key={`${result.lessonId}:${result.id}`} onClick={() => openSearchResult(result.lessonId)}><strong><Snippet text={result.title} query={globalSearchValue} /></strong><small>{result.detail}</small></button>) : <p className="empty-state">No matching course content.</p>}</div>}</section></div>}
       {showReviewPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowReviewPanel(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="review-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Review queue</span><h2 id="review-panel-title">Needs review <span className="modal-count">{reviewItems.length}</span></h2></div><button className="icon-button" aria-label="Close review queue" onClick={() => setShowReviewPanel(false)}><X size={17} /></button></div><p className="modal-description">Transcript segments and imported pages that still need a quick human check.</p><div className="review-results">{reviewItems.length ? reviewItems.map(({ lesson, segment }) => <button className="review-result" key={`${lesson.id}:${segment.id}`} onClick={() => { selectLesson(lesson.id); setShowReviewPanel(false); }}><strong><Snippet text={segment.text} /></strong><small>{lesson.title} · {segment.timestamp}</small></button>) : <p className="empty-state">Nothing needs review.</p>}</div></section></div>}
       {showTranscriptPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowTranscriptPanel(false)}><section className="modal transcript-modal" role="dialog" aria-modal="true" aria-labelledby="transcript-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Transcript archive</span><h2 id="transcript-panel-title">Full transcript <span className="modal-count">{transcript.length}</span></h2>{visibleLiveTranscript.length > 0 && <span className="review-badge">Live preview</span>}</div><button className="icon-button" aria-label="Close full transcript" onClick={() => setShowTranscriptPanel(false)}><X size={17} /></button></div><p className="modal-description">Review every indexed segment from {activeLesson.title}. Changes are saved to this course workspace.</p><div className={`transcript-list modal-transcript-list ${compactTranscript ? 'compact' : ''}`}>{transcript.length || visibleLiveTranscript.length ? [...transcript, ...visibleLiveTranscript].map(renderTranscriptSegment) : <p className="empty-state">This course has no transcript segments yet.</p>}</div></section></div>}
-      {showSettingsPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettingsPanel(false)}><section className="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace preferences</span><h2 id="settings-panel-title">Settings</h2></div><button className="icon-button" aria-label="Close settings" onClick={() => setShowSettingsPanel(false)}><X size={17} /></button></div><p className="modal-description">Connect your local services. Recording and text import work without an AI model.</p>
+      {showSettingsPanel && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowSettingsPanel(false)}><section className="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-panel-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><span className="section-kicker">Workspace preferences</span><h2 id="settings-panel-title">Settings</h2></div><button className="icon-button" aria-label="Close settings" onClick={() => setShowSettingsPanel(false)}><X size={17} /></button></div><p className="modal-description">Connect your local services. Recording and text import work without an AI model. <a href={USER_GUIDE_URL} target="_blank" rel="noreferrer">Read the user guide</a> for setup help.</p>
         <form className="connection-settings" onSubmit={saveServiceSettings}>
           {NIM_AVAILABLE && <label>AI provider<select value={serviceDraft.llmProvider} onChange={(event) => setServiceDraft((current) => ({ ...current, llmProvider: event.target.value }))}><option value="lm-studio">LM Studio (local)</option><option value="nvidia-nim">NVIDIA NIM (cloud)</option></select></label>}
           {usesNim(serviceDraft) ? <>

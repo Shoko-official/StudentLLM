@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCourseExport, exportSizeWarning, MAX_COURSE_EXPORT_BYTES, readCourseExport } from './course-transfer';
+import { buildCourseExport, describeCourseImportFailure, exportSizeWarning, MAX_COURSE_EXPORT_BYTES, readCourseExport } from './course-transfer';
 
 const lesson = {
   id: 'lesson-1',
@@ -73,5 +73,17 @@ describe('course transfer', () => {
     expect(exportSizeWarning(10 * 1024 * 1024)).toBeNull();
     expect(exportSizeWarning(MAX_COURSE_EXPORT_BYTES)).toBeNull();
     expect(exportSizeWarning(MAX_COURSE_EXPORT_BYTES + 5 * 1024 * 1024)).toMatch(/more than the 256 MB/);
+  });
+
+  it('explains why a truncated, tampered or foreign file cannot be imported', async () => {
+    const exportBlob = await buildCourseExport(lesson, workspace, { loadSourceBlob: async () => new Blob(['notes']), listAudioChunks: async () => [] });
+    const text = await exportBlob.text();
+    const reason = async (input: string) => describeCourseImportFailure(await readCourseExport(input).catch((error: unknown) => error));
+
+    expect(await reason(text.slice(0, Math.floor(text.length / 2)))).toMatch(/damaged or cut short/);
+    expect(await reason(JSON.stringify({ format: 'something-else', version: 1 }))).toMatch(/not a StudentLLM course export/);
+    expect(await reason(text.replace('"chunks":[{"data":"', '"chunks":[{"data":"!!!'))).toMatch(/modified/);
+    expect(describeCourseImportFailure(new Error('The course export is too large.'))).toMatch(/256 MB/);
+    expect(describeCourseImportFailure(new Error('disk full'))).toMatch(/could not be read or its contents could not be stored/);
   });
 });

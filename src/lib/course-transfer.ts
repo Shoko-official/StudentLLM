@@ -296,3 +296,13 @@ export async function readCourseExport(input: Blob | string, idFactory: CourseId
     assets,
   };
 }
+
+/** Why a course file could not be imported, in words a student can act on. */
+export function describeCourseImportFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  if (/too large/i.test(message)) return `Course files larger than ${Math.round(MAX_COURSE_EXPORT_BYTES / (1024 * 1024))} MB cannot be imported.`;
+  if (/not valid JSON/i.test(message)) return 'The file is damaged or cut short (it may not have finished downloading or copying). Export the course again from the original.';
+  if (/not supported/i.test(message)) return 'This is not a StudentLLM course export, it was made by a newer version of the app, or it was modified.';
+  if (/invalid asset chunk|unknown resource/i.test(message)) return 'The file has been modified or is damaged.';
+  return 'The file could not be read or its contents could not be stored.';
+}
