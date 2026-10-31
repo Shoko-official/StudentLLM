@@ -245,12 +245,22 @@ function parseWorkspaceUncounted(raw: string | null, fallback: WorkspaceSnapshot
     const activeLessonId = typeof parsed.activeLessonId === 'string' && lessons.some((lesson) => lesson.id === parsed.activeLessonId)
       ? parsed.activeLessonId
       : lessons[0]?.id ?? '';
+    const hasTopLevelLists = [parsed.resources, parsed.transcript, parsed.chat, parsed.artifacts].some(Array.isArray);
+    const lessonWorkspaces = parseLessonWorkspaces(parsed.lessonWorkspaces, lessons);
+    const activeCopy = lessonWorkspaces?.[activeLessonId];
+    if (!hasTopLevelLists && activeCopy) {
+      // Compact shape (see serializeWorkspaceSnapshot): the active course lives only in `lessonWorkspaces`. The in-memory
+      // snapshot still exposes it as the top-level lists, exactly as the older shape did.
+      return {
+        activeLessonId, lessons, resources: activeCopy.resources, transcript: activeCopy.transcript, chat: activeCopy.chat, artifacts: activeCopy.artifacts,
+        lessonWorkspaces,
+      };
+    }
     const resources = keep(parsed.resources, isResource);
     const transcript = keep(parsed.transcript, isTranscriptSegment);
     const chat = keep(parsed.chat, isChatMessage);
     const sourceIds = new Set(resources.map((resource) => resource.id));
     const artifacts = keep(parsed.artifacts, (artifact): artifact is Artifact => isArtifact(artifact, sourceIds));
-    const lessonWorkspaces = parseLessonWorkspaces(parsed.lessonWorkspaces, lessons);
 
     return { activeLessonId, lessons, resources, transcript, chat, artifacts, ...(lessonWorkspaces ? { lessonWorkspaces } : {}) };
   } catch {
@@ -410,11 +420,24 @@ export function loadWorkspace(fallback: WorkspaceSnapshot, storage: Storage | un
   return loadWorkspaceWithStatus(fallback, storage).snapshot;
 }
 
+/**
+ * The browser stores the workspace in this shape. The active course used to be written twice, as the top-level
+ * `resources`, `transcript`, `chat` and `artifacts` and again inside `lessonWorkspaces[activeLessonId]`, which about
+ * doubled the size of a large course. When `lessonWorkspaces` is present the top-level copies are left out; the loader
+ * rebuilds them, and still reads the older shape. Without `lessonWorkspaces` (the very old flat shape) nothing is left out.
+ * The native shell keeps writing the full shape: SQLite has no such quota.
+ */
+export function serializeWorkspaceSnapshot(snapshot: WorkspaceSnapshot): string {
+  if (!snapshot.lessonWorkspaces) return JSON.stringify({ version: 1, ...snapshot });
+  const { resources: _resources, transcript: _transcript, chat: _chat, artifacts: _artifacts, ...compact } = snapshot;
+  return JSON.stringify({ version: 1, ...compact });
+}
+
 export function saveWorkspace(snapshot: WorkspaceSnapshot, storage: Storage | undefined = getStorage()): boolean {
   if (!storage) return false;
 
   try {
-    const serialized = JSON.stringify({ version: 1, ...snapshot });
+    const serialized = serializeWorkspaceSnapshot(snapshot);
     if (serialized.length > MAX_WORKSPACE_SNAPSHOT_BYTES) return false;
     storage.setItem(WORKSPACE_STORAGE_KEY, serialized);
     return true;
