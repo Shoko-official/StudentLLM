@@ -701,11 +701,24 @@ def pdf_layout_blocks(layout_page: object) -> tuple[list[dict[str, object]], flo
 
 def render_pdf_page_png(document: object, page_index: int) -> bytes:
     """Rasterise one page at `PDF_OCR_SCALE` for OCR."""
+    return rasterize_pdf_page(document, page_index)[0]
+
+
+def rasterize_pdf_page(document: object, page_index: int) -> tuple[bytes, tuple[float, ...]]:
+    """Return the raster and its pixel-to-PDF transform, including CropBox and page rotation."""
     page = document[page_index]
     try:
-        buffer = BytesIO()
-        page.render(scale=PDF_OCR_SCALE).to_pil().convert("RGB").save(buffer, format="PNG")
-        return buffer.getvalue()
+        bitmap = page.render(scale=PDF_OCR_SCALE)
+        try:
+            converter = bitmap.get_posconv(page)
+            origin, x_step, y_step = [converter.to_page(x, y) for x, y in ((0, 0), (1, 0), (0, 1))]
+            transform = (x_step[0] - origin[0], x_step[1] - origin[1],
+                         y_step[0] - origin[0], y_step[1] - origin[1], *origin)
+            buffer = BytesIO()
+            bitmap.to_pil().convert("RGB").save(buffer, format="PNG")
+            return buffer.getvalue(), transform
+        finally:
+            bitmap.close()
     finally:
         page.close()
 
@@ -739,11 +752,17 @@ def pdf_uncovered_image_regions(layout_page: object, native_blocks: list[dict[st
     return regions
 
 
-def image_region_ocr_blocks(blocks: list[dict[str, object]], regions: list[tuple[float, float, float, float]], native: list[dict[str, object]]) -> list[dict[str, object]]:
+def image_region_ocr_blocks(blocks: list[dict[str, object]], regions: list[tuple[float, float, float, float]],
+                            native: list[dict[str, object]], raster_to_layout: tuple[float, ...]) -> list[dict[str, object]]:
     """Keep OCR additions inside the raster regions, retaining native text instead of its OCR approximation."""
+    from pdfminer.utils import apply_matrix_pt
+
     additions = []
     for block in blocks:
-        normalized = {**block, **{key: float(block[key]) / PDF_OCR_SCALE for key in ("x", "y", "width", "height")}}
+        bx, by, bw, bh = [float(block[key]) for key in ("x", "y", "width", "height")]
+        points = [apply_matrix_pt(raster_to_layout, (x, y)) for x in (bx, bx + bw) for y in (by, by + bh)]
+        xs, ys = zip(*points)
+        normalized = {**block, "x": min(xs), "y": min(ys), "width": max(xs) - min(xs), "height": max(ys) - min(ys)}
         x, y = normalized["x"] + normalized["width"] / 2, normalized["y"] + normalized["height"] / 2
         if not any(x0 <= x <= x1 and y0 <= y <= y1 for x0, y0, x1, y1 in regions):
             continue
@@ -785,6 +804,7 @@ def _extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
     from pdfminer.converter import PDFPageAggregator
     from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
     from pdfminer.pdfpage import PDFPage
+    from pdfminer.utils import mult_matrix
 
     page_count = 0
     for _ in PDFPage.get_pages(BytesIO(pdf_bytes)):
@@ -795,6 +815,7 @@ def _extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
     pages: list[dict[str, object]] = []
     too_dense: list[int] = []
     image_regions: dict[int, list[tuple[float, float, float, float]]] = {}
+    page_transforms: dict[int, tuple[float, ...]] = {}
     resources = PDFResourceManager()
     device = PDFPageAggregator(resources, laparams=None)  # Raw characters first; the analysis is chosen per page.
     interpreter = PDFPageInterpreter(resources, device)
@@ -807,6 +828,10 @@ def _extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
             continue
         layout_blocks, width, height = pdf_layout_blocks(layout_page)
         image_regions[page_number] = pdf_uncovered_image_regions(layout_page, layout_blocks)
+        # Match pdfminer's rotated MediaBox layout, rather than assuming PDFium's cropped raster origin.
+        a, b, c, d, e, f = interpreter.ctm
+        left, _, _, top = layout_page.bbox
+        page_transforms[page_number] = (a, -b, c, -d, e - left, top - f)
         text = "\n".join(block_text(block) for block in layout_blocks).strip()
         pages.append({
             "pageNumber": page_number,
@@ -833,10 +858,14 @@ def _extract_pdf(pdf_bytes: bytes) -> tuple[str, list[dict[str, object]]]:
             document = pypdfium2.PdfDocument(pdf_bytes)
             try:
                 for page in ocr_pages:
-                    _, blocks = ocr_image(render_pdf_page_png(document, int(page["pageNumber"]) - 1))
+                    image, raster_to_pdf = rasterize_pdf_page(document, int(page["pageNumber"]) - 1)
+                    _, blocks = ocr_image(image)
                     if page["text"] and not has_unmapped_glyphs(str(page["text"])):
                         # Native reading order is kept; recovered image text follows it, without invented structure.
-                        blocks = [*page["blocks"], *image_region_ocr_blocks(blocks, image_regions[page["pageNumber"]], page["blocks"])]
+                        raster_to_layout = mult_matrix(raster_to_pdf, page_transforms[page["pageNumber"]])
+                        additions = image_region_ocr_blocks(blocks, image_regions[page["pageNumber"]],
+                                                            page["blocks"], raster_to_layout)
+                        blocks = [*page["blocks"], *additions]
                     page["blocks"] = blocks
                     page["text"] = "\n".join(str(block["text"]) for block in blocks)
             finally:

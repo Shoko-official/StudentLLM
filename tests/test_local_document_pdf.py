@@ -148,6 +148,47 @@ class PdfExtractionTests(unittest.TestCase):
         self.assertEqual((model, pages[0]["text"]), ("pdfminer", "Native caption"))
         ocr.assert_not_called()
 
+    def test_mixed_page_ocr_uses_media_layout_coordinates_after_asymmetric_crop_and_rotation(self):
+        import pypdfium2
+
+        for crop_box in (None, (50, 150, 560, 700), (80, 120, 580, 735)):
+            for rotation in (0, 90, 180, 270):
+                with self.subTest(crop_box=crop_box, rotation=rotation):
+                    pdf = pdf_fixtures.mixed_image_pdf(bytes([255]) * 100, 10, 10,
+                        native_runs=[("Native caption", 100, 170)], crop_box=crop_box, rotation=rotation)
+                    # Place oracle OCR boxes using PDFium's actual source-to-render transform.
+                    # These are PDF content positions, independent of the extraction implementation.
+                    with pypdfium2.PdfDocument(pdf) as document:
+                        pdf_page = document[0]
+                        bitmap = pdf_page.render(scale=local_document_server.PDF_OCR_SCALE)
+                        converter = bitmap.get_posconv(pdf_page)
+                        blocks = []
+                        for text, box in (("Wrong duplicated caption", (100, 168, 182, 180)),
+                                          ("Recovered scan text", (100, 660, 260, 680))):
+                            points = [converter.to_bitmap(x, y) for x in (box[0], box[2]) for y in (box[1], box[3])]
+                            xs, ys = zip(*points)
+                            blocks.append({"x": min(xs), "y": min(ys), "width": max(xs) - min(xs),
+                                           "height": max(ys) - min(ys), "text": text, "kind": "text"})
+                        bitmap.close()
+                        pdf_page.close()
+                    with mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=True), \
+                            mock.patch.object(local_document_server, "ocr_image", return_value=("rapidocr", blocks)):
+                        _, pages = local_document_server.extract_pdf(pdf)
+                    self.assertEqual(pages[0]["text"].count("Recovered scan text"), 1)
+                    self.assertNotIn("Wrong duplicated caption", pages[0]["text"])
+                    recovered = next(block for block in pages[0]["blocks"] if block["text"] == "Recovered scan text")
+                    layout_point = {
+                        0: lambda x, y: (x, 792 - y), 90: lambda x, y: (y, x),
+                        180: lambda x, y: (612 - x, y), 270: lambda x, y: (792 - y, 612 - x),
+                    }[rotation]
+                    xs, ys = zip(*(layout_point(x, y) for x in (100, 260) for y in (660, 680)))
+                    expected = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+                    for key, value in zip(("x", "y", "width", "height"), expected):
+                        self.assertAlmostEqual(recovered[key], value, delta=0.51)
+                    native_text = "".join(pages[0]["text"].split()).replace("Recoveredscantext", "")
+                    # Rotated native characters can be separate pdfminer lines; preserve all of them once.
+                    self.assertEqual(sorted(native_text), sorted("Nativecaption"))
+
     def test_keeps_native_caption_when_mixed_page_ocr_finds_no_text(self):
         pdf = pdf_fixtures.mixed_image_pdf(bytes([255]) * 100, 10, 10)
         with mock.patch.object(local_document_server, "has_ocr_dependencies", return_value=True), \
