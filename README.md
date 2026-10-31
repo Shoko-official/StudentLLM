@@ -163,6 +163,7 @@ docs/
   cloud-admin.openapi.yaml   OpenAPI 3.1 source of truth for the admin API
   cloud-admin-fixtures/      shared JSON conformance examples for the admin API
   legal/                     draft terms and privacy policy for the cloud tier (not legal advice)
+  enterprise-readiness.md    honest enterprise-readiness assessment, roadmap, backlog and claims register
 ```
 
 ## Roadmap

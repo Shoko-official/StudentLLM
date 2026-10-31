@@ -1,0 +1,467 @@
+# Enterprise readiness: assessment and backlog
+
+Status: assessment as of 2026-10-31, written against `main` at commit `92d124e`. It is a planning document, not a promise, not a compliance statement and not legal advice. Anything marked "verify" was not checked against an official source and must be before it is relied on. Anything marked "unverified" could not be confirmed from this repository or from the tools available when this was written.
+
+The founder's goal is to sell StudentLLM to enterprises and institutions (universities, training organisations, corporate learning teams). This document says what stands between the repository today and a product that an enterprise procurement, security and legal team would approve, which of that engineers (and AI agents working under review) can do in code and docs, and which of it only the company can do.
+
+Related documents: [status.md](./status.md) (verified coverage), [architecture.md](./architecture.md), [desktop.md](./desktop.md), [providers.md](./providers.md), [cloud-plan.md](./cloud-plan.md), [cloud-api.md](./cloud-api.md), [legal/](./legal/) (consumer-oriented drafts), [../SECURITY.md](../SECURITY.md), [../cloud/README.md](../cloud/README.md). The cloud admin design (`docs/cloud-admin.md`) was on the unmerged branch `docs/cloud-admin` when this was written and is cited as "the admin design"; its status is "planned, not implemented".
+
+## Contents
+
+1. [Positioning and the honest picture](#1-positioning-and-the-honest-picture)
+2. [Measured evidence snapshot](#2-measured-evidence-snapshot)
+3. [Buyer requirements matrix](#3-buyer-requirements-matrix)
+4. [Control mapping: SOC 2 and ISO 27001](#4-control-mapping-soc-2-and-iso-27001)
+5. [Licensing options given MIT](#5-licensing-options-given-mit)
+6. [Sequenced roadmap](#6-sequenced-roadmap)
+7. [Backlog: what engineers and agents can do now](#7-backlog-what-engineers-and-agents-can-do-now)
+8. [What cannot be done by code](#8-what-cannot-be-done-by-code)
+9. [Claims register](#9-claims-register)
+10. [Open decisions and unverified items](#10-open-decisions-and-unverified-items)
+11. [Appendix: how the numbers were measured](#11-appendix-how-the-numbers-were-measured)
+
+## 1. Positioning and the honest picture
+
+### What the local-first design gives an enterprise buyer
+
+- Course content (audio, transcripts, documents, notes, chat) stays on the user's machine by default. `SECURITY.md` states that local mode makes no implicit network request; `tests/e2e/workspace.spec.ts` has one browser scenario that records non-local requests while the app is used offline and expects none. There is no vendor-held course data, so a breach of the vendor cannot expose lectures that the vendor never received.
+- Inference can run on the buyer's own hardware or network through any OpenAI-compatible endpoint (`docs/providers.md`). That is a real answer to "can we keep it on-prem".
+- Model output is rendered defensively: Markdown images are replaced by their alt text (`src/lib/rich-text.tsx`), so a poisoned document cannot cause an image-fetch exfiltration through rendered output, and links are limited to http, https, mailto and relative targets.
+- Desktop persistence has recovery evidence: SQLite WAL, crash-recovery relaunch cycles on Windows, macOS and Linux (10 per CI run, a 30-cycle manual soak recorded in `docs/status.md`).
+- The cloud design (`docs/cloud-plan.md`) is careful: no content stored, consent per provider set, fail-closed pipeline, contract-first with fixtures. The gateway scaffold has extensive tests for a scaffold (297 tests, 92% statement coverage; section 2).
+
+### What it does not give them
+
+- **Central management.** There is none. Settings are per user and per device (browser local storage plus a few environment variables). An IT team cannot push a configuration, lock a setting, disable cloud, restrict endpoints or see what is deployed.
+- **Identity.** No SSO, SCIM, roles, organisations, seats or domain verification. The cloud design is one individual account per email, three devices, Google or email-code sign-in, consumer billing (`docs/cloud-plan.md`). The admin design is an operator console for the founder (owner role only in the first cut) and lists a customer support portal as a non-goal.
+- **Audit.** No customer-visible audit trail. The admin design's tamper-evident log records operator actions; it was not designed as a tenant audit export.
+- **Distribution that IT accepts.** Installers are unsigned, there is no MSI or PKG, no silent-install or uninstall guidance, no updater, no supported-OS statement, and the optional Python speech and document services are not bundled (`docs/desktop.md`).
+- **Support and assurance.** No SLA, support tiers, on-call, status page, security certification, penetration test, VPAT or completed questionnaire. `main` has 354 commits; across all branches `git shortlog -sn --all` lists 772 for the main author identity, 28 for dependabot and 6 for a second identity (probably the same person; unverified), and `CODEOWNERS` lists one account. Key-person risk is a buyer-visible fact.
+- **A quality story they can verify.** The benchmark evidence is mostly about one general model, not about the product, and several targets are recorded as unmet (section 3, AI rows).
+
+### Valuation, bluntly
+
+Whether the company is worth several million euros depends on customers, recurring revenue, retention, sales traction, team, and market position. Code cannot supply any of those, and none of this document's work changes a valuation by itself. This document covers only the product and engineering readiness side: it removes reasons for a buyer's security, procurement and legal teams to say no. It does not generate demand, and a product that passes every row below can still have no customers.
+
+### Three product shapes to decide between (no decision made here)
+
+The matrix below applies differently depending on what is sold. Several rows (SSO, SCIM, tenant model, audit export, data residency, SLA) only matter if the vendor operates an identity-bearing service.
+
+| Shape | What the customer buys | What it needs most | Reuse of existing work |
+| --- | --- | --- | --- |
+| A. Managed local-first | Signed installers, a policy mechanism for IT, an offline licence, a support contract. No vendor cloud. | Code signing, MSI/PKG, managed configuration, bundled sidecars, offline licence, support process, assurance of the company (not of a service) | Highest: it is the existing product plus distribution and management |
+| B. Organisation cloud tier | A managed Plus-style service for an institution: pooled budgets, SSO, SCIM, admin console, audit export, EU residency, SLA | Everything in A that the users run, plus the whole identity, tenancy, operations and assurance stack | Medium: gateway scaffold and contract-first process; tenancy, SSO, SLA are all new |
+| C. Institution-hosted gateway | Gateway and models run inside the customer's environment (on-prem or their cloud) | Packaging and operations guides for the gateway outside Cloudflare, supported inference stack, upgrade path | Medium: `cloud/` uses Web-standard APIs and runs on Node 22, but the state design assumes Durable Objects and D1 |
+
+Shape A can ship before B or C exist and gives the fewest new obligations. Which shapes the company wants is a founder decision; the roadmap in section 6 marks which phases each shape needs.
+
+## 2. Measured evidence snapshot
+
+Taken on 2026-10-31 in an isolated worktree of `main` (92d124e). Commands are in the [appendix](#11-appendix-how-the-numbers-were-measured). "Reported" means taken from `docs/status.md` and not re-run here.
+
+| Item | Result | Source |
+| --- | --- | --- |
+| App unit and integration tests (Vitest) | 41 files, 438 tests, all passed (81.9 s) | Run here. `status.md` reports 40 files and 417 tests at its date, so it lags `main` |
+| App statement / branch / function / line coverage | 79.34% / 73.87% / 77.31% / 84.74% over `src/**` excluding tests | Run here with `@vitest/coverage-v8` installed without saving. **CI has no coverage tooling and no threshold** |
+| Cloud gateway tests | 10 files, 297 tests, all passed (5.6 s) | Run here |
+| Cloud gateway coverage | 92.12% / 86.84% / 93.35% / 94.73% over `cloud/src` excluding tests and `src/testing` | Run here. Note most routes are 501 stubs, so this measures the scaffold, not a service |
+| Browser e2e (Playwright, Chromium only) | 48 `test(` declarations in `tests/e2e/`; `status.md` reports 48 passed and 1 skipped | Counted by grep; not re-run here (needs browsers) |
+| Packaged desktop UI (WebDriver) | Linux and Windows run it; macOS is covered by package and recovery jobs only | `docs/desktop.md`, `ci.yml` |
+| Rust tests | 9 `#[test]` functions (4 in `sidecars.rs`, 5 in `workspace.rs`) | Counted by grep; not re-run |
+| Python tests | 89 `def test_` methods under `tests/`; `status.md` reports 24 sidecar tests passing | Counted by grep; not re-run |
+| Accessibility automation | `@axe-core/playwright` referenced in `tests/e2e/workspace.spec.ts` (4 lines mention `AxeBuilder`: the import and its uses; by grep); no manual or screen-reader audit recorded | grep and `status.md` |
+| Fuzz, property-based, load, soak (gateway), chaos (gateway), DAST | None found. `chaosStores()` in `cloud/src/testing` reorders concurrent callers; it is not fault injection | grep of `tests/`, `src/`, `cloud/src` |
+| npm audit | Root: 4 low advisories, none high (exit 0 for `--omit=dev --audit-level=high`); `cloud/`: 0 vulnerabilities | Run here |
+| Dependency count and licences | 847 package entries in the root `package-lock.json`. Declared licences: MIT 668, Apache-2.0 50, ISC 45, BSD-2 23, MPL-2.0 14, others small. One dual `MIT OR GPL-3.0-or-later` (`jszip`, the MIT option is available). MPL-2.0 entries are `axe-core`, `@axe-core/playwright` and `lightningcss` (test and build time) | Run here from the lockfile; this is a declared-licence scan, not a legal review |
+| Python sidecar dependencies | `requirements-*.txt` use ranges (for example `PyMuPDF>=1.26,<2`), no lockfile and no hashes. `pip-audit` runs in CI on four requirement files | Read here |
+| GitHub repository settings | Public. Secret scanning and push protection **enabled**. Private vulnerability reporting **enabled**. Dependabot security updates **disabled**. The vulnerability-alerts endpoint answered 404 (appears disabled; verify). `main` is **not protected** and there are no rulesets. **No code-scanning analysis exists.** A draft `v0.1.0` release exists | Queried with `gh api` on 2026-10-31 (rate limit was then hit, so branch-protection details beyond "not protected" were not explored) |
+| Workflow hygiene | All third-party actions pinned to commit SHAs; workflow `permissions: contents: read` by default; release job scoped to `contents: write`. `cargo install tauri-driver --locked` is not version-pinned. No `id-token` or attestation permission anywhere | Read `.github/workflows/` |
+| Tauri content security policy | `"csp": null` in `src-tauri/tauri.conf.json`. Already recorded as a blocker in `cloud-plan.md` | Read here |
+| Release artifacts | Unsigned (`--no-sign`), no SBOM, no provenance, SHA-256 files uploaded next to the installers (integrity against corruption, not authenticity) | `release.yml` |
+| Localisation | UI is English (`<html lang="en">`); no i18n library or message catalogue found by grep | grep |
+
+## 3. Buyer requirements matrix
+
+Legend. **State**: done, partial, missing. **Owner**: eng (engineering), founder, legal (a qualified lawyer, plus DPO if appointed), auditor (an external accredited or licensed firm). **Size** is a rough effort for one engineer for the engineering column and says "ext" where calendar time is dominated by an outside party: S under a week, M one to four weeks, L one to three months, XL more than three months or ongoing. Sizes are guesses for planning, not estimates. Row ids (S1, D1, ...) are referenced from the roadmap and backlog.
+
+### 3.1 Security assurance
+
+| Id | Requirement | Today | Gap | Engineering work | Non-engineering work | Owner | Size |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| S1 | SOC 2 Type II | **Missing.** Some technical controls exist (pinned actions, audits in CI, secret scanning) | No policies, risk assessment, access reviews, vendor management, incident response, change-management enforcement (`main` is unprotected, one maintainer), no auditor. Scope is the company and any operated service, not the desktop binary | Controls matrix and evidence automation (B22), branch protection and required reviews (B2), CodeQL (B2), SBOM and provenance (B3, B4), coverage gates (B23), threat models (B12), runbooks (B21, B24, B27) | Pick a scope (likely gateway plus company), adopt policies, choose an auditor, Type I then an observation window then Type II (window length, typically months, verify), management attestations | founder, auditor | XL |
+| S2 | ISO/IEC 27001 certification | **Missing** | No ISMS, risk register, Statement of Applicability, internal audit, management review | Same evidence engine as S1; map controls (section 4) | Build the ISMS, run an internal audit, engage an accredited certification body for stage 1 and 2 (verify the current standard edition and transition rules) | founder, auditor | XL |
+| S3 | Independent penetration test | **Missing** | No external test of any component | Fix findings; prepare a test environment and scoped brief (desktop IPC and sidecars, webview, gateway, admin) after B1, B8, B12 | Select a firm, scope, retest, obtain an attestation letter. Do it after the Phase 1 hardening, otherwise findings are the already-known ones | auditor | M (ext) |
+| S4 | Vulnerability disclosure and bug bounty | **Partial.** `SECURITY.md` exists; private vulnerability reporting is enabled (verified) | No response targets, supported-version table, safe-harbour wording, advisory process, `security.txt`. No bounty | Rewrite `SECURITY.md` (B21); publish GitHub security advisories for fixed issues | Decide response targets you can actually meet; decide on a bounty later (platform and payout costs, verify) | founder | S |
+| S5 | Security questionnaires: SIG Lite, CAIQ, HECVAT (higher education) | **Missing.** Honest answer to most items today is "no formal programme" | No answer bank, no evidence links | Build an answer bank tied to the controls matrix, with links to repo evidence (B22); keep it versioned | Complete and sign each questionnaire (HECVAT is maintained by EDUCAUSE; check the current version and whether the buyer accepts it; French public bodies often use their own forms) | founder | M |
+| S6 | Threat models | **Partial.** The admin design has a threat model section; `cloud-plan.md` has security requirements. Nothing covers the desktop app, sidecars or document parsing | Desktop and sidecar attack surface is undocumented (imported documents are untrusted input into PyMuPDF, RapidOCR, OOXML parsers and the webview) | `docs/threat-model.md` with data-flow diagrams and abuse cases (B12) | Review by an external security person | eng | M |
+| S7 | SBOM and supply chain (SLSA provenance, pinned dependencies, reproducible builds, dependency review) | **Partial.** Lockfiles committed (`package-lock.json`, `Cargo.lock`, `cloud/package-lock.json`); actions pinned to SHAs; cloud dependencies pinned exactly with a two-week age rule; Dependabot version updates configured; `npm audit` and `pip-audit` in CI | No SBOM, no provenance or attestation, no reproducibility check. Root npm dependencies mostly use caret ranges. Python requirements are ranges without hashes. No `cargo audit` or `cargo deny`. `tauri-driver` install unpinned. Dependabot security updates and alerts appear disabled. No dependency-review action on pull requests | B3, B4, B5, B2 | Decide the licence policy (B5) | eng | M |
+| S8 | Secret scanning | **Done at platform level** (secret scanning and push protection enabled, verified). `.env` ignored; `SECURITY.md` forbids committing credentials | Non-provider patterns disabled; no scan of CI logs or artifacts; no pre-commit hook | Optional gitleaks job in CI (B2) | None | eng | S |
+| S9 | SAST and DAST in CI | **Missing.** No code-scanning analysis exists. Clippy and `cargo audit` are not in CI | No static analysis for TypeScript, Rust or Python; no dynamic testing of the gateway | CodeQL or equivalent for JS/TS and Python (Rust support: verify), `cargo clippy -D warnings`, bandit or semgrep rules for the sidecars (B2); ZAP-style baseline scan against a staging gateway once it exists (B14) | Triage policy and SLAs for findings | eng | M |
+| S10 | Signed and verifiable releases | **Missing.** Tags are not shown to be signed; installers unsigned; checksums are published next to the files | See D1, D2; also signed tags, Sigstore signatures or GitHub attestations, a published verification guide | B4, B6 | Obtain certificates (D1, D2) | eng, founder | M |
+
+### 3.2 Desktop distribution
+
+| Id | Requirement | Today | Gap | Engineering work | Non-engineering work | Owner | Size |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| D1 | Windows code signing (Authenticode, EV or cloud-signing service) | **Missing.** `release.yml` builds with `--no-sign`; SmartScreen warns | No certificate, no signing step, no verification step | Signing workflow with conditional steps, a verification job (`signtool verify`), and plumbing tested with a throwaway certificate (B6) | Buy a certificate or enrol in a cloud signing service (eligibility, cost and current SmartScreen reputation rules: verify). Requires a legal entity with verifiable details | founder | M |
+| D2 | macOS Developer ID signing and notarisation | **Missing.** DMG for Apple Silicon only; Gatekeeper warns | No Apple Developer membership in the pipeline, no notarisation, no Intel or universal build | Sign and notarise steps with `codesign` / `notarytool`, staple, verify with `spctl` (B6); decide on Intel support | Apple Developer Program enrolment (cost and entity requirements: verify) | founder | M |
+| D3 | Auto-update with signature verification | **Missing, by design.** `docs/cloud-plan.md`: "The app has no updater". Fits the zero-ambient-traffic promise, but a product with no patch channel cannot satisfy a vulnerability-response SLA | An opt-in updater that is off by default, can be disabled or pointed at an internal mirror by policy, and verifies a signature before installing | B7 (depends on B8 for policy and B6 for the signing key) | Key custody procedure for the update-signing key | eng, founder | M |
+| D4 | MSI / MSIX / PKG for MDM (Intune, Jamf, SCCM) | **Partial.** NSIS `-setup.exe`, `.deb`, `.dmg` only. `tauri.conf.json` has `"targets": "all"` but the release workflow builds `deb`, `nsis`, `dmg` | No MSI/MSIX, no signed PKG, no rpm/AppImage | B9 (MSI via the bundler's WiX target, verify availability; PKG via `productbuild`; per-machine install) | Test with the customer's MDM | eng | M |
+| D5 | Silent install, uninstall, data wipe | **Missing.** Not documented or tested. Course deletion removes local blobs and chunks (tested), but there is no whole-profile erase | Documented silent flags, a clean uninstall that optionally removes data, an in-app "erase all local data" | B9, B10 | None | eng | M |
+| D6 | Group policy and managed configuration (managed settings, cloud off, endpoint allowlists) | **Missing.** Settings persist in browser local storage; sidecar commands come from `STUDENTLLM_ASR_COMMAND` / `STUDENTLLM_DOCUMENT_COMMAND`; the endpoint is whatever the user types | A machine-level policy file or registry/plist source enforced in Rust, with UI showing "managed by your organisation", an endpoint allowlist, locked sidecar commands, disabled export/recording if required | B8, B26 | Define the policy schema with a pilot customer | eng | L |
+| D7 | Offline licence handling | **Missing and not needed under MIT.** | If a commercial edition has seats or features, a signed licence file verified offline, no phone-home, clear expiry behaviour. Depends on the licensing decision (section 5) | B25 includes the design; implementation after the decision | Licensing model, pricing, terms | founder, legal | M |
+| D8 | Supported OS matrix | **Partial.** CI builds and smoke-tests on `ubuntu-latest`, `windows-latest`, `macos-latest` (Apple Silicon runner). Windows needs WebView2; Linux needs WebKitGTK 4.1 dev packages to build | No stated minimum OS versions, no Intel macOS, no Windows on Arm, no older-OS testing. Only the three newest hosted images are exercised | B18; publish the matrix | None | eng | M |
+| D9 | Bundled speech and document services | **Missing.** ASR and document sidecars are Python scripts users install separately (`docs/desktop.md`); the supervisor only starts commands the user configures | IT will not deploy `pip install`. Needs a self-contained runtime (frozen Python or native replacement), model download/cache story, and a licence decision for PyMuPDF (see C1) | Packaging spike, then implementation (B20) | Model licence review per model (verify) | eng | XL |
+| D10 | Proxy, custom CA, TLS inspection support | **Unverified.** Not documented or tested | Corporate proxies and TLS-inspecting gateways are the norm; behaviour of the webview and any future Rust HTTP client is unknown | Test matrix and docs (B26) | None | eng | M |
+
+### 3.3 Identity and access (cloud and any central admin)
+
+All rows are **missing**: `docs/cloud-plan.md` and `docs/cloud-api.md` define individual accounts only, and a search for tenant, organisation, SSO, SCIM and SAML in those documents and the legal drafts finds nothing relevant. The gateway scaffold has no module for it. These rows apply to shapes B and C only.
+
+| Id | Requirement | Gap | Engineering work | Non-engineering work | Owner | Size |
+| --- | --- | --- | --- | --- | --- | --- |
+| I1 | Tenant and organisation model | No org entity, membership, pooled budget, or separation between personal and institutional accounts. The per-account Durable Object design (budget, revocations) assumes one account is one budget | Contract-first design: orgs, memberships, plan ownership, pooled vs per-seat budgets, data table additions, deletion semantics (B25). Implementation after Phase 2 gateway work | Commercial model for pooled usage | eng | L |
+| I2 | SSO via SAML 2.0 and OIDC | Sign-in is Google OIDC or an emailed code only | OIDC first (per-org issuer config, JWKS, claim mapping, tested against at least two IdPs), then SAML (assertion validation, signature and replay handling; use a vetted library, verify options that run on Workers) | Customer IdP onboarding runbook | eng | L |
+| I3 | SCIM 2.0 provisioning | None | `/scim/v2` users and groups, bearer token per org, idempotent deprovisioning that revokes sessions | None | eng | M |
+| I4 | RBAC | The admin design has `owner`, `admin`, `support` roles for the operator console; the first cut has owner only. No customer roles | Customer roles (org owner, admin, member, read-only auditor), enforced in the domain layer with the same invariant-test approach as the admin design | Define roles with a pilot customer | eng | M |
+| I5 | Domain verification | None | DNS TXT verification, domain-to-org binding, takeover protection | None | eng | S |
+| I6 | Seat management | Device limit of 3 per account exists in design; no seats | Seat assignment, reclaim, over-assignment rules, licence state in the client (ties to D7) | Pricing | eng | M |
+| I7 | Customer admin console | The admin design is operator-only and lists a customer support portal as a non-goal | A tenant-scoped console (users, seats, policy, usage, audit) with the admin design's security posture (step-up, no content access) | UX research with admins | eng | XL |
+| I8 | Audit log and export | The admin design describes a tamper-evident operator audit chain with export and verify; nothing for tenants | Tenant-scoped audit events (sign-in, role change, policy change, seat change, export, deletion), export in a stable format, retention setting. Reuse the chain design | Retention decision (legal) | eng | L |
+
+### 3.4 Data protection and privacy
+
+| Id | Requirement | Today | Gap | Engineering work | Non-engineering work | Owner | Size |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| P1 | DPA and subprocessor list | **Partial.** `docs/legal/privacy-policy.draft.md` section 5 has a processors table full of placeholders; no customer DPA template; no public subprocessor page | Customer-facing DPA, change-notification mechanism, a maintained subprocessor list. In a pure local-first deployment the vendor may not process course content at all (counsel to confirm), which makes the DPA scope narrower | Generate the subprocessor page from one data file (B22) | Draft and negotiate the DPA | legal | M |
+| P2 | Data residency (EU region) | **Partial, design only.** Durable Objects and storage pinned to an EU jurisdiction (verify options); edge code may run elsewhere; first inference provider planned is Groq (processing region unverified). Nothing is deployed | A committed EU-only processing path for content in transit (an EU-hosted provider or customer-hosted inference) and a statement of what the edge sees. Public-sector buyers may ask about non-EU provider exposure and sovereignty labels (for example SecNumCloud in France; verify applicability) | Routing-table support for region constraints per provider set; shape C packaging (D-level work) | Provider selection and contracts | founder, legal | L |
+| P3 | Retention and deletion | **Partial.** Local course deletion clears blobs, chunks and derived data (covered by tests, `docs/status.md`). Cloud deletion with a tombstone is specified; its test is a stated release criterion. Platform snapshot retention is "verify" | Whole-profile erase (B10); tested cloud deletion once implemented; documented backup/snapshot retention | B10, gateway tests | Decide retention periods (`[PLACEHOLDER]` in the data table) | eng, legal | M |
+| P4 | GDPR rights tooling | **Partial.** Cloud export and deletion endpoints are specified and exempt from gating; local data is already in the user's hands (JSON course export exists) | Organisation-level requests (an admin asks for a member's data) need I1/I7; no request-tracking process | Export/erase endpoints at tenant level | DSAR procedure and register | eng, legal | M |
+| P5 | DPIA | **Missing.** `cloud-plan.md` lists "DPIA decision" as an open item; draft policy section 13 is a placeholder | A DPIA (or documented reasoning for none) covering student data, AI processing and recording; many data protection authorities list such cases (check the CNIL list; verify) | Provide data-flow inventory (from B12) | Conduct the DPIA with a DPO or counsel | legal | M |
+| P6 | Student and children's data: FERPA, COPPA, French and EU education rules | **Missing analysis.** Terms draft has a minimum-age placeholder citing French age-15 rule | Per-market requirements, minimum age and parental-consent process, institutional contract terms (for example FERPA "school official" arrangements, student-privacy pledges, EU/French edtech expectations; verify all) | Product options that help: org-controlled enablement, no analytics, policy to disable cloud | Legal opinion per target market | legal | L |
+| P7 | Recording-consent obligations | **Partial.** The microphone requires explicit browser/OS permission; the cloud terms draft puts compliance with school rules on the user. Nothing in-product addresses third parties' voices (lecturers, classmates) | Optional recording notice and acknowledgement, a policy switch to disable recording or require acknowledgement (D6/B8), clear guidance that capture of other people may need their consent | B8, B30 | Counsel to say what notices and policies each market needs | legal, eng | M |
+| P8 | EU AI Act implications | **Missing classification.** Draft policy section 12 has AI transparency wording; the plan labels generated content as AI-generated | Education is an area the Act lists for high-risk use cases (for example evaluating learning outcomes or monitoring students during tests; verify the exact text). A note-taking and study assistant is probably not in those categories, but any grading, adaptive-assessment or proctoring feature could be. Emotion recognition in education is prohibited (verify); do not build it. Transparency and AI-literacy duties, and the company's role as deployer or provider when it bundles models, need a written position. Application dates and amendments are in flux (verify) | Keep an intended-purpose statement in the repo; feature review checklist (B21) | Counsel opinion and a written classification | legal | M |
+| P9 | Encryption in transit and at rest, key management, backups | **Partial.** In transit: cloud TLS-only and HSTS are specified; loopback sidecars use plain HTTP on localhost and refuse non-loopback binds (`scripts/local_server_security.py`). At rest: desktop SQLite and IndexedDB are not encrypted by the app; the control is the OS (BitLocker, FileVault, LUKS). Keys: cloud secrets as Workers secrets with a rotation procedure (specified, not rehearsed). Backups: none for desktop; gateway relies on D1 snapshots (platform-defined) | State the at-rest position honestly in the security overview; offer an optional encrypted store (B11); rehearse key rotation when the gateway exists | B11, B21 | Key custody procedures | eng, founder | L |
+
+### 3.5 Reliability and operations
+
+The gateway is a scaffold: every route answers 501, there are no storage adapters, no deployment, and no users (`cloud/README.md`). So almost every row is design-only. The desktop side has good recovery evidence but no scale evidence.
+
+| Id | Requirement | Today | Gap | Engineering work | Non-engineering work | Owner | Size |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| R1 | SLOs and SLA | **Missing.** A `GET /v1/status` is specified; the terms draft has no availability commitment | SLO definitions (latency, availability, error budget, budget-accuracy invariant), measurement, then a contractual SLA | SLO doc and burn-rate alerts as code (B27) | Decide what you can honestly commit to; a solo operator cannot offer a 24/7 SLA | founder | M |
+| R2 | Load, soak and chaos tests | **Partial.** Desktop soak (30 relaunch cycles on three OSes) is real. Gateway: no load or soak test; `chaosStores()` only reorders callers | k6 load and soak against the gateway with correctness invariants (no overspend, no double settlement, no lost reservation); fault injection on stores; later the same against Durable Object adapters | B14 | None | eng | L |
+| R3 | Multi-region or failover | **Missing.** Per-account Durable Objects live in one location by design | A documented failure model: what happens on region loss, what degrades (the app falls back to local models, which is a genuine strength) | Failure-mode doc and tests of the client fallback | Decide whether to pay for regional redundancy | eng, founder | M |
+| R4 | Backup, disaster recovery, tested restores | **Missing** for the gateway (platform snapshots only). None needed for local data beyond OS backup | Restore drill for D1/DO state once adapters exist, with a measured recovery time and recovery point | B14 follow-up | Define RTO/RPO targets | eng | M |
+| R5 | Observability without content | **Partial, design only.** Operational logs defined without content; `wrangler.toml` keeps platform observability off deliberately; a logging-policy test is a stated release criterion | Metrics, traces, alerts with a content-free schema; the logging-policy test; synthetic probes | B27 | None | eng | M |
+| R6 | Incident response and status page | **Missing.** Kill switches and a freeze switch are designed. No IR plan, no status page, no comms templates | IR runbook, severity levels, post-incident review template, status page wired to the probe, breach-notification procedure (GDPR notification duty is 72 hours to the authority; verify) | B24, B27 | Rehearse a tabletop exercise | founder | M |
+| R7 | On-call and runbooks | **Missing.** Single maintainer | Runbooks for every alert (B27). 24/7 on-call needs at least several people | Hiring or a managed on-call arrangement | founder | XL |
+| R8 | Capacity and cost controls | **Done in design.** Hard per-account budgets, global spend cap, kill switches, concurrency limits | Implementation and load validation of the caps (B14) | B14 | None | eng | M |
+| R9 | Release process and rollback | **Partial.** Version consistency check across three files, draft release, changelog discipline, CI gates | Desktop rollback is "reinstall the old installer" (no updater); the tag does not require the full CI matrix; no staged rollout; no gateway deploy pipeline (Wrangler is not yet a dependency) | B24, B7 | Release approval policy | eng | M |
+
+### 3.6 Quality evidence
+
+| Id | Requirement | Today | Gap | Engineering work | Non-engineering work | Owner | Size |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Q1 | Unit, integration, e2e, contract tests | **Done for unit, integration, e2e and contract tests at this stage** (section 2): 438 + 297 Vitest tests, 48 browser scenarios, 9 Rust and 89 Python tests, OpenAPI fixture conformance in CI, packaged-desktop smoke on three OSes | No coverage gate, no mutation testing, no property or fuzz tests, Chromium-only browser tests | B23, B13, B15, B18 | None | eng | M |
+| Q2 | Accessibility: WCAG 2.2 AA, VPAT/ACR | **Partial.** axe scans in Playwright; focus-management regressions; undo toast is a live region. No manual audit, no screen-reader testing record, no conformance report. Automated tools check only a subset of WCAG | Full audit, remediation, conformance report (B17). Public bodies in the EU are often bound to EN 301 549 (verify) | B17 | Third-party audit for a credible ACR | eng, auditor | L |
+| Q3 | Localisation | **Missing.** English UI only; content handling is French-aware (ASR default, concept-schema verbs) | i18n framework, message catalogues, French first, locale-aware formats, RTL consideration; French public buyers will expect French | B29b | Translation review | eng | L |
+| Q4 | Performance budgets | **Missing.** Vite warns about a large chunk; no startup, memory, search or save-latency budgets; ASR real-time factors were measured on a CUDA GPU, not on typical enterprise laptops | B19 (and B20 for workspace size) | None | eng | M |
+| Q5 | Documentation | **Partial.** Strong developer and architecture docs. No IT admin guide, install guide, security overview, FAQ, or user manual | Admin and deployment guide (after D4–D6), security overview (B21), user documentation | Technical writing | eng | M |
+| Q6 | Support tooling | **Missing.** GitHub issue templates only | A privacy-safe diagnostics export (no content), version/health report, known-issues page | New backlog item B31 | Support process and tooling (D below) | eng, founder | M |
+
+### 3.7 AI-specific enterprise concerns
+
+| Id | Requirement | Today | Gap | Engineering work | Non-engineering work | Owner | Size |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| A1 | Model and provider governance (allowed models, bring-your-own-endpoint) | **Partial.** Any OpenAI-compatible endpoint is accepted; the NVIDIA proxy is dev-only, loopback-only and pinned to one host; the cloud design has provider sets with per-set consent | No organisation-level allowlist of endpoints, models or providers; no way to lock the endpoint; no credential store for BYO keys in the packaged app (listed as open in `cloud-plan.md`) | B8, B26 | Governance policy template for buyers | eng | M |
+| A2 | On-prem inference | **Partial.** LM Studio and any local server work today | No supported reference deployment (for example vLLM), sizing guidance, tested model list, or TLS/mTLS to an internal server | Reference deployment guide and tests (B26) | None | eng | M |
+| A3 | Prompt and data leakage controls | **Partial.** Chat wraps evidence in explicit boundaries with an insufficient-evidence rule; citations point only to passages actually sent; Markdown images neutralised; the app owns the agent loop and the plan forbids tools upstream | No prompt-injection test suite for imported documents and transcripts; "never cloud" per course is designed, not built; no PII redaction option | B29a (injection suite), B30 | Decide redaction scope | eng | M |
+| A4 | Evaluation and quality evidence | **Partial, and weaker than the volume suggests.** See the next subsection | Product-level evaluation (LectureBench) is not built | B28 | None | eng | L |
+| A5 | Hallucination and citation guarantees | **Partial.** Note blocks must link to submitted segment IDs; invalid model output falls back to the deterministic note; chat can refuse when evidence is insufficient | Nothing measures citation faithfulness (does the cited passage support the claim) or refusal calibration. A guarantee of no hallucination cannot honestly be given | B28 | Wording in the claims register | eng | L |
+| A6 | Content filtering | **Missing.** Relies on the model | A configurable moderation hook for cloud and enterprise deployments; classroom policies | New feature, scope with a pilot customer | Policy decisions | eng | M |
+| A7 | Auditability | **Partial.** Local chat history and artifacts are persisted; the cloud plan adds a payload inspector; model names are recorded in transcription results | No exportable per-answer record of model, version, prompt template, evidence and policy applied; no org audit (I8) | Record model id, prompt-template version and evidence ids per generation; export | None | eng | M |
+
+**The honest limits of the public benchmark evidence** (`docs/status.md`, `docs/benchmarks.md`):
+
+- The language-model results are almost all for one model, `openai/gpt-oss-20b`, called through NVIDIA NIM's hosted API. They describe that model on that endpoint, not the local model an institution would deploy, and not `gpt-oss-120b` on Groq, the planned paid-tier model. `cloud-plan.md` itself says the NIM catalogue is a trial offer not for production use; using it for evaluation is a separate question (verify the terms).
+- General academic benchmarks (MMLU-Pro, BBH, GSM8K, MATH-500, AIME, ARC, IFEval, TruthfulQA, HumanEval) measure the model. None measures the product's job: answering from a particular student's lecture with correct citations. The product-level benchmark, LectureBench, is listed as open.
+- Several targets are recorded as unmet by the repository itself: CRAG judge score 0.0397 over 1,335 records; PubTabNet content-sensitive TEDS -0.1970; MTRAG retrieval and generation well below any strong target; DROP on a 512-example partial sample at exact match 0.20%; BFCL results partial with multi-turn format failures; AMI far-field (SDM) WER 40.83%. `status.md` says the evidence is not a claim that every quality target is complete.
+- Speech numbers that look good (FLEURS French WER 6.56%, MLS 5.41%) are for CUDA `large-v3-turbo`. The CPU `small` baseline is WER 13.57% on FLEURS, and CPU is what most enterprise laptops will run. Real lecture halls are closer to the far-field AMI result than to read speech.
+- Raw receipts "stay local and ignored by Git". A reviewer cannot re-derive the headline numbers from the repository alone; the evidence is self-reported, with no third-party reproduction.
+- No human evaluation, no teacher or student study, no bias or fairness evaluation, no evaluation of accessibility of generated content, and languages beyond French and English are not covered.
+- The provider and benchmark evidence was not re-run for the 0.1.0 candidate (`status.md`), and model catalogues drift.
+
+### 3.8 Commercial and legal
+
+| Id | Requirement | Today | Gap | Engineering work | Non-engineering work | Owner | Size |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| C1 | Licence and IP position | **Partial.** MIT for the code; `NOTICE.md` lists Lordicon icons as non-MIT (free tier, attribution). The document sidecar imports PyMuPDF, which as far as I know is dual-licensed AGPL-3.0 / commercial (verify); it is not bundled today, which is why it is tolerable now. Trademark: no registration known (unverified). Code provenance: most commits are by one identity and the work was developed with AI assistance, whose copyright status buyers' counsel may ask about (verify with counsel). No CLA or DCO, so contributions cannot be relicensed without each contributor | Licence audit and policy (B5); decide how to handle PyMuPDF and Lordicon before bundling or selling; contribution terms (DCO or CLA) before outside contributors arrive | B5 | Trademark search and filing; IP counsel opinion; section 5 decision | founder, legal | M |
+| C2 | Terms, MSA, SLA | **Partial, consumer only.** `docs/legal/terms-of-service.draft.md` is a consumer text full of `[LAWYER]` and `[PLACEHOLDER]` markers | Enterprise MSA, order form, DPA, SLA schedule, acceptable use for institutions, liability caps, governing law | None | Counsel drafts | legal | L |
+| C3 | Support tiers | **Missing.** GitHub Issues only | Tier definitions, response targets, channels, escalation, a staffed rota | B31 (diagnostics) | Hire or contract support; price tiers | founder | XL |
+| C4 | Insurance (cyber, E&O/professional liability) | **Missing.** Unverified whether any exists | None | Broker, quotes, coverage limits that match contract demands | founder | M (ext) |
+| C5 | Procurement paperwork | **Missing.** Legal entity details are an open item in `cloud-plan.md` | Vendor onboarding forms, company registration and tax/social compliance certificates, bank details, security questionnaires (S5), insurance certificates, references. French public buyers have specific supplier documents and framework purchasing routes (verify) | None | Assemble and keep current | founder | M |
+| C6 | Enterprise billing | **Missing.** Billing is Paddle checkout at 6 EUR per month for consumers | Quotes, purchase orders, invoicing by transfer, VAT ID handling, multi-year terms, renewals | Billing module change or a separate manual process | Accounting tooling, payment terms | founder | M |
+| C7 | Partners and resellers | **Missing** | Partner programme, deal registration, training, a reseller-safe licence (links to section 5) | Licence-key tooling if needed | Programme design, contracts | founder | L |
+| C8 | EU Cyber Resilience Act | **Unassessed.** Selling a commercial edition probably makes the company a "manufacturer" of a product with digital elements; reporting and conformity duties phase in over 2026 and 2027 (verify dates, scope and the open-source rules with counsel) | Vulnerability handling, SBOM, secure-by-default configuration, security updates for a defined support period, technical documentation | B3, B21, B24 | Counsel opinion and a conformity route | legal | L |
+| C9 | Accessibility law for the buyer's procurement | See Q2. A VPAT/ACR and conformance to EN 301 549 are routine asks from universities and public bodies (verify) | B17 | External audit | eng, auditor | L |
+
+## 4. Control mapping: SOC 2 and ISO 27001
+
+For SOC 2 the trust services criteria are the Common Criteria (CC1 to CC9) plus the optional Availability, Confidentiality, Processing Integrity and Privacy categories. ISO/IEC 27001:2022 Annex A is grouped into four themes (organisational, people, physical, technological). Verify both against the current published criteria and the auditor's reading before use. Important scoping fact: a local-first desktop application mostly pushes the audit scope onto the company's development and release process and onto any service it operates (gateway, admin, support tooling). A report about a gateway that is not yet deployed would be empty.
+
+| Theme (SOC 2 / ISO Annex A) | What the repo gives today | What is missing | Evidence the repo could produce automatically |
+| --- | --- | --- | --- |
+| Control environment, governance (CC1; A.5 organisational) | `CODEOWNERS`, contribution rules, PR template with a verification checklist | Policies, roles, security responsibility, management review, risk ownership | Policy documents versioned in git with review history |
+| Communication (CC2; A.5) | `SECURITY.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, status docs | Customer-facing security and incident communications | Published advisories and changelog diffs |
+| Risk assessment (CC3; A.5) | Risk table in `cloud-plan.md`; admin threat model; no desktop threat model | A risk register with owners, likelihood, treatment, review dates | Register file with dated reviews (B12, B22) |
+| Monitoring (CC4, CC7; A.8 technological) | CI on every PR and push; scheduled Dependabot; `pip-audit`, `npm audit` | Production monitoring and alerting (no production yet), anomaly review, internal audit | CI run history, audit job outputs, alert definitions as code |
+| Control activities, change management (CC5, CC8; A.8) | PRs, squash merges, Conventional Commits, required checks by convention, SHA-pinned actions | **`main` is unprotected**: nothing enforces review or green checks; single maintainer so no separation of duties | Branch-protection/ruleset export, review and check history per merge (B2, B22) |
+| Logical access (CC6; A.5, A.8) | Secrets only in environment and platform secrets by policy; secret scanning with push protection; admin design with step-up and no standing credentials | Access reviews, MFA enforcement evidence for the GitHub org and the cloud platform, offboarding procedure | Org member and permission export, 2FA-enforcement setting export (B22) |
+| Physical (CC6; A.7 physical) | Not applicable to the repo; the company's premises and devices are out of scope here | Endpoint management for the founder's devices, clear-desk and media policies | None |
+| People (CC1; A.6 people) | None | Screening, security awareness training, confidentiality agreements, disciplinary process | Training completion records (from a platform) |
+| System operations, incident response (CC7; A.5, A.8) | Kill-switch and freeze designs, runbook intentions | Incident response plan, rehearsed rotation procedures, post-incident reviews | Drill records, runbook change history (B24, B27) |
+| Vendor management (CC9; A.5) | Provider checklist in `cloud-plan.md` | Vendor inventory, due diligence records, DPAs, annual reviews | Subprocessor data file with last-review dates (B22) |
+| Availability (A1; A.5, A.8) | Fallback-to-local design; soak testing on desktop | SLOs, capacity planning evidence, backups and tested restores, DR | Load and restore drill reports (B14) |
+| Confidentiality (C1; A.5, A.8) | No content stored by design; loopback-only sidecars; Markdown image neutralisation | At-rest encryption option, data classification, secure disposal | Logging-policy test results, data-flow inventory (B12, B27) |
+| Processing integrity (PI1; A.8) | Contract fixtures, idempotency and budget invariants in the gateway design and tests; checksummed sources | Production monitoring of invariants | Contract-conformance and invariant test results per commit |
+| Privacy (P; A.5) | Data table, retention intent, consent design, draft policy | DPIA, DSAR procedure, final policy, retention execution | Data inventory file; deletion-test results |
+| Secure development (CC8; A.8) | Tests, typed codebase, audits in CI, review via PR | SAST, fuzzing, SBOM, provenance, signed releases, coverage gates | Code-scanning results, SBOM and attestation per release, coverage reports (B2 to B4, B13, B23) |
+
+## 5. Licensing options given MIT
+
+The code is MIT today, so every published version stays available to everyone under MIT permanently. A licence change can only affect future versions and code the company owns. Contributions from others (so far history shows one main author identity, dependabot, and a second identity that is probably the same person; unverified) would need contributor agreement to be relicensed. This section lays out options and trade-offs; it does not choose.
+
+| Option | Description | Advantages | Drawbacks and risks |
+| --- | --- | --- | --- |
+| 1. Stay MIT, sell services | Keep everything MIT. Charge for signed and supported builds, managed distribution, hosted services, support contracts, training, SLAs | Simplest; community goodwill; no relicensing risk; fits Shape A | Anyone can resell or fork the same code; revenue depends on trust, signing and support, not on exclusivity; large vendors can rebuild services |
+| 2. Open core | MIT core; a proprietary enterprise module (policy engine, SSO, SCIM, admin console, audit export, licence enforcement) in a separate repo or directory | Clear commercial line that mirrors what enterprises pay for; core stays open; common model | Needs a clean module boundary and plugin seam; the proprietary part must not copy MIT contributions in unclear ways; forks can reimplement the enterprise features; need CLA/DCO for outside contributions |
+| 3. Dual licence (copyleft + commercial) | Relicense future versions to a strong copyleft licence and sell commercial licences to those who cannot accept it | Strong protection against closed forks; classic revenue route | Requires sole copyright ownership of all contributions; scares some institutional users; AGPL-style terms interact with PyMuPDF; earlier MIT versions remain MIT, so a fork from the last MIT release is always possible |
+| 4. Source-available (for example BSL/FSL-style) | Future versions under a licence that restricts competing commercial use, converting to open source after a delay | Protects against hosted-competitor copying; keeps code visible | Not open source by the usual definitions; community and some procurement policies object; relicensing sentiment risk; legal review of the exact licence needed (verify) |
+| 5. Separate proprietary edition | The commercial edition is built from the MIT core in a private repo, with the free app unchanged | Maximum control | Maintenance burden of two lines; trust cost if the free app stagnates (this conflicts with the cloud plan's rule that the free tier is never degraded) |
+
+Orthogonal items: trademark ownership and a trademark policy (so forks cannot present themselves as the official product); contributor terms (DCO is lighter, a CLA permits relicensing); handling of third-party components (PyMuPDF's licence, Lordicon terms, per-model licences for any bundled models) which matter for every option once binaries are redistributed commercially; and whether the company wants a patent or indemnity posture.
+
+## 6. Sequenced roadmap
+
+Durations are deliberately not estimated: phases 3 and 4 are dominated by external parties (certificates, auditors, counsel, customers). Each phase lists exit criteria that can be tested, the dependencies, and what can run in parallel. "Shape" says which product shapes need the phase.
+
+### Phase 0: harden what exists (shapes A, B, C)
+
+Scope: close the cheap, high-signal gaps in the repository itself. No new product features.
+
+- Backlog: B1, B2, B3, B4, B5, B12, B16, B21, B23, B24.
+- Exit criteria:
+  1. `csp` in `tauri.conf.json` is non-null and the packaged UI tests pass on Linux and Windows.
+  2. The GitHub API reports `main` protected (or a ruleset) with required status checks for every CI job and at least one required review or a documented, tested compensating control; Dependabot alerts and security updates are enabled; a code-scanning analysis exists and the default branch has zero open high alerts.
+  3. Each tagged release carries a CycloneDX SBOM for npm, Cargo and Python inputs, and a build-provenance attestation that `gh attestation verify` accepts.
+  4. `npm run licenses:check` (or equivalent) and `cargo deny check` run in CI with an allowlist; the PyMuPDF and Lordicon decisions are written down.
+  5. Vitest coverage is reported in CI with thresholds not lower than the figures in section 2.
+  6. A full-session test with a request recorder shows zero non-loopback requests from the packaged app in default configuration.
+  7. `docs/threat-model.md` and a rewritten `SECURITY.md` are merged.
+- Dependencies: none. Parallel lanes: supply chain (B2 to B5, B23), desktop security (B1, B16), documentation (B12, B21, B24).
+
+### Phase 1: trust foundations (shapes A, B, C)
+
+Scope: distribution that IT accepts and a security story that can be shown.
+
+- Backlog: B6, B7, B8, B9, B10, B13, B14 (design and local harness), B17 (audit and remediation), B18, B19, B20 (spike), B22, B26, B27, B31.
+- Founder lane: legal entity and details, code-signing certificates and Apple membership, lawyer engaged, insurance quotes, support email and security contact, decision on product shape (section 1) and licensing (section 5).
+- Exit criteria:
+  1. Release artifacts for Windows and macOS verify with `signtool verify` and `spctl --assess` / `codesign --verify` in a CI job, and the macOS build is notarised and stapled.
+  2. A silent install, a policy-file lock of settings, and an uninstall with data wipe pass on a CI Windows runner and a macOS runner.
+  3. The policy file can disable cloud, lock endpoints to an allowlist and lock sidecar commands, with Rust-side enforcement tests (a hostile frontend cannot bypass them).
+  4. Fuzz targets for the course-import JSON, workspace snapshot loader, sidecar command-line parser and the document sidecar's parsers run nightly with committed corpora and no open crashes older than seven days.
+  5. A k6 suite exists in the repo with documented thresholds and the invariants "no overspend" and "no double settlement" asserted under parallel load; chaos tests inject store failures and restarts.
+  6. Desktop performance numbers on a defined low-end reference machine are published and enforced by budgets in CI where hosted runners allow.
+  7. A first-party WCAG 2.2 AA self-assessment with no open serious or critical findings from manual keyboard and screen-reader passes on three platforms.
+- Dependencies: Phase 0 B1 and B2; certificates for B6 (without them only the plumbing is tested). Parallel: three desktop engineers (B6/B7, B8/B9/B10, B18/B19) and one test engineer (B13/B14/B17) are independent.
+
+### Phase 2: enterprise features (shapes B and C; shape A needs only the starred items)
+
+- Backlog: B11 (at-rest option), B20 (self-contained sidecars)*, B25 (org/tenant/SSO/SCIM/audit contract), then implementation tickets derived from B25, B28 (LectureBench), B29a, B29b, B30*, and the gateway modules (auth, inference, billing, ops) following `cloud-plan.md` phases 2 and 3.
+- Exit criteria:
+  1. The org contract (OpenAPI, fixtures, validator) is merged and conformance tests pass against the gateway for orgs, memberships, SSO connections and SCIM.
+  2. SSO via OIDC passes an integration test against at least two real IdPs (for example a self-hosted one and a commercial one); SAML passes against a SAML test IdP; SCIM passes the conformance tests of at least one IdP's validator.
+  3. Tenant audit events export and verify against the chain verifier; deprovisioning via SCIM revokes sessions within a stated number of seconds in a test.
+  4. LectureBench v0 exists with at least two languages, a reproducible runner, receipts committed or attached to releases, and a published result for the default shipped configuration.
+  5. A prompt-injection and leakage suite runs in CI with a pass threshold.
+  6. Bundled ASR and document services install and start with no user-installed Python on clean VMs of each OS.
+- Dependencies: Phase 1 policy mechanism and licensing decision; legal input for tenancy terms. Parallel: identity (I2 to I4), audit (I8), evaluation (B28, B29a), packaging (B20) can proceed independently once B25 is merged.
+
+### Phase 3: assurance and certification (shapes B and C; shape A needs S1 or S2 only if buyers demand it)
+
+- Mostly non-engineering. Engineering: remediation, evidence automation (B22), questionnaire answer bank (S5), the accessibility remediation after an external audit.
+- Exit criteria (each is a third-party artifact, not a repo state):
+  1. An independent penetration test report with all high and critical findings fixed and retested.
+  2. SOC 2 Type I report issued, then Type II covering an observation window of the auditor's choosing (verify the minimum). Or ISO 27001 stage 2 completed; the founder decides which first based on buyers.
+  3. A third-party accessibility audit with an ACR/VPAT published.
+  4. DPIA completed; DPA, subprocessor page and enterprise MSA in use with the first customer; cyber and E&O insurance bound.
+  5. At least three completed security questionnaires accepted by buyers.
+- Dependencies: Phase 1 and the relevant parts of Phase 2; a deployed gateway for any operated-service scope.
+
+### Phase 4: scale (shapes B and C)
+
+- Scope: SLA with real measurements, multi-region or documented failover, 24/7 or documented business-hours support, partner programme, procurement frameworks, reference customers.
+- Exit criteria: twelve consecutive months of measured SLO attainment above the contracted level; two tested restores per year with recorded RTO and RPO; a status page with history; a support process with response metrics; at least a few reference customers with written permission.
+- Dependencies: customers, staffing and revenue. Code cannot be the limiting factor here.
+
+## 7. Backlog: what engineers and agents can do now
+
+Ordered by value and risk reduction within Phase 0 and Phase 1. Each item is independently assignable unless it names a dependency. "Tests" says what must exist before merge. Items that need a purchased credential say what to do without it. Keep the repository rules: pin new dependencies exactly, use versions at least two weeks old, Conventional Commits, one logical outcome per PR, and no secrets.
+
+**B1. Close the Tauri content security policy** (S6, S9; prerequisite named in `cloud-plan.md`). Scope: replace `"csp": null` in `src-tauri/tauri.conf.json` with a restrictive policy: `default-src 'self'`, no remote scripts, `connect-src` limited to the local sidecars and the configured model endpoint, `img-src` including `blob:` and `data:` for local previews, fonts and KaTeX assets self-hosted. Problem to solve: user-configurable endpoints conflict with a static `connect-src`; choose one of (a) route model calls through a Rust command so the webview needs only local origins, or (b) generate `connect-src` from the validated settings. Areas: `src-tauri/tauri.conf.json`, `src-tauri/src/`, `src/lib/` provider adapters. Acceptance: packaged app starts, records, imports, previews PDF/image/audio, renders KaTeX, and chats with a local endpoint; an injected inline script and a request to a non-allowlisted origin are blocked. Tests: existing desktop-ui and recovery smoke on three OSes; a new WebDriver test asserting a console CSP violation for an injected script; a unit test for the connect-src builder.
+
+**B2. Repository governance and static analysis** (S1, S7, S8, S9). Scope: (1) enable branch protection or a ruleset on `main`: required status checks for all CI jobs, linear history, no force pushes, required pull request; add required review when a second reviewer exists, otherwise document the compensating control; (2) enable Dependabot alerts and security updates; (3) add `.github/workflows/codeql.yml` (JavaScript/TypeScript and Python; add Rust if supported, verify) with SHA-pinned actions and least-privilege permissions; (4) add `actions/dependency-review-action` on pull requests; (5) add `cargo clippy -- -D warnings`, `cargo audit` and `cargo deny` to the quality job; (6) pin `cargo install tauri-driver --version X --locked`; (7) optional gitleaks job. Repository settings are changed by the owner; the engineer ships the workflows and a `scripts/verify-repo-settings.mjs` that queries `gh api` and fails on drift. Acceptance: the verify script passes; code-scanning results appear; a deliberate failing check blocks a test PR. Tests: the verify script in a scheduled workflow.
+
+**B3. SBOM generation in the release workflow** (S7, C8). Scope: CycloneDX (or SPDX; pick one) documents for npm (root and `cloud/`), Cargo (`cargo-cyclonedx` or equivalent) and Python requirements, generated in `release.yml` and attached to the draft release with hashes in `SHA256SUMS`. Acceptance: files validate against the format's schema in CI; each component has a version and licence where declared; the release notes link them. Tests: schema validation step; a unit test of the aggregation script on a fixture lockfile.
+
+**B4. Build provenance and a verification guide** (S7, S10). Scope: add `id-token: write` and `attestations: write` to the build job only, call GitHub's build-provenance attestation action (SHA-pinned) for each installer and the SBOMs, document `gh attestation verify` and checksum verification in `docs/desktop.md`. Also a reproducibility experiment: build the frontend (`dist/`) and the Rust binary twice with `--locked`, fixed `SOURCE_DATE_EPOCH`, and compare hashes; document which parts are bit-reproducible and which are not (installers likely are not; do not claim otherwise). Acceptance: attestation verifies for every release asset; the reproducibility report lists results per artifact. Tests: a CI job that downloads the draft assets and runs the verification.
+
+**B5. Dependency and licence audit with policy** (S7, C1). Scope: a licence scan for npm (production and build separated), Cargo and Python, an allowlist (MIT, Apache-2.0, ISC, BSD, MPL-2.0 for build-only, and so on) failing CI on anything else; a written decision record on PyMuPDF (AGPL/commercial: verify), RapidOCR and ONNX Runtime, Lordicon's terms, `jszip` (take MIT), KaTeX fonts (OFL), and the licence of each model the docs recommend (verify); generate `THIRD-PARTY-NOTICES` from the scan. Pin Python requirements with hashes (`pip-compile --generate-hashes` or `uv`) next to the range files, and pin root npm dependencies exactly with the two-week rule used in `cloud/`. Acceptance: CI fails on a deliberately added GPL dependency; the decision record exists. Tests: the policy check itself.
+
+**B6. Code-signing and notarisation pipeline** (D1, D2, S10). Scope: `docs/signing.md` (key custody, rotation, who may trigger), release-workflow steps that sign when secrets are present and skip with a clear warning when absent, plus verification jobs: `signtool verify /pa` on Windows, `codesign --verify --deep --strict` and `spctl --assess` on macOS, `xcrun stapler validate`. Test the plumbing in a pull-request job with a self-signed throwaway certificate on Windows and an ad-hoc signature on macOS so the verification logic is proven before real certificates exist. Founder lane: obtain the certificates and register secrets. Do not put secrets in `ci.yml`. Acceptance: with secrets, installers verify as signed by the company; without, the job reports "unsigned" and the release notes say so. Tests: the verification jobs; a negative test that an unsigned binary fails verification.
+
+**B7. Opt-in auto-update with signature verification** (D3, R9). Dependencies: B6 key custody, B8 policy. Scope: Tauri updater plugin (verify current API) with a minisign-style key pair, manifest on release assets or a customer mirror URL set by policy, off by default, and on explicit user action or when policy enables it. Preserve the "zero ambient traffic" promise: no check at launch unless enabled. Acceptance: a tampered bundle is rejected; default configuration makes no update request; policy can pin a mirror or disable updates. Tests: unit tests for manifest and signature checks; the zero-traffic test (B16) extended; a rollback test that a downgrade is refused unless policy allows.
+
+**B8. Managed configuration and policy enforcement** (D6, A1, P7). Scope: a policy source read by Rust at startup and on change: Windows `ProgramData` file or HKLM registry keys, macOS `/Library/Managed Preferences` or an application-support file, Linux `/etc/studentllm/policy.json`. Keys (first cut): `cloud.enabled`, `endpoints.allowlist`, `endpoints.locked`, `sidecars.commands.locked`, `updates.mode`, `recording.enabled`, `recording.requireNotice`, `export.enabled`, `dataDirectory`. Policy overrides user settings and is enforced in Rust commands (the webview only displays state); the UI shows locked fields as managed. Document the schema with a JSON Schema. Acceptance: with a policy that locks the endpoint, a modified frontend cannot reach another host; malformed policy fails closed to the most restrictive documented defaults and shows a diagnostic. Tests: Rust unit tests for parsing, precedence and fail-closed; fuzz target for the parser (B13); a WebDriver test of locked fields.
+
+**B9. MSI, PKG, silent install and uninstall** (D4, D5). Scope: add an MSI target (verify bundler support and per-machine installation), a signed PKG for macOS, documented silent flags, uninstall behaviour with an option to keep or erase data, and CI jobs that install silently on `windows-latest` and `macos-latest`, run the existing runtime smoke, then uninstall and assert files and the registered application are gone. Linux: add rpm/AppImage only if a buyer needs it. Acceptance: the commands in the docs work verbatim in CI. Tests: the install, smoke, uninstall CI jobs.
+
+**B10. Whole-profile erase and data-location documentation** (D5, P3). Scope: an in-app "Erase all local data" (SQLite database and WAL files, IndexedDB sources and recording chunks, recovery manifests, settings) behind a confirmation, plus a CLI flag for IT; a document listing every data location per OS; honest wording about secure deletion on SSDs and snapshots. Acceptance: after erase, a scan of the application data directory finds no workspace, source or recording artifacts. Tests: Rust test for the database and files; Playwright for IndexedDB; desktop smoke.
+
+**B11. Optional at-rest encryption** (P9). Scope: a design record first (threat model: lost laptop versus local malware; OS full-disk encryption is the baseline control) then, if justified, an encrypted workspace store (SQLCipher via the SQLite crate's feature, verify) with the key in the OS credential store, and a plan to move source and audio blobs out of WebView IndexedDB into an encrypted Rust-managed store, because IndexedDB cannot be encrypted by the app without a key handling layer in the webview. Migration from the unencrypted store must be reversible and tested. Acceptance: with the option on, the database file is not readable without the key; recovery smoke passes with encryption. Tests: migration tests in both directions; crash-recovery cycles with encryption on; key-loss behaviour documented.
+
+**B12. Threat models** (S6). Scope: `docs/threat-model.md` with data-flow diagrams for the desktop app, each sidecar, the dev NVIDIA proxy, and the cloud gateway; STRIDE or similar per boundary; abuse cases: a malicious PDF/DOCX/PPTX against the document sidecar and ZIP-bomb limits (`MAX_ARCHIVE_*`), prompt injection in imported text steering chat, another local process calling a loopback sidecar (no authentication token today, so any local process or user on a shared machine can submit files and read results; verify and decide on a per-launch token), a hostile webview content path once the CSP is closed, the environment-variable command source for sidecars. Acceptance: each abuse case has a mitigation, a test reference or an explicit accepted-risk entry with an owner. Tests: none for the document; follow-ups become issues.
+
+**B13. Fuzz and property-based tests** (Q1, S9). Scope: `fast-check` properties for the course import/export package parser, workspace migrations and snapshot loader, source chunking, search stripping (the linear-time pattern was a past bug), and rich-text normalisation; Rust `cargo-fuzz` or property tests for the sidecar command-line splitter and the workspace snapshot load; Python `hypothesis` (or Atheris) for the document server's parsers and archive limits. A nightly workflow with a time budget, corpora committed under `tests/fuzz/`, crashes opened as issues. Acceptance: at least five targets run nightly; known past bugs are reintroduced in a scratch branch and caught. Tests: the targets themselves, plus a regression seed per fixed bug.
+
+**B14. Gateway load, soak and chaos testing** (R2, R4, R8, S9). Dependency: meaningful numbers need the real Durable Object and D1 adapters; build the harness now against the in-memory stores with `wrangler dev` or a Node harness. Scope: k6 scripts under `cloud/loadtest/` for sign-in, chat with streaming, idempotent retries and webhook bursts; thresholds for p95 latency and error rate; invariant checkers run after each test (no account exceeds its budget, every reservation settles or is released exactly once, double-settlement counters stay zero); soak runs of one to four hours; chaos by wrapping stores with fault injection (timeouts, partial writes, restart mid-reservation, clock skew) beyond the existing reordering. Later: run the same against staging, add a restore drill. Acceptance: the suite runs in a manual workflow and publishes a summary; a deliberately introduced overspend bug is caught. Tests: the invariants are the tests.
+
+**B15. Contract and fuzz tests for the gateway API** (Q1, S9). Scope: property-based or schema-driven tests (for example Schemathesis against `docs/cloud-api.openapi.yaml`, or fast-check generators from the generated types) that send malformed, oversized and boundary requests and assert the error envelope, no secret in `details`, correct status classes, header-only checks before body reads. Extend negative fixtures. Acceptance: runs in `cloud-gateway` CI in under a few minutes; replaces the 501 stub expectations as modules become real. Tests: itself.
+
+**B16. Zero-ambient-traffic proof** (S5, A3; also a stated test requirement in `cloud-plan.md`). Scope: in Playwright and in the packaged desktop run, record every outbound request over a full session (launch, record, import, chat with a local model stub, study, export, idle for a minute) and fail on any non-loopback destination; also DNS-level assertion where possible. Publish the result as a short document that sales and security questionnaires can cite (with its limits: development vs packaged, which endpoints the user configured). Acceptance: test fails when a deliberate telemetry call is added. Tests: itself, plus a negative control.
+
+**B17. Accessibility audit and conformance report** (Q2, C9). Scope: axe scans across all views, dialogs, themes and breakpoints; a manual WCAG 2.2 AA checklist (including newer criteria such as target size, focus not obscured, dragging alternatives, consistent help, redundant entry, accessible authentication; verify the list); keyboard-only walkthroughs; screen-reader passes with NVDA and VoiceOver (and JAWS where available); 200% zoom and 320 px reflow; reduced motion; contrast for both themes and for rendered KaTeX. Produce `docs/accessibility-conformance.md` as a self-assessment in the ACR layout (verify the template version) with clear "self-assessed" wording, and file issues for each failure. Acceptance: no open serious or critical issues in tested flows; every criterion has a recorded result. Tests: new Playwright axe scans per view; regression tests for each fix.
+
+**B18. End-to-end OS and WebView matrix** (D8, Q1). Scope: run Playwright on Windows and macOS runners as well as Linux, add WebKit and Firefox projects for the web build as a proxy for WKWebView and WebKitGTK (state clearly that this is a proxy); add older hosted images (for example `ubuntu-22.04`, previous Windows and macOS images, verify availability) to the desktop package job; investigate a macOS UI driver for the packaged app (the current WebDriver path does not cover it); publish the supported-OS table in `docs/desktop.md`. Acceptance: matrix green; table published with minimum versions actually tested. Tests: CI matrix.
+
+**B19. Desktop performance benchmarks and budgets on low-end hardware** (Q4). Scope: define a reference low-end machine (for example 8 GB RAM, 4 cores, no discrete GPU, spinning-disk-like I/O optional; justify it); script measurements: cold start, memory with a large synthetic workspace, workspace save latency versus size (the persistence is a versioned single-row snapshot, so save cost grows with workspace size; measure it), search latency, import of a 300-page PDF, local ASR real-time factor with `small` and `base` int8 on CPU, OCR seconds per page; set bundle-size budget (split `pdfjs-dist` to clear the Vite large-chunk advisory). Publish a table and enforce regressions in CI where hosted runners are stable enough, otherwise nightly. Acceptance: numbers published with hardware descriptions; budgets fail on a deliberate 2x regression. Tests: the benchmark harness; a synthetic workspace generator (also feeds B20's scale tests).
+
+**B20. Self-contained speech and document services** (D9, C1). Scope: a spike comparing (a) freezing the Python sidecars (PyInstaller-class) with bundled runtimes and models downloaded on first use under a model-licence review, and (b) native replacements (whisper.cpp, pdfium or a permissively licensed PDF library, a native OCR path) which would also remove the PyMuPDF licence question. Decide by size, accuracy parity on the existing benchmarks and licence. Then implement, wire the supervisor, and extend packaged-runtime smoke to start both services without any preinstalled Python. Acceptance: clean-VM install transcribes a sample and extracts a PDF offline. Tests: packaged smoke, accuracy parity checks against the existing FLEURS and document receipts.
+
+**B21. Security documentation set** (S4, P8, C8). Scope: rewrite `SECURITY.md` (supported versions, reporting channels including the enabled GitHub private reporting, response targets chosen by the founder, safe-harbour wording reviewed by counsel, disclosure timeline, how advisories are published); a `docs/security-overview.md` that states controls and limits plainly with a link to evidence for every claim (and cross-references the claims register); an intended-purpose and feature-review checklist for AI Act classification (no grading, proctoring, emotion inference); a dependency and update policy; a data-flow summary. Acceptance: every statement links to a test, config or document; reviewed against the claims register. Tests: a link checker in CI.
+
+**B22. Controls matrix and automated evidence collection** (S1, S2, S5, P1). Scope: `docs/compliance/controls.md` mapping each control to SOC 2 criteria and ISO Annex A themes with status; `scripts/collect-evidence.mjs` that gathers, into a dated `artifacts/evidence/` folder (git-ignored, optionally attached to a release): branch protection and ruleset export, required checks, Dependabot and code-scanning status, the last N CI runs with outcomes, test and coverage numbers, SBOM and attestation hashes, org member and 2FA settings (needs admin scope), and the subprocessor data file. Acceptance: reproducible run, no secrets in output, schema-validated, hash-manifested. Tests: unit tests with recorded API fixtures.
+
+**B23. Coverage reporting and gates** (Q1, S1). Scope: add `@vitest/coverage-v8` as a pinned devDependency in the root and `cloud/`, report in CI, set thresholds slightly below the section 2 figures and ratchet upward; add Rust coverage (`cargo-llvm-cov`) and Python coverage as informational first. Acceptance: CI fails when coverage drops below thresholds. Tests: CI behaviour.
+
+**B24. Release, rollback and incident runbooks** (R6, R9, C8). Scope: `docs/release-process.md` (checklist; the tag job to require a green CI run on the tagged commit, including the e2e and desktop jobs which the release workflow currently skips; version and channel policy; a long-term-support branch policy for enterprise customers); a desktop rollback procedure; an incident response plan with severity levels, roles, comms templates and breach-notification steps (verify legal deadlines with counsel); a vulnerability-handling process with fix timelines. Acceptance: the checklist is exercised on the 0.1.0 draft release and corrected. Tests: a workflow guard that refuses the tag unless CI passed.
+
+**B25. Organisation, SSO and SCIM contract (design first)** (I1 to I8, D7). Scope: following the repository's contract-first practice, extend the OpenAPI file, fixtures and validator with organisations, memberships, roles, seats, SSO connections (OIDC and SAML metadata), domain verification, SCIM, tenant audit events and export, and an offline licence-file format; add the data-table rows and deletion semantics to the plan; reuse the audit chain ideas from the admin design; decide pooled versus per-seat budgets in a way that preserves the per-account Durable Object invariants. Include the "no vendor cloud" alternative for shape A (licence file plus policy only). Acceptance: fixtures validate, negative fixtures fail as intended, and a review by someone with SAML experience is recorded. Tests: the contract validator in CI.
+
+**B26. Proxy, custom CA, mTLS and on-prem inference guide** (D10, A1, A2). Scope: test the packaged app (webview and any Rust HTTP path) behind an authenticating proxy, a TLS-inspecting proxy with a custom root CA, and against an internal inference server with mTLS; document what works; add support for a custom CA and client certificate through policy where missing; a reference deployment guide for a self-hosted OpenAI-compatible server (for example vLLM) with a tested model list and sizing notes. Acceptance: a documented matrix with pass/fail from real tests. Tests: a containerised proxy and server fixture in CI where possible.
+
+**B27. Gateway observability, SLOs and runbooks** (R1, R5, R6). Scope: define SLIs and SLOs (availability, latency, budget-invariant violations, reconciler lag), a content-free metrics and log schema, the logging-policy test from `cloud-plan.md` (fails if a log call can receive a body, prompt or transcript), alert rules as code, a synthetic probe, and a runbook per alert. Acceptance: the logging-policy test fails on a deliberate violation; every alert links to a runbook. Tests: itself.
+
+**B28. LectureBench v0 and product-level evaluation** (A4, A5). Scope: a small held-out, versioned benchmark of lecture scenarios in French and English: transcript plus document sets with questions whose answers and supporting spans are labelled; metrics: answer correctness, citation precision and recall (does the cited span support the claim, plus a check that cited IDs exist among the sent passages), correct refusal on unanswerable questions, formula fidelity, note-structure validity. A runner that works against any OpenAI-compatible endpoint, reports confidence intervals, records model, endpoint, seed, date and hardware, and writes a small receipt that is committed or attached to releases (so third parties can verify). Run it for the default shipped local configuration and for the cloud model, on CPU hardware. Add human spot checks for a sample. Acceptance: reproducible run on a clean machine; results published together with limitations. Tests: unit tests for the scorers (the repo already does this for other benchmarks).
+
+**B29. Prompt-injection, leakage and French localisation** is two items. **B29a, injection and leakage suite** (A3): documents and transcripts containing instructions (ignore previous, reveal system prompt, produce links or images to external URLs, change language), checks that answers stay grounded, no external URL is rendered as active content, no secret from settings is exposed, and the evidence-boundary format cannot be broken out of; thresholds in CI against a deterministic stub plus a nightly run against a real model. **B29b, internationalisation** (Q3): introduce an i18n layer, extract strings, ship French as the first additional language, add locale-aware formats, and a lint that fails on new hard-coded UI strings. Acceptance: the suite and the extraction lint pass; French UI passes the existing e2e scenarios.
+
+**B30. Enterprise policy features for recording and cloud** (P7, A3). Dependency: B8. Scope: a recording notice and acknowledgement that policy can require, an indicator while recording, per-course "never cloud" (as specified in `cloud-plan.md`), optional redaction of obvious identifiers before any remote request, with limits stated plainly. Acceptance: with policy on, recording cannot start without acknowledgement; "never cloud" is enforced Rust-side. Tests: Rust tests and Playwright flows.
+
+**B31. Privacy-safe diagnostics and support tooling** (Q6, C3). Scope: a one-click diagnostics bundle (app version, OS, sidecar status, settings with endpoints redacted to hosts, recent error codes, no content, no file names) that the user can inspect before sharing; a known-issues document; a version and health page in Settings. Acceptance: a test proves no source, transcript or course title appears in the bundle. Tests: unit test with canary strings.
+
+Suggested pick order for the first sprint (value over risk, all independent): B1, B2, B23, B3, B5, B16, B21, B12. Second wave: B4, B6 (plumbing), B8, B9, B10, B13, B17, B19. The gateway items (B14, B15, B25, B27) can run in a separate lane at any time because the scaffold already supports them.
+
+## 8. What cannot be done by code
+
+None of the following can be claimed, advertised or answered "yes" on a questionnaire until it has actually happened and the evidence exists.
+
+- SOC 2 and ISO 27001 audits and reports: only a licensed audit firm or an accredited certification body can issue them, after an observation period for Type II.
+- Independent penetration tests and their attestation letters.
+- Third-party accessibility audit and a published ACR/VPAT.
+- A legal entity with verifiable registration, bank account, tax and social filings, signing authority.
+- Code-signing certificates and Apple Developer enrolment, which require identity verification of the entity.
+- Contracts: customer MSA, DPA, order forms, SLA schedules, supplier and subprocessor agreements (with the inference, hosting, email and payment providers), reseller agreements.
+- Lawyer opinions: GDPR roles, DPIA, AI Act classification, education-sector rules per country, recording consent, licence strategy, Cyber Resilience Act position, consumer-law points already marked `[LAWYER]` in the drafts.
+- Insurance (cyber, professional liability): a broker, underwriting and policy documents.
+- Customer references, case studies and logos, each with written permission.
+- Sales, partner and procurement work: pipeline, tenders, framework listings, pricing decisions.
+- Staffing: support, on-call, security ownership, compliance ownership. One person cannot be separation of duties for change management, nor a 24/7 rota.
+- Trademark search and registration.
+- Corporate decisions: product shape, licence, pricing, refund and SLA commitments.
+
+## 9. Claims register
+
+Do not make these claims in the product, website, documentation, pitch decks or questionnaires until the listed evidence exists. "Safe wording today" is a suggestion that is true of the repository as of the date above; legal review of public wording is still advised.
+
+| Claim | Why not now | Evidence required | Safe wording today |
+| --- | --- | --- | --- |
+| "SOC 2 compliant" or "SOC 2 certified" | No audit has happened. SOC 2 is an attestation report by a licensed firm, not a certificate | Issued Type II report (or Type I, labelled as such), its scope, period and auditor, shared under NDA | "We have not been audited." If true later: "SOC 2 Type II report available under NDA, scope: X, period: Y" |
+| "ISO 27001 certified" | No ISMS, no certificate | Certificate from an accredited body with the scope statement | Nothing |
+| "GDPR compliant" or "GDPR certified" | Compliance is not certified by a generic stamp; no DPIA, DPA, records or DPO decision exist | Records of processing, DPIA, DPA, procedures, lawyer sign-off; any formal certification must name the scheme | "Local mode does not send course content to us. The optional cloud design stores only [data table link]" (design, not yet operated) |
+| "Enterprise-grade security" or "bank-grade" or "military-grade encryption" | Undefined terms; unsigned installers, `main` unprotected, no CSP, no pen test | Replace with specific, evidenced statements | List the specific controls with links |
+| "Your data never leaves your device" | True only for local mode with local endpoints. A user can configure any remote endpoint, the dev app has an opt-in NVIDIA path, and the cloud tier will send content in transit | Packaged-app zero-traffic proof (B16), policy that can lock endpoints (B8), clear scoping | "Local mode makes no implicit network request; remote providers are explicit integrations" (as in `SECURITY.md`, tested in one browser scenario) |
+| "Encrypted at rest" or "end-to-end encrypted" or "zero-knowledge" | Desktop data is not encrypted by the app; the gateway sees content in transit; backup does not exist | B11 shipped and verified; for E2EE, a reviewed design and implementation | "Relies on operating-system disk encryption" |
+| "Penetration tested" or "independently audited" | No external test | Report with scope, date, fixed findings | Nothing |
+| "Signed", "verified publisher", "secure automatic updates" | Installers are unsigned; there is no updater | B6 and B7 with verification evidence | "Unsigned; verify the published SHA-256 sums" |
+| "99.9% uptime" or any SLA | No service is deployed; no measurements; no staffing | Twelve months of measured SLO data and a contract schedule you can staff | Nothing |
+| "WCAG 2.2 AA compliant" or "VPAT available" | Only automated axe checks and focus tests exist | B17 manual audit, ideally third-party, ACR published | "Automated accessibility checks run in CI; no serious or critical violations observed in the tested flows" |
+| Benchmark claims ("state of the art", "X% accuracy", "outperforms") | Results are for a general model on a hosted endpoint, several targets are unmet, product-level evaluation does not exist, receipts are not published | LectureBench (B28) on the shipped configuration, published receipts, confidence intervals, model and hardware stated, third-party reproduction for headline numbers | Cite `docs/status.md` with model, split and date; say which targets are unmet |
+| "No hallucinations", "always accurate", "always cites its sources" | Not measurable as a guarantee; faithfulness not measured | Measured citation precision/recall and refusal rates with limits (B28) | "Answers link to the passages sent to the model; check the source" |
+| "AI Act compliant" or "high-risk compliant" | No classification or conformity work | Written classification and counsel opinion | Nothing |
+| "FERPA / COPPA / HIPAA compliant" | These are legal duties of institutions and vendors under contract, not product stamps; no analysis exists | Counsel analysis per market and the contract terms that support it | "Local-first: lecture content is not transmitted to us in local mode" |
+| "SSO, SCIM, RBAC supported" | Not implemented | Shipped features with conformance tests against real IdPs | Nothing |
+| "Works on Windows, macOS and Linux" without qualification | macOS is Apple Silicon only; builds are unsigned; minimum versions untested; Linux is `.deb` only | The supported-OS table (D8, B18) | "Unsigned builds for Windows, Apple Silicon macOS and Debian-based Linux" |
+| "Works fully offline" | Recording and text import work without services; transcription and document extraction need separately installed Python services and downloaded models | B20 | "Recording and text import need no service; speech and documents use optional local services" |
+| "Used by universities" or "trusted by" | No customers | Written permission from each named customer | Nothing |
+| "Open source" for the whole product | True for the MIT code only; third-party assets differ; a future enterprise module may not be open | Final licence decision (section 5), `THIRD-PARTY-NOTICES` | "The application code is MIT licensed; see NOTICE.md for exceptions" |
+| "The service stores no student data" (cloud) | Cloud is not deployed; the claim rests on a design, a not-yet-existing logging test, and platform behaviour; the sign-in email is stored; the hosting provider sees traffic in transit | Deployed system, logging-policy test (B27) passing, audit of the deployed configuration, privacy policy published after legal review | "Planned design: no content stored; see `docs/cloud-plan.md`" |
+| "Insured", "24/7 support", "dedicated customer success" | None exist | Policy certificates; staffed rota; contract terms | Nothing |
+| "Privacy by design" with DPIA or "children's data safe" | No DPIA; no minors process | DPIA, age policy, counsel sign-off | Nothing |
+
+## 10. Open decisions and unverified items
+
+Decisions needed from the founder (this document does not make them): the product shape (section 1); the licence route (section 5); target markets and therefore which education-data regimes apply; which assurance to pursue first (SOC 2, ISO 27001, both, or neither initially); whether to staff support and on-call; when to give up the single-maintainer model for change control (a second reviewer).
+
+Items to verify before relying on them: every standard and regulation detail in this document (SOC 2 criteria categories, ISO Annex A grouping and edition, HECVAT version, WCAG 2.2 success criteria list, EN 301 549 applicability, AI Act categories and dates, Cyber Resilience Act dates and open-source treatment, GDPR breach-notification timing, CNIL DPIA list, FERPA and COPPA scope, SecNumCloud applicability); PyMuPDF and every bundled or recommended model's licence; Lordicon terms for commercial redistribution; code-signing eligibility, cost and SmartScreen reputation behaviour; Apple Developer Program terms; availability of MSI/PKG bundling in the pinned Tauri version; CodeQL support for Rust; Cloudflare plan features (EU jurisdiction, regional controls, snapshot retention); Groq's processing region and terms; NVIDIA trial terms regarding benchmark use; whether any trademark or insurance exists today; whether GitHub's Dependabot alerts are really disabled (the API answer was ambiguous) and the details of branch rules beyond "not protected" (the API rate limit was reached before they were examined).
+
+Not examined: the full text of `docs/benchmarks.md` (1,062 lines) beyond the summary tables in `status.md`; the Rust source beyond configuration, grep counts and the files named; the admin design's later sections (data tables, UI, rollout) beyond its decisions, authentication and trust boundaries; the cloud OpenAPI file and fixtures; the Playwright and desktop test bodies except where cited.
+
+## 11. Appendix: how the numbers were measured
+
+Environment: Windows 11, Node 22, a git worktree of `main` at `92d124e`, 2026-10-31. Nothing was added to `package.json`.
+
+```bash
+# App tests and coverage (the coverage package was installed with --no-save and is not a project dependency)
+npm ci
+npx vitest run
+npm i --no-save @vitest/coverage-v8@5.0.2
+npx vitest run --coverage --coverage.reporter=text-summary \
+  --coverage.include='src/**' --coverage.exclude='src/**/*.test.*'
+
+# Cloud gateway tests and coverage
+cd cloud && npm ci && npx vitest run
+npm i --no-save @vitest/coverage-v8@5.0.5
+npx vitest run --coverage --coverage.reporter=text-summary \
+  --coverage.include='src/**' --coverage.exclude='src/**/*.test.ts' --coverage.exclude='src/testing/**'
+
+# Dependency audit and declared licences
+npm audit --omit=dev --audit-level=high ; npm audit ; (cd cloud && npm audit)
+node -e "<tally of the license field of every entry in package-lock.json>"
+
+# Counts by grep
+grep -rE "^\s*test\(" tests/e2e | wc -l          # 48 browser test declarations
+grep -rE "^\s+def test_" tests/*.py | wc -l        # 89 Python test methods
+grep -c "#\[test\]" src-tauri/src/*.rs             # 4 + 5 Rust tests
+
+# Repository settings (read-only)
+gh api repos/Shoko-official/StudentLLM --jq '{vis:.visibility,sec:.security_and_analysis}'
+gh api repos/Shoko-official/StudentLLM/branches/main/protection   # 404: not protected
+gh api repos/Shoko-official/StudentLLM/rulesets                    # []
+gh api repos/Shoko-official/StudentLLM/code-scanning/alerts        # 404: no analysis
+gh api repos/Shoko-official/StudentLLM/private-vulnerability-reporting   # enabled
+```
+
+Browser e2e, Rust tests, Python tests and the packaged desktop jobs were not re-run for this document; their figures are either grep counts or taken from `docs/status.md` and labelled as such. The coverage figures describe line and branch execution by the existing tests and say nothing about the quality of the assertions.
