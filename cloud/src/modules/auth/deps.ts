@@ -20,7 +20,7 @@ export function createAuthDeps(core: CoreDeps, overrides: Partial<AuthDeps> = {}
   return {
     email: unconfiguredEmailSender,
     keys: lazy(() =>
-      loadTokenKeys(config.secret("TOKEN_SIGNING_KEY").reveal(), parsePreviousPublicKeys(config.var("TOKEN_PREVIOUS_PUBLIC_KEYS"))),
+      loadTokenKeys(config.secret("TOKEN_SIGNING_KEY").reveal(), parsePreviousPublicKeys(config.variable("TOKEN_PREVIOUS_PUBLIC_KEYS"))),
     ),
     google: createGoogleClient({
       fetch: (input, init) => core.fetch(input, init),

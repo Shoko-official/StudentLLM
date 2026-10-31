@@ -106,7 +106,7 @@ export interface Config {
   secret(name: SecretName): Secret;
   hasSecret(name: SecretName): boolean;
   /** A non-secret variable (trimmed), or undefined when unset or empty. */
-  var(name: VarName): string | undefined;
+  variable(name: VarName): string | undefined;
 }
 
 const SEMVER = /^\d+\.\d+\.\d+$/;
@@ -204,7 +204,7 @@ export function loadConfig(env: Env, overrides: { limits?: Limits } = {}): Confi
     hasSecret(name) {
       return secrets.has(name);
     },
-    var(name) {
+    variable(name) {
       const value = env[name];
       return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
     },
