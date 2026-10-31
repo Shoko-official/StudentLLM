@@ -5,6 +5,7 @@ import {
   type IdempotencyRecord,
   type IdempotencyState,
   type IdempotencyStore,
+  type IdempotencyTransitionExtras,
 } from "../interfaces";
 
 const copy = <T>(value: T): T => structuredClone(value);
@@ -59,13 +60,13 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
     from: IdempotencyState[],
     to: IdempotencyState,
     now: number,
-    extras: { creditsCharged?: number } = {},
+    extras: IdempotencyTransitionExtras = {},
   ) {
     const r = this.live(key, now);
     if (!r || !from.includes(r.state)) return null;
     r.state = to;
     if (extras.creditsCharged !== undefined) r.creditsCharged = extras.creditsCharged;
-    if (to === "failed_no_usage") {
+    if (to === "failed_no_usage" && extras.countAnomaly !== false) {
       const hourKey = `${key.accountId}|${Math.floor(now / 3_600_000)}`;
       this.failedNoUsage.set(hourKey, (this.failedNoUsage.get(hourKey) ?? 0) + 1);
     }

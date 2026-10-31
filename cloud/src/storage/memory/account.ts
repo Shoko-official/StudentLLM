@@ -1,4 +1,17 @@
-import type { AccountPatch, AccountRecord, AccountStore, DeletionTombstone, LoginMethod, NewAccount, PlanRecord } from "../interfaces";
+import type {
+  AccountPatch,
+  AccountRecord,
+  AccountStore,
+  ApplyPlanEventResult,
+  DeletionTombstone,
+  LoginMethod,
+  NewAccount,
+  PlanReducer,
+  PlanRecord,
+  SavePlanResult,
+} from "../interfaces";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const copy = <T>(value: T): T => structuredClone(value);
 
@@ -59,6 +72,14 @@ export class InMemoryAccountStore implements AccountStore {
     return copy(a);
   }
 
+  async touchLastRequest(accountId: string, now: number) {
+    const a = this.accounts.get(accountId);
+    if (!a) return false;
+    if (a.lastRequestAt !== null && Math.floor(a.lastRequestAt / DAY_MS) >= Math.floor(now / DAY_MS)) return false;
+    a.lastRequestAt = now;
+    return true;
+  }
+
   async acceptTerms(accountId: string, termsVersion: string, now: number) {
     const a = this.accounts.get(accountId);
     if (!a) return null;
@@ -100,9 +121,7 @@ export class InMemoryAccountStore implements AccountStore {
     return p ? copy(p) : null;
   }
 
-  async savePlan(plan: PlanRecord) {
-    const a = this.accounts.get(plan.accountId);
-    if (!a) return null;
+  private store(a: AccountRecord, plan: PlanRecord): number {
     const previous = this.plans.get(plan.accountId);
     if (previous?.paddleSubscriptionId) this.bySubscription.delete(previous.paddleSubscriptionId);
     if (previous?.paddleCustomerId) this.byCustomer.delete(previous.paddleCustomerId);
@@ -111,6 +130,27 @@ export class InMemoryAccountStore implements AccountStore {
     if (plan.paddleCustomerId) this.byCustomer.set(plan.paddleCustomerId, plan.accountId);
     a.planVersion += 1;
     return a.planVersion;
+  }
+
+  async savePlan(plan: PlanRecord, options: { expectedPlanVersion: number }): Promise<SavePlanResult> {
+    const a = this.accounts.get(plan.accountId);
+    if (!a) return { ok: false, reason: "not_found" };
+    if (a.planVersion !== options.expectedPlanVersion) {
+      return { ok: false, reason: "conflict", currentPlanVersion: a.planVersion };
+    }
+    return { ok: true, planVersion: this.store(a, plan) };
+  }
+
+  async applyPlanEvent(accountId: string, occurredAt: number, reduce: PlanReducer): Promise<ApplyPlanEventResult> {
+    const a = this.accounts.get(accountId);
+    if (!a) return { applied: false, reason: "not_found" };
+    const current = this.plans.get(accountId) ?? null;
+    if (current?.lastEventAt != null && occurredAt < current.lastEventAt) return { applied: false, reason: "stale" };
+    const next = copy(reduce(current ? copy(current) : null));
+    if (next.accountId !== accountId) throw new Error("a plan reducer must keep the account id");
+    next.lastEventAt = occurredAt;
+    const planVersion = this.store(a, next);
+    return { applied: true, plan: copy(next), planVersion };
   }
 
   async findAccountIdByPaddleSubscription(subscriptionId: string) {

@@ -1,4 +1,6 @@
-import type { AuthChallengeStore, LinkTicket, PendingSignIn } from "../interfaces";
+import { constantTimeEqual } from "../../crypto/compare";
+import type { SaltedHash, StableHash } from "../../crypto/keyed-hash";
+import type { AuthChallengeStore, LinkTicket, PendingSignIn, VerifyEmailCodeResult } from "../interfaces";
 
 const copy = <T>(value: T): T => structuredClone(value);
 
@@ -30,7 +32,7 @@ export class InMemoryAuthChallengeStore implements AuthChallengeStore {
     return this.find((p) => p.stateHash === stateHash, now);
   }
 
-  async getByEmailHash(emailHash: string, now: number) {
+  async getByEmailHash(emailHash: StableHash, now: number) {
     return this.find((p) => p.emailHash === emailHash, now);
   }
 
@@ -38,11 +40,27 @@ export class InMemoryAuthChallengeStore implements AuthChallengeStore {
     return this.find((p) => p.codeHash === codeHash, now);
   }
 
-  async incrementAttempts(id: string) {
-    const p = this.pending.get(id);
-    if (!p) return null;
-    p.attempts += 1;
-    return p.attempts;
+  async verifyEmailCode(input: {
+    emailHash: StableHash;
+    candidateCodeHash: string;
+    maxAttempts: number;
+    countAttempt: boolean;
+    now: number;
+  }): Promise<VerifyEmailCodeResult> {
+    // One synchronous step: read, compare, count and consume cannot interleave with another guess.
+    let p: PendingSignIn | undefined;
+    for (const candidate of this.pending.values()) {
+      if (candidate.kind === "email" && candidate.emailHash === input.emailHash && candidate.expiresAt > input.now) p = candidate;
+    }
+    if (!p) return { outcome: "gone" };
+    if (p.attempts >= input.maxAttempts) return { outcome: "locked" };
+    if (p.codeHash === null || !constantTimeEqual(p.codeHash, input.candidateCodeHash)) {
+      p.attempts += 1;
+      return { outcome: "wrong", attempts: p.attempts };
+    }
+    const pending = copy(p);
+    if (input.countAttempt) this.pending.delete(p.id);
+    return { outcome: "ok", pending };
   }
 
   async delete(id: string) {
@@ -69,7 +87,7 @@ export class InMemoryAuthChallengeStore implements AuthChallengeStore {
     return out;
   }
 
-  async incrementCounter(key: string, now: number, ttlMs: number) {
+  async incrementCounter(key: SaltedHash, now: number, ttlMs: number) {
     const existing = this.counters.get(key);
     if (!existing || existing.expiresAt <= now) {
       this.counters.set(key, { count: 1, expiresAt: now + ttlMs });
@@ -79,7 +97,7 @@ export class InMemoryAuthChallengeStore implements AuthChallengeStore {
     return existing.count;
   }
 
-  async getCounter(key: string, now: number) {
+  async getCounter(key: SaltedHash, now: number) {
     const c = this.counters.get(key);
     return c && c.expiresAt > now ? c.count : 0;
   }
