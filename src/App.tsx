@@ -71,6 +71,8 @@ import { analyzeQuickStart } from './lib/quick-start';
 import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-routing';
 import type { QuickStartProposal } from './lib/quick-start';
 import { Artifact, ArtifactKind, ChatMessage, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from './types';
+import { chooseNoteOnUndo, restoreAtPositions, sameIdSet, SOURCE_REMOVAL_MAX_MS, SOURCE_REMOVAL_UNDO_MS, takeWithPositions, type RemovedEntry } from './lib/source-removal';
+import { addPendingSourceErase, isStalePendingSourceErase, listPendingSourceErases, removePendingSourceErase } from './lib/pending-source-erase';
 
 const PdfPreview = lazy(() => import('./lib/pdf-preview').then(({ PdfPreview: Preview }) => ({ default: Preview })));
 
@@ -143,6 +145,21 @@ const emptyLessonWorkspace: LessonWorkspace = {
 const LARGE_BATCH_IMPORT = 60;
 const sourceAccept = 'audio/*,image/*,.pdf,.txt,.md,.html,.htm,.rtf,.docx,.pptx';
 const PREFERENCES_STORAGE_KEY = 'studentllm.preferences.v1';
+type PendingSourceRemoval = {
+  lessonId: string;
+  resource: Resource;
+  resourceEntry: RemovedEntry<Resource>;
+  segmentEntries: RemovedEntry<TranscriptSegment>[];
+  courseNote: LessonWorkspace['courseNote'];
+  noteAfterRemoval: LessonWorkspace['courseNote'] | undefined;
+  preRemovalIds: string[];
+  timer: number;
+  hardTimer: number;
+  deadline: number;
+  remaining: number;
+  hover: boolean;
+  focus: boolean;
+};
 const RECORDING_NOTICE_STORAGE_KEY = 'studentllm.recording-notice.v1';
 const RECORDING_NOTICE_VERSION = 1;
 const SERVICES_STORAGE_KEY = 'studentllm.services.v1';
@@ -307,6 +324,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
   const [isStartingRecording, setIsStartingRecording] = useState(false);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(workspace.lessonWorkspaces?.[workspace.activeLessonId]?.artifacts[0]?.id ?? workspace.artifacts[0]?.id ?? null);
   const [toast, setToast] = useState('');
+  const [pendingSourceRemoval, setPendingSourceRemoval] = useState<PendingSourceRemoval | null>(null);
+  const pendingSourceRemovalRef = useRef<PendingSourceRemoval | null>(null);
+  const flushSourceRemovalRef = useRef<() => void>(() => undefined);
+  const [focusRestoredSourceId, setFocusRestoredSourceId] = useState<string | null>(null);
   const [showNewCourse, setShowNewCourse] = useState(false);
   const [showDeleteCourse, setShowDeleteCourse] = useState(false);
   const [showGlobalSearch, setShowGlobalSearch] = useState(false);
@@ -711,6 +732,56 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     const timeout = window.setTimeout(() => setToast(''), 2600);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  // Erase originals of sources removed in an earlier session whose undo window never closed (reload, crash, closed tab).
+  useEffect(() => {
+    if (!nativeStorageReady) return;
+    // Entries younger than the undo window plus margin may belong to another tab that can still undo; a later start sweeps them.
+    const stale = listPendingSourceErases().filter((entry) => isStalePendingSourceErase(entry) && entry.id !== pendingSourceRemovalRef.current?.resource.id);
+    if (!stale.length) return;
+    const referenced = new Set(Object.values(lessonWorkspaces).flatMap((item) => item.resources.map((resource) => resource.id)));
+    void (async () => {
+      for (const entry of stale) {
+        if (referenced.has(entry.id)) {
+          removePendingSourceErase(entry.id);
+          continue;
+        }
+        try {
+          await sourceBlobStore.remove(entry.id);
+          if (entry.kind === 'audio') await recordingChunkStore.clear(entry.id);
+          removePendingSourceErase(entry.id);
+        } catch {
+          // Keep the entry; the next start retries.
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeStorageReady, sourceBlobStore, recordingChunkStore]);
+
+  // Finalize a removal that is still in its undo window when the page is hidden or the app unmounts.
+  useEffect(() => {
+    const onPageHide = () => flushSourceRemovalRef.current();
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      flushSourceRemovalRef.current();
+    };
+  }, []);
+
+  // Remember the note as it stands right after the removal, so Undo can tell whether it was changed during the window.
+  useEffect(() => {
+    const pending = pendingSourceRemovalRef.current;
+    if (pending && pending.noteAfterRemoval === undefined) pending.noteAfterRemoval = lessonWorkspaces[pending.lessonId]?.courseNote;
+  }, [lessonWorkspaces, pendingSourceRemoval]);
+
+  // After Undo, hand keyboard focus back to the restored source (or the Sources tab when it is not on screen).
+  useEffect(() => {
+    if (!focusRestoredSourceId) return;
+    const target = Array.from(document.querySelectorAll<HTMLElement>('[data-resource-id]')).find((element) => element.dataset.resourceId === focusRestoredSourceId)
+      ?? document.getElementById('view-tab-sources');
+    target?.focus();
+    setFocusRestoredSourceId(null);
+  }, [focusRestoredSourceId, resources, view]);
 
   useEffect(() => {
     try {
@@ -1992,21 +2063,127 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
     sourceInputRef.current.click();
   };
 
-  const removeSource = async (resource: Resource) => {
+  const commitSourceRemoval = async (pending: PendingSourceRemoval) => {
     try {
-      await sourceBlobStore.remove(resource.id);
-      if (resource.kind === 'audio') await recordingChunkStore.clear(resource.id);
-      updateActiveWorkspace((current) => ({
-        ...current,
-        resources: current.resources.filter((item) => item.id !== resource.id),
-        transcript: current.transcript.filter((segment) => segment.sourceId !== resource.id && !segment.id.startsWith(`${resource.id}:`)),
-      }));
-      // The note was rebuilt without the removed source; let a reachable provider rewrite it again.
-      formatExistingCourseNote(activeLessonId, transcript.filter((segment) => segment.sourceId !== resource.id && !segment.id.startsWith(`${resource.id}:`)));
-      notify(`${resource.name} removed from this course.`);
+      await sourceBlobStore.remove(pending.resource.id);
+      if (pending.resource.kind === 'audio') await recordingChunkStore.clear(pending.resource.id);
+      removePendingSourceErase(pending.resource.id);
     } catch {
-      notify(`${resource.name} could not be removed.`);
+      // The ledger entry stays, so the erase is retried the next time the app starts.
+      notify(`${pending.resource.name} could not be fully removed.`);
     }
+  };
+
+  // Finalizes the removal that is still waiting in the undo window, if any.
+  const flushPendingSourceRemoval = () => {
+    const pending = pendingSourceRemovalRef.current;
+    if (!pending) return;
+    pendingSourceRemovalRef.current = null;
+    window.clearTimeout(pending.timer);
+    window.clearTimeout(pending.hardTimer);
+    setPendingSourceRemoval(null);
+    void commitSourceRemoval(pending);
+  };
+  flushSourceRemovalRef.current = flushPendingSourceRemoval;
+
+  const armUndoTimer = (pending: PendingSourceRemoval, ms: number) => {
+    pending.remaining = ms;
+    pending.deadline = Date.now() + ms;
+    pending.timer = window.setTimeout(() => flushSourceRemovalRef.current(), ms);
+  };
+
+  // The undo window stops counting down while the toast is hovered or holds keyboard focus.
+  const setUndoToastEngaged = (kind: 'hover' | 'focus', engaged: boolean) => {
+    const pending = pendingSourceRemovalRef.current;
+    if (!pending) return;
+    pending[kind] = engaged;
+    const paused = pending.hover || pending.focus;
+    if (paused && pending.timer) {
+      window.clearTimeout(pending.timer);
+      pending.timer = 0;
+      pending.remaining = Math.max(0, pending.deadline - Date.now());
+    } else if (!paused && !pending.timer) {
+      armUndoTimer(pending, pending.remaining);
+    }
+  };
+
+  const undoSourceRemoval = () => {
+    const pending = pendingSourceRemovalRef.current;
+    if (!pending) return;
+    pendingSourceRemovalRef.current = null;
+    window.clearTimeout(pending.timer);
+    window.clearTimeout(pending.hardTimer);
+    setPendingSourceRemoval(null);
+    // Small window: the ledger entry is cleared before the restored workspace is saved. If the page dies in between,
+    // the source is absent from the saved workspace while its blob stays on disk: a possible leak, never a loss.
+    removePendingSourceErase(pending.resource.id);
+    const before = lessonWorkspaces[pending.lessonId] ?? emptyLessonWorkspace;
+    const restoredTranscript = restoreAtPositions(before.transcript, pending.segmentEntries);
+    const noteChoice = chooseNoteOnUndo({
+      hasSnapshot: Boolean(pending.courseNote),
+      sameSegments: sameIdSet(restoredTranscript.map((segment) => segment.id), pending.preRemovalIds),
+      currentNote: before.courseNote,
+      noteAfterRemoval: pending.noteAfterRemoval,
+    });
+    const restoreInto = (workspace: LessonWorkspace): LessonWorkspace => ({
+      ...workspace,
+      resources: restoreAtPositions(workspace.resources, [pending.resourceEntry]),
+      transcript: restoreAtPositions(workspace.transcript, pending.segmentEntries),
+    });
+    if (noteChoice === 'rebuild') {
+      updateLessonWorkspace(pending.lessonId, restoreInto);
+      formatExistingCourseNote(pending.lessonId, restoredTranscript);
+    } else {
+      // 'snapshot': the same segments are back, so the pre-removal note (possibly AI-written) is still right.
+      // 'keep': the note changed during the window; do not overwrite it, but ask the provider to refresh it.
+      setLessonWorkspaces((current) => {
+        const workspace = restoreInto(current[pending.lessonId] ?? emptyLessonWorkspace);
+        return { ...current, [pending.lessonId]: noteChoice === 'snapshot' ? { ...workspace, courseNote: pending.courseNote } : workspace };
+      });
+      if (noteChoice === 'keep') formatExistingCourseNote(pending.lessonId, restoredTranscript);
+    }
+    setFocusRestoredSourceId(pending.resource.id);
+    notify(`${pending.resource.name} restored.`);
+  };
+
+  // The source leaves the course right away, but its stored original is only erased once the undo window closes.
+  const removeSource = (resource: Resource) => {
+    flushPendingSourceRemoval();
+    const belongsToSource = (segment: TranscriptSegment) => segment.sourceId === resource.id || segment.id.startsWith(`${resource.id}:`);
+    const lessonId = activeLessonId;
+    const pending: PendingSourceRemoval = {
+      lessonId,
+      resource,
+      resourceEntry: { index: 0, item: resource },
+      segmentEntries: [],
+      courseNote: undefined,
+      noteAfterRemoval: undefined,
+      preRemovalIds: [],
+      timer: 0,
+      hardTimer: 0,
+      deadline: 0,
+      remaining: SOURCE_REMOVAL_UNDO_MS,
+      hover: false,
+      focus: false,
+    };
+    addPendingSourceErase({ id: resource.id, kind: resource.kind });
+    // Read the freshest state inside the updater so segments that arrived late are still captured for Undo.
+    updateActiveWorkspace((current) => {
+      const resourceSplit = takeWithPositions(current.resources, (item) => item.id === resource.id);
+      const segmentSplit = takeWithPositions(current.transcript, belongsToSource);
+      pending.resourceEntry = resourceSplit.removed[0] ?? pending.resourceEntry;
+      pending.segmentEntries = segmentSplit.removed;
+      pending.courseNote = current.courseNote;
+      pending.preRemovalIds = current.transcript.map((segment) => segment.id);
+      return { ...current, resources: resourceSplit.kept, transcript: segmentSplit.kept };
+    });
+    // The note was rebuilt without the removed source; let a reachable provider rewrite it again.
+    formatExistingCourseNote(lessonId, transcript.filter((segment) => !belongsToSource(segment)));
+    armUndoTimer(pending, SOURCE_REMOVAL_UNDO_MS);
+    // Hovering or focusing the toast pauses the countdown, but never past this hard cap.
+    pending.hardTimer = window.setTimeout(() => flushSourceRemovalRef.current(), SOURCE_REMOVAL_MAX_MS);
+    pendingSourceRemovalRef.current = pending;
+    setPendingSourceRemoval(pending);
   };
 
   const deleteActiveCourse = async () => {
@@ -2016,6 +2193,7 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
       return;
     }
 
+    flushPendingSourceRemoval();
     const lessonId = activeLesson.id;
     const lessonTitle = activeLesson.title;
     try {
@@ -2409,9 +2587,9 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
               <div className="section-toolbar"><h2>Sources</h2><button className="secondary-action" onClick={() => openSourcePicker(sourceAccept)}><Plus size={16} /> Import file</button></div>
               {!resources.length && <div className="empty-panel"><EmptyStateIcon name="folder" /><p className="empty-state">Add audio, a PDF, an image or text notes to this course.</p></div>}
               <div className="resource-list">{activeResources.map((resource) => <div className="resource-item" key={resource.id}>
-                <button className="resource-open" onClick={() => void openResource(resource)}>{resourceIcon(resource.kind)}<span><strong>{resource.name}</strong><small>{transcribingResourceIds.has(resource.id) ? 'Transcribing...' : resource.meta}</small></span><ChevronRight size={16} /></button>
+                <button className="resource-open" data-resource-id={resource.id} onClick={() => void openResource(resource)}>{resourceIcon(resource.kind)}<span><strong>{resource.name}</strong><small>{transcribingResourceIds.has(resource.id) ? 'Transcribing...' : resource.meta}</small></span><ChevronRight size={16} /></button>
                 {resource.kind === 'audio' && <button className="text-action" aria-label={`Transcribe ${resource.name}`} disabled={transcribingResourceIds.has(resource.id)} onClick={() => void transcribeSource(resource)}>{transcribingResourceIds.has(resource.id) ? 'Transcribing...' : 'Transcribe'}</button>}
-                <button className="icon-button" aria-label={`Remove source ${resource.name}`} disabled={transcribingResourceIds.has(resource.id)} onClick={() => void removeSource(resource)}><X size={16} /></button>
+                <button className="icon-button" aria-label={`Remove source ${resource.name}`} disabled={transcribingResourceIds.has(resource.id)} onClick={() => removeSource(resource)}><X size={16} /></button>
               </div>)}</div>
               {resources.length > 3 && <button className="text-action" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`}</button>}
             </section>}
@@ -2452,7 +2630,10 @@ function App({ provider, recorderSessionFactory = requestRecorderSession, speech
           <p className="empty-state" role="status">LM Studio / Bionic: {isCheckingSidecars ? 'Checking...' : llmHealth}</p>{availableModels.length > 0 && <p className="detected-models">Detected local models: {availableModels.join(', ')}</p>}
         </form><div className="settings-list"><label className="setting-row"><span><strong>Dark mode</strong><small>Use a low-light workspace palette.</small></span><input type="checkbox" checked={darkMode} onChange={(event) => setDarkMode(event.target.checked)} /></label><label className="setting-row"><span><strong>Show verified transcript segments</strong><small>Keep completed segments visible in the course view.</small></span><input type="checkbox" checked={showVerifiedTranscript} onChange={(event) => setShowVerifiedTranscript(event.target.checked)} /></label><label className="setting-row"><span><strong>Compact transcript spacing</strong><small>Fit more indexed content on screen.</small></span><input type="checkbox" checked={compactTranscript} onChange={(event) => setCompactTranscript(event.target.checked)} /></label><div className="setting-info"><span className={`sidecar-status-dot ${sidecarHealth?.asr.available || sidecarHealth?.documents.available ? 'ready' : ''}`} /><span><strong>Local processing</strong><small>Audio and document sidecars are checked without interrupting any running local model.</small></span></div><div className="sidecar-status-list" aria-live="polite"><div><strong>ASR sidecar</strong><span className={sidecarHealth?.asr.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.asr.model ? `${sidecarHealth.asr.model} · ready` : sidecarHealth?.asr.detail ?? 'Not checked.'}</span></div><div><strong>Document sidecar</strong><span className={sidecarHealth?.documents.available ? 'ready' : ''}>{isCheckingSidecars ? 'Checking…' : sidecarHealth?.documents.model ? `${sidecarHealth.documents.model} · ready` : sidecarHealth?.documents.detail ?? 'Not checked.'}</span></div></div><button type="button" className="secondary-action refresh-sidecars" onClick={() => void checkSidecars()} disabled={isCheckingSidecars}>{isCheckingSidecars ? 'Checking local services…' : 'Refresh local services'}</button><p className="credits">Animated icons by <a href="https://lordicon.com/" target="_blank" rel="noreferrer">Lordicon</a>.</p></div><div className="modal-footer"><button type="button" className="primary-submit" onClick={() => setShowSettingsPanel(false)}>Done</button></div></section></div>}
       {isNativeRuntime() && <div className="managed-sidecar-tray" aria-label="Managed local services"><span>Managed services</span><span aria-live="polite">{managedSidecars.filter((sidecar) => sidecar.running).length}/2 running</span><button type="button" onClick={() => void startConfiguredSidecars()}>Start</button><button type="button" onClick={() => void stopConfiguredSidecars()}>Stop</button></div>}
-      {toast && <div className="toast" role="status">{toast}</div>}
+      <div className="toast-stack">
+        <div className="toast-slot" role="status" aria-atomic="true">{toast && <div className="toast">{toast}</div>}</div>
+        <div className="toast-slot" role="status" aria-atomic="true">{pendingSourceRemoval && <div className="toast toast-undo" onPointerEnter={(event) => { if (event.pointerType === 'mouse') setUndoToastEngaged('hover', true); }} onPointerLeave={(event) => { if (event.pointerType === 'mouse') setUndoToastEngaged('hover', false); }} onFocus={() => setUndoToastEngaged('focus', true)} onBlur={() => setUndoToastEngaged('focus', false)}><span>{pendingSourceRemoval.resource.name} removed from this course.</span><button type="button" className="text-action" onClick={undoSourceRemoval}>Undo</button></div>}</div>
+      </div>
     </div>
   );
 }
