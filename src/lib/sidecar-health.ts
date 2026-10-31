@@ -38,10 +38,11 @@ export async function probeSidecar(baseUrl: string | undefined, options: Sidecar
     };
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return { available: false, detail: 'Health check timed out.' };
-    return { available: false, detail: error instanceof Error ? error.message : 'Health check failed.' };
+    return { available: false, detail: describeServiceUnreachable(error) };
   } finally {
     clearTimeout(timer);
   }
 }
 import { readJsonResponse } from './response-json';
+import { describeServiceUnreachable } from './service-errors';
 import { isLoopbackServiceUrl, LOOPBACK_ONLY_DETAIL, normalizeServiceBaseUrl } from './service-url';

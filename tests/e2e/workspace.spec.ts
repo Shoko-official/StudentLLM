@@ -549,7 +549,8 @@ test.describe('StudentLLM workspace', () => {
       buffer: Buffer.from('{"format":"studentllm-course","version":1}'),
     });
 
-    await expect(page.getByText('The course import could not be completed.')).toBeVisible();
+    await expect(page.getByRole('alert')).toContainText('broken.studentllm.json could not be imported.');
+    await expect(page.getByRole('alert')).toContainText('Nothing was changed.');
     await expect(page.getByRole('heading', { name: 'Attention & Scaled Dot-Product' }).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Self-attention and Context' })).toBeVisible();
   });
@@ -1191,7 +1192,7 @@ test.describe('StudentLLM workspace', () => {
   });
 
   for (const failure of [
-    { label: 'a failed provider request', content: 'Fixture generation unavailable.', status: 503, error: 'Provider request failed (503): Fixture generation unavailable.' },
+    { label: 'a failed provider request', content: 'Fixture generation unavailable.', status: 503, error: 'Fixture generation unavailable.' },
     { label: 'an empty provider answer', content: '   ', status: 200, error: 'The model returned no final answer.' },
   ]) {
     test(`does not save study material after ${failure.label}`, async ({ page }) => {

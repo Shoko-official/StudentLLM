@@ -67,7 +67,10 @@ describe('StudentLLM workspace', () => {
     expect(screen.queryByRole('complementary', { name: 'Course Studio' })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('region', { name: 'Course notes document' })).toHaveTextContent('The square-root factor');
-    expect(screen.getByRole('region', { name: 'Transcript preview' })).not.toBeVisible();
+    // The transcript list is only built once its section is opened.
+    expect(screen.queryByRole('region', { name: 'Transcript preview' })).not.toBeInTheDocument();
+    await openTranscript(user);
+    expect(screen.getByRole('region', { name: 'Transcript preview' })).toBeVisible();
     await openSources(user);
     expect(screen.getByText('transcript.txt')).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: 'Study' }));
@@ -547,7 +550,7 @@ describe('StudentLLM workspace', () => {
     await user.type(screen.getByLabelText('Ask the course chat'), 'Explain why normalization matters.');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByText('Provider request timed out.')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('The AI model took too long to answer.');
     expect(generate).toHaveBeenCalledTimes(1);
   });
 

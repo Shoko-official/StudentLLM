@@ -8,6 +8,17 @@ const MAX_SOURCE_CHARS = 20_000;
 /** Hard cap on any single construct a regex may span (link text, emphasis, inline math). */
 const SPAN = 300;
 
+/**
+ * Lowercases and removes accents, one character for one character, so "ete" finds "été", "ecole" finds "École" and a
+ * straight apostrophe finds the typographic one. Same length as the lowercased text, so snippet offsets stay valid.
+ */
+export function foldForSearch(text: string): string {
+  return text.toLocaleLowerCase().replace(/[\u00c0-\u024f\u1e00-\u1eff\u2018\u2019]/g, (character) => {
+    if (character === '\u2018' || character === '\u2019') return "'";
+    return character.normalize('NFD')[0] ?? character;
+  });
+}
+
 const PIPE = '\u0001'; // restored to "|" after table-pipe stripping
 const ESCAPE_BASE = 0xe100; // private-use range holding escaped literal characters
 
@@ -97,22 +108,26 @@ function queryVariants(query: string): string[] {
 let lastVariants: { query: string; variants: string[] } | undefined;
 
 function computeQueryVariants(query: string): string[] {
-  const typed = query.trim().toLocaleLowerCase();
+  const typed = foldForSearch(query.trim());
   if (!typed) return [];
-  const stripped = toPlainText(query).toLocaleLowerCase();
+  const stripped = foldForSearch(toPlainText(query));
   const symbolic = typed.replace(/[a-z]+/gi, (word) => {
     const symbol = LATEX_SYMBOLS[word] ?? LATEX_SYMBOLS[word.toLowerCase()];
     return symbol && symbol !== PIPE ? symbol : word;
   });
   const unmarked = typed.replace(/[*_`#~>\\$]/g, '').replace(/\s+/g, ' ').trim();
-  return [...new Set([typed, stripped, symbolic.toLocaleLowerCase(), unmarked])].filter(Boolean);
+  // Ligatures are typed as two letters: let `coeur` find `cœur` and `cœur` find `coeur`.
+  const ligature = (text: string) => text.replace(/oe/g, 'œ').replace(/ae/g, 'æ');
+  const unligature = (text: string) => text.replace(/œ/g, 'oe').replace(/æ/g, 'ae');
+  const base = [typed, stripped, foldForSearch(symbolic), unmarked];
+  return [...new Set([...base, ...base.map(ligature), ...base.map(unligature)])].filter(Boolean);
 }
 
 /** Window of the raw source worth stripping: the head, or the area around a raw match in a very long text. */
 function boundedSource(source: string, query: string) {
   if (source.length <= MAX_SOURCE_CHARS) return source;
-  const needle = query.trim().toLocaleLowerCase();
-  const index = needle ? source.toLocaleLowerCase().indexOf(needle) : -1;
+  const needle = foldForSearch(query.trim());
+  const index = needle ? foldForSearch(source).indexOf(needle) : -1;
   if (index < 0) return source;
   const start = Math.max(0, index - MAX_SOURCE_CHARS / 2);
   return source.slice(start, start + MAX_SOURCE_CHARS);
@@ -132,14 +147,14 @@ export function __plainCacheStatsForTests() {
 /** Lowercased plain text of a source, cached (bounded, least recently used) so each keystroke does not re-strip every segment. */
 function lowerPlainText(source: string, query: string): string {
   // Longer sources are windowed around the query, so their plain text depends on the query: do not cache.
-  if (source.length > MAX_SOURCE_CHARS) return toPlainText(boundedSource(source, query)).toLocaleLowerCase();
+  if (source.length > MAX_SOURCE_CHARS) return foldForSearch(toPlainText(boundedSource(source, query)));
   const cached = plainCache.get(source);
   if (cached !== undefined) {
     plainCache.delete(source);
     plainCache.set(source, cached);
     return cached;
   }
-  const plain = toPlainText(source).toLocaleLowerCase();
+  const plain = foldForSearch(toPlainText(source));
   plainCache.set(source, plain);
   plainCacheChars += source.length + plain.length;
   for (const key of plainCache.keys()) {
@@ -155,9 +170,9 @@ function lowerPlainText(source: string, query: string): string {
  * so search results agree with the highlighted snippet.
  */
 export function textMatchesQuery(source: string, query: string): boolean {
-  const needle = query.trim().toLocaleLowerCase();
+  const needle = foldForSearch(query.trim());
   if (!needle) return false;
-  if (source.toLocaleLowerCase().includes(needle)) return true;
+  if (foldForSearch(source).includes(needle)) return true;
   const plain = lowerPlainText(source, query);
   return queryVariants(query).some((variant) => plain.includes(variant));
 }
@@ -166,7 +181,7 @@ export function textMatchesQuery(source: string, query: string): boolean {
 export function buildSnippet(source: string, query: string, maxLength = 160): SnippetPart[] {
   const plain = toPlainText(boundedSource(source, query));
   if (!plain) return [];
-  const lower = plain.toLocaleLowerCase();
+  const lower = foldForSearch(plain);
   // Lowercasing can change length for rare characters; skip highlighting then.
   let index = -1;
   let length = 0;

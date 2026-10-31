@@ -7,7 +7,12 @@ export interface RecorderStopSummary {
   persistenceError: boolean;
 }
 
+/** `interrupted`: the browser stopped recording by itself (microphone unplugged or permission withdrawn). `storage`: a chunk could not be saved. */
+export type RecorderProblem = 'interrupted' | 'storage';
+
 export interface RecorderSession {
+  /** Called when something goes wrong while recording is still on; what was captured so far is kept. */
+  onProblem?: (listener: (problem: RecorderProblem) => void) => void;
   stop: () => Promise<RecorderStopSummary>;
   readChunks: () => Promise<AudioChunkRecord[]>;
   readPreviewWindow?: (fromSeconds: number) => AudioPreviewWindow | null;
@@ -30,6 +35,23 @@ export interface RecorderOptions {
   chunkIntervalMs?: number;
   recordingId?: string;
   now?: () => number;
+}
+
+const STOP_TIMEOUT_MS = 5_000;
+
+/** A sentence for a refused or missing microphone, or null when the error is not a known microphone failure. */
+export function describeMicrophoneError(error: unknown): string | null {
+  const name = error instanceof DOMException || error instanceof Error ? error.name : '';
+  if (['NotAllowedError', 'SecurityError', 'PermissionDeniedError'].includes(name)) {
+    return 'Microphone access is blocked. Allow the microphone for StudentLLM in your browser (or in your system privacy settings for the desktop app), then try again.';
+  }
+  if (['NotFoundError', 'DevicesNotFoundError', 'OverconstrainedError'].includes(name)) {
+    return 'No microphone was found. Plug one in or pick an input device in your system sound settings, then try again.';
+  }
+  if (['NotReadableError', 'TrackStartError', 'AbortError'].includes(name)) {
+    return 'The microphone could not be opened. Another app may be using it: close that app and try again.';
+  }
+  return null;
 }
 
 function createRecordingId() {
@@ -83,6 +105,19 @@ export async function requestRecorderSession(options: RecorderOptions = {}): Pro
   let pendingWrites = Promise.resolve();
   let stopPromise: Promise<RecorderStopSummary> | undefined;
   const preview = await captureLiveAudio(stream);
+  // The browser ends a MediaRecorder by itself when every track ends (device unplugged, permission withdrawn).
+  // Remember it, because asking an already finished recorder to stop never produces another stop event.
+  let stopRequested = false;
+  let recorderEnded = false;
+  let markEnded!: () => void;
+  const ended = new Promise<void>((resolve) => { markEnded = resolve; });
+  const problemListeners = new Set<(problem: RecorderProblem) => void>();
+  const reportProblem = (problem: RecorderProblem) => problemListeners.forEach((listener) => listener(problem));
+  recorder.onstop = () => {
+    recorderEnded = true;
+    markEnded();
+    if (!stopRequested) reportProblem('interrupted');
+  };
 
   recorder.ondataavailable = (event) => {
     if (!event.data.size) return;
@@ -97,6 +132,7 @@ export async function requestRecorderSession(options: RecorderOptions = {}): Pro
         await chunkStore.append(chunk);
         chunksPersisted += 1;
       } catch {
+        if (!persistenceError) reportProblem('storage');
         persistenceError = true;
       }
     });
@@ -105,12 +141,21 @@ export async function requestRecorderSession(options: RecorderOptions = {}): Pro
   const stop = () => {
     if (stopPromise) return stopPromise;
     stopPromise = (async () => {
-      const stopped = new Promise<void>((resolve) => {
-        recorder.onstop = () => resolve();
-      });
+      stopRequested = true;
       try {
-        recorder.stop();
-        await stopped;
+        if (!recorderEnded) {
+          try {
+            recorder.stop();
+          } catch {
+            // Already inactive: the final data was delivered when it ended.
+            recorderEnded = true;
+          }
+          if (!recorderEnded) {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            await Promise.race([ended, new Promise<void>((resolve) => { timer = setTimeout(resolve, STOP_TIMEOUT_MS); })]);
+            clearTimeout(timer);
+          }
+        }
       } finally {
         preview?.close();
         stream.getTracks().forEach((track) => track.stop());
@@ -132,6 +177,7 @@ export async function requestRecorderSession(options: RecorderOptions = {}): Pro
     stream,
     stop,
     readChunks: () => chunkStore.list(recordingId),
+    onProblem: (listener) => { problemListeners.add(listener); },
     ...(preview ? { readPreviewWindow: preview.read } : {}),
     recordingId,
     durability: chunkStore.durability,

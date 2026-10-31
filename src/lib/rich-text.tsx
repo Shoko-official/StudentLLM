@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, memo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
@@ -198,7 +198,9 @@ interface RichTextProps {
   className?: string;
 }
 
-export function RichText({ content, highlightExtractedMath = false, className }: RichTextProps) {
+// Memoized: parsing Markdown and typesetting KaTeX is the expensive part of a render, and the workspace re-renders on
+// every keystroke in a search field or the chat composer. The props are plain strings, so a shallow compare is exact.
+export const RichText = memo(function RichText({ content, highlightExtractedMath = false, className }: RichTextProps) {
   const classes = ['rich-text', className].filter(Boolean).join(' ');
   if (highlightExtractedMath) return <div className={classes}>{renderExtractedText(content)}</div>;
 
@@ -210,10 +212,15 @@ export function RichText({ content, highlightExtractedMath = false, className }:
         urlTransform={safeUrlTransform}
         components={{
           img: ({ alt }) => <span className="rich-image-alt" role="img" aria-label={alt || 'Image omitted'}>{alt || 'Image omitted'}</span>,
+          // Only real external addresses are links. An empty, relative or in-page href would reload or navigate this single-page
+          // app away from the course (and an empty href reloads it outright), so it is shown as plain text instead.
+          a: ({ href, children }) => (typeof href === 'string' && /^(?:https?:|mailto:)/i.test(href.trim())
+            ? <a href={href}>{children}</a>
+            : <span className="rich-link-inert">{children}</span>),
         }}
       >
         {normalizeMathDelimiters(repairUnclosedInlineLatex(normalizeMarkdownLatex(content)))}
       </ReactMarkdown>
     </div>
   );
-}
+});

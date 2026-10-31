@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed
+
+- An unreachable AI model, speech service or document service is explained in plain language in Chat, Study, the organizer, imports and Settings, instead of "Provider request failed (502)" or "Failed to fetch". A failed chat request is no longer saved as an assistant answer; the question returns to the composer ([#338](https://github.com/Shoko-official/StudentLLM/issues/338)).
+- Work is no longer lost silently: a transcription, extraction, recording or organizer call that finishes later merges into the transcript as it is then, so text imported during it is kept; a course deleted while an import runs is not resurrected; removing or deleting a source or course never erases a stored original that another course uses or is still importing; a full or blocked browser store shows an alert instead of "saved locally"; a damaged, partly unreadable or newer-format workspace is copied aside and, when no copy can be kept or a newer version owns the data, left untouched with saving paused and a download of the saved data (the copy is a raw workspace file, not a course export, so it cannot be imported back and must be kept and restored by hand); a write from another tab pauses saving in the stale tab, which then offers Reload and Export; closing the tab during an import, transcription, recording or while changes are not being saved asks for confirmation; a recording stopped while saving is paused stays recoverable. Empty files and a second copy of a file in one course are refused.
+- When the microphone disappears during a recording, the recording now ends cleanly and says why. Before, Stop left the interface on "Saving recording" until a reload. Blocked and missing microphones get plain-language messages, and a full store is reported while recording.
+- Imported Markdown shows headings, lists and tables in the course notes; citation chips still open their source after a course import; exporting a course too large to import back warns about it.
+- Search finds French text typed without accents (`ete` finds `été`) and across apostrophe styles.
+- Typing in a search field or the chat no longer re-typesets every note block and transcript segment: with 800 segments and the CPU slowed 4x, 20 keystrokes went from 5.3 s to 0.8 s and opening the Notes tab from 11.9 s to 3.3 s.
+- The selected tab, open course and needs-review segments stay visible in Windows High Contrast (forced colors).
+- A PDF or Word file the document service refuses is reported as a problem with the file (damaged or password-protected) instead of a service to restart.
+
+### Added
+
+- [User guide](docs/user-guide.md) for students, linked from the README and from Settings.
+
+
 ### Security
 
 - The packaged desktop app now enforces a Content Security Policy instead of running with none (`csp: null`): scripts only from the app itself (no `eval`, no inline code), no plugins, no framing, no form posts, and requests only to the app, Tauri IPC and loopback services (`127.0.0.1` and `localhost`). Inline style attributes are the one allowance, for KaTeX. A navigation guard in the Rust shell keeps the webview on the app's own origins, because a Content Security Policy does not cover top-level navigation; new-window requests (`window.open`, `target="_blank"`) are not blocked yet. A browser test serves the production build with this exact policy and fails on any violation. Because of it, the packaged app no longer connects to remote or LAN model and service addresses, and Settings refuses to save such an address and says why instead of reporting a missing server. See [docs/desktop.md](docs/desktop.md#content-security-policy).
