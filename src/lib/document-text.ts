@@ -8,6 +8,14 @@ const PDF_LIGATURES: Record<string, string> = {
   '\u001e': 'ffi',
   '\u001f': 'fi',
   '\u0088': ' • ',
+  // Presentation-form ligatures, which pdfminer.six reports when the font maps them to Unicode.
+  'ﬀ': 'ff',
+  'ﬁ': 'fi',
+  'ﬂ': 'fl',
+  'ﬃ': 'ffi',
+  'ﬄ': 'ffl',
+  'ﬅ': 'st',
+  'ﬆ': 'st',
 };
 
 function repairMojibakeUtf8(value: string) {
@@ -71,6 +79,8 @@ export function normalizeExtractedDocumentText(value: string) {
     normalized = normalized.replaceAll(character, replacement);
   });
   normalized = normalized
+    // pdfminer.six prints `(cid:N)` for a glyph whose font has no Unicode map. It carries no text, so drop it.
+    .replace(/\(cid:\d+\)/g, '')
     .replaceAll('\u0000', '(')
     .replaceAll('\u0001', ')')
     .replaceAll('\u0002', '')
