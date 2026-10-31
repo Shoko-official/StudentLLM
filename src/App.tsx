@@ -79,7 +79,7 @@ import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-
 import type { QuickStartProposal } from './lib/quick-start';
 import { Artifact, ArtifactKind, ChatMessage, CourseNoteBlock, Lesson, LessonWorkspace, Resource, TranscriptSegment } from './types';
 import { chooseNoteOnUndo, restoreAtPositions, sameIdSet, SOURCE_REMOVAL_MAX_MS, SOURCE_REMOVAL_UNDO_MS, takeWithPositions, type RemovedEntry } from './lib/source-removal';
-import { addPendingSourceErase, isStalePendingSourceErase, listPendingSourceErases, removePendingSourceErase } from './lib/pending-source-erase';
+import { addPendingSourceErase, hasSessionOnlyPendingSourceErases, isStalePendingSourceErase, listPendingSourceErases, removePendingSourceErase } from './lib/pending-source-erase';
 
 const PdfPreview = lazy(() => import('./lib/pdf-preview').then(({ PdfPreview: Preview }) => ({ default: Preview })));
 
@@ -2751,7 +2751,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     && !lessons.some((lesson) => lesson.id === entry.lessonId)
     && !Object.values(lessonWorkspaces).some((workspace) => workspace.resources.some((resource) => resource.id === entry.recordingId));
   const orphanRecordings = showSettingsPanel ? listPendingRecordings().filter(canDiscardRecording) : [];
-  const sessionOnlyRecovery = hasSessionOnlyPendingRecordings();
+  const sessionOnlyRecovery = hasSessionOnlyPendingRecordings() || hasSessionOnlyPendingSourceErases();
   void orphanTick;
   const discardUnrecoveredRecording = async (entry: PendingRecording) => {
     if (!canDiscardRecording(entry)) return;
@@ -3021,7 +3021,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         <button className="icon-button" aria-label="Settings" onClick={() => setShowSettingsPanel(true)}><Settings2 size={19} /></button>
       </header>
 
-      {sessionOnlyRecovery && <div className="action-error storage-banner" role="status"><p>Recovery information is saved only for this browser session because local storage is full or blocked. Finish and save your recording before closing this tab or browser; interrupted audio may otherwise be hard to find.</p></div>}
+      {sessionOnlyRecovery && <div className="action-error storage-banner" role="status"><p>Recovery information is saved only for this browser session because local storage is full or blocked. Finish and save any recording before closing this tab or browser. Interrupted audio may otherwise be hard to find, and pending file cleanup information may be lost.</p></div>}
       {storageNotice && <div className="action-error storage-banner" role="alert"><p>{storageNoticeText(storageNotice)}</p><span className="storage-banner-actions">
         {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'indexeddb-blocked' || storageNotice.kind === 'indexeddb-timeout') && <button className="text-action" onClick={() => { skipUnloadWarningRef.current = true; window.location.reload(); }}>Reload</button>}
         {(storageNotice.kind === 'changed-elsewhere' || storageNotice.kind === 'save-failed' || storageNotice.kind === 'indexeddb-blocked' || storageNotice.kind === 'indexeddb-timeout') && hasCourse && <button className="text-action" onClick={() => void exportCourse()}>Export this course</button>}

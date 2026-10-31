@@ -63,6 +63,11 @@ export function listPendingSourceErases(): PendingSourceErase[] {
   return [...primary, ...readEntries(getSessionStorage()).filter((entry) => !known.has(entry.id))];
 }
 
+export function hasSessionOnlyPendingSourceErases(): boolean {
+  const durableIds = new Set(readEntries(localStorageOrNothing()).map((entry) => entry.id));
+  return readEntries(getSessionStorage()).some((entry) => !durableIds.has(entry.id));
+}
+
 function write(entries: PendingSourceErase[]) {
   const local = localStorageOrNothing();
   const session = getSessionStorage();

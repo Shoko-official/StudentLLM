@@ -322,6 +322,12 @@ describe('unrecovered recordings in Settings', () => {
     await user.click(screen.getByRole('button', { name: 'Settings' }));
     expect(await screen.findByText(/Recovery information is saved only for this browser session/)).toHaveTextContent('before closing');
   });
+
+  it('also warns when pending file cleanup only lasts for this browser session', async () => {
+    sessionStorage.setItem(PENDING_SOURCE_ERASE_STORAGE_KEY, JSON.stringify([{ id: 'awaiting-cleanup', kind: 'document', at: Date.now() }]));
+    render(<App provider={null} sourceBlobStore={blobStore()} recordingChunkStore={chunkStore(4)} />);
+    expect(await screen.findByText(/Recovery information is saved only for this browser session/)).toHaveTextContent('cleanup');
+  });
 });
 
 describe('interrupted recordings and an unreadable workspace', () => {
