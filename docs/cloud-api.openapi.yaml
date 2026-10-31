@@ -10,15 +10,16 @@ info:
 
     Gating exceptions: `terms_required` and `account_suspended` never block, and are never returned by,
     `GET /v1/account`, `GET /v1/account/export`, `DELETE /v1/account`, `POST /auth/refresh`,
-    `POST /auth/logout`, `GET /v1/devices`, `DELETE /v1/devices/{device_id}` and `POST /v1/account/terms`,
-    so data-rights routes always work for a suspended account or one that has not accepted the latest terms.
+    `POST /auth/logout`, `GET /v1/devices`, `DELETE /v1/devices/{device_id}`, `GET /v1/billing/portal` and
+    `POST /v1/account/terms`, so data-rights routes always work for a suspended account or one that has not
+    accepted the latest terms. Sign-in routes (`/auth/start`, `/auth/callback`, `/auth/token`, `/auth/email/request`, `/auth/email/verify`) succeed for suspended accounts: the account gets an access token that is usable only on the exempt routes, and every other route returns `account_suspended`.
 
     Fresh sign-in routes: account export, linking a login method, unlinking a login method and deleting the
     account all require `auth_time` within 5 minutes and otherwise return `reauth_required`.
 
     Scope: a `manage_token` (opaque, returned only by the device-limit response) works only for
     `GET /v1/devices` and `DELETE /v1/devices/{device_id}`. Every other route rejects it with
-    `insufficient_scope` (403). A manage token must never be logged.
+    `insufficient_scope` (403). A manage token must never be logged. The gateway tells a manage token from an access token on `Authorization: Bearer` by the `mt_` prefix, which is checked first. A token without that prefix is parsed as a JWT, and a malformed one gets `invalid_token`; an `mt_` token on any route other than the two device routes gets `insufficient_scope`.
 
     Versioning: the `/v1` prefix is stable. Additive changes (new optional fields, new endpoints, new
     error codes, new enum values clients must tolerate) are allowed within `/v1`. A breaking change
@@ -170,7 +171,8 @@ paths:
         only). A successful code check at the limit does not count as an attempt, the code stays unconsumed,
         and at most 3 manage tokens are minted per code. The limit check and the device insert are one atomic
         step inside the account's Durable Object. The Google path never issues a manage token: the user revokes
-        a device from another signed-in device, or uses the email path, then retries.
+        a device from another signed-in device, or, if the email method is linked, uses the email path, then retries.
+        A Google-only user (the email method is not linked) at the limit with no other signed-in device cannot self-serve: they wait for the 30-day idle expiry of an old session or contact support.
       security: []
       requestBody:
         required: true
@@ -684,7 +686,7 @@ components:
       scheme: bearer
       description: |
         Opaque random token (not a JWT), valid 5 minutes, stored hashed, single-purpose: only the device list
-        and device revoke routes accept it. Never logged.
+        and device revoke routes accept it. Never logged. Starts with `mt_`, which the gateway checks first.
     bearerAuth:
       type: http
       scheme: bearer
@@ -700,8 +702,12 @@ components:
         `in_flight`, `failed_before_forward`, `failed_no_usage`, `settled`.
         A retry while `in_flight` returns idempotency_conflict with details.state=in_progress.
         A same-key retry is allowed from `failed_before_forward` (reuses the reservation) and from
-        `failed_no_usage` (a forwarded call that returned a provider error with no completion; the
-        reservation is released and zero credits are charged).
+        `failed_no_usage` (strictly: an explicit upstream error response, a definitive error status with no
+        completion, or a connection failure before the request was accepted; the reservation is released and zero
+        credits are charged). Every timeout, gateway abort, reset after bytes were sent, or missing response is an
+        unknown outcome and settles at the full reservation, or on counted tokens where available; the same-key
+        retry then gets `idempotency_conflict` with `details.state=settled`. `failed_no_usage` events are counted
+        per account per hour as an anomaly signal.
         A forwarded attempt that produced output is settled at actual usage; the full reservation applies only
         to unknown outcomes (a crash, a missing usage chunk, a client abort after the first token). A mid-stream
         provider_unavailable settles on the tokens actually emitted, with the full reservation only as a fallback.
@@ -718,7 +724,7 @@ components:
       name: X-StudentLLM-Client
       in: header
       required: true
-      description: Client name and version, for example `studentllm-desktop/0.2.0`.
+      description: Client name and version, for example `studentllm-desktop/0.2.0`. Required on the content routes and on status only; the minimum-client check applies there.
       schema: { type: string, pattern: "^studentllm-desktop/[0-9]+\\.[0-9]+\\.[0-9]+.*$" }
   headers:
     CreditsRemaining:
@@ -928,7 +934,7 @@ components:
             code: { type: string, const: device_limit_reached }
             message: { type: string }
             request_id: { type: string }
-        manage_token: { type: string, description: Opaque random token, 5 minutes, devices routes only }
+        manage_token: { type: string, pattern: "^mt_", description: Opaque random token starting with mt_, 5 minutes, devices routes only }
         manage_token_expires_in: { type: integer, const: 300 }
     TokenRequest:
       type: object
@@ -1014,6 +1020,7 @@ components:
         current: { type: boolean }
     DeviceList:
       type: object
+      description: Under a manage token, `current` is false for every device.
       required: [devices]
       additionalProperties: false
       properties:

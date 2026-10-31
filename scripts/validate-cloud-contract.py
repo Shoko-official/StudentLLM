@@ -6,19 +6,19 @@ Checks, with no network access:
   2. every file in docs/cloud-api-fixtures/ is listed in index.json and vice versa;
   3. each fixture names a real operationId, uses a status code the operation declares,
      and its request body, response body and SSE event payloads satisfy the JSON Schemas
-     of the contract (JSON Schema 2020-12);
+     of the contract (JSON Schema 2020-12, with format checking enabled);
   4. error fixtures use a code from the ErrorCode enum and never carry a secret in the envelope.
 
 Usage:
   python scripts/validate-cloud-contract.py
-Requires: pyyaml, jsonschema, openapi-spec-validator (see requirements-cloud-contract.txt).
+Requires: pyyaml, jsonschema, openapi-spec-validator, rfc3339-validator (see requirements-cloud-contract.txt).
 """
 import json
 import sys
 from pathlib import Path
 
 import yaml
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, FormatChecker
 from openapi_spec_validator import validate as validate_openapi
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,6 +27,8 @@ FIXTURES = ROOT / "docs" / "cloud-api-fixtures"
 SECRET_KEYS = {"manage_token", "refresh_token", "access_token", "code", "code_verifier"}
 
 errors = []
+# Format assertions (date-time, uuid, ...) are enforced; date-time needs rfc3339-validator.
+FORMAT_CHECKER = FormatChecker()
 
 
 def fail(message):
@@ -35,7 +37,7 @@ def fail(message):
 
 
 def schema_for(components, name):
-    return Draft202012Validator({"$ref": "#/components/schemas/" + name, "components": components})
+    return Draft202012Validator({"$ref": "#/components/schemas/" + name, "components": components}, format_checker=FORMAT_CHECKER)
 
 
 def check(validator, instance, label):

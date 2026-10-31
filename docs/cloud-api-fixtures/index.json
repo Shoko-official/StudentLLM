@@ -36,6 +36,7 @@
     "status.client_outdated.json",
     "usage.get.free_account.json",
     "consent.record.text_version_mismatch.json",
-    "webhook-paddle.success.json"
+    "webhook-paddle.success.json",
+    "chat-completions.idempotency_conflict.after_timeout.json"
   ]
 }
