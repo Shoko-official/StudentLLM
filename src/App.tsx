@@ -431,6 +431,18 @@ function TranscriptDisclosure({ summary, children }: { summary: string; children
 // loaded, so there is no flash of an empty workspace and no effect can save an empty state over the real one. Where
 // IndexedDB does not exist (and in the desktop shell, which has its own storage) the workspace is read synchronously, as before.
 function WorkspaceLoading() {
+  // A file dropped while the workspace opens must not make the browser open it and leave the app.
+  useEffect(() => {
+    const keepFilesHere = (event: DragEvent) => {
+      if (Array.from(event.dataTransfer?.types ?? []).includes('Files')) event.preventDefault();
+    };
+    window.addEventListener('dragover', keepFilesHere);
+    window.addEventListener('drop', keepFilesHere);
+    return () => {
+      window.removeEventListener('dragover', keepFilesHere);
+      window.removeEventListener('drop', keepFilesHere);
+    };
+  }, []);
   return (
     <div className="app-shell workspace-loading" role="status" aria-live="polite">
       <span className="brand-name"><span className="brand-mark" aria-hidden="true"><BrandGlyph size={24} /></span>StudentLLM</span>

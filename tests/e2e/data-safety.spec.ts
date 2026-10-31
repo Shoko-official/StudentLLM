@@ -73,6 +73,7 @@ test.describe('data safety', () => {
 
   test('a dropped file is imported and the page does not navigate away', async ({ page }) => {
     await page.goto('/');
+    await expect(page.getByRole('button', { name: 'Self-attention and Context' })).toBeVisible();
     const url = page.url();
     await page.evaluate(() => {
       const data = new DataTransfer();

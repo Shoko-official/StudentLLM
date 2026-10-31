@@ -507,6 +507,7 @@ test.describe('StudentLLM workspace', () => {
     });
 
     await page.goto('/');
+    await expect(page.getByRole('button', { name: 'Self-attention and Context' })).toBeVisible();
     await context.setOffline(true);
     await page.setInputFiles('input[aria-label="Select course source"]', {
       name: 'offline-notes.md',

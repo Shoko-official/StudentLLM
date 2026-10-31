@@ -102,8 +102,12 @@ export class WorkspaceIdb {
     }
   }
 
-  /** Runs one transaction. `work` queues requests; the promise settles when the transaction commits or aborts. */
-  private run<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore, finish: (value: T) => void) => void): Promise<T> {
+  /**
+   * Runs one transaction. `work` queues requests; the promise settles when the transaction commits or aborts. Request
+   * callbacks go through `guard`, so an exception inside one (a transaction that was aborted under it, a value that
+   * cannot be cloned) aborts the transaction and rejects instead of surfacing as an unhandled error.
+   */
+  private run<T>(mode: IDBTransactionMode, work: (store: IDBObjectStore, finish: (value: T) => void, guard: (handler: () => void) => () => void) => void): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       if (this.closed) {
         reject(new WorkspaceIdbError('closed', 'The workspace database is closed.'));
@@ -121,11 +125,25 @@ export class WorkspaceIdb {
       transaction.oncomplete = () => (hasResult ? resolve(result) : reject(new WorkspaceIdbError('failed', 'The transaction ended without a result.')));
       transaction.onabort = () => reject(toError(transaction.error, 'The workspace database transaction was aborted.'));
       transaction.onerror = () => undefined; // onabort follows and carries the error.
+      const guard = (handler: () => void) => () => {
+        try {
+          handler();
+        } catch (error) {
+          try {
+            transaction.abort();
+          } catch {
+            // Already finished.
+          }
+          // The abort event carries the browser's own reason (for instance a full disk) and settles the promise first. This
+          // only makes sure it settles at all.
+          setTimeout(() => reject(toError(error, 'The workspace database request failed.')), 50);
+        }
+      };
       try {
         work(transaction.objectStore(STORE_NAME), (value) => {
           result = value;
           hasResult = true;
-        });
+        }, guard);
       } catch (error) {
         try {
           transaction.abort();
@@ -138,31 +156,31 @@ export class WorkspaceIdb {
   }
 
   get(key: string): Promise<unknown> {
-    return this.run<unknown>('readonly', (store, finish) => {
+    return this.run<unknown>('readonly', (store, finish, guard) => {
       const request = store.get(key);
-      request.onsuccess = () => finish(request.result);
+      request.onsuccess = guard(() => finish(request.result));
     });
   }
 
   keysWithPrefix(prefix: string): Promise<string[]> {
-    return this.run<string[]>('readonly', (store, finish) => {
-      const request = store.getAllKeys(IDBKeyRange.bound(prefix, `${prefix}￿`));
-      request.onsuccess = () => finish(request.result.filter((key): key is string => typeof key === 'string'));
+    return this.run<string[]>('readonly', (store, finish, guard) => {
+      const request = store.getAllKeys(IDBKeyRange.bound(prefix, prefix + String.fromCharCode(0xffff)));
+      request.onsuccess = guard(() => finish(request.result.filter((key): key is string => typeof key === 'string')));
     });
   }
 
   /** Writes only when the key does not exist yet. Resolves with whether it wrote. */
   putIfAbsent(key: string, value: unknown): Promise<boolean> {
-    return this.run<boolean>('readwrite', (store, finish) => {
+    return this.run<boolean>('readwrite', (store, finish, guard) => {
       const read = store.get(key);
-      read.onsuccess = () => {
+      read.onsuccess = guard(() => {
         if (read.result !== undefined) {
           finish(false);
           return;
         }
         store.put(value, key);
         finish(true);
-      };
+      });
     });
   }
 
@@ -183,13 +201,13 @@ export class WorkspaceIdb {
 
   /** Reads the metadata, lets `update` change it, and writes the result, in one transaction. */
   updateMeta(update: (current: WorkspaceMeta | undefined) => WorkspaceMeta): Promise<WorkspaceMeta> {
-    return this.run<WorkspaceMeta>('readwrite', (store, finish) => {
+    return this.run<WorkspaceMeta>('readwrite', (store, finish, guard) => {
       const read = store.get(META_KEY);
-      read.onsuccess = () => {
+      read.onsuccess = guard(() => {
         const next = update(parseMeta(read.result));
         store.put(next, META_KEY);
         finish(next);
-      };
+      });
     });
   }
 
@@ -198,9 +216,9 @@ export class WorkspaceIdb {
    * written in the same transaction, so a conflict leaves both untouched and a crash never leaves them out of step.
    */
   compareAndSet(expectedVersion: number, snapshot: string, writer: string, now = Date.now()): Promise<CompareAndSetResult> {
-    return this.run<CompareAndSetResult>('readwrite', (store, finish) => {
+    return this.run<CompareAndSetResult>('readwrite', (store, finish, guard) => {
       const read = store.get(META_KEY);
-      read.onsuccess = () => {
+      read.onsuccess = guard(() => {
         const current = parseMeta(read.result);
         const found = current?.version ?? 0;
         if (found !== expectedVersion) {
@@ -211,7 +229,7 @@ export class WorkspaceIdb {
         store.put(snapshot, SNAPSHOT_KEY);
         store.put(next, META_KEY);
         finish({ ok: true, version: next.version });
-      };
+      });
     });
   }
 }
