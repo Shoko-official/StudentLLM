@@ -1,7 +1,7 @@
 {
   "name": "audit.verify.success",
   "operation": "verifyAuditChain",
-  "description": "The chain is recomputed with the key held only by the audit-writer Worker, the Ed25519 signatures of the anchors are checked under the published public key, and the anchors are compared with the published copies.",
+  "description": "The chain is recomputed with the key held only by the audit-writer Worker, the content chain and the Ed25519 signatures of the anchors are checked under the published public key, and the anchors are compared with the published copies.",
   "request": {
     "method": "POST",
     "path": "/admin/v1/audit/verify",
@@ -24,8 +24,9 @@
       "ok": true,
       "rows_checked": 42,
       "head_seq": 42,
-      "head_hash": "5259f5094437ca4b6bbc4ba2db750923258e8715113a4fb60c2cf1080d1b7141",
+      "head_hash": "ba00022b520eedef6d2b6d821555919c0308579ddb29bf8af986fe7fc6d2260c",
       "first_broken_seq": null,
+      "content_integrity_ok": true,
       "anchors_checked": 3,
       "anchor_signatures_valid": true,
       "anchors_match": true,

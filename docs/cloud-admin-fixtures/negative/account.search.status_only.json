@@ -33,5 +33,5 @@
     }
   },
   "response_schema": "AccountSearchResponse",
-  "expect_failure": "is not valid under any of the given schemas"
+  "expect_failure": " request: <root>: {'status': 'suspended'} is not valid under any of the given schemas"
 }

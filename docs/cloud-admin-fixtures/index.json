@@ -28,13 +28,17 @@
     "invitation.accept.invalid.json",
     "audit.list.success.json",
     "audit.list.genesis.json",
-    "audit.verify.success.json"
+    "audit.export.success.json",
+    "audit.verify.success.json",
+    "review.list.success.json"
   ],
   "negative_fixtures": [
     "audit.list.tampered_row.json",
     "audit.list.reordered_rows.json",
     "audit.list.broken_link.json",
     "audit.list.bad_genesis.json",
+    "audit.export.gap.json",
+    "audit.list.forged_hmac_content_mismatch.json",
     "audit.list.forbidden_params.json",
     "account.suspend.notify_user_false.json",
     "error.secret_in_details.json",

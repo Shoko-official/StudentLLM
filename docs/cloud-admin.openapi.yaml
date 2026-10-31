@@ -289,16 +289,17 @@ paths:
       operationId: removeCredential
       summary: "Remove a WebAuthn credential"
       description: |
-        Refused for the last credential (`state_conflict`).
+        Containment write (owner plus step-up, allowed while frozen) so that a stolen key can be removed during an incident. Refused for the last credential (`state_conflict`).
       x-required-role: owner
       x-phase: first
       x-read-only: false
       x-requires-stepup: true
-      x-allowed-when-frozen: false
+      x-allowed-when-frozen: true
       x-csrf-exempt: false
       x-destructive: true
       x-notifies-owner: true
       x-audit-action: admin.credential_remove
+      x-audit-independent: true
       parameters:
         - { $ref: "#/components/parameters/CredentialId" }
         - { $ref: "#/components/parameters/CsrfHeader" }
@@ -321,7 +322,6 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { $ref: "#/components/responses/Unavailable" }
   /admin/v1/system:
     get:
       tags: [system]
@@ -540,6 +540,7 @@ paths:
       x-destructive: false
       x-notifies-owner: false
       x-audit-action: device.revoke
+      x-audit-independent: true
       parameters:
         - { $ref: "#/components/parameters/AccountId" }
         - { $ref: "#/components/parameters/DeviceId" }
@@ -563,7 +564,6 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { $ref: "#/components/responses/Unavailable" }
   /admin/v1/accounts/{account_id}/sessions/revoke-all:
     post:
       tags: [accounts]
@@ -580,6 +580,7 @@ paths:
       x-destructive: false
       x-notifies-owner: false
       x-audit-action: sessions.revoke_all
+      x-audit-independent: true
       parameters:
         - { $ref: "#/components/parameters/AccountId" }
         - { $ref: "#/components/parameters/CsrfHeader" }
@@ -602,7 +603,6 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { $ref: "#/components/responses/Unavailable" }
   /admin/v1/accounts/{account_id}/grants:
     get:
       tags: [grants]
@@ -641,9 +641,11 @@ paths:
         Creates a grant and its budget windows with source `admin_grant`, with no payment. `days` is explicit
         (1 to the configured maximum, never above the contract ceiling of 90). The budget is `budget_percent` of the
         standard Plus window (default 100); overriding the default is owner only. A grant is cut into windows of at most
-        30 days (the last prorated, rounded down). Window rules, caps and accounting are in docs/cloud-admin.md. The window
-        insertion is a conditional insert in the account object that rejects any overlap (`window_overlap`); the cap checks
-        use one atomic counter object; caps give `limit_exceeded`. The account must be `active`. The user is always
+        30 days (the last prorated, rounded down). Window rules, caps and accounting are in docs/cloud-admin.md. All windows of
+        a grant are inserted in one all-or-nothing step inside the account object, which rejects any overlap with existing
+        windows (`window_overlap`); paid periods are never rejected by a grant (they live in the plan record, take
+        precedence and cut grant windows). The cap checks reserve in one atomic counter object, insert, then confirm;
+        caps give `limit_exceeded`. The account must be `active`. The user is always
         notified (a fixed text) unless `notify_user` is false.
       x-required-role: admin
       x-phase: first
@@ -763,6 +765,7 @@ paths:
       x-destructive: false
       x-notifies-owner: false
       x-audit-action: grant.revoke
+      x-audit-independent: true
       parameters:
         - { $ref: "#/components/parameters/GrantId" }
         - { $ref: "#/components/parameters/CsrfHeader" }
@@ -785,7 +788,6 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { $ref: "#/components/responses/Unavailable" }
   /admin/v1/stats/grants:
     get:
       tags: [grants]
@@ -828,7 +830,7 @@ paths:
       x-requires-stepup: false
       x-allowed-when-frozen: false
       x-csrf-exempt: false
-      x-destructive: false
+      x-destructive: true
       x-notifies-owner: true
       x-audit-action: subscription.cancel_at_period_end
       parameters:
@@ -995,11 +997,11 @@ paths:
       operationId: retryOperation
       summary: "Retry a pending or failed operation now"
       description: |
-        Re-runs the next step now. Refused while writes are frozen and for a `held` operation (see the design document).
+        Re-runs the next step now. Needs a step-up. Refused while writes are frozen. Resuming a `held` deletion this way restarts its cooling-off clock (see the design document).
       x-required-role: admin
       x-phase: first
       x-read-only: false
-      x-requires-stepup: false
+      x-requires-stepup: true
       x-allowed-when-frozen: false
       x-csrf-exempt: false
       x-destructive: false
@@ -1009,6 +1011,7 @@ paths:
         - { $ref: "#/components/parameters/OperationId" }
         - { $ref: "#/components/parameters/CsrfHeader" }
         - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/StepUpHeader" }
       requestBody:
         required: true
         content:
@@ -1044,6 +1047,7 @@ paths:
       x-destructive: false
       x-notifies-owner: false
       x-audit-action: operation.withdraw
+      x-audit-independent: true
       parameters:
         - { $ref: "#/components/parameters/OperationId" }
         - { $ref: "#/components/parameters/CsrfHeader" }
@@ -1066,7 +1070,6 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { $ref: "#/components/responses/Unavailable" }
   /admin/v1/operations/{operation_id}/complete-manually:
     post:
       tags: [billing]
@@ -1272,8 +1275,10 @@ paths:
         (category `pending_admin_deletion`) and the operation is `cooling_off` until `executes_at`; it can be withdrawn
         until then, and the user may export or delete the account themselves meanwhile. At execution the system
         re-validates (requester still enabled, freeze off, account still in the expected state) and otherwise holds the
-        operation and alerts. Execution runs the shared deletion function: all personal data is erased at tombstone
-        creation, only the Paddle ids remain until the cancel succeeds.
+        operation and alerts. Execution runs the shared deletion function: the deletion-ledger entry and the tombstone are
+        written first and every session is revoked at that instant, the final email is attempted, then idempotent per-store
+        erase steps run with retry (the email last) and completion is recorded when all are done; only the Paddle ids remain
+        until the cancel succeeds. This is the target deletion model for both the user and the admin.
       x-required-role: admin
       x-phase: first
       x-read-only: false
@@ -1283,6 +1288,7 @@ paths:
       x-destructive: true
       x-notifies-owner: true
       x-audit-action: account.delete_request
+      x-owner-only-values: { cooling_off_hours: [0] }
       parameters:
         - { $ref: "#/components/parameters/AccountId" }
         - { $ref: "#/components/parameters/CsrfHeader" }
@@ -1530,6 +1536,7 @@ paths:
       x-destructive: true
       x-notifies-owner: true
       x-audit-action: admin.disable
+      x-audit-independent: true
       parameters:
         - { $ref: "#/components/parameters/AdminId" }
         - { $ref: "#/components/parameters/CsrfHeader" }
@@ -1552,7 +1559,6 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { $ref: "#/components/responses/Unavailable" }
   /admin/v1/admins/{admin_id}/enable:
     post:
       tags: [admins]
@@ -1609,6 +1615,7 @@ paths:
       x-destructive: true
       x-notifies-owner: true
       x-audit-action: admin.remove
+      x-audit-independent: true
       parameters:
         - { $ref: "#/components/parameters/AdminId" }
         - { $ref: "#/components/parameters/CsrfHeader" }
@@ -1625,6 +1632,71 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Admin" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /admin/v1/review-items:
+    get:
+      tags: [billing]
+      operationId: listReviewItems
+      summary: "List owner review items"
+      description: |
+        Items that need an owner decision and are never actioned automatically: chargebacks, refunds that could not restore a grant because the monthly cap was full, repeated failures. Audited as `review.list`.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: true
+      x-requires-stepup: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: review.list
+      parameters:
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Cursor" }
+      responses:
+        "200":
+          description: "A page of review items."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewItemList" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/v1/review-items/{review_item_id}/resolve:
+    post:
+      tags: [billing]
+      operationId: resolveReviewItem
+      summary: "Resolve an owner review item"
+      description: |
+        Records the decision. Any action it leads to (suspension, grant revocation) is a separate, audited call.
+      x-required-role: owner
+      x-phase: first
+      x-read-only: false
+      x-requires-stepup: false
+      x-allowed-when-frozen: false
+      x-csrf-exempt: false
+      x-destructive: false
+      x-notifies-owner: false
+      x-audit-action: review.resolve
+      parameters:
+        - { $ref: "#/components/parameters/ReviewItemId" }
+        - { $ref: "#/components/parameters/CsrfHeader" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResolveReviewRequest" }
+      responses:
+        "200":
+          description: "Resolved (idempotent)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewItem" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1840,6 +1912,11 @@ components:
       in: path
       required: true
       schema: { $ref: "#/components/schemas/CredentialId" }
+    ReviewItemId:
+      name: review_item_id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/ReviewItemId" }
     Purpose:
       name: purpose
       in: query
@@ -1990,6 +2067,7 @@ components:
     OperationId: { type: string, pattern: "^opr_[A-Za-z0-9]+$" }
     AuditId: { type: string, pattern: "^aud_[A-Za-z0-9]+$" }
     CredentialId: { type: string, pattern: "^cred_[A-Za-z0-9]+$" }
+    ReviewItemId: { type: string, pattern: "^rev_[A-Za-z0-9]+$" }
     Sha256Hex: { type: string, pattern: "^[a-f0-9]{64}$" }
     AccessPurpose:
       type: string
@@ -2109,7 +2187,7 @@ components:
       additionalProperties: false
       properties:
         label: { type: string, minLength: 1, maxLength: 64 }
-        enrollment_ticket: { type: string, minLength: 20, maxLength: 128, description: "Single-use ticket printed once by the bootstrap script. Used only for the first credential." }
+        enrollment_ticket: { type: string, minLength: 20, maxLength: 128, description: "Single-use ticket printed once by the bootstrap script, valid for 1 hour (24 hours after a recovery request, plus the waiting period). Accepted only while the admin has no credential (credentials_count is 0); every later credential needs a step-up with an existing one." }
     CredentialRegistrationOptions:
       type: object
       required: [registration_id, expires_at, public_key_options]
@@ -2119,7 +2197,7 @@ components:
         expires_at: { type: string, format: date-time }
         public_key_options:
           type: object
-          description: WebAuthn PublicKeyCredentialCreationOptions with user verification required.
+          description: "WebAuthn PublicKeyCredentialCreationOptions: userVerification required, authenticatorAttachment cross-platform (a security key), attestation none, rp id and origin pinned to the exact admin hostname. The completion is refused if the credential is backup-eligible (BE=1)."
           additionalProperties: true
     CredentialRegistrationComplete:
       type: object
@@ -2637,6 +2715,35 @@ components:
       properties:
         role: { $ref: "#/components/schemas/Role" }
         reason: { $ref: "#/components/schemas/Reason" }
+    ReviewItem:
+      type: object
+      required: [review_item_id, kind, account_id, state, created_at, resolved_at, resolved_by_admin_id, resolution]
+      additionalProperties: false
+      properties:
+        review_item_id: { $ref: "#/components/schemas/ReviewItemId" }
+        kind: { type: string, enum: [chargeback, refund_restore_capped, operation_failed] }
+        account_id: { $ref: "#/components/schemas/AccountId" }
+        state: { type: string, enum: [open, resolved] }
+        created_at: { type: string, format: date-time }
+        resolved_at: { type: [string, "null"], format: date-time }
+        resolved_by_admin_id: { type: [string, "null"] }
+        resolution: { type: [string, "null"], enum: [no_action, suspended, grant_revoked, other, null] }
+    ReviewItemList:
+      type: object
+      required: [data, next_cursor]
+      additionalProperties: false
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/ReviewItem" }
+        next_cursor: { type: [string, "null"] }
+    ResolveReviewRequest:
+      type: object
+      required: [reason, resolution]
+      additionalProperties: false
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+        resolution: { type: string, enum: [no_action, suspended, grant_revoked, other] }
     AuditAction:
       type: string
       enum:
@@ -2652,6 +2759,7 @@ components:
         - grant.stats_read
         - account.suspension_expire
         - grant.expire
+        - admin.session_evict
         - account.search
         - account.read
         - grant.create
@@ -2689,6 +2797,9 @@ components:
         - admin.list
         - invitation.list
         - blocklist.list
+        - review.list
+        - review.resolve
+        - audit.key_rotate
         - audit.export
         - audit.verify
         - audit.denied_overflow
@@ -2840,6 +2951,20 @@ components:
       additionalProperties: false
       properties:
         source: { type: string, enum: [manual, auto, platform_override] }
+    ParamsReviewResolve:
+      type: object
+      required: [review_item_id, resolution]
+      additionalProperties: false
+      properties:
+        review_item_id: { $ref: "#/components/schemas/ReviewItemId" }
+        resolution: { type: string, enum: [no_action, suspended, grant_revoked, other] }
+    ParamsKeyRotate:
+      type: object
+      required: [key_kind, new_key_id]
+      additionalProperties: false
+      properties:
+        key_kind: { type: string, enum: [chain, anchor] }
+        new_key_id: { type: string, pattern: "^(ck|ak)[0-9]+$" }
     ParamsAutoFreeze:
       type: object
       required: [trigger, count, window_minutes]
@@ -2901,19 +3026,26 @@ components:
     AuditRow:
       type: object
       description: |
-        Append-only and chained. `row_hash` is an HMAC-SHA-256, under a key only the audit-writer Worker holds, over
-        `prev_hash`, a newline and the RFC 8785 canonical JSON of the row without `row_hash`, `reason_text` and
-        `reason_state` (those two are not part of the chain). `chain_version` and an environment id (in the genesis
-        hash) separate versions and environments. There is deliberately no field for an IP address, a user agent,
-        content, a token or a code, and no email address. `params` is one of the per-action schemas below, each with
+        Append-only and double-chained. `content_sha256` is the unkeyed SHA-256 of the RFC 8785 canonical JSON of the
+        row without `row_hash`, `content_sha256`, `reason_text` and `reason_state`; it includes `prev_content_sha256`,
+        so a public verifier with no secret can check content integrity up to each signed anchor. `row_hash` is an
+        HMAC-SHA-256, under the key named by `chain_key_id` that only the audit-writer Worker holds, over `prev_hash`,
+        a newline and the canonical JSON of the row without `row_hash`, `reason_text` and `reason_state` (so it
+        includes `content_sha256` and `chain_key_id`). `chain_version` and an environment id (in the genesis hashes)
+        separate versions and environments. There is deliberately no field for an IP address, a user agent, content,
+        a token or a code, and no email address. `params` is one of the per-action schemas below, each with
         `additionalProperties: false`. `session_ref` is an HMAC of the admin session id (it links the rows of one
-        browser session without any network identifier); `country` is an optional coarse country, off by default.
-      required: [audit_id, seq, chain_version, occurred_at, actor_kind, actor_admin_id, actor_role, action, target_account_id, target_admin_id, reason_commitment, reason_text, reason_state, request_id, session_ref, country, result, result_code, params, prev_hash, row_hash]
+        browser session without any network identifier); `credential_id` is the WebAuthn credential used for the
+        step-up of the action (null if none); `country` is an optional coarse country, off by default. The rows with
+        action `audit.reconcile`, `retention.checkpoint` and `audit.key_rotate` are chain-internal: the `append`
+        method that the admin Worker can call cannot produce them.
+      required: [audit_id, seq, chain_version, chain_key_id, occurred_at, actor_kind, actor_admin_id, actor_role, action, target_account_id, target_admin_id, reason_commitment, reason_text, reason_state, request_id, session_ref, credential_id, country, result, result_code, params, prev_content_sha256, content_sha256, prev_hash, row_hash]
       additionalProperties: false
       properties:
         audit_id: { $ref: "#/components/schemas/AuditId" }
         seq: { type: integer, minimum: 1 }
         chain_version: { type: integer, const: 1 }
+        chain_key_id: { type: string, pattern: "^ck[0-9]+$" }
         occurred_at: { type: string, format: date-time }
         actor_kind: { type: string, enum: [admin, system, unregistered] }
         actor_admin_id: { type: [string, "null"] }
@@ -2934,6 +3066,10 @@ components:
         session_ref:
           oneOf:
             - { $ref: "#/components/schemas/Sha256Hex" }
+            - { type: "null" }
+        credential_id:
+          oneOf:
+            - { $ref: "#/components/schemas/CredentialId" }
             - { type: "null" }
         country: { type: [string, "null"], pattern: "^[A-Z]{2}$" }
         result: { $ref: "#/components/schemas/AuditResult" }
@@ -2966,17 +3102,21 @@ components:
             - { $ref: "#/components/schemas/ParamsFreeze" }
             - { $ref: "#/components/schemas/ParamsAutoFreeze" }
             - { $ref: "#/components/schemas/ParamsCount" }
+            - { $ref: "#/components/schemas/ParamsReviewResolve" }
+            - { $ref: "#/components/schemas/ParamsKeyRotate" }
             - { $ref: "#/components/schemas/ParamsExport" }
             - { $ref: "#/components/schemas/ParamsVerify" }
             - { $ref: "#/components/schemas/ParamsOverflow" }
             - { $ref: "#/components/schemas/ParamsRetention" }
             - { $ref: "#/components/schemas/ParamsReconcile" }
+        prev_content_sha256: { $ref: "#/components/schemas/Sha256Hex" }
+        content_sha256: { $ref: "#/components/schemas/Sha256Hex" }
         prev_hash: { $ref: "#/components/schemas/Sha256Hex" }
         row_hash: { $ref: "#/components/schemas/Sha256Hex" }
       allOf:
         - if:
             properties:
-              action: { enum: [admin.session_start, admin.session_end, admin.bootstrap, admin.disable, admin.enable, admin.remove, admin.invitation_accept, admin.invitation_revoke, account.devices_read, grant.stats_read, account.suspension_expire, grant.expire] }
+              action: { enum: [admin.session_start, admin.session_end, admin.bootstrap, admin.disable, admin.enable, admin.remove, admin.invitation_accept, admin.invitation_revoke, account.devices_read, grant.stats_read, account.suspension_expire, grant.expire, admin.session_evict] }
             required: [action]
           then:
             properties:
@@ -3130,11 +3270,25 @@ components:
               params: { $ref: "#/components/schemas/ParamsAutoFreeze" }
         - if:
             properties:
-              action: { enum: [grant.list, operation.list, audit.list, credential.list, admin.list, invitation.list, blocklist.list] }
+              action: { enum: [grant.list, operation.list, audit.list, credential.list, admin.list, invitation.list, blocklist.list, review.list] }
             required: [action]
           then:
             properties:
               params: { $ref: "#/components/schemas/ParamsCount" }
+        - if:
+            properties:
+              action: { enum: [review.resolve] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsReviewResolve" }
+        - if:
+            properties:
+              action: { enum: [audit.key_rotate] }
+            required: [action]
+          then:
+            properties:
+              params: { $ref: "#/components/schemas/ParamsKeyRotate" }
         - if:
             properties:
               action: { enum: [audit.export] }
@@ -3189,7 +3343,7 @@ components:
         reason: { $ref: "#/components/schemas/Reason" }
     AuditVerification:
       type: object
-      required: [ok, rows_checked, head_seq, head_hash, first_broken_seq, anchors_checked, anchor_signatures_valid, anchors_match, last_anchor_seq]
+      required: [ok, rows_checked, head_seq, head_hash, first_broken_seq, content_integrity_ok, anchors_checked, anchor_signatures_valid, anchors_match, last_anchor_seq]
       additionalProperties: false
       properties:
         ok: { type: boolean }
@@ -3197,6 +3351,7 @@ components:
         head_seq: { type: integer, minimum: 0 }
         head_hash: { $ref: "#/components/schemas/Sha256Hex" }
         first_broken_seq: { type: [integer, "null"] }
+        content_integrity_ok: { type: boolean, description: The unkeyed content chain is intact up to every anchor (the check a public verifier can do without any secret). }
         anchors_checked: { type: integer, minimum: 0 }
         anchor_signatures_valid: { type: boolean, description: Every Ed25519 anchor signature verifies under the published public key. }
         anchors_match: { type: boolean, description: The recomputed chain agrees with every published anchor. }

@@ -1,0 +1,114 @@
+{
+  "name": "audit.export.success",
+  "operation": "exportAuditLog",
+  "description": "An export is a contiguous run of rows in sequence order, one per line, with the hash fields and the reason text where it still exists. The validator requires contiguity: a gap fails.",
+  "request": {
+    "method": "POST",
+    "path": "/admin/v1/audit/export",
+    "headers": {
+      "Cf-Access-Jwt-Assertion": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.EXAMPLE.EXAMPLE",
+      "X-StudentLLM-Admin-CSRF": "ses_EXAMPLE.NOT_A_REAL_SESSION_TOKEN_0001",
+      "Content-Type": "application/json",
+      "Idempotency-Key": "6f1c1f0e-3a55-4b0c-9f0a-6d9d2f0f6a21",
+      "X-StudentLLM-Admin-StepUp": "chl_01EXAMPLE.EXAMPLE_NOT_A_REAL_ASSERTION_BASE64URL"
+    },
+    "body": {
+      "from_seq": 1,
+      "to_seq": 3,
+      "reason": "Quarterly export for the offline copy."
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-Request-Id": "req_01EXAMPLE0000000000000001",
+      "Content-Disposition": "attachment; filename=audit-1-3.jsonl"
+    },
+    "ndjson": [
+      {
+        "audit_id": "aud_01EXAMPLE0001",
+        "seq": 1,
+        "chain_version": 1,
+        "chain_key_id": "ck1",
+        "occurred_at": "2026-11-01T08:00:00Z",
+        "actor_kind": "system",
+        "actor_admin_id": null,
+        "actor_role": null,
+        "action": "admin.bootstrap",
+        "target_account_id": null,
+        "target_admin_id": "adm_01EXAMPLEOWNER",
+        "reason_commitment": null,
+        "reason_text": null,
+        "reason_state": "none",
+        "request_id": "req_01EXAMPLEBOOTSTRAP",
+        "session_ref": null,
+        "credential_id": null,
+        "country": null,
+        "result": "success",
+        "result_code": null,
+        "params": {},
+        "prev_content_sha256": "52e93c4f07973cb1922b6abb2de7253a30fb7eb81df363dc40c91bfaec7f6b3a",
+        "prev_hash": "cb806cd6eacc5cdb94e154eda025a36bae206cf28eda83e9f79a548b590e0421",
+        "content_sha256": "c2d43a86b284ee3551c566dd2dda6cf152d1f03f9959b79ca8bc12c7c8aa7946",
+        "row_hash": "d9b54363417fd178e5f6f4b5f46048359faeb215dc66d694c5816386bb46e000"
+      },
+      {
+        "audit_id": "aud_01EXAMPLE0002",
+        "seq": 2,
+        "chain_version": 1,
+        "chain_key_id": "ck1",
+        "occurred_at": "2026-11-01T08:05:00Z",
+        "actor_kind": "admin",
+        "actor_admin_id": "adm_01EXAMPLEOWNER",
+        "actor_role": "owner",
+        "action": "admin.session_start",
+        "target_account_id": null,
+        "target_admin_id": null,
+        "reason_commitment": null,
+        "reason_text": null,
+        "reason_state": "none",
+        "request_id": "req_01EXAMPLE0000000000000002",
+        "session_ref": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+        "credential_id": null,
+        "country": null,
+        "result": "success",
+        "result_code": null,
+        "params": {},
+        "prev_content_sha256": "c2d43a86b284ee3551c566dd2dda6cf152d1f03f9959b79ca8bc12c7c8aa7946",
+        "prev_hash": "d9b54363417fd178e5f6f4b5f46048359faeb215dc66d694c5816386bb46e000",
+        "content_sha256": "541e7e77661afa351c965bca9165e5b89b6a6809fcf904248fa185368dd92013",
+        "row_hash": "292e8679712ceada834d69b8e847fdcdf70c2378b7d618001062b35233e85ee1"
+      },
+      {
+        "audit_id": "aud_01EXAMPLE0003",
+        "seq": 3,
+        "chain_version": 1,
+        "chain_key_id": "ck1",
+        "occurred_at": "2026-11-01T08:10:00Z",
+        "actor_kind": "admin",
+        "actor_admin_id": "adm_01EXAMPLEOWNER",
+        "actor_role": "owner",
+        "action": "admin.credential_register",
+        "target_account_id": null,
+        "target_admin_id": null,
+        "reason_commitment": "37b628fd525db7130f5cf49087e6a57d5b4c9620a0fd0461006e97634c560027",
+        "reason_text": "Registered the first security key.",
+        "reason_state": "present",
+        "request_id": "req_01EXAMPLE0000000000000003",
+        "session_ref": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+        "credential_id": "cred_01EXAMPLE",
+        "country": null,
+        "result": "success",
+        "result_code": null,
+        "params": {
+          "credential_id": "cred_01EXAMPLE"
+        },
+        "prev_content_sha256": "541e7e77661afa351c965bca9165e5b89b6a6809fcf904248fa185368dd92013",
+        "prev_hash": "292e8679712ceada834d69b8e847fdcdf70c2378b7d618001062b35233e85ee1",
+        "content_sha256": "12400b5ce47e724ec0191fb6a76035d88075132950c77c8733ad29859de86fa5",
+        "row_hash": "6cdea13a0e3078401112f07564d8076a02fa3bfe51d158187f1034710888309f"
+      }
+    ]
+  },
+  "response_schema": null
+}

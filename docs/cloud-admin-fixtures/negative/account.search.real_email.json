@@ -33,5 +33,5 @@
     }
   },
   "response_schema": "AccountSearchResponse",
-  "expect_failure": "example.invalid"
+  "expect_failure": ": fixtures must only use example.invalid addresses"
 }

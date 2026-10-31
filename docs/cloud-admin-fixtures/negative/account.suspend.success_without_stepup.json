@@ -34,5 +34,5 @@
     }
   },
   "response_schema": "SuspensionResult",
-  "expect_failure": "step-up header"
+  "expect_failure": ": a successful step-up action must carry the step-up header"
 }

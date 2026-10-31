@@ -33,5 +33,5 @@
     }
   },
   "response_schema": "AccountSearchResponse",
-  "expect_failure": "email_masked"
+  "expect_failure": " response: data/0/email_masked: 'student@example.invalid' does not match '^[^@*]{1,2}\\\\*\\\\*\\\\*@[^@]+$'"
 }

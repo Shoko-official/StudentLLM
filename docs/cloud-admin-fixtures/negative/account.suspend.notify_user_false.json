@@ -36,5 +36,5 @@
     }
   },
   "response_schema": "SuspensionResult",
-  "expect_failure": "notify_user"
+  "expect_failure": " request: <root>: Additional properties are not allowed ('notify_user' was unexpected)"
 }

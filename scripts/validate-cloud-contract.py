@@ -35,9 +35,12 @@ For the admin contract only, additional rules keep the design and the contract a
  10. fixtures use the Access header and never a bearer token, carry the session header where required, an
      Idempotency-Key only where the operation takes one, and a step-up header on step-up operations, and use
      only example.invalid addresses;
- 11. the audit hash chain in the fixtures is recomputed: HMAC row hashes under a fixture key, links between
-     rows, and the genesis hash;
- 12. negative fixtures (docs/cloud-admin-fixtures/negative/) must FAIL validation with the stated message.
+ 11. the audit chains in the fixtures are recomputed: the unkeyed content chain, the HMAC row hashes under a
+     fixture key, links between rows, both genesis hashes, and contiguity for exports (a gap must fail);
+ 12. negative fixtures (docs/cloud-admin-fixtures/negative/) must FAIL validation with exactly the stated message;
+ 13. the contract ceilings in the design document equal the schema maxima, owner-only values name real request
+     fields, and fixtures contain no IP address or spelled-out email address (the linter cannot detect names or
+     other free personal data in a reason: that stays the admin's responsibility and the UI warning).
 
 Usage:
   python scripts/validate-cloud-contract.py
@@ -89,7 +92,19 @@ BOOLEAN_FLAGS = ("x-read-only", "x-requires-stepup", "x-destructive", "x-notifie
 # Test-only key and environment for the audit chain in the fixtures. Not a secret.
 FIXTURE_CHAIN_KEY = b"studentllm-fixture-chain-key-not-a-secret"
 FIXTURE_ENVIRONMENT = "fixture"
-AUDIT_NOT_CHAINED = {"row_hash", "reason_text", "reason_state"}
+AUDIT_NOT_HMACED = {"row_hash", "reason_text", "reason_state"}
+AUDIT_NOT_CONTENT = {"row_hash", "content_sha256", "reason_text", "reason_state"}
+CEILING_FIELDS = {
+    "days": ("GrantCreateRequest", "days"),
+    "budget_percent": ("GrantCreateRequest", "budget_percent"),
+    "grant_max_total_percent": ("AdminLimits", "grant_max_total_percent"),
+    "grant_max_days_per_account_per_year": ("AdminLimits", "grant_max_days_per_account_per_year"),
+    "grant_max_per_admin_per_day": ("AdminLimits", "grant_max_per_admin_per_day"),
+    "suspension_max_days": ("AdminLimits", "suspension_max_days"),
+    "deletion_max_cooling_off_hours": ("AdminLimits", "deletion_max_cooling_off_hours"),
+}
+IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+SPELLED_EMAIL = re.compile(r"\b[\w.]+\s*(?:\(at\)|\[at\]|\bat\b)\s*[\w.-]+\s*(?:\(dot\)|\[dot\]|\bdot\b)\s*\w+\b", re.I)
 
 errors = []
 _capture = None  # a list while a negative fixture is being checked
@@ -163,9 +178,16 @@ def canonical_json(obj):
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+def audit_content_hash(row):
+    """content_sha256 = SHA-256 of the canonical JSON of the row without row_hash, content_sha256 and the reason text.
+    It is unkeyed, so a public verifier with no secret can check content integrity up to each signed anchor."""
+    body = {k: v for k, v in row.items() if k not in AUDIT_NOT_CONTENT}
+    return hashlib.sha256(canonical_json(body).encode("utf-8")).hexdigest()
+
+
 def audit_row_hash(row, key=FIXTURE_CHAIN_KEY):
-    """row_hash = HMAC-SHA-256(key, prev_hash + newline + canonical JSON of the chained fields)."""
-    body = {k: v for k, v in row.items() if k not in AUDIT_NOT_CHAINED}
+    """row_hash = HMAC-SHA-256(key, prev_hash + newline + canonical JSON of the chained fields, content_sha256 included)."""
+    body = {k: v for k, v in row.items() if k not in AUDIT_NOT_HMACED}
     return hmac.new(key, (row["prev_hash"] + "\n" + canonical_json(body)).encode("utf-8"), hashlib.sha256).hexdigest()
 
 
@@ -173,18 +195,30 @@ def audit_genesis_hash(key=FIXTURE_CHAIN_KEY, environment=FIXTURE_ENVIRONMENT):
     return hmac.new(key, f"studentllm-audit-genesis-v1:{environment}".encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-def verify_audit_chain(rows, label):
-    """Recompute every row hash, check the genesis hash and the link between consecutive rows."""
+def audit_content_genesis(environment=FIXTURE_ENVIRONMENT):
+    return hashlib.sha256(f"studentllm-audit-content-genesis-v1:{environment}".encode("utf-8")).hexdigest()
+
+
+def verify_audit_chain(rows, label, contiguous=False):
+    """Recompute the content hashes and the HMAC row hashes, check both genesis hashes and the links between rows.
+    An export must be contiguous: a gap in the sequence fails."""
     ordered = sorted(rows, key=lambda r: r["seq"])
     for i, row in enumerate(ordered):
+        if audit_content_hash(row) != row["content_sha256"]:
+            fail(f"{label}: audit row seq {row['seq']} does not match its content_sha256")
         if audit_row_hash(row) != row["row_hash"]:
             fail(f"{label}: audit row seq {row['seq']} does not match its row_hash")
-        if row["seq"] == 1 and row["prev_hash"] != audit_genesis_hash():
+        if row["seq"] == 1 and (row["prev_hash"] != audit_genesis_hash() or row["prev_content_sha256"] != audit_content_genesis()):
             fail(f"{label}: audit row seq 1 does not start from the genesis hash")
-        if i > 0 and ordered[i - 1]["seq"] + 1 == row["seq"] and ordered[i - 1]["row_hash"] != row["prev_hash"]:
-            fail(f"{label}: audit row seq {row['seq']} is not linked to the previous row")
-        if i > 0 and ordered[i - 1]["seq"] == row["seq"]:
-            fail(f"{label}: duplicate audit sequence number {row['seq']}")
+        if i > 0:
+            prev = ordered[i - 1]
+            if prev["seq"] == row["seq"]:
+                fail(f"{label}: duplicate audit sequence number {row['seq']}")
+            elif prev["seq"] + 1 == row["seq"]:
+                if prev["row_hash"] != row["prev_hash"] or prev["content_sha256"] != row["prev_content_sha256"]:
+                    fail(f"{label}: audit row seq {row['seq']} is not linked to the previous row")
+            elif contiguous:
+                fail(f"{label}: gap in the audit sequence between {prev['seq']} and {row['seq']}")
 
 
 # ------------------------------------------------------------------ admin spec
@@ -282,10 +316,10 @@ def lint_admin_spec(spec, public_spec):
             fail(f"{op_id}: a POST route must declare x-allowed-when-frozen explicitly")
         if mutating and op.get("x-allowed-when-frozen") and not ro:
             frozen_ops.add(op_id)
-            if op_id not in FREEZE_EXEMPT_FROM_CONTAINMENT_RULE and (role != "owner" or not op.get("x-requires-stepup")) and op_id != "unfreezeAdminWrites":
+            if op_id not in FREEZE_EXEMPT_FROM_CONTAINMENT_RULE and (role != "owner" or not op.get("x-requires-stepup")):
                 fail(f"{op_id}: a write allowed while frozen must be owner plus step-up")
-            if op_id == "unfreezeAdminWrites" and (role != "owner" or not op.get("x-requires-stepup")):
-                fail(f"{op_id}: unfreeze must be owner plus step-up")
+            if op_id not in ("verifyAuditChain", "exportAuditLog") and not op.get("x-audit-independent"):
+                fail(f"{op_id}: a containment write must not depend on the audit writer (x-audit-independent)")
         if op.get("x-requires-stepup"):
             if not mutating:
                 fail(f"{op_id}: only POST routes can require a step-up")
@@ -303,8 +337,8 @@ def lint_admin_spec(spec, public_spec):
             fail(f"{op_id}: x-audit-action {action} is not in the AuditAction enum")
         if action and not op.get("x-audit-independent") and "503" not in statuses:
             fail(f"{op_id}: an audited route must declare 503 (audit_unavailable)")
-        if op.get("x-audit-independent") and action not in ("system.freeze", "system.unfreeze"):
-            fail(f"{op_id}: only freeze and unfreeze may be audit-independent")
+        if op.get("x-audit-independent") and not (mutating and op.get("x-allowed-when-frozen")):
+            fail(f"{op_id}: only freeze, unfreeze and containment writes may be audit-independent")
         if not mutating and op_id not in NO_AUDIT_GETS and not action:
             fail(f"{op_id}: a read route must be audited")
         if "Cursor" in names and not mutating:
@@ -315,10 +349,13 @@ def lint_admin_spec(spec, public_spec):
         # 7 (cont). owner-only management, audited single-account reads
         if (path.startswith("/admin/v1/admins") or path.startswith("/admin/v1/invitations")) and role not in ("owner", "invitee"):
             fail(f"{op_id}: admin management routes are owner only")
-        # owner-only request fields exist in the request schema
+        # owner-only request fields and values exist in the request schema
         for field in op.get("x-owner-only-fields", []):
             if field not in body_schema(spec, op).get("properties", {}):
                 fail(f"{op_id}: x-owner-only-fields names {field}, which is not in the request schema")
+        for field in op.get("x-owner-only-values", {}):
+            if field not in body_schema(spec, op).get("properties", {}):
+                fail(f"{op_id}: x-owner-only-values names {field}, which is not in the request schema")
 
     # request schemas without a user notification switch
     for name in NO_USER_SWITCH_SCHEMAS:
@@ -351,6 +388,21 @@ def lint_admin_spec(spec, public_spec):
             for n, e, got in zip(names_, expect, cells[1:]):
                 if e != got:
                     fail(f"docs/cloud-admin.md: matrix {n} of {op_id} is {got}, the contract says {e}")
+    ceilings_md = re.search(r"<!-- ceilings:start -->(.*?)<!-- ceilings:end -->", text, re.S)
+    if not ceilings_md:
+        fail("docs/cloud-admin.md: ceilings markers not found")
+    else:
+        doc_ceilings = {}
+        for line in ceilings_md.group(1).splitlines():
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) == 2 and cells[0].startswith("`"):
+                doc_ceilings[cells[0].strip("`")] = cells[1]
+        for field, (schema_name, prop) in CEILING_FIELDS.items():
+            maximum = components["schemas"][schema_name]["properties"][prop].get("maximum")
+            if str(maximum) != doc_ceilings.get(field):
+                fail(f"docs/cloud-admin.md: ceiling of {field} is {doc_ceilings.get(field)}, the schema maximum is {maximum}")
+        for field in sorted(set(doc_ceilings) - set(CEILING_FIELDS)):
+            fail(f"docs/cloud-admin.md: ceilings table lists unknown field {field}")
     frozen_list = parse_md_frozen_list(text)
     if frozen_list is None:
         fail("docs/cloud-admin.md: frozen-list markers not found")
@@ -411,6 +463,17 @@ def path_matches(template, path):
     return re.fullmatch(pattern, path.split("?")[0]) is not None
 
 
+def iter_strings(node):
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from iter_strings(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from iter_strings(value)
+
+
 def lint_admin_fixture(spec, label, fx, path_to_ops):
     req = fx["request"]
     headers = {k.lower(): v for k, v in req.get("headers", {}).items()}
@@ -448,6 +511,11 @@ def lint_admin_fixture(spec, label, fx, path_to_ops):
         fail(f"{label}: this operation takes no step-up header")
     if re.search(r"\b[A-Za-z0-9._%+-]+@(?!example\.invalid)[A-Za-z0-9.-]+\.[a-z]{2,}\b", json.dumps(fx).replace("***@", "x@")):
         fail(f"{label}: fixtures must only use example.invalid addresses")
+    for text in iter_strings(fx):
+        if IPV4.search(text):
+            fail(f"{label}: a fixture string looks like an IP address")
+        if SPELLED_EMAIL.search(text):
+            fail(f"{label}: a fixture string looks like a spelled-out email address")
 
 
 def check_fixture(ctx, label, fx):
@@ -483,6 +551,12 @@ def check_fixture(ctx, label, fx):
 
     resp = fx["response"]
     schema_name = fx.get("response_schema")
+    if "ndjson" in resp:
+        row_validator = schema_for(components, "AuditRow")
+        for i, row in enumerate(resp["ndjson"]):
+            check(row_validator, row, f"{label} line {i + 1}")
+        verify_audit_chain(resp["ndjson"], label, contiguous=True)
+        return
     if "sse" in resp:
         lines = resp["sse"]
         event, saw_done, saw_error = None, False, False
@@ -583,8 +657,9 @@ def validate_contract(name, spec_path, fixtures_dir, admin_spec_check=None, publ
                 check_fixture(ctx, "negative/" + fname, fx)
             finally:
                 messages, _capture = _capture, None
-            if not any(expect in m for m in messages):
-                fail(f"negative/{fname}: expected a failure containing {expect!r}, got {messages or 'none'}")
+            prefix = "negative/" + fname
+            if not any(m.startswith(prefix) and m[len(prefix):] == expect for m in messages):
+                fail(f"negative/{fname}: expected exactly the failure {expect!r}, got {[m[len(prefix):] for m in messages] or 'none'}")
         print(f"{len(set(negatives) & present_neg)} negative fixtures checked (each must fail)")
     return spec
 

@@ -1,7 +1,7 @@
 {
   "name": "audit.list.reordered_rows",
   "operation": "listAuditLog",
-  "description": "Negative fixture: validation must fail with a message containing 'does not match its row_hash'. Two consecutive rows, newest first. Each row_hash is an HMAC-SHA-256 over prev_hash and the canonical JSON of the chained fields (the validator uses a fixture key that is not a secret). The reason text is outside the chain: the row holds only a salted commitment. There is no IP address, no content and no token in a row.",
+  "description": "Negative fixture: validation must fail with a message containing 'does not match its row_hash'. Two consecutive rows, newest first. content_sha256 is an unkeyed SHA-256 chain that a public verifier can check; row_hash is an HMAC under the key named by chain_key_id (the validator uses a fixture key that is not a secret). The reason text is outside the chain: the row holds only a commitment (an HMAC under the per-account key). There is no IP address, no content and no token in a row.",
   "request": {
     "method": "GET",
     "path": "/admin/v1/audit?target_account_id=acc_01EXAMPLE&limit=2",
@@ -21,6 +21,7 @@
           "audit_id": "aud_01EXAMPLE0042",
           "seq": 41,
           "chain_version": 1,
+          "chain_key_id": "ck1",
           "occurred_at": "2026-11-02T10:30:10Z",
           "actor_kind": "admin",
           "actor_admin_id": "adm_01EXAMPLEOWNER",
@@ -28,11 +29,12 @@
           "action": "grant.create",
           "target_account_id": "acc_01EXAMPLE",
           "target_admin_id": null,
-          "reason_commitment": "260a29eee3b55d83987a8e2b36d336fbdb5c0f644892f7b4d57c2bdb8a431965",
+          "reason_commitment": "49dd9ee99eb62b5c5f2b274c70332dadfce85fe3f9aa7a0bb8e9075d49f29818",
           "reason_text": "Private beta tester.",
           "reason_state": "present",
           "request_id": "req_01EXAMPLE0000000000000042",
           "session_ref": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+          "credential_id": null,
           "country": null,
           "result": "success",
           "result_code": null,
@@ -44,13 +46,16 @@
             "start_policy": "now",
             "reason_category": "beta_tester"
           },
-          "prev_hash": "65389d972a38a7d9ab402179f2e0da0acf5b2f8cf6975a33fe6c1d6cdefd4003",
-          "row_hash": "5259f5094437ca4b6bbc4ba2db750923258e8715113a4fb60c2cf1080d1b7141"
+          "prev_content_sha256": "e603c8064f653b05458f1e6344a0e55a18334a1903e48f09b5e767fcef61139d",
+          "prev_hash": "afb67527235ebd017c4402b64343136835d8667149aa602aa064fef3b283115b",
+          "content_sha256": "9602d66d43103e07686e259bbf0aecee3a8c385ad9c2368c3829b59b045fef7c",
+          "row_hash": "ba00022b520eedef6d2b6d821555919c0308579ddb29bf8af986fe7fc6d2260c"
         },
         {
           "audit_id": "aud_01EXAMPLE0041",
           "seq": 42,
           "chain_version": 1,
+          "chain_key_id": "ck1",
           "occurred_at": "2026-11-02T10:29:40Z",
           "actor_kind": "admin",
           "actor_admin_id": "adm_01EXAMPLEOWNER",
@@ -63,19 +68,22 @@
           "reason_state": "none",
           "request_id": "req_01EXAMPLE0000000000000041",
           "session_ref": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef",
+          "credential_id": null,
           "country": null,
           "result": "success",
           "result_code": null,
           "params": {
             "purpose": "support_request"
           },
+          "prev_content_sha256": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
           "prev_hash": "abababababababababababababababababababababababababababababababab",
-          "row_hash": "65389d972a38a7d9ab402179f2e0da0acf5b2f8cf6975a33fe6c1d6cdefd4003"
+          "content_sha256": "e603c8064f653b05458f1e6344a0e55a18334a1903e48f09b5e767fcef61139d",
+          "row_hash": "afb67527235ebd017c4402b64343136835d8667149aa602aa064fef3b283115b"
         }
       ],
       "next_cursor": null
     }
   },
   "response_schema": "AuditList",
-  "expect_failure": "does not match its row_hash"
+  "expect_failure": ": audit row seq 41 does not match its row_hash"
 }
