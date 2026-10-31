@@ -564,7 +564,7 @@ paths:
         Then the idempotency lookup (a conflict returns immediately and never consumes a concurrency slot),
         then the concurrency slot; then the body is read and validated while it streams in; then the budget
         reservation (`budget_exhausted`).
-        The request is validated against an allowlist (unknown fields, `tools`, `n` above 1, `logit_bias`,
+        The request is validated against an allowlist (unknown fields, `tools`, an `n` other than 1, `logit_bias`,
         `user`, `stream_options` are rejected; images only as data URLs; `max_tokens` clamped; `model`
         rewritten from the routing table). With `stream: true` the response is `text/event-stream`:
         unnamed OpenAI chunks, then `event: usage`, then `data: [DONE]`; a failure after the first byte is
@@ -1295,7 +1295,7 @@ components:
               items: { $ref: "#/components/schemas/ChatContentPart" }
     ChatRequest:
       type: object
-      description: Allowlist. Anything else, including tools, tool_choice, functions, n above 1, logit_bias, user and stream_options, is rejected with invalid_request.
+      description: Allowlist. Anything else, including tools, tool_choice, functions, logit_bias, user, stream_options and an `n` other than 1, is rejected with invalid_request.
       required: [model, messages]
       additionalProperties: false
       properties:
@@ -1304,6 +1304,7 @@ components:
           type: array
           minItems: 1
           items: { $ref: "#/components/schemas/ChatMessage" }
+        n: { type: integer, const: 1, description: "Accepted for OpenAI-client compatibility and not forwarded (one choice is the only supported value); any other value is invalid_request" }
         stream: { type: boolean, default: false }
         max_tokens: { type: integer, minimum: 1, description: Clamped to the model's max_output_tokens }
         temperature: { type: number, minimum: 0, maximum: 2 }

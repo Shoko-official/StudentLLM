@@ -1,7 +1,7 @@
 {
   "name": "chat-completions.stream.mid_stream_error",
   "operation": "chatCompletions",
-  "description": "A failure after the first byte: one error event, then the stream closes WITHOUT [DONE]. The request is settled at the full reservation when no usage chunk arrived.",
+  "description": "A failure after the first byte: one error event, then the stream closes WITHOUT [DONE]. The request is settled on the tokens actually emitted, and at the full reservation only if they cannot be counted.",
   "request": {
     "method": "POST",
     "path": "/v1/chat/completions",

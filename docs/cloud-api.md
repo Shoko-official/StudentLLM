@@ -161,7 +161,7 @@ With `stream: true` the response is `text/event-stream`: unnamed OpenAI-format `
 
 ## Content routes
 
-- **Chat** accepts only the allowlisted fields of `ChatRequest`. Images are `data:` URLs only. `tools`, `tool_choice`, `functions`, `n` above 1, `logit_bias`, `user` and `stream_options` are rejected. `max_tokens` is clamped, `model` is a logical id rewritten from the routing table. The gateway sets the upstream `user` to a per-account HMAC pseudonym.
+- **Chat** accepts only the allowlisted fields of `ChatRequest`. Images are `data:` URLs only. `tools`, `tool_choice`, `functions`, an `n` other than 1 (`n: 1` is accepted and not forwarded), `logit_bias`, `user` and `stream_options` are rejected. `max_tokens` is clamped, `model` is a logical id rewritten from the routing table. The gateway sets the upstream `user` to a per-account HMAC pseudonym.
 - **Transcription** takes one chunk per request. The reservation is `max(declared duration, a bound from the byte size)` and settlement uses the provider-reported duration. The client splits longer recordings, gives each chunk its own idempotency key, and applies timestamp offsets when merging. No `prompt` field is accepted.
 - **OCR** takes an image and returns text and blocks. The response schema is provisional until the OCR provider is chosen.
 
