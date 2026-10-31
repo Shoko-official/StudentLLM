@@ -5,6 +5,7 @@ import type {
   ApplyPlanEventResult,
   DeletionJob,
   DeletionTombstone,
+  TombstoneCancel,
   LoginMethod,
   NewAccount,
   PlanReducer,
@@ -196,13 +197,26 @@ export class InMemoryAccountStore implements AccountStore {
   }
 
   async listPendingCancels(now: number, limit: number) {
-    return [...this.plans.values()]
-      .map((p) => ({ p, due: dueAt(p) }))
-      .filter((x) => x.due !== null && x.due <= now)
-      .sort((x, y) => x.due! - y.due!)
-      .map((x) => x.p)
+    const due = new Map<string, number>();
+    for (const p of this.plans.values()) {
+      const at = dueAt(p);
+      if (at !== null) due.set(p.accountId, at);
+    }
+    for (const t of this.tombstones.values()) {
+      if (t.cancel?.state === "pending") due.set(t.accountId, Math.min(due.get(t.accountId) ?? Infinity, t.cancel.nextAttemptAt));
+    }
+    return [...due]
+      .filter(([, at]) => at <= now)
+      .sort((x, y) => x[1] - y[1])
       .slice(0, limit)
-      .map((p) => p.accountId);
+      .map(([id]) => id);
+  }
+
+  async setTombstoneCancel(accountId: string, cancel: TombstoneCancel | null) {
+    const t = this.tombstones.get(accountId);
+    if (!t) return null;
+    t.cancel = cancel === null ? null : copy(cancel);
+    return copy(t);
   }
 
   async findAccountIdByPaddleSubscription(subscriptionId: string) {
@@ -231,10 +245,11 @@ export class InMemoryAccountStore implements AccountStore {
       accountId,
       paddleCustomerId: plan?.paddleCustomerId ?? null,
       paddleSubscriptionId: plan?.paddleSubscriptionId ?? null,
-      paddleSubscriptionIds: [...subscriptionIds],
-      paddleCustomerIds: [...customerIds],
       createdAt: now,
     };
+    // Billing: every other subscription and customer id the account used, so the deletion can cancel all of them.
+    if (subscriptionIds.size > (plan?.paddleSubscriptionId ? 1 : 0)) tombstone.paddleSubscriptionIds = [...subscriptionIds];
+    if (customerIds.size > (plan?.paddleCustomerId ? 1 : 0)) tombstone.paddleCustomerIds = [...customerIds];
     this.tombstones.set(accountId, tombstone);
     this.retries.set(accountId, { cancelAttempts: 0, nextAttemptAt: now, manualReview: false });
     // Erase: the account row, its plan and the email and Google indexes. The Paddle indexes stay with the tombstone.

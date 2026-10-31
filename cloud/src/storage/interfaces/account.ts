@@ -110,14 +110,32 @@ export interface PlanRecord {
   extraCancels?: ExtraCancel[];
 }
 
+/**
+ * The cancellation of every Paddle subscription of a deleted account, kept on the tombstone because the plan row is
+ * gone by then. `pending` lists the subscription ids Paddle has not confirmed yet; the scheduled task retries them
+ * with backoff until the list is empty (`done`). Ids only.
+ */
+export interface TombstoneCancel {
+  state: "pending" | "done";
+  pendingIds: string[];
+  attempts: number;
+  nextAttemptAt: number;
+  alerted: boolean;
+}
+
 export interface DeletionTombstone {
   accountId: string;
   paddleCustomerId: string | null;
   paddleSubscriptionId: string | null;
-  /** Every subscription id the account has seen (current, replaced, duplicate): all must be canceled before the purge. */
-  paddleSubscriptionIds: string[];
-  /** Every customer id the account has used. */
-  paddleCustomerIds: string[];
+  /**
+   * Billing: every subscription id the account has seen (current, replaced, duplicate) when that is more than
+   * `paddleSubscriptionId`; absent otherwise. All of them must be canceled before the purge.
+   */
+  paddleSubscriptionIds?: string[];
+  /** Billing: every customer id the account has used, when that is more than `paddleCustomerId`; absent otherwise. */
+  paddleCustomerIds?: string[];
+  /** Absent until the first cancellation attempt of the deletion. */
+  cancel?: TombstoneCancel | null;
   createdAt: number;
 }
 
@@ -196,7 +214,10 @@ export interface AccountStore {
    * complimentary window, still makes clients refetch the account). Returns the new version, or null for an unknown account.
    */
   touchPlanVersion(accountId: string): Promise<number | null>;
-  /** Accounts whose plan has a `pendingCancel` due at `now` (earliest first, at most `limit`). */
+  /**
+   * Accounts with a cancellation due at `now` (earliest first, at most `limit`): a plan's `pendingCancel` or extra
+   * cancellation, or the pending cancellation on the tombstone of a deleted account.
+   */
   listPendingCancels(now: number, limit: number): Promise<string[]>;
   /**
    * Resolves through every subscription id the account has used (current, replaced, duplicate): the index never
@@ -230,6 +251,8 @@ export interface AccountStore {
   listDueDeletions(now: number, limit: number): Promise<DeletionJob[]>;
   /** Counts a cancel attempt that did not finish and schedules the next one. Returns the job, or null. */
   recordCancelAttempt(accountId: string, nextAttemptAt: number): Promise<DeletionJob | null>;
+  /** Records the state of the cancellation of a deleted account on its tombstone. Null when there is no tombstone. */
+  setTombstoneCancel(accountId: string, cancel: TombstoneCancel | null): Promise<DeletionTombstone | null>;
   /** Removes the account (if any), its plan, its tombstone and the Paddle indexes. */
   purgeAccount(accountId: string): Promise<void>;
 }

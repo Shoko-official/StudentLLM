@@ -38,7 +38,7 @@ export async function ensureCustomerOnPlan(env: BillingEnv, accountId: string, c
   const { accounts } = env.stores;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const account = await accounts.getById(accountId);
-    if (!account) return null;
+    if (!account || account.status === "deleting") return null;
     const plan = await accounts.getPlan(accountId);
     if (plan?.paddleCustomerId) return plan.paddleCustomerId;
     const next: PlanRecord = plan ? { ...plan, paddleCustomerId: customerId } : { ...emptyPlan(accountId), paddleCustomerId: customerId };

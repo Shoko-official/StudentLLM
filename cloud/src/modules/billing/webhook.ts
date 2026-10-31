@@ -12,7 +12,7 @@
 import type { RequestContext } from "../../http/context";
 import { ApiError, jsonResponse } from "../../http/envelope";
 import type { PlanRecord, WebhookFields } from "../../storage";
-import { attemptPendingCancel } from "./cancel";
+import { attemptPendingCancel, confirmTombstoneSubscription } from "./cancel";
 import { envFromDeps, type BillingEnv } from "./env";
 import { EventShapeError, eventFromRecord, ledgerFields, normalizeEvent, type NormalizedEvent } from "./events";
 import { addExtraCancel, emptyPlan, reduceEvent, type ConflictReason, type Reduction } from "./plan-model";
@@ -168,10 +168,25 @@ async function processEvent(env: BillingEnv, ev: NormalizedEvent): Promise<Outco
   const accountId = await resolveAccountId(env, ev);
   if (accountId === null) return quarantine(env, ev, "unknown_account", null);
   const account = await accounts.getById(accountId);
-  if (!account) return quarantine(env, ev, "unknown_account", null);
+  const before = await accounts.getPlan(accountId);
+
+  // A deleted account keeps only a tombstone (no account row or no plan row). An event for it can only confirm that a
+  // subscription was canceled; it never recreates plan state, and a purchase is quarantined for the operator.
+  if (!account || !before) {
+    const tombstone = await accounts.getTombstone(accountId);
+    if (tombstone) {
+      if (ev.kind === "subscription" && ev.status === "canceled" && ev.subscriptionId !== null && (await confirmTombstoneSubscription(env, accountId, ev.subscriptionId))) {
+        return { state: "processed", fields, after: [] };
+      }
+      const paid = ev.kind === "transaction" || (ev.kind === "subscription" && ev.status === "active");
+      const outcome = await quarantine(env, ev, "account_deleted", accountId);
+      if (paid) outcome.after.push(() => env.notifier.alertOperator({ kind: "purchase_while_deleting", accountId }));
+      return outcome;
+    }
+    if (!account) return quarantine(env, ev, "unknown_account", null);
+  }
 
   const options = { accountId, prices: env.settings.prices } as const;
-  const before = await accounts.getPlan(accountId);
   const dry = reduceEvent(before, ev, { ...options, mode: "full" });
   if (dry.kind === "conflict") return quarantineConflict(env, ev, dry.reason, accountId);
 
