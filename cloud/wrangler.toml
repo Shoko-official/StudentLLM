@@ -15,7 +15,24 @@ workers_dev = false
 enabled = false
 
 # TODO(owner: ops): bind the account Durable Object, D1 and the EU jurisdiction here when the
-# storage adapters land. They are intentionally absent from the scaffold.
+# storage adapters land. They are intentionally absent from the scaffold. The shape they will take (one object per
+# account holds the ledger, idempotency records, rate-limit buckets and concurrency leases; see
+# src/durable-objects.ts), kept commented out so nothing is bound before the adapters exist:
+#
+# [[durable_objects.bindings]]
+# name = "ACCOUNT_OBJECT"
+# class_name = "AccountObject"
+#
+# [[migrations]]
+# tag = "v1"
+# new_sqlite_classes = ["AccountObject"]
+#
+# The object is addressed by name (the account id) inside an EU jurisdiction; verify the options the platform offers
+# at deploy time. The cron below is only the safety net of the reconciler: the object's alarm is the primary sweep
+# of expired reservations.
+#
+# [triggers]
+# crons = ["*/5 * * * *"]
 
 # ENVIRONMENT is deliberately NOT set in this file. It comes from the deploy environment (a Worker variable set
 # per environment by the deploy pipeline, or `ENVIRONMENT=development` in the untracked .dev.vars). A missing

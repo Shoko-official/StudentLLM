@@ -58,6 +58,8 @@ export interface Reservation {
   accountId: string;
   windowStart: number;
   feature: Feature;
+  /** The logical model the request was routed to, so a sweep can write a real ledger row. */
+  logicalModelId: string;
   credits: number;
   state: ReservationState;
   /** True once the request was sent upstream; an expired forwarded reservation settles at the full amount. */
@@ -93,6 +95,8 @@ export interface SweepResult {
   settled: number;
   /** Never-forwarded reservations, released with zero charge. */
   released: number;
+  /** Credits charged by the forwarded reservations settled in this call (for the global spend counter). */
+  settledCredits: number;
   /** Earliest expiry among the account's remaining open reservations, or null when none is left. */
   nextDueAt: number | null;
 }
@@ -139,12 +143,17 @@ export interface LedgerStore {
    */
   truncateWindows(accountId: string, at: number, filter?: WindowFilter): Promise<number>;
 
-  /** Atomic: checks the remaining budget of the current window and reserves `credits` (a positive integer). */
+  /**
+   * Atomic: checks the remaining budget of the current window and reserves `credits` (a positive integer).
+   * With an idempotency ref it also marks that record as owning a reservation (`IdempotencyStore.markReserved`),
+   * so the record's lease no longer applies: the sweep resolves it at the reservation's expiry.
+   */
   reserve(
     accountId: string,
     input: {
       requestId: string;
       feature: Feature;
+      logicalModelId: string;
       credits: number;
       now: number;
       expiresAt: number;
@@ -177,7 +186,9 @@ export interface LedgerStore {
   /**
    * Reconciles this account's expired reservations: forwarded ones settle at the full reservation (an
    * unknown outcome must never be free usage), never-forwarded ones are released. Idempotency records move
-   * in the same step. Safe to call at any time and repeatedly.
+   * in the same step: a released reservation moves its record from `in_flight` OR `failed_before_forward` to
+   * `failed_no_usage`, so the next same-key retry gets a new request id instead of `duplicate_request`.
+   * Safe to call at any time and repeatedly.
    */
   sweep(accountId: string, now: number): Promise<SweepResult>;
   getLedgerEntry(accountId: string, requestId: string): Promise<LedgerEntry | null>;

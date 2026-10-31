@@ -21,4 +21,11 @@ export interface SwitchStore {
   /** Adds an integer amount (cost-normalized credits) to the running total and returns the new total. Atomic. */
   addSpend(period: SpendPeriod, amount: number): Promise<number>;
   getSpend(period: SpendPeriod): Promise<number>;
+
+  /**
+   * A named operational counter per day or month (never content, never an account): for example how many unknown
+   * outcomes were charged in full because a network error carried no usable cause. Adds one and returns the total. Atomic.
+   */
+  incrementCounter(name: string, period: SpendPeriod): Promise<number>;
+  getCounter(name: string, period: SpendPeriod): Promise<number>;
 }

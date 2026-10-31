@@ -1,4 +1,5 @@
 import {
+  IDEMPOTENCY_DEFAULT_LEASE_MS,
   IDEMPOTENCY_TTL_MS,
   type IdempotencyBegin,
   type IdempotencyKey,
@@ -24,7 +25,8 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
     return r;
   }
 
-  async begin(key: IdempotencyKey, requestId: string, now: number): Promise<IdempotencyBegin> {
+  async begin(key: IdempotencyKey, requestId: string, now: number, leaseMs = IDEMPOTENCY_DEFAULT_LEASE_MS): Promise<IdempotencyBegin> {
+    if (!Number.isInteger(leaseMs) || leaseMs < 1) throw new RangeError("leaseMs must be a positive integer");
     const existing = this.live(key, now);
     if (!existing) {
       const record: IdempotencyRecord = {
@@ -34,9 +36,16 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
         creditsCharged: null,
         createdAt: now,
         expiresAt: now + IDEMPOTENCY_TTL_MS,
+        leaseExpiresAt: now + leaseMs,
+        reserved: false,
       };
       this.records.set(mapKey(key), record);
       return { outcome: "started", record: copy(record) };
+    }
+    // A crash between `begin` and `reserve` leaves an in_flight record that no reservation will ever resolve.
+    // Once its lease ran out it counts as failed_before_forward (same request id: no reservation exists yet).
+    if (existing.state === "in_flight" && !existing.reserved && existing.leaseExpiresAt <= now) {
+      existing.state = "failed_before_forward";
     }
     switch (existing.state) {
       case "in_flight":
@@ -48,11 +57,22 @@ export class InMemoryIdempotencyStore implements IdempotencyStore {
         const previousState = existing.state;
         // failed_before_forward keeps the original request id: its reservation is reused.
         // failed_no_usage released its reservation, so the new attempt owns a new one.
-        if (previousState === "failed_no_usage") existing.requestId = requestId;
+        if (previousState === "failed_no_usage") {
+          existing.requestId = requestId;
+          existing.reserved = false;
+        }
         existing.state = "in_flight";
+        existing.leaseExpiresAt = now + leaseMs;
         return { outcome: "retry", record: copy(existing), previousState };
       }
     }
+  }
+
+  async markReserved(key: IdempotencyKey) {
+    const r = this.records.get(mapKey(key));
+    if (!r) return false;
+    r.reserved = true;
+    return true;
   }
 
   async transition(

@@ -80,7 +80,7 @@ function decorate(response: Response, requestId: string, extra: Headers): Respon
  * Runs `cleanups` once after the body was fully read or cancelled. With no body they run at once. The
  * cleanup runs BEFORE the stream reports its end, so a consumer that saw the end can rely on it having run.
  */
-async function afterBody(response: Response, run: () => Promise<void>): Promise<Response> {
+async function afterBody(response: Response, run: () => Promise<void>, executionCtx?: ExecutionContext): Promise<Response> {
   if (!response.body) {
     await run();
     return response;
@@ -105,7 +105,11 @@ async function afterBody(response: Response, run: () => Promise<void>): Promise<
       try {
         await reader.cancel(reason);
       } finally {
-        await run();
+        // A client that disconnects may let the runtime drop this promise: waitUntil keeps the Worker alive
+        // until the cleanup (for example releasing a concurrency slot) has finished.
+        const cleanup = run();
+        executionCtx?.waitUntil(cleanup.catch(() => undefined));
+        await cleanup;
       }
     },
   });
@@ -225,7 +229,7 @@ export function createApp(deps: Deps, options: AppOptions = {}): App {
     }
 
     response = decorate(response, requestId, ctx?.responseHeaders ?? new Headers());
-    if (afterBodyFns.length > 0) response = await afterBody(response, once(() => runAll(afterBodyFns, "after-body")));
+    if (afterBodyFns.length > 0) response = await afterBody(response, once(() => runAll(afterBodyFns, "after-body")), executionCtx);
 
     deps.log.request({
       requestId,

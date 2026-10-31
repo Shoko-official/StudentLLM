@@ -150,6 +150,8 @@ export const requirePrincipalStep: Step = (ctx) => {
  * activity at day granularity, and sets `X-StudentLLM-Plan-Version`. An account that no longer exists ends the
  * session (`session_revoked`: "account deleted").
  */
+const utcDay = (ms: number): number => Math.floor(ms / 86_400_000);
+
 export const accountContextStep: Step = async (ctx) => {
   const principal = ctx.principal;
   if (!principal) return;
@@ -159,7 +161,12 @@ export const accountContextStep: Step = async (ctx) => {
     if (!account) throw new ApiError("session_revoked");
     ctx.account = account;
     ctx.plan = await accounts.getPlan(principal.accountId);
-    await accounts.touchLastRequest(principal.accountId, ctx.deps.clock.now());
+    // Hot path: the stored value has day granularity, so skip the write (an RPC to the account object) when it
+    // is already today.
+    const now = ctx.deps.clock.now();
+    if (account.lastRequestAt === null || utcDay(now) > utcDay(account.lastRequestAt)) {
+      await accounts.touchLastRequest(principal.accountId, now);
+    }
   }
   if (!ctx.responseHeaders.has("X-StudentLLM-Plan-Version")) {
     ctx.responseHeaders.set("X-StudentLLM-Plan-Version", String(ctx.account.planVersion));

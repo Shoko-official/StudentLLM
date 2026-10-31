@@ -188,7 +188,7 @@ describe("GET /v1/account", () => {
       { expectedPlanVersion: 0 },
     );
     await t.stores.ledger.ensureWindow(accountId, { start, end, limit: 12500 });
-    await t.stores.ledger.reserve(accountId, { requestId: "r1", feature: "chat", credits: 100, now: t.clock.now(), expiresAt: t.clock.now() + 60_000, idempotency: null });
+    await t.stores.ledger.reserve(accountId, { requestId: "r1", feature: "chat", logicalModelId: "studentllm-large", credits: 100, now: t.clock.now(), expiresAt: t.clock.now() + 60_000, idempotency: null });
     await t.stores.consents.record({ consentId: "cns_a", accountId, providerSetId: "ps1", providerSetVersion: 1, features: ["chat"], textVersion: "2026-11-01", granted: true }, t.clock.now());
     const res = await t.get("/v1/account", auth);
     expect(res.headers.get("X-StudentLLM-Plan-Version")).toBe("1");

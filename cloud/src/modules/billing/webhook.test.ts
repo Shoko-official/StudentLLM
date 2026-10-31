@@ -447,7 +447,7 @@ describe("webhook: the purchase flows end to end", () => {
     expect(windows).toHaveLength(1);
     expect(windows[0]).toMatchObject({ start: T, end: addMonthsUTC(T, 1), limit: 12_500, source: "paddle", used: 0 });
     // Spend some of it, then replay and renew.
-    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", credits: 700, now: T + 5000, expiresAt: T + 60_000, idempotency: null });
+    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", logicalModelId: "studentllm-large", credits: 700, now: T + 5000, expiresAt: T + 60_000, idempotency: null });
     await app.stores.ledger.settle("acc_test", { requestId: "r1", credits: 700, logicalModelId: "m", now: T + 6000 });
     await app.webhook(subscriptionEvent({ subscriptionId: "sub_1", occurredAt: T + DAY, periodStart: T, periodEnd: addMonthsUTC(T, 1), customerId: "ctm_1" }));
     const renewal = addMonthsUTC(T, 1);
@@ -584,7 +584,7 @@ describe("webhook: cancellation, refunds and chargebacks", () => {
   it("an immediate cancellation ends the running window at that instant, keeping used credits", async () => {
     const app = await setup();
     await app.webhook(firstSubscription());
-    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", credits: 40, now: T + 1000, expiresAt: T + 60_000, idempotency: null });
+    await app.stores.ledger.reserve("acc_test", { requestId: "r1", feature: "chat", logicalModelId: "studentllm-large", credits: 40, now: T + 1000, expiresAt: T + 60_000, idempotency: null });
     await app.stores.ledger.settle("acc_test", { requestId: "r1", credits: 40, logicalModelId: "m", now: T + 2000 });
     const at = T + 10 * DAY;
     await app.webhook(subscriptionEvent({ type: "subscription.canceled", subscriptionId: "sub_1", status: "canceled", occurredAt: at, customerId: "ctm_1" }));

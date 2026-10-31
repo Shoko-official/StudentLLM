@@ -56,7 +56,7 @@ describe("client version handshake", () => {
     const t = makeTestApp({ allowMissingHooks: true });
     for (const v of ["0.2.0", "0.2.1", "0.10.0", "1.0.0", "0.2.0+build5"]) {
       const res = await t.request("/v1/status", { headers: { "X-StudentLLM-Client": `studentllm-desktop/${v}` } });
-      expect(res.status, v).toBe(501); // past the handshake, into the stub
+      expect(res.status, v).toBe(200); // past the handshake, into the real status handler
     }
     const pre = await t.request("/v1/status", { headers: { "X-StudentLLM-Client": "studentllm-desktop/0.2.0-beta.1" } });
     expect(pre.status).toBe(426);
@@ -80,8 +80,9 @@ describe("client version handshake", () => {
       body: "{}",
     });
     expect(outdated.status).toBe(426);
-    // GET /v1/models has no client header requirement, so none is demanded.
-    expect((await t.request("/v1/models")).status).toBe(501);
+    // A route without the client flag demands no header.
+    t.app.router.add("GET", "/test/no-client", () => new Response("ok"), routeMeta({ operationId: "no_client", auth: "none" }));
+    expect((await t.request("/test/no-client")).status).toBe(200);
   });
 
   it("orders versions numerically, prerelease below release", () => {

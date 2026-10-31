@@ -170,7 +170,15 @@ export class InMemoryLedgerStore implements LedgerStore {
 
   async reserve(
     accountId: string,
-    input: { requestId: string; feature: Feature; credits: number; now: number; expiresAt: number; idempotency: IdempotencyRef | null },
+    input: {
+      requestId: string;
+      feature: Feature;
+      logicalModelId: string;
+      credits: number;
+      now: number;
+      expiresAt: number;
+      idempotency: IdempotencyRef | null;
+    },
   ): Promise<ReserveResult> {
     assertCredits(input.credits, "credits");
     if (input.credits < 1) throw new RangeError("a reservation needs at least one credit");
@@ -185,6 +193,7 @@ export class InMemoryLedgerStore implements LedgerStore {
       accountId,
       windowStart: w.start,
       feature: input.feature,
+      logicalModelId: input.logicalModelId,
       credits: input.credits,
       state: "reserved",
       forwarded: false,
@@ -193,6 +202,8 @@ export class InMemoryLedgerStore implements LedgerStore {
       expiresAt: input.expiresAt,
     };
     this.reservations.set(this.rKey(accountId, reservation.requestId), reservation);
+    const key = this.idemKey(reservation);
+    if (key) await this.idempotency.markReserved(key);
     await this.sweeps.schedule(accountId, input.expiresAt);
     return { ok: true, reservation: copy(reservation), remaining: remaining - input.credits, resetsAt: w.end };
   }
@@ -285,17 +296,26 @@ export class InMemoryLedgerStore implements LedgerStore {
   async sweep(accountId: string, now: number): Promise<SweepResult> {
     let settled = 0;
     let released = 0;
+    let settledCredits = 0;
     for (const r of [...this.reservations.values()]) {
       if (r.accountId !== accountId || r.state !== "reserved" || r.expiresAt > now) continue;
       const key = this.idemKey(r);
       if (r.forwarded) {
         // Unknown outcome: a crash cannot create free usage, so charge the full reservation.
-        const { charged } = this.settleNow(r, r.credits, "unknown_outcome", now);
+        const { charged } = this.settleNow(r, r.credits, r.logicalModelId, now);
         if (key) await this.idempotency.transition(key, ["in_flight"], "settled", now, { creditsCharged: charged });
         settled++;
+        settledCredits += charged;
       } else {
         this.releaseNow(r);
-        if (key) await this.idempotency.transition(key, ["in_flight"], "failed_no_usage", now, { creditsCharged: 0, countAnomaly: false });
+        // A reservation kept by markFailedBeforeForward leaves its record in failed_before_forward: move that one
+        // too, or every same-key retry would reuse the released reservation and fail with duplicate_request.
+        if (key) {
+          await this.idempotency.transition(key, ["in_flight", "failed_before_forward"], "failed_no_usage", now, {
+            creditsCharged: 0,
+            countAnomaly: false,
+          });
+        }
         released++;
       }
     }
@@ -304,7 +324,7 @@ export class InMemoryLedgerStore implements LedgerStore {
       if (r.accountId === accountId && r.state === "reserved" && (nextDueAt === null || r.expiresAt < nextDueAt)) nextDueAt = r.expiresAt;
     }
     await this.sweeps.reschedule(accountId, nextDueAt);
-    return { settled, released, nextDueAt };
+    return { settled, released, settledCredits, nextDueAt };
   }
 
   async getLedgerEntry(accountId: string, requestId: string) {

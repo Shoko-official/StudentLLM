@@ -297,10 +297,11 @@ export type ChatMessage = {
   content: string | ChatContentPart[];
 };
 
-/** Allowlist. Anything else, including tools, tool_choice, functions, n above 1, logit_bias, user and stream_options, is rejected with invalid_request. */
+/** Allowlist. Anything else, including tools, tool_choice, functions, logit_bias, user, stream_options and an `n` other than 1, is rejected with invalid_request. */
 export type ChatRequest = {
   model: string;
   messages: ChatMessage[];
+  n?: 1;
   stream?: boolean;
   max_tokens?: number;
   temperature?: number;

@@ -5,6 +5,7 @@ import type { TokenResponse } from "../../types";
 import { createAuthDeps } from "../auth";
 import { emailLookupHash } from "../auth/codes";
 import { createAccountDeps } from "./index";
+import { providerSetCatalog } from "./provider-sets";
 import { defaultBillingSeam, defaultInferenceSeam, billingSeam, inferenceSeam } from "./seams";
 
 const EMAIL = "student@example.invalid";
@@ -132,14 +133,16 @@ describe("the AuthSeam", () => {
 });
 
 describe("the other modules' seams", () => {
-  it("fall back to inert defaults when a module provides none (the billing module now does; inference does not yet)", async () => {
-    const t = await makeAuthApp({ extraDeps: { billing: {} as never } });
+  it("fall back to inert defaults when a module provides none (the billing and inference modules both do)", async () => {
+    const t = await makeAuthApp({ extraDeps: { billing: {} as never, inference: {} as never } });
     expect(billingSeam(t.deps)).toBe(defaultBillingSeam);
-    // With the real billing deps the seam is the module's own.
+    // With the real billing and inference deps the seams are the modules' own.
     const real = await makeAuthApp();
     expect(billingSeam(real.deps)).toBe(real.deps.billing);
     expect(billingSeam(real.deps)).not.toBe(defaultBillingSeam);
     expect(inferenceSeam(t.deps)).toBe(defaultInferenceSeam);
+    expect(inferenceSeam(real.deps)).toBe(real.deps.inference);
+    expect(inferenceSeam(real.deps)).not.toBe(defaultInferenceSeam);
     expect(await defaultBillingSeam.cancelSubscription("a", "now")).toEqual({ state: "none" });
     expect(await defaultInferenceSeam.usageSnapshot("a")).toEqual({ creditsUsed: 0, windowStart: null, windowEnd: null });
     await expect(defaultInferenceSeam.purgeLedger("a")).resolves.toBeUndefined();
@@ -170,7 +173,9 @@ describe("cron cleanup", () => {
 describe("module wiring", () => {
   it("builds the module deps from the core deps alone, as createDeps does", async () => {
     const t = await makeAuthApp();
-    expect(createAccountDeps(t.core).providerSets.list().length).toBeGreaterThan(0);
+    // The provider sets are not stored in the account deps: they come from the inference routing table.
+    expect(createAccountDeps(t.core).providerSets).toBeUndefined();
+    expect(providerSetCatalog(t.deps).list().map((s) => s.id)).toEqual(["ps1"]);
     expect(typeof createAuthDeps(t.core).keys).toBe("function");
   });
 });
