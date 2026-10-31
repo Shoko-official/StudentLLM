@@ -30,6 +30,19 @@ The desktop shell can own optional local sidecars when their commands are config
 
 This supervisor is intentionally opt-in because the current unsigned package does not bundle Python runtimes or the optional sidecar dependencies. Use absolute script paths for packaged desktop experiments, and configure the matching `VITE_LOCAL_ASR_BASE_URL` or `VITE_LOCAL_DOCUMENT_BASE_URL` endpoint so the health probe can verify readiness after launch.
 
+## Single instance
+
+Only one StudentLLM process runs per user session. Two processes would open the same `workspace.sqlite3` and the same webview profile, and each saves its whole snapshot on every change, so the last writer would silently overwrite the other window's work. The browser protection ("changed in another tab") relies on the `storage` event and is not active in the native runtime, so the desktop shell prevents the situation instead.
+
+`src-tauri/src/single_instance.rs` registers the official `tauri-plugin-single-instance` (pinned to `=2.4.5`, the newest release that accepts the Tauri 2.11 line; 2.5.x needs Tauri 2.12) as the first plugin, as its documentation requires: a second launch exits from the plugin's setup, before the workspace is opened and before any window exists. It hands over to the running instance, whose callback restores the main window if it is minimized, shows it, and focuses it. The second launch's arguments and working directory are neither used nor logged.
+
+- **Where the lock lives.** The operating system holds it, so it disappears with the process and a crash or a force-stop leaves nothing to clean up: a named mutex on Windows, a D-Bus session-bus name on Linux, and a Unix socket in `/tmp` on macOS (a leftover socket file refuses connections, and the next instance replaces it). The packaged smoke test force-stops the app repeatedly and starts it again, which is how this is checked.
+- **Keyed by the app identifier, not by the data directory.** A second launch with another `XDG_DATA_HOME`, `APPDATA` or `HOME` is also redirected. There is no supported way to run two copies side by side; the smoke and WebDriver tests run one instance at a time.
+- **Linux without a session bus.** The plugin cannot find another instance and the app starts normally without the protection; it does not fail to start. Desktop environments provide the bus, and CI runs under `dbus-run-session`.
+- **Windows.** The handover waits for the running instance to process one message. A running instance that is hung does not answer, so the second launch waits as well.
+
+`scripts/desktop-runtime-smoke.mjs --single-instance` checks the behaviour on the packaged binary: with an instance running and its window loaded, a second launch (same data directory) and a third (another data directory) each exit with code 0 within 15 seconds, the first instance keeps running and reports the redirect, no workspace database appears in the other data directory, and after the first instance is force-stopped a new one starts normally. The `Desktop UI` WebDriver test also launches the app a second time while its window is open and asserts that the process exits with code 0 and that the session still has exactly one window.
+
 ## Content Security Policy
 
 The webview runs with the policy below, set in `src-tauri/tauri.conf.json` (`app.security.csp`). It replaces the former `null` policy and is part of the prerequisites for the optional cloud tier in [cloud-plan.md](./cloud-plan.md): imported documents and model output reach the webview, which must not be able to load remote script or send data to arbitrary hosts. The policy stops script from making `fetch`, XHR, WebSocket, beacon, image, font, frame or form requests to non-loopback hosts. It does **not** cover top-level navigation (`location.href = "https://host/?d=..."` sends the request), `window.open`, or resource hints such as `<link rel="preconnect">` and `dns-prefetch`; see [Navigation guard](#navigation-guard).

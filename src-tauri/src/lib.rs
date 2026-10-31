@@ -1,5 +1,7 @@
 mod navigation;
 mod sidecars;
+#[cfg(desktop)]
+mod single_instance;
 mod workspace;
 
 use std::time::Duration;
@@ -8,7 +10,13 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // First, so that a second instance exits before anything else is set up (see `single_instance`).
+    #[cfg(desktop)]
+    let builder = builder.plugin(single_instance::plugin::<tauri::Wry>());
+
+    let builder = builder
         .plugin(navigation::plugin::<tauri::Wry>())
         .manage(sidecars::SidecarSupervisor::default())
         .invoke_handler(tauri::generate_handler![

@@ -1,4 +1,8 @@
+import { spawn } from 'node:child_process';
+import path from 'node:path';
 import { $, $$, browser, expect } from '@wdio/globals';
+
+const binaryPath = path.join(process.cwd(), 'src-tauri', 'target', 'debug', process.platform === 'win32' ? 'studentllm.exe' : 'studentllm');
 
 async function visible(selector) {
   const element = await $(selector);
@@ -161,5 +165,35 @@ describe('StudentLLM packaged desktop workflow', () => {
     console.log(`Blob frame under the navigation guard: ${JSON.stringify(frameState)}`);
     if (frameState.readable) expect(frameState.text).toBe('blob preview');
     else expect(frameState.loaded).toBe(true);
+  });
+
+  it('hands a second launch of the app over to the running window instead of opening another', async () => {
+    await expect(await visible('.topbar')).toBeDisplayed();
+    expect(await browser.getWindowHandles()).toHaveLength(1);
+
+    // The second process shares the first one's environment, as a launch from the shortcut would. The lock is held per user session.
+    const outcome = await new Promise((resolve) => {
+      const child = spawn(binaryPath, [], { stdio: 'ignore', env: process.env });
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL');
+        resolve({ timedOut: true, code: null, signal: null });
+      }, 30_000);
+      child.once('error', (error) => {
+        clearTimeout(timer);
+        resolve({ timedOut: false, code: null, signal: null, error: error.message });
+      });
+      child.once('exit', (code, signal) => {
+        clearTimeout(timer);
+        resolve({ timedOut: false, code, signal });
+      });
+    });
+    console.log(`Second launch: ${JSON.stringify(outcome)}`);
+    expect(outcome.timedOut).toBe(false);
+    expect(outcome.code).toBe(0);
+
+    // A second window would take a moment to appear; the first one must still be the only one and still work.
+    await browser.pause(3_000);
+    expect(await browser.getWindowHandles()).toHaveLength(1);
+    await expect(await visible('.topbar')).toBeDisplayed();
   });
 });

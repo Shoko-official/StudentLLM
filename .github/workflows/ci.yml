@@ -180,10 +180,10 @@ jobs:
         run: node scripts/check-bundle-licenses.mjs
       - name: Smoke test packaged desktop runtime
         if: runner.os == 'Linux'
-        run: dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x920x24' node scripts/desktop-runtime-smoke.mjs src-tauri/target/debug/studentllm --crash-recovery --recovery-cycles=10 --sidecar-supervision --frontend-ipc
+        run: dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x920x24' node scripts/desktop-runtime-smoke.mjs src-tauri/target/debug/studentllm --crash-recovery --recovery-cycles=10 --sidecar-supervision --frontend-ipc --single-instance
       - name: Smoke test packaged desktop runtime
         if: runner.os != 'Linux'
-        run: node scripts/desktop-runtime-smoke.mjs src-tauri/target/debug/studentllm --crash-recovery --recovery-cycles=10 --sidecar-supervision --frontend-ipc
+        run: node scripts/desktop-runtime-smoke.mjs src-tauri/target/debug/studentllm --crash-recovery --recovery-cycles=10 --sidecar-supervision --frontend-ipc --single-instance
       - name: Upload package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
