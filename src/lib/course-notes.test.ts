@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCourseNote, buildDocumentCourseNote, courseNoteMarkdown, detectCourse, detectCourseWithProvider, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider } from './course-notes';
+import { buildCourseNote, buildDocumentCourseNote, composeDocumentSourcesNote, courseNoteMarkdown, detectCourse, detectCourseWithProvider, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider } from './course-notes';
 import type { Lesson, TranscriptSegment } from '../types';
 
 const lesson: Lesson = {
@@ -16,6 +16,26 @@ const lesson: Lesson = {
 const segment = (text: string): TranscriptSegment => ({ id: 'segment-1', timestamp: '00:01:00', speaker: 'Professor', text, status: 'review' });
 
 describe('course notes', () => {
+  it('interleaves semantic text cited by segment ID with document sources and the initial unsourced transcript', () => {
+    const opening = segment('Opening lecture passage.');
+    const intro = { ...segment('Introduction document.'), id: 'intro:page-1', sourceId: 'intro', timestamp: 'Page 1' };
+    const notes = { ...segment('Middle notes.'), id: 'notes:text', sourceId: 'notes', timestamp: 'Notes' };
+    const tutorial = { ...segment('Tutorial document.'), id: 'tutorial:page-1', sourceId: 'tutorial', timestamp: 'Page 1' };
+    const transcript = [opening, intro, notes, tutorial];
+    const resources = [{ id: 'intro', name: 'Intro.pdf' }, { id: 'notes', name: 'Notes.md' }, { id: 'tutorial', name: 'TD.pdf' }];
+    const documentNote = (text: string, name: string) => buildDocumentCourseNote(lesson, [{ pageNumber: 1, text, blocks: [] }], name);
+    const first = composeDocumentSourcesNote(lesson, transcript, resources, undefined, { resourceId: 'intro', note: documentNote(intro.text, 'Intro.pdf') });
+    const current = composeDocumentSourcesNote(lesson, transcript, resources, first, { resourceId: 'tutorial', note: documentNote(tutorial.text, 'TD.pdf') });
+    const semantic = buildCourseNote(lesson, [opening]);
+    semantic.detection.method = 'LM Studio';
+    semantic.blocks.push({ id: 'semantic-notes', type: 'markdown', sourceId: notes.id, transcriptIds: [notes.id], markdown: 'Middle notes.' });
+    const note = composeDocumentSourcesNote(lesson, transcript, resources, current, undefined, semantic);
+    const markdown = courseNoteMarkdown(note);
+    const positions = [opening.text, intro.text, notes.text, tutorial.text].map((text) => markdown.indexOf(text));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual(positions.slice().sort((a, b) => a - b));
+  });
+
   it('keeps schema edges from multi-line lists and long natural-language sentences', () => {
     const schemaOf = (text: string) => buildCourseNote(lesson, [segment(text)]).blocks.find(block => block.type === 'schema');
     const list = schemaOf('Inflation -> unemployment\nSupply -> price');
