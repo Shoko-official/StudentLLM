@@ -175,6 +175,9 @@ jobs:
         env:
           VITE_STUDENTLLM_PACKAGED_IPC_SMOKE: 'true'
         run: npm run desktop:package
+      - name: Check that the bundle carries the licence notices
+        # .deb: dpkg -c; macOS: the .app contents; Windows: the NSIS script Tauri generates. No third-party action.
+        run: node scripts/check-bundle-licenses.mjs
       - name: Smoke test packaged desktop runtime
         if: runner.os == 'Linux'
         run: dbus-run-session -- xvfb-run --auto-servernum --server-args='-screen 0 1440x920x24' node scripts/desktop-runtime-smoke.mjs src-tauri/target/debug/studentllm --crash-recovery --recovery-cycles=10 --sidecar-supervision --frontend-ipc
