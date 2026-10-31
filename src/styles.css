@@ -363,6 +363,11 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .visual-source { display: block; margin-top: 10px; color: var(--muted); font-size: 11px; }
 .credits { margin: 0; color: var(--muted); font-size: 12px; }
 .credits a { color: inherit; text-underline-offset: 3px; }
+.link-button { padding: 0; border: 0; color: inherit; background: none; font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.licenses-modal { width: min(100%, 760px); }
+.license-section { margin-top: 14px; }
+.license-section > summary { cursor: pointer; font-weight: 600; }
+.license-text { max-height: 40dvh; margin: 8px 0 0; padding: 12px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); color: var(--text); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .managed-sidecar-tray { display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; padding: 16px; border-top: 1px solid var(--line); }
 .navigation-scrim { display: none; }
 
