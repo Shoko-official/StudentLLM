@@ -17,6 +17,8 @@ export const vars = [
    */
   { name: "PADDLE_PRICE_PLUS_MONTHLY", required: false },
   { name: "PADDLE_PRICE_PLUS_SEMESTER", required: false },
+  /** Comma-separated host names Paddle's hosted checkout may be on (your approved checkout domain). The checkout URL is pinned to them. */
+  { name: "PADDLE_CHECKOUT_HOSTS", required: false },
   /**
    * Credits per budget window (docs/cloud-plan.md, "Quota design"), whole numbers. PLACEHOLDER defaults of the
    * billing module apply when unset (12500, from the 1.50 EUR ceiling of "Unit economics"). Verify before launch.

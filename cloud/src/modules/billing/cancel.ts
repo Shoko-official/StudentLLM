@@ -9,18 +9,27 @@
 //   none       There is no subscription to cancel (a free account, a pass, one that already ended).
 //
 // The call is idempotent: the deletion flow may call it again on each of its own retries.
+//
+// Which subscriptions: the plan's current one (`when` decides period end or now) and, when the request is `now`,
+// also every EXTRA one the account has (a duplicate bought by a parallel checkout, a replaced one whose cancel was
+// pending): they are always canceled immediately, are retried by the same task, and the answer is `pending` while any
+// of them is. So deleting an account cancels everything it ever subscribed to before the records are purged.
 
-import type { PendingCancel, PlanRecord } from "../../storage";
+import type { ExtraCancel, PendingCancel, PlanRecord } from "../../storage";
 import type { BillingEnv } from "./env";
 import { PaddleError, type PaddleSubscription } from "./paddle-client";
-import { applyConfirmedCancel } from "./plan-model";
+import { applyConfirmedCancel, removeExtraCancel } from "./plan-model";
 import { syncWindows, updatePlan } from "./plan-store";
 import { lastEnd } from "./windows";
 
 export type CancelWhen = "period_end" | "now";
 export type CancelState = "cancelled" | "pending" | "none";
 
-/** `now` wins over `period_end`: a stronger request is never weakened by a retry of a weaker one. */
+/**
+ * Two requests for the same subscription can disagree (a retry of a period-end cancel, then a deletion that wants it
+ * now). The STRONGER one wins and a weaker request never downgrades what is already pending: `now` beats `period_end`.
+ * So `pendingCancel.when` only ever moves from `period_end` to `now` while it waits, never back.
+ */
 const stronger = (a: CancelWhen, b: CancelWhen): CancelWhen => (a === "now" || b === "now" ? "now" : "period_end");
 
 export function retryDelayMs(env: BillingEnv, attempts: number): number {
@@ -51,7 +60,7 @@ async function askPaddle(env: BillingEnv, subscriptionId: string, when: CancelWh
   }
 }
 
-async function recordPending(env: BillingEnv, accountId: string, when: CancelWhen, now: number): Promise<void> {
+async function recordPending(env: BillingEnv, accountId: string, subscriptionId: string, when: CancelWhen, now: number): Promise<void> {
   let attemptsNow = 0;
   let alertNow = false;
   const updated = await updatePlan(env, accountId, (plan) => {
@@ -69,50 +78,98 @@ async function recordPending(env: BillingEnv, accountId: string, when: CancelWhe
     };
     return { ...plan, pendingCancel: pending };
   });
-  if (updated && alertNow) await env.notifier.alertOperator({ kind: "cancel_failing", accountId, attempts: attemptsNow });
+  if (updated && alertNow) await env.notifier.alertOperator({ kind: "cancel_failing", accountId, attempts: attemptsNow, subscriptionId });
 }
 
-export async function cancelSubscription(env: BillingEnv, accountId: string, when: CancelWhen): Promise<{ state: CancelState }> {
-  const { accounts } = env.stores;
-  const plan = await accounts.getPlan(accountId);
-  const tombstone = await accounts.getTombstone(accountId);
-  const subscriptionId = plan?.paddleSubscriptionId ?? tombstone?.paddleSubscriptionId ?? null;
-  if (subscriptionId === null) return { state: "none" };
-
+async function cancelMain(env: BillingEnv, accountId: string, plan: PlanRecord | null, subscriptionId: string | null, when: CancelWhen): Promise<CancelState> {
+  if (subscriptionId === null) return "none";
   if (plan && !plan.pendingCancel) {
     // Already over at Paddle as far as we know, or already scheduled for what is asked.
-    if (plan.status === "canceled" || plan.status === "none") return { state: "none" };
-    if (plan.status === "revoked") return { state: "none" };
-    if (when === "period_end" && plan.cancelAtPeriodEnd) return { state: "cancelled" };
+    if (plan.status === "canceled" || plan.status === "none") return "none";
+    if (plan.status === "revoked") return "none";
+    if (when === "period_end" && plan.cancelAtPeriodEnd) return "cancelled";
   }
 
   const now = env.clock.now();
   const effective = plan?.pendingCancel ? stronger(plan.pendingCancel.when, when) : when;
   if (!(await askPaddle(env, subscriptionId, effective))) {
-    await recordPending(env, accountId, effective, now);
-    return { state: "pending" };
+    await recordPending(env, accountId, subscriptionId, effective, now);
+    return "pending";
   }
 
   const confirmed = await updatePlan(env, accountId, (current: PlanRecord) => applyConfirmedCancel(current, effective, now));
   if (confirmed) {
-    await syncWindows(env, accountId, confirmed);
-    const account = await accounts.getById(accountId);
+    const cuts = await syncWindows(env, accountId, confirmed);
+    if (cuts.length > 0) await env.notifier.grantCut({ accountId, cuts });
+    const account = await env.stores.accounts.getById(accountId);
     // The deletion flow sends its own mail; a notification of the cancellation on top would be noise.
     if (account && account.status !== "deleting") {
       const end = effective === "period_end" ? lastEnd(confirmed.paidPeriods, "subscription") : now;
       await env.notifier.subscriptionCancelled({ accountId, when: effective, effectiveAt: end });
     }
   }
-  return { state: "cancelled" };
+  return "cancelled";
 }
 
-/** Tries the cancellation recorded on the plan once (right after a refund recorded it, or from the retry task). */
-export async function attemptPendingCancel(env: BillingEnv, accountId: string): Promise<void> {
+/** Cancels one extra subscription now; on success the entry is removed, on failure its attempts and next try are recorded. */
+async function cancelExtra(env: BillingEnv, accountId: string, extra: ExtraCancel): Promise<CancelState> {
+  const now = env.clock.now();
+  if (await askPaddle(env, extra.subscriptionId, "now")) {
+    await updatePlan(env, accountId, (plan) => removeExtraCancel(plan, extra.subscriptionId));
+    return "cancelled";
+  }
+  let alertNow = false;
+  let attemptsNow = 0;
+  const updated = await updatePlan(env, accountId, (plan) => {
+    const list = (plan.extraCancels ?? []).map((e) => {
+      if (e.subscriptionId !== extra.subscriptionId) return e;
+      const attempts = e.attempts + 1;
+      attemptsNow = attempts;
+      const reached = attempts >= env.settings.cancel.alertAfterAttempts;
+      alertNow = reached && !e.alerted;
+      return { ...e, attempts, nextAttemptAt: now + retryDelayMs(env, attempts), alerted: e.alerted || reached };
+    });
+    return { ...plan, extraCancels: list };
+  });
+  if (updated && alertNow) await env.notifier.alertOperator({ kind: "cancel_failing", accountId, attempts: attemptsNow, subscriptionId: extra.subscriptionId });
+  return "pending";
+}
+
+export async function cancelSubscription(env: BillingEnv, accountId: string, when: CancelWhen): Promise<{ state: CancelState }> {
+  const { accounts } = env.stores;
+  const plan = await accounts.getPlan(accountId);
+  const tombstone = await accounts.getTombstone(accountId);
+  const states: CancelState[] = [];
+
+  if (plan === null && tombstone !== null) {
+    // The plan row is gone but the tombstone kept every id: cancel them all now, nothing to record the retry on.
+    const ids = new Set([...(tombstone.paddleSubscriptionIds ?? []), ...(tombstone.paddleSubscriptionId ? [tombstone.paddleSubscriptionId] : [])]);
+    for (const id of ids) states.push((await askPaddle(env, id, "now")) ? "cancelled" : "pending");
+  } else {
+    states.push(await cancelMain(env, accountId, plan, plan?.paddleSubscriptionId ?? tombstone?.paddleSubscriptionId ?? null, when));
+    // Extra subscriptions are always canceled now, whatever the main request is.
+    if (when === "now") {
+      for (const extra of plan?.extraCancels ?? []) states.push(await cancelExtra(env, accountId, extra));
+    }
+  }
+  if (states.includes("pending")) return { state: "pending" };
+  return { state: states.includes("cancelled") ? "cancelled" : "none" };
+}
+
+/** Tries the cancellations recorded on the plan once (right after a refund recorded one, or from the retry task). */
+export async function attemptPendingCancel(env: BillingEnv, accountId: string, options: { onlyDue?: boolean } = {}): Promise<void> {
   const plan = await env.stores.accounts.getPlan(accountId);
-  if (plan?.pendingCancel) await cancelSubscription(env, accountId, plan.pendingCancel.when);
+  if (!plan) return;
+  const now = env.clock.now();
+  if (plan.pendingCancel && (!options.onlyDue || plan.pendingCancel.nextAttemptAt <= now)) {
+    await cancelMain(env, accountId, plan, plan.paddleSubscriptionId, plan.pendingCancel.when);
+  }
+  for (const extra of plan.extraCancels ?? []) {
+    if (!options.onlyDue || extra.nextAttemptAt <= now) await cancelExtra(env, accountId, extra);
+  }
 }
 
-/** One pass of the scheduled retry: every cancellation whose next attempt is due. Returns how many were tried. */
+/** One pass of the scheduled retry: every cancellation whose next attempt is due. Returns how many accounts were tried. */
 export async function retryPendingCancels(env: BillingEnv): Promise<number> {
   const now = env.clock.now();
   const due = await env.stores.accounts.listPendingCancels(now, env.settings.cancel.batch);
@@ -120,7 +177,7 @@ export async function retryPendingCancels(env: BillingEnv): Promise<number> {
   for (const accountId of due) {
     tried++;
     try {
-      await attemptPendingCancel(env, accountId);
+      await attemptPendingCancel(env, accountId, { onlyDue: true });
     } catch {
       // One account failing must not stop the others; its pending state and next attempt are already recorded.
       console.error("billing: cancel retry failed");

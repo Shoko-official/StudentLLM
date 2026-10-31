@@ -17,7 +17,7 @@ import { envFromCore } from "./env";
 import { checkPlan } from "./hooks";
 import { defaultNotifier, type BillingNotifier } from "./notifier";
 import { createHttpPaddleClient, type PaddleClient } from "./paddle-client";
-import { loadBillingSettings, type BillingSettings } from "./settings";
+import { assertApiKeyMatchesEnvironment, loadBillingSettings, type BillingSettings } from "./settings";
 import { billingScheduledTasks } from "./tasks";
 import { handlePaddleWebhook } from "./webhook";
 
@@ -37,6 +37,8 @@ export interface BillingOverrides {
 
 export function createBillingDeps(core: CoreDeps, overrides: BillingOverrides = {}): BillingDeps {
   const settings = loadBillingSettings(core.config, overrides.settings);
+  // Sandbox and live are never mixed: a key of the other environment stops the Worker at start, not at the first call.
+  if (core.config.hasSecret("PADDLE_API_KEY")) assertApiKeyMatchesEnvironment(core.config.secret("PADDLE_API_KEY").reveal(), settings.environment);
   const paddle =
     overrides.paddle ??
     createHttpPaddleClient({

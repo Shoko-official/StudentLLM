@@ -28,4 +28,5 @@ PADDLE_WEBHOOK_SECRET_PREVIOUS=
 # Not secrets, so they live in wrangler.toml [vars] per environment: the Paddle price ids (they differ between
 # sandbox and live) and, optionally, the credits of one budget window (placeholders, verify before launch):
 #   PADDLE_PRICE_PLUS_MONTHLY, PADDLE_PRICE_PLUS_SEMESTER, PLUS_MONTHLY_WINDOW_CREDITS, PLUS_SEMESTER_WINDOW_CREDITS
-# Outside development the billing module refuses to start with a missing or placeholder price id.
+# and PADDLE_CHECKOUT_HOSTS (comma-separated host names the hosted checkout may be on; the checkout URL is pinned to them).
+# Outside development the billing module refuses to start with a missing or placeholder price id or checkout host.

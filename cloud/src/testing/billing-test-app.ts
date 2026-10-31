@@ -5,7 +5,9 @@ import { hmacSha256Hex } from "../crypto/hash";
 import { loadConfig } from "../config";
 import type { CoreDeps } from "../deps";
 import { createBillingDeps, type BillingDeps, type BillingOverrides } from "../modules/billing";
-import type { BillingNotifier, OperatorAlert } from "../modules/billing/notifier";
+import { envFromDeps } from "../modules/billing/env";
+import { ensureCustomerOnPlan } from "../modules/billing/plan-store";
+import type { BillingNotifier, GrantCut, OperatorAlert, OwnerReview } from "../modules/billing/notifier";
 import { PaddleError, type PaddleClient, type PaddleFailure, type PaddleSubscription } from "../modules/billing/paddle-client";
 import type { ExecutionContext } from "../platform";
 import { createInMemoryStores, type AccountRecord, type PlanRecord, type Stores } from "../storage";
@@ -26,13 +28,35 @@ export class FakePaddle implements PaddleClient {
   /** Failures to throw, consumed one per call of the named method. */
   private readonly failures: Array<{ method: string; failure: PaddleFailure }> = [];
   private n = 0;
+  /** The host of the checkout URLs it returns (a test sets another one to play a wrong answer from Paddle). */
+  checkoutHost = "checkout.paddle.example.invalid";
+  private readonly gates = new Map<string, Promise<void>>();
 
-  failNext(method: "createTransaction" | "createPortalSession" | "getSubscription" | "cancelSubscription", failure: PaddleFailure = "unavailable", times = 1): void {
+  /** Forgets the failures that were queued and not used yet. */
+  clearFailures(): void {
+    this.failures.length = 0;
+  }
+
+  /** The next call of `method` waits until the returned function is called (to hold a request mid-flight). */
+  hold(method: string): () => void {
+    let release!: () => void;
+    this.gates.set(method, new Promise<void>((resolve) => (release = resolve)));
+    return release;
+  }
+
+  /** The customer id handed out by createCustomer, in order; defaults to `ctm_fake_<n>`. */
+  readonly customerIds: string[] = [];
+  failNext(method: "createCustomer" | "createTransaction" | "createPortalSession" | "getSubscription" | "cancelSubscription", failure: PaddleFailure = "unavailable", times = 1): void {
     for (let i = 0; i < times; i++) this.failures.push({ method, failure });
   }
 
-  private record(method: string, args: unknown[]): void {
+  private async record(method: string, args: unknown[]): Promise<void> {
     this.calls.push({ method, args });
+    const gate = this.gates.get(method);
+    if (gate) {
+      this.gates.delete(method);
+      await gate;
+    }
     const i = this.failures.findIndex((f) => f.method === method);
     if (i >= 0) throw new PaddleError(this.failures.splice(i, 1)[0]!.failure);
   }
@@ -41,26 +65,32 @@ export class FakePaddle implements PaddleClient {
     return this.calls.filter((c) => c.method === method).map((c) => c.args);
   }
 
-  async createTransaction(input: { priceId: string; accountId: string; customerId: string | null }) {
-    this.record("createTransaction", [input]);
+  async createCustomer(input: { email: string; accountId: string }) {
+    await this.record("createCustomer", [input]);
     this.n++;
-    return { transactionId: `txn_fake_${this.n}`, checkoutUrl: `https://checkout.paddle.example.invalid/pay?_ptxn=txn_fake_${this.n}` };
+    return { customerId: this.customerIds.shift() ?? `ctm_fake_${this.n}` };
+  }
+
+  async createTransaction(input: { priceId: string; accountId: string; customerId: string }) {
+    await this.record("createTransaction", [input]);
+    this.n++;
+    return { transactionId: `txn_fake_${this.n}`, checkoutUrl: `https://${this.checkoutHost}/pay?_ptxn=txn_fake_${this.n}` };
   }
 
   async createPortalSession(input: { customerId: string; subscriptionId: string | null }) {
-    this.record("createPortalSession", [input]);
+    await this.record("createPortalSession", [input]);
     return { url: `https://portal.paddle.example.invalid/${input.customerId}`, expiresAt: null };
   }
 
   async getSubscription(subscriptionId: string) {
-    this.record("getSubscription", [subscriptionId]);
+    await this.record("getSubscription", [subscriptionId]);
     const s = this.subscriptions.get(subscriptionId);
     if (!s) throw new PaddleError("not_found");
     return { ...s };
   }
 
   async cancelSubscription(subscriptionId: string, effectiveFrom: "next_billing_period" | "immediately") {
-    this.record("cancelSubscription", [subscriptionId, effectiveFrom]);
+    await this.record("cancelSubscription", [subscriptionId, effectiveFrom]);
     const s = this.subscriptions.get(subscriptionId) ?? { id: subscriptionId, status: "active", customerId: null, periodStart: null, periodEnd: null, cancelScheduled: false };
     if (s.status === "canceled") throw new PaddleError("conflict");
     const next = effectiveFrom === "immediately" ? { ...s, status: "canceled", cancelScheduled: false } : { ...s, cancelScheduled: true };
@@ -72,6 +102,14 @@ export class FakePaddle implements PaddleClient {
 export class FakeNotifier implements BillingNotifier {
   readonly cancellations: Array<{ accountId: string; when: "period_end" | "now"; effectiveAt: number | null }> = [];
   readonly alerts: OperatorAlert[] = [];
+  readonly reviews: OwnerReview[] = [];
+  readonly grantCuts: Array<{ accountId: string; cuts: GrantCut[] }> = [];
+  async requestOwnerReview(item: OwnerReview) {
+    this.reviews.push(item);
+  }
+  async grantCut(input: { accountId: string; cuts: GrantCut[] }) {
+    this.grantCuts.push(input);
+  }
   async subscriptionCancelled(input: { accountId: string; when: "period_end" | "now"; effectiveAt: number | null }) {
     this.cancellations.push(input);
   }
@@ -163,7 +201,7 @@ export function transactionEvent(
   return { event_id: input.eventId ?? nextEventId(), event_type: input.type ?? "transaction.completed", occurred_at: iso(input.occurredAt), notification_id: "ntf_x", data };
 }
 
-export function adjustmentEvent(input: Common & { adjustmentId?: string; transactionId?: string | null; subscriptionId?: string; action?: string; status?: string; type?: string }): Record<string, unknown> {
+export function adjustmentEvent(input: Common & { adjustmentId?: string; transactionId?: string | null; subscriptionId?: string; action?: string; status?: string; type?: string; adjustmentType?: string | null }): Record<string, unknown> {
   return {
     event_id: input.eventId ?? nextEventId(),
     event_type: input.type ?? "adjustment.updated",
@@ -172,6 +210,7 @@ export function adjustmentEvent(input: Common & { adjustmentId?: string; transac
     data: {
       id: input.adjustmentId ?? "adj_test_1",
       action: input.action ?? "refund",
+      ...(input.adjustmentType === null ? {} : { type: input.adjustmentType ?? "full" }),
       status: input.status ?? "approved",
       transaction_id: input.transactionId === undefined ? "txn_test_1" : input.transactionId,
       subscription_id: input.subscriptionId ?? null,
@@ -197,8 +236,11 @@ export interface BillingTestApp {
   billing: BillingDeps;
   /** The last execution context: `await exec.settled()` waits for the work that runs after the response. */
   exec: ExecutionContext & { settled(): Promise<void> };
-  /** Creates the account (and optionally a plan) the events and requests refer to. */
-  createAccount(id?: string, email?: string): Promise<AccountRecord>;
+  /**
+   * Creates the account the events and requests refer to, with the Paddle customer that checkout would have created
+   * on the server (`customerId`, default `ctm_1`; null for an account that never started a checkout).
+   */
+  createAccount(id?: string, email?: string, customerId?: string | null): Promise<AccountRecord>;
   /** Posts a signed webhook. Pass `signAs`/`body`/`header` to forge or damage it. */
   webhook(event: unknown, options?: { signWith?: string | string[]; at?: number; header?: string | null; rawBody?: string | Uint8Array; headers?: Record<string, string> }): Promise<Response>;
   plan(id?: string): Promise<PlanRecord | null>;
@@ -217,6 +259,7 @@ export function makeBillingTestApp(options: BillingTestOptions = {}): BillingTes
   const env = testEnv({
     PADDLE_PRICE_PLUS_MONTHLY: PRICE_MONTHLY,
     PADDLE_PRICE_PLUS_SEMESTER: PRICE_SEMESTER,
+    PADDLE_CHECKOUT_HOSTS: "checkout.paddle.example.invalid",
     PADDLE_WEBHOOK_SECRET: WEBHOOK_SECRET,
     PADDLE_WEBHOOK_SECRET_PREVIOUS: WEBHOOK_SECRET_PREVIOUS,
     ...options.env,
@@ -257,12 +300,17 @@ export function makeBillingTestApp(options: BillingTestOptions = {}): BillingTes
     get exec() {
       return state.exec;
     },
-    async createAccount(id = accountId, email = `${id}@example.invalid`) {
+    async createAccount(id = accountId, email = `${id}@example.invalid`, customerId: string | null = "ctm_1") {
       const r = await stores.accounts.create({ accountId: id, email, googleSubject: null, loginMethods: ["email"], termsVersion: "2026-11-01", now: clock.now() });
       if (!r.ok) throw new Error("account setup failed");
-      return r.account;
+      if (customerId !== null) await ensureCustomerOnPlan(envFromDeps(t.deps), id, customerId);
+      return (await stores.accounts.getById(id))!;
     },
     async webhook(event, o = {}) {
+      // The gateway orders events by occurred_at but never trusts one further ahead than the signature tolerance, so a
+      // test that sends an event from the future moves the clock to it first (never backwards).
+      const stamp = Date.parse(String((event as { occurred_at?: unknown } | null)?.occurred_at ?? ""));
+      if (o.at === undefined && Number.isFinite(stamp) && stamp > clock.now()) clock.set(stamp);
       const raw = o.rawBody ?? JSON.stringify(event);
       const header = o.header !== undefined ? o.header : await paddleSignature(o.signWith ?? WEBHOOK_SECRET, raw, o.at ?? clock.now());
       const headers: Record<string, string> = { "Content-Type": "application/json", ...o.headers };

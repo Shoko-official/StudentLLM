@@ -9,7 +9,7 @@
 //
 // Everything is a function of (current plan, event) and an instant. No clock, no store, no network.
 
-import type { PaidPeriod, PlanId, PlanRecord, PlanStatus } from "../../storage";
+import type { BudgetWindow, ExtraCancel, PaidPeriod, PlanId, PlanRecord, PlanStatus } from "../../storage";
 import type { NormalizedEvent } from "./events";
 import { SEMESTER_PASS_MONTHS, type PaidPlanId } from "./settings";
 import {
@@ -25,10 +25,12 @@ import {
   truncatePeriods,
 } from "./windows";
 
-
+const DAY_MS = 24 * 60 * 60 * 1000;
 /** A Paddle billing period longer than this is not a monthly period; the event is refused rather than trusted. */
-export const MAX_SUBSCRIPTION_PERIOD_MS = 62 * 24 * 60 * 60 * 1000;
-/** Bound of `revokedPurchaseIds` and `retiredSubscriptionIds`. */
+export const MAX_SUBSCRIPTION_PERIOD_MS = 62 * DAY_MS;
+/** Nor is one shorter than this (a billing month is 28 to 31 days): a period like that is refused, not granted. */
+export const MIN_SUBSCRIPTION_PERIOD_MS = 25 * DAY_MS;
+/** Bound of the remembered id lists of a plan. */
 const MAX_REMEMBERED_IDS = 20;
 
 export type { PaidPlanId };
@@ -38,7 +40,7 @@ export interface Prices {
   plus_semester: string | null;
 }
 
-export type ConflictReason = "duplicate_subscription" | "plan_conflict" | "unexpected_price" | "malformed";
+export type ConflictReason = "duplicate_subscription" | "plan_conflict" | "unexpected_price" | "malformed" | "customer_mismatch";
 
 export type Reduction =
   | {
@@ -48,11 +50,15 @@ export type Reduction =
       added: PaidPeriod[];
       /** True when a refund or chargeback withdrew at least one period. */
       revoked: boolean;
+      /** True when the account had no Paddle customer id and adopted the event's (the operator is told). */
+      customerAdopted?: boolean;
     }
   /** Nothing to do: an event the model does not use, a replay, or a late event of a replaced subscription. */
   | { kind: "ignored" }
   /** The event is valid but cannot be applied (a second plan, an unknown product): quarantine and alert. */
-  | { kind: "conflict"; reason: ConflictReason };
+  | { kind: "conflict"; reason: ConflictReason }
+  /** Valid, changes nothing, and a person must look at it (a partial refund is a normal flow, not a revocation). */
+  | { kind: "review"; reason: "partial_refund" };
 
 export function emptyPlan(accountId: string): PlanRecord {
   return {
@@ -67,6 +73,8 @@ export function emptyPlan(accountId: string): PlanRecord {
     pendingCancel: null,
     revokedPurchaseIds: [],
     retiredSubscriptionIds: [],
+    retiredCustomerIds: [],
+    extraCancels: [],
   };
 }
 
@@ -98,9 +106,10 @@ export type Eligibility = { ok: true } | { ok: false; reason: "subscription_acti
  */
 export function checkoutEligibility(plan: PlanRecord | null, requested: PaidPlanId, at: number): Eligibility {
   if (subscriptionRunning(plan, at)) return { ok: false, reason: "subscription_active" };
-  // A cancellation Paddle has not confirmed yet: the old subscription may still be billing, and a second one
-  // would be paid twice. The user is pointed to the portal until the cancel is confirmed.
+  // A cancellation Paddle has not confirmed yet (the plan's own, or one of a duplicate or replaced subscription): a
+  // subscription may still be billing, and a second one would be paid twice. The user is pointed to the portal.
   if (plan?.pendingCancel && plan.paddleSubscriptionId) return { ok: false, reason: "subscription_active" };
+  if ((plan?.extraCancels ?? []).length > 0) return { ok: false, reason: "subscription_active" };
   if (requested === "plus_monthly" && passActive(plan, at)) return { ok: false, reason: "pass_active" };
   return { ok: true };
 }
@@ -115,21 +124,64 @@ function addRevokedPurchase(plan: PlanRecord, id: string): void {
   plan.revokedPurchaseIds = ids.slice(-MAX_REMEMBERED_IDS);
 }
 
-/** Remembers the current subscription id as retired (it is about to be replaced or forgotten). */
+/** Adds (or replaces, by subscription id) an extra cancellation to retry; attempts and timing start fresh. */
+export function addExtraCancel(plan: PlanRecord, input: { subscriptionId: string; customerId: string | null; reason: ExtraCancel["reason"]; now: number }): void {
+  const list = (plan.extraCancels ?? []).filter((e) => e.subscriptionId !== input.subscriptionId);
+  list.push({ subscriptionId: input.subscriptionId, customerId: input.customerId, reason: input.reason, requestedAt: input.now, attempts: 0, nextAttemptAt: input.now, alerted: false });
+  plan.extraCancels = list.slice(-MAX_REMEMBERED_IDS);
+}
+
+/**
+ * Remembers the current subscription id as retired (it is about to be replaced or forgotten). A cancellation that
+ * was still pending for it moves to the extra cancellations with its attempts, so replacing the subscription
+ * never wipes a cancel Paddle has not confirmed.
+ */
 function retireSubscription(plan: PlanRecord): void {
   const id = plan.paddleSubscriptionId;
   if (id === null) return;
   const ids = plan.retiredSubscriptionIds ?? [];
   if (!ids.includes(id)) ids.push(id);
   plan.retiredSubscriptionIds = ids.slice(-MAX_REMEMBERED_IDS);
+  if (plan.pendingCancel) {
+    const p = plan.pendingCancel;
+    const list = (plan.extraCancels ?? []).filter((e) => e.subscriptionId !== id);
+    list.push({ subscriptionId: id, customerId: plan.paddleCustomerId, reason: "retired", requestedAt: p.requestedAt, attempts: p.attempts, nextAttemptAt: p.nextAttemptAt, alerted: p.alerted });
+    plan.extraCancels = list.slice(-MAX_REMEMBERED_IDS);
+    plan.pendingCancel = null;
+  } else if (plan.status === "active" || plan.status === "past_due") {
+    // Replaced while Paddle may still hold it alive (a paused subscription, a cancel whose event has not arrived):
+    // cancel it now, so a subscription nobody tracks cannot resume billing. Due at once (time 0).
+    addExtraCancel(plan, { subscriptionId: id, customerId: plan.paddleCustomerId, reason: "retired", now: 0 });
+  }
+}
+
+/** Removes a confirmed extra cancellation. */
+export function removeExtraCancel(plan: PlanRecord, subscriptionId: string): PlanRecord {
+  const next = clonePlan(plan);
+  next.extraCancels = (next.extraCancels ?? []).filter((e) => e.subscriptionId !== subscriptionId);
+  return next;
+}
+
+/** Every subscription id the plan has seen: current, replaced and duplicate. */
+export function seenSubscriptionIds(plan: PlanRecord): string[] {
+  const ids = new Set<string>();
+  for (const id of [plan.paddleSubscriptionId, ...(plan.retiredSubscriptionIds ?? []), ...(plan.extraCancels ?? []).map((e) => e.subscriptionId)]) if (id) ids.add(id);
+  return [...ids];
 }
 
 /** Adds a period; one whose paying transaction was already refunded is recorded as revoked, buying nothing. */
 function addPeriod(plan: PlanRecord, candidate: PaidPeriod, added: PaidPeriod[]): void {
   const result = insertPeriod(plan.paidPeriods, candidate);
+  const refunded = (id: string | undefined): boolean => id !== undefined && (plan.revokedPurchaseIds ?? []).includes(id);
+  if (result.backfilled) {
+    // The period existed without its payment id; now the payment is known, and it may be a refunded one.
+    const filled = result.backfilled;
+    plan.paidPeriods = result.periods.map((p) => (p.start === filled.start && refunded(filled.purchaseId) && p.revokedAt === undefined ? { ...p, revokedAt: p.start } : p));
+    return;
+  }
   if (!result.added) return;
   let period = result.added;
-  if (period.purchaseId !== undefined && (plan.revokedPurchaseIds ?? []).includes(period.purchaseId)) {
+  if (refunded(period.purchaseId)) {
     period = { ...period, revokedAt: period.start };
     result.periods[result.periods.indexOf(result.added)] = period;
   }
@@ -152,12 +204,27 @@ export function reduceEvent(current: PlanRecord | null, ev: NormalizedEvent, opt
     case "subscription":
       return reduceSubscription(current, ev, options, "subscription");
     case "transaction":
+      // A completed transaction without a single item is not something we sold.
+      if (ev.itemCount === 0) return { kind: "conflict", reason: "malformed" };
       return ev.subscriptionId !== null ? reduceSubscription(current, ev, options, "payment") : reducePass(current, ev, options);
     case "adjustment":
       return reduceAdjustment(current, ev, options);
     default:
       return { kind: "ignored" };
   }
+}
+
+type CustomerCheck = "ok" | "adopt" | "mismatch";
+
+/**
+ * Checkout creates the Paddle customer on the server and always passes it, so the account's customer id is known
+ * before the first event. An event with another customer id does not belong to this account's purchase.
+ */
+function customerCheck(base: PlanRecord, ev: NormalizedEvent): CustomerCheck {
+  if (ev.customerId === null) return "ok";
+  if (base.paddleCustomerId === null) return "adopt";
+  if (ev.customerId === base.paddleCustomerId || (base.retiredCustomerIds ?? []).includes(ev.customerId)) return "ok";
+  return "mismatch";
 }
 
 function reduceSubscription(current: PlanRecord | null, ev: NormalizedEvent, options: ReduceOptions, via: "subscription" | "payment"): Reduction {
@@ -172,15 +239,29 @@ function reduceSubscription(current: PlanRecord | null, ev: NormalizedEvent, opt
   const sameSubscription = base.paddleSubscriptionId === ev.subscriptionId;
   const full = options.mode === "full";
 
+  const customer = customerCheck(base, ev);
+  if (customer === "mismatch") return { kind: "conflict", reason: "customer_mismatch" };
+
+  if (status === "active" && ev.periodStart !== null && ev.periodEnd !== null) {
+    const length = ev.periodEnd - ev.periodStart;
+    if (!(length > 0) || length > MAX_SUBSCRIPTION_PERIOD_MS || length < MIN_SUBSCRIPTION_PERIOD_MS) return { kind: "conflict", reason: "malformed" };
+  }
+
+  if (!sameSubscription && status === "canceled") {
+    // The end of a subscription we asked to cancel (a duplicate, or a replaced one): the retry is done.
+    if ((base.extraCancels ?? []).some((e) => e.subscriptionId === ev.subscriptionId)) {
+      return { kind: "applied", plan: removeExtraCancel(base, ev.subscriptionId), added: [], revoked: false };
+    }
+  }
+
   if ((base.retiredSubscriptionIds ?? []).includes(ev.subscriptionId)) {
     // A late event of a subscription that was replaced. It may carry a payment (a paid period is a fact), but it
     // never takes the plan back to that subscription.
     if (status !== "active" || ev.periodStart === null || ev.periodEnd === null) return { kind: "ignored" };
-    if (!(ev.periodEnd > ev.periodStart) || ev.periodEnd - ev.periodStart > MAX_SUBSCRIPTION_PERIOD_MS) return { kind: "conflict", reason: "malformed" };
     const late = clonePlan(base);
     const lateAdded: PaidPeriod[] = [];
     addPeriod(late, { start: ev.periodStart, end: ev.periodEnd, kind: "subscription", ...(via === "payment" && ev.transactionId ? { purchaseId: ev.transactionId } : {}) }, lateAdded);
-    return lateAdded.length === 0 ? { kind: "ignored" } : { kind: "applied", plan: late, added: lateAdded, revoked: false };
+    return JSON.stringify(late.paidPeriods) === JSON.stringify(base.paidPeriods) ? { kind: "ignored" } : { kind: "applied", plan: late, added: lateAdded, revoked: false };
   }
 
   if (!sameSubscription && base.paddleSubscriptionId !== null) {
@@ -203,38 +284,37 @@ function reduceSubscription(current: PlanRecord | null, ev: NormalizedEvent, opt
     plan.paddleSubscriptionId = ev.subscriptionId;
     plan.planId = "plus_monthly";
     plan.cancelAtPeriodEnd = false;
-    plan.pendingCancel = null;
     plan.status = status === "past_due" ? "past_due" : "active";
   } else if (full) {
     if (status === "active") plan.status = "active";
     else if (status === "past_due") plan.status = "past_due";
-    else plan.status = "canceled";
+    else if (status === "canceled") plan.status = "canceled";
+    // `paused` is not a cancellation: the subscription still exists at Paddle and can be resumed or canceled later,
+    // so the local status is kept and the plan simply stops at the end of the paid period (below).
   }
   plan.planId = "plus_monthly";
-  // The customer id is set by the first event of a subscription and never rewritten by its later events.
-  if (ev.customerId !== null && (!sameSubscription || plan.paddleCustomerId === null)) plan.paddleCustomerId = ev.customerId;
+  if (customer === "adopt") plan.paddleCustomerId = ev.customerId;
 
   // A paid period exists only for a payment that went through: an active subscription or a completed transaction.
   // `past_due` starts no new window until the payment succeeds.
   if (status === "active" && ev.periodStart !== null && ev.periodEnd !== null) {
-    if (!(ev.periodEnd > ev.periodStart) || ev.periodEnd - ev.periodStart > MAX_SUBSCRIPTION_PERIOD_MS) {
-      return { kind: "conflict", reason: "malformed" };
-    }
     addPeriod(plan, { start: ev.periodStart, end: ev.periodEnd, kind: "subscription", ...(via === "payment" && ev.transactionId ? { purchaseId: ev.transactionId } : {}) }, added);
   }
 
   if (full || !sameSubscription) {
-    if (status === "canceled" || status === "paused") {
+    if (status === "canceled") {
       // An immediate cancellation ends the period now; one scheduled for the period end has nothing left to cut.
       if (!(base.cancelAtPeriodEnd || ev.cancelAtPeriodEnd === true)) plan.paidPeriods = truncatePeriods(plan.paidPeriods, ev.occurredAt, "subscription");
       plan.cancelAtPeriodEnd = false;
       plan.pendingCancel = null;
+    } else if (status === "paused") {
+      plan.cancelAtPeriodEnd = true;
     } else if (ev.cancelAtPeriodEnd !== null) {
       plan.cancelAtPeriodEnd = ev.cancelAtPeriodEnd;
       if (ev.cancelAtPeriodEnd && plan.pendingCancel?.when === "period_end") plan.pendingCancel = null;
     }
   }
-  return { kind: "applied", plan, added, revoked: false };
+  return { kind: "applied", plan, added, revoked: false, ...(customer === "adopt" ? { customerAdopted: true } : {}) };
 }
 
 function reducePass(current: PlanRecord | null, ev: NormalizedEvent, options: ReduceOptions): Reduction {
@@ -244,6 +324,8 @@ function reducePass(current: PlanRecord | null, ev: NormalizedEvent, options: Re
   if (ev.transactionId === null) return { kind: "conflict", reason: "malformed" };
 
   const base = current ?? emptyPlan(options.accountId);
+  const customer = customerCheck(base, ev);
+  if (customer === "mismatch") return { kind: "conflict", reason: "customer_mismatch" };
   if (hasPurchase(base.paidPeriods, ev.transactionId)) return { kind: "ignored" }; // a replay
   if (subscriptionRunning(base, ev.occurredAt)) return { kind: "conflict", reason: "plan_conflict" };
 
@@ -256,46 +338,59 @@ function reducePass(current: PlanRecord | null, ev: NormalizedEvent, options: Re
     addPeriod(plan, { ...month, kind: "pass", purchaseId: ev.transactionId }, added);
   }
   if (added.length === 0) return { kind: "ignored" };
+  // The old subscription (if any) is over; forgetting its id keeps a pass-only plan from looking subscribed. A
+  // cancellation that was still pending for it moves to the extra cancellations (see retireSubscription, which
+  // reads the status the plan had, so it runs first).
+  retireSubscription(plan);
   plan.planId = "plus_semester";
   plan.status = "active";
   plan.cancelAtPeriodEnd = false;
-  // The old subscription (if any) is over; forgetting its id keeps a pass-only plan from looking subscribed.
-  retireSubscription(plan);
   plan.paddleSubscriptionId = null;
   plan.pendingCancel = null;
-  if (ev.customerId !== null) plan.paddleCustomerId = ev.customerId;
-  return { kind: "applied", plan, added, revoked: false };
+  if (customer === "adopt") plan.paddleCustomerId = ev.customerId;
+  return { kind: "applied", plan, added, revoked: false, ...(customer === "adopt" ? { customerAdopted: true } : {}) };
 }
 
+/**
+ * Refunds and chargebacks (docs/cloud-plan.md, "Webhook specification").
+ * - Only an APPROVED adjustment acts. A chargeback and a `full` refund withdraw windows; a `partial` refund (a
+ *   proportional withdrawal refund is a normal flow, ToS 5.2) changes nothing and asks for a review; a refund whose
+ *   type is not stated is treated as partial, because withdrawing on a guess is the worse mistake.
+ * - What is withdrawn: the windows the refunded transaction bought; when the event names no transaction, the running
+ *   window and all later ones. A refund of one payment never takes the window another payment bought.
+ * - A refunded payment is remembered, so a period that is recorded later for it arrives already revoked.
+ * - A withdrawn subscription period also asks for the subscription to be canceled now (a refund does not cancel it,
+ *   and the renewals would start entitlement again).
+ */
 function reduceAdjustment(current: PlanRecord | null, ev: NormalizedEvent, _options: ReduceOptions): Reduction {
   if (current === null) return { kind: "ignored" };
-  // Only an approved refund or chargeback withdraws anything (event and status names: verify with Paddle).
-  if ((ev.action !== "refund" && ev.action !== "chargeback") || ev.status !== "approved") return { kind: "ignored" };
+  if (ev.status !== "approved") return { kind: "ignored" };
+  if (ev.action === "refund" && ev.adjustmentType !== "full") return { kind: "review", reason: "partial_refund" };
+  if (ev.action !== "refund" && ev.action !== "chargeback") return { kind: "ignored" };
 
   const plan = clonePlan(current);
   const at = ev.occurredAt;
   let revoked = false;
+  let revokedSubscription = false;
   plan.paidPeriods = plan.paidPeriods.map((p) => {
     if (!isLive(p) || p.end <= at) return p;
-    // The current window, the windows the refunded payment bought, and (when the event names no payment) all later ones.
-    const bought = ev.transactionId !== null && p.purchaseId === ev.transactionId;
-    const running = p.start <= at;
-    if (!(bought || running || ev.transactionId === null)) return p;
+    const hit = ev.transactionId !== null ? p.purchaseId === ev.transactionId : true; // no payment named: running and later
+    if (!hit) return p;
     revoked = true;
+    if (kindOf(p) === "subscription") revokedSubscription = true;
     return { ...p, revokedAt: at };
   });
   // Remember the refunded payment: a period it bought that is recorded later arrives already revoked.
   const newlyRemembered = ev.transactionId !== null && !(plan.revokedPurchaseIds ?? []).includes(ev.transactionId);
   if (newlyRemembered) addRevokedPurchase(plan, ev.transactionId!);
   if (!revoked) return newlyRemembered ? { kind: "applied", plan, added: [], revoked: false } : { kind: "ignored" };
-  const stillBuying = livePeriods(plan.paidPeriods).some((p) => p.end > at);
-  if (!stillBuying) {
+  if (!livePeriods(plan.paidPeriods).some((p) => p.end > at)) {
     plan.status = "revoked";
     plan.cancelAtPeriodEnd = false;
-    // Stop the renewals: a refund does not cancel the subscription by itself.
-    if (subscriptionRunning(current, at) && !plan.pendingCancel) {
-      plan.pendingCancel = { when: "now", requestedAt: at, attempts: 0, nextAttemptAt: at, alerted: false };
-    }
+  }
+  // Stop the renewals.
+  if (revokedSubscription && subscriptionRunning(current, at) && !plan.pendingCancel) {
+    plan.pendingCancel = { when: "now", requestedAt: at, attempts: 0, nextAttemptAt: at, alerted: false };
   }
   return { kind: "applied", plan, added: [], revoked: true };
 }
@@ -326,8 +421,15 @@ export function applyConfirmedCancel(plan: PlanRecord, when: "period_end" | "now
 // The public view
 // ---------------------------------------------------------------------------------------------------------------
 
+/**
+ * The plan id a complimentary (admin grant) window is reported as. The public `Plan.id` enum has no complimentary id
+ * yet: this stays `free` until the public contract gains `plus_complimentary` (amendment A2, a separate change), and
+ * then this one constant changes. Nothing else in the module spells the id.
+ */
+export const COMPLIMENTARY_PLAN_ID: PublicPlan["id"] = "free";
+
 export interface PublicPlan {
-  id: "free" | "plus_monthly" | "plus_semester";
+  id: "free" | "plus_monthly" | "plus_semester" | "plus_complimentary";
   status: "none" | "active" | "past_due" | "canceled" | "revoked";
   period_start: string | null;
   period_end: string | null;
@@ -337,22 +439,24 @@ export interface PublicPlan {
 const iso = (ms: number): string => new Date(ms).toISOString().replace(".000Z", "Z");
 
 /**
- * The `Plan` object of the contract for an instant. The account module may use it for `GET /v1/account`.
- * - a running period: its id and dates (status `past_due` keeps showing the running window);
+ * The `Plan` object of the contract for an instant. The account module may use it for `GET /v1/account`; pass the
+ * running budget window (`ledger.getCurrentWindow`) so a complimentary window is reported by its source.
+ * - a running paid period: its id and dates (status `past_due` keeps showing the running window);
  * - a revoked plan: `revoked`, no dates;
+ * - no running paid period but a running admin_grant window: `COMPLIMENTARY_PLAN_ID`, active, the window's dates;
  * - a subscription that is past due with no running window: `past_due`, no dates;
  * - nothing running: `free` (status `canceled` when a plan existed and ended, `none` when there never was one).
- * A complimentary grant is not part of the plan record, so an account with only a grant reports `free`
- * (contract question in the pull request); its window is visible in the credits.
  */
-export function toPublicPlan(plan: PlanRecord | null, at: number): PublicPlan {
+export function toPublicPlan(plan: PlanRecord | null, at: number, window: BudgetWindow | null = null): PublicPlan {
   const free = (status: PublicPlan["status"]): PublicPlan => ({ id: "free", status, period_start: null, period_end: null, cancel_at_period_end: false });
-  if (!plan) return free("none");
-  if (plan.status === "revoked") {
-    const stillRunning = periodAt(plan.paidPeriods, at);
-    if (!stillRunning) return { id: plan.planId, status: "revoked", period_start: null, period_end: null, cancel_at_period_end: false };
+  const running = plan ? periodAt(plan.paidPeriods, at) : undefined;
+  if (!running && window && window.source === "admin_grant" && window.revokedAt === null && window.start <= at && at < window.end) {
+    return { id: COMPLIMENTARY_PLAN_ID, status: "active", period_start: iso(window.start), period_end: iso(window.end), cancel_at_period_end: false };
   }
-  const running = periodAt(plan.paidPeriods, at);
+  if (!plan) return free("none");
+  if (plan.status === "revoked" && !running) {
+    return { id: plan.planId, status: "revoked", period_start: null, period_end: null, cancel_at_period_end: false };
+  }
   if (running) {
     const status: PlanStatus = plan.status === "past_due" ? "past_due" : "active";
     const id: PlanId = kindOf(running) === "pass" ? "plus_semester" : "plus_monthly";

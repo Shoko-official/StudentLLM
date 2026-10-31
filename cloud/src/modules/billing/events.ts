@@ -5,7 +5,7 @@
 // (docs/cloud-plan.md "Before phase 3"). The contract's PaddleEvent is deliberately loose: event_id,
 // event_type, occurred_at and a `data` object.
 
-import type { WebhookFields } from "../../storage";
+import type { WebhookEventRecord, WebhookFields } from "../../storage";
 
 export type EventKind = "subscription" | "transaction" | "adjustment" | "other";
 
@@ -22,6 +22,10 @@ export interface NormalizedEvent {
   priceIds: string[];
   status: string | null;
   action: string | null;
+  /** An adjustment's `type`: `full` or `partial`. */
+  adjustmentType: string | null;
+  /** How many items the payload lists (a transaction event without any is malformed). */
+  itemCount: number;
   currency: string | null;
   periodStart: number | null;
   periodEnd: number | null;
@@ -109,6 +113,8 @@ export function normalizeEvent(raw: unknown): NormalizedEvent {
     priceIds: [],
     status: word(data.status),
     action: word(data.action),
+    adjustmentType: kind === "adjustment" ? word(data.type) : null,
+    itemCount: Array.isArray(data.items) ? data.items.length : 0,
     currency: typeof data.currency_code === "string" && CURRENCY.test(data.currency_code) ? data.currency_code.toUpperCase() : null,
     periodStart: null,
     periodEnd: null,
@@ -164,9 +170,41 @@ export function ledgerFields(ev: NormalizedEvent): WebhookFields {
   put("price_id", ev.priceIds[0] ?? null);
   put("status", ev.status);
   put("action", ev.action);
+  put("adjustment_type", ev.adjustmentType);
   put("currency", ev.currency);
   put("period_start", ev.periodStart);
   put("period_end", ev.periodEnd);
   put("cancel_at_period_end", ev.cancelAtPeriodEnd);
   return fields as WebhookFields;
+}
+
+/**
+ * Rebuilds the part of an event the plan model reads from what the ledger kept (the allowlisted fields), so a
+ * quarantined adjustment can be replayed later. Only adjustments are replayed; `accountHint` is never stored.
+ */
+export function eventFromRecord(record: WebhookEventRecord): NormalizedEvent | null {
+  const f = record.fields;
+  const str = (k: keyof typeof f): string | null => (typeof f[k] === "string" ? (f[k] as string) : null);
+  const kind = kindOfEventType(record.eventType);
+  if (kind !== "adjustment") return null;
+  return {
+    eventId: record.eventId,
+    eventType: record.eventType,
+    occurredAt: record.occurredAt,
+    kind,
+    subscriptionId: str("subscription_id"),
+    customerId: str("customer_id"),
+    transactionId: str("transaction_id"),
+    adjustmentId: str("adjustment_id"),
+    priceIds: [],
+    status: str("status"),
+    action: str("action"),
+    adjustmentType: str("adjustment_type"),
+    itemCount: 0,
+    currency: str("currency"),
+    periodStart: null,
+    periodEnd: null,
+    cancelAtPeriodEnd: null,
+    accountHint: null,
+  };
 }

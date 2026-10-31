@@ -39,10 +39,11 @@ describe("POST /v1/billing/checkout", () => {
     expect(validateAgainst("CheckoutResponse", body)).toEqual([]);
     expect(body.checkout_url).toMatch(/^https:\/\/checkout\.paddle\.example\.invalid\//);
     expect(body.expires_at).toBe(new Date(T + app.billing.settings.checkoutTtlMs).toISOString().replace(".000Z", "Z"));
-    expect(app.paddle.callsTo("createTransaction")).toEqual([[{ priceId: PRICE_MONTHLY, accountId: "acc_test", customerId: null }]]);
+    expect(app.paddle.callsTo("createTransaction")).toEqual([[{ priceId: PRICE_MONTHLY, accountId: "acc_test", customerId: "ctm_1" }]]);
     const semester = await checkout(app, { plan: "plus_semester" });
     expect(semester.status).toBe(200);
-    expect(app.paddle.callsTo("createTransaction")[1]).toEqual([{ priceId: PRICE_SEMESTER, accountId: "acc_test", customerId: null }]);
+    expect(app.paddle.callsTo("createTransaction")[1]).toEqual([{ priceId: PRICE_SEMESTER, accountId: "acc_test", customerId: "ctm_1" }]);
+    expect(app.paddle.callsTo("createCustomer")).toEqual([]); // the account already had its customer
   });
 
   it("never lets the client choose the price, the account or any custom data", async () => {
@@ -188,8 +189,9 @@ describe("POST /v1/billing/checkout", () => {
 });
 
 describe("GET /v1/billing/portal", () => {
-  it("is not_found for an account that never bought anything", async () => {
-    const app = await setup();
+  it("is not_found for an account that never started a checkout (no Paddle customer yet)", async () => {
+    const app = makeBillingTestApp();
+    await app.createAccount(undefined, undefined, null);
     const res = await app.as("/v1/billing/portal");
     expect(res.status).toBe(404);
     expect((await res.json()).error.code).toBe("not_found");

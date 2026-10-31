@@ -127,7 +127,7 @@ describe("BillingSeam.cancelSubscription", () => {
     expect(final.attempts).toBe(alertAfterAttempts + 6);
     expect(delays.slice(0, 3)).toEqual([baseDelayMs, baseDelayMs * 2, baseDelayMs * 4]);
     expect(Math.max(...delays, final.nextAttemptAt - now)).toBe(maxDelayMs);
-    expect(app.notifier.alerts).toEqual([{ kind: "cancel_failing", accountId: "acc_test", attempts: alertAfterAttempts }]); // once
+    expect(app.notifier.alerts).toEqual([{ kind: "cancel_failing", accountId: "acc_test", attempts: alertAfterAttempts, subscriptionId: "sub_1" }]); // once
     expect(final.alerted).toBe(true);
   });
 

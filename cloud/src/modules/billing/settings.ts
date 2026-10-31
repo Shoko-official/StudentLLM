@@ -10,6 +10,11 @@ export interface BillingSettings {
   /** Paddle price id per plan; null when not configured (development only). */
   prices: Record<PaidPlanId, string | null>;
   /**
+   * The only hosts a checkout URL may point to (lower case). Null (development only) accepts any https URL. A URL
+   * Paddle returns on another host is refused, so a wrong answer cannot send a user to a page we did not approve.
+   */
+  checkoutHosts: string[] | null;
+  /**
    * Credits of one budget window per plan. The pool is cost-normalized (one credit is a fixed small amount of
    * money at the routing-table price, docs/cloud-plan.md "Quota design"), so these are money budgets, not token counts.
    * PLACEHOLDER: 12500 credits is the account fixture's limit; verify against the unit economics before launch.
@@ -36,7 +41,7 @@ export const DEFAULT_WINDOW_CREDITS = 12_500;
 /** Months in a semester pass: five consecutive one-month windows from its start. */
 export const SEMESTER_PASS_MONTHS = 5;
 
-export const DEFAULT_SETTINGS: Omit<BillingSettings, "environment" | "prices" | "windowCredits"> = {
+export const DEFAULT_SETTINGS: Omit<BillingSettings, "environment" | "prices" | "windowCredits" | "checkoutHosts"> = {
   signatureToleranceMs: MINUTE,
   claimStaleAfterMs: MINUTE,
   checkoutTtlMs: 60 * MINUTE,
@@ -66,7 +71,13 @@ export function loadBillingSettings(config: Config, overrides: Partial<BillingSe
     plus_monthly: config.variable("PADDLE_PRICE_PLUS_MONTHLY") ?? null,
     plus_semester: config.variable("PADDLE_PRICE_PLUS_SEMESTER") ?? null,
   };
+  const hostList = config.variable("PADDLE_CHECKOUT_HOSTS");
+  const checkoutHosts = hostList === undefined ? null : hostList.split(",").map((h) => h.trim().toLowerCase()).filter((h) => h !== "");
+  if (checkoutHosts !== null && checkoutHosts.some((h) => !/^[a-z0-9.-]+$/.test(h))) throw new ConfigError("PADDLE_CHECKOUT_HOSTS must list host names");
   if (config.environment !== "development") {
+    if (checkoutHosts === null || checkoutHosts.length === 0 || checkoutHosts.some(looksLikeTemplate)) {
+      throw new ConfigError(`PADDLE_CHECKOUT_HOSTS is empty or a template value; set a real one for ${config.environment}`);
+    }
     for (const [plan, price] of Object.entries(prices)) {
       if (price === null || looksLikeTemplate(price)) {
         throw new ConfigError(`PADDLE_PRICE_${plan.toUpperCase()} is empty or a template value; set a real one for ${config.environment}`);
@@ -77,6 +88,7 @@ export function loadBillingSettings(config: Config, overrides: Partial<BillingSe
   return {
     environment: config.paddleEnvironment,
     prices,
+    checkoutHosts: checkoutHosts !== null && checkoutHosts.length === 0 ? null : checkoutHosts,
     windowCredits: { plus_monthly: credits(config, "PLUS_MONTHLY_WINDOW_CREDITS"), plus_semester: credits(config, "PLUS_SEMESTER_WINDOW_CREDITS") },
     ...DEFAULT_SETTINGS,
     ...overrides,

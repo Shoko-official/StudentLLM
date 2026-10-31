@@ -30,6 +30,8 @@ function ev(over: Partial<NormalizedEvent> & Pick<NormalizedEvent, "kind" | "occ
     priceIds: [],
     status: null,
     action: null,
+    adjustmentType: null,
+    itemCount: over.kind === "adjustment" ? 0 : 1,
     currency: "EUR",
     periodStart: null,
     periodEnd: null,
@@ -45,7 +47,7 @@ const pay = (at: number, txn: string, over: Partial<NormalizedEvent> = {}) =>
   ev({ kind: "transaction", occurredAt: at, transactionId: txn, subscriptionId: "sub_1", priceIds: ["pri_m"], periodStart: T, periodEnd: addMonthsUTC(T, 1), ...over });
 const pass = (at: number, txn: string, over: Partial<NormalizedEvent> = {}) => ev({ kind: "transaction", occurredAt: at, transactionId: txn, priceIds: ["pri_s"], ...over });
 const refund = (at: number, txn: string | null, over: Partial<NormalizedEvent> = {}) =>
-  ev({ kind: "adjustment", occurredAt: at, transactionId: txn, action: "refund", status: "approved", ...over });
+  ev({ kind: "adjustment", occurredAt: at, transactionId: txn, action: "refund", status: "approved", adjustmentType: "full", ...over });
 
 const apply = (current: PlanRecord | null, e: NormalizedEvent, mode: "full" | "additive" = "full"): Reduction => reduceEvent(current, e, { accountId: ACC, prices: PRICES, mode });
 function run(events: NormalizedEvent[]): PlanRecord | null {
@@ -107,7 +109,8 @@ describe("the already_subscribed rule (checkoutEligibility)", () => {
 describe("subscription events", () => {
   it("adds one period per paid billing period, once, whatever event carries it", () => {
     const plan = run([sub(T), pay(T + 1000, "txn_1"), sub(T + DAY), pay(T + 2000, "txn_1")])!;
-    expect(plan.paidPeriods).toEqual([{ start: T, end: addMonthsUTC(T, 1), kind: "subscription" }]);
+    // The first event to name the paying transaction fills it in, without adding a second period.
+    expect(plan.paidPeriods).toEqual([{ start: T, end: addMonthsUTC(T, 1), kind: "subscription", purchaseId: "txn_1" }]);
   });
 
   it("records the paying transaction on the period when the payment event is the first to carry it", () => {
@@ -216,13 +219,14 @@ describe("semester pass", () => {
 });
 
 describe("refunds and chargebacks", () => {
-  it("revoke the running period and the periods the refunded payment bought, nothing else", () => {
+  it("revoke the periods the refunded payment bought, and not the running window another payment bought", () => {
     const plan = run([pass(T, "txn_a"), pass(T + DAY, "txn_b"), refund(T + 40 * DAY, "txn_b")])!;
     const revoked = plan.paidPeriods.filter((p) => p.revokedAt !== undefined);
-    // Pass A's running month and the windows of B are withdrawn; A's later months are A's own payment and remain.
-    expect(revoked.map((p) => p.purchaseId)).toEqual(["txn_a", "txn_b", "txn_b", "txn_b", "txn_b", "txn_b"]);
-    expect(plan.status).toBe("active"); // A's later months still buy something
-    expect(livePeriods(plan.paidPeriods).every((p) => p.purchaseId === "txn_a" && !(p.start <= T + 40 * DAY && T + 40 * DAY < p.end))).toBe(true);
+    // Pass A is running at the refund, but A's payment was not refunded: only B's five windows are withdrawn.
+    expect(revoked.map((p) => p.purchaseId)).toEqual(["txn_b", "txn_b", "txn_b", "txn_b", "txn_b"]);
+    expect(plan.status).toBe("active");
+    expect(livePeriods(plan.paidPeriods).every((p) => p.purchaseId === "txn_a")).toBe(true);
+    expect(livePeriods(plan.paidPeriods)).toHaveLength(5);
   });
 
   it("with no payment named, revoke the running and all later periods", () => {

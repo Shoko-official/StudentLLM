@@ -48,9 +48,9 @@ describe("planGrantWindows", () => {
     expect(GRANT_WINDOW_DAYS).toBe(30);
   });
 
-  it("enforces the contract ceilings", () => {
+  it("enforces the day ceiling and whole positive budgets (the credit ceilings come from W, see below)", () => {
     for (const days of [0, -1, 91, 1.5, NaN]) expect(() => planGrantWindows(T, days, 100), String(days)).toThrow(RangeError);
-    for (const credits of [0, -5, 25_001, 1.5]) expect(() => planGrantWindows(T, 10, credits), String(credits)).toThrow(RangeError);
+    for (const credits of [0, -5, 1.5]) expect(() => planGrantWindows(T, 10, credits), String(credits)).toThrow(RangeError);
     expect(() => planGrantWindows(T, 90, 25_000)).not.toThrow();
   });
 });
@@ -67,7 +67,7 @@ describe("creating a grant", () => {
       ["admin_grant", "grt_1", 5000, 30 * DAY, 60 * DAY],
     ]);
     expect(await version(app)).toBe(before + 1);
-    expect(await app.stores.accounts.getPlan("acc_test")).toBeNull(); // no payment, no Paddle object, no plan row
+    expect((await app.stores.accounts.getPlan("acc_test"))!.paidPeriods).toEqual([]); // no payment, no Paddle object: only the customer row
   });
 
   it("defaults the budget to the standard Plus window", async () => {

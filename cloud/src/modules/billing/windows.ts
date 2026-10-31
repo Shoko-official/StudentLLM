@@ -82,27 +82,42 @@ function byStart(a: PaidPeriod, b: PaidPeriod): number {
  * - A period that overlaps a live one is clipped to begin where the live one ends, or dropped when it lies
  *   wholly inside it, so two windows can never be open at once and budgets never stack.
  */
-export function insertPeriod(periods: readonly PaidPeriod[], candidate: PaidPeriod): { periods: PaidPeriod[]; added: PaidPeriod | null } {
-  if (!(candidate.end > candidate.start)) return { periods: [...periods], added: null };
-  if (periods.some((p) => p.start === candidate.start)) return { periods: [...periods], added: null };
+export function insertPeriod(
+  periods: readonly PaidPeriod[],
+  candidate: PaidPeriod,
+): { periods: PaidPeriod[]; added: PaidPeriod | null; backfilled: PaidPeriod | null } {
+  if (!(candidate.end > candidate.start)) return { periods: [...periods], added: null, backfilled: null };
+  const same = periods.find((p) => p.start === candidate.start);
+  if (same) {
+    // The same period seen again. If this event is the first to name the payment that bought it, remember the
+    // payment: a later refund finds the period by it.
+    if (candidate.purchaseId !== undefined && same.purchaseId === undefined) {
+      const filled = { ...same, purchaseId: candidate.purchaseId };
+      return { periods: periods.map((p) => (p === same ? filled : p)), added: null, backfilled: filled };
+    }
+    return { periods: [...periods], added: null, backfilled: null };
+  }
   let start = candidate.start;
   const live = livePeriods(periods).sort(byStart);
   for (const p of live) {
     if (candidate.end <= p.start || start >= p.end) continue;
-    if (candidate.end <= p.end && start >= p.start) return { periods: [...periods], added: null };
+    if (candidate.end <= p.end && start >= p.start) return { periods: [...periods], added: null, backfilled: null };
     if (start < p.start) {
       // The candidate begins before a live period and runs into it: keep only the part before it.
       return finishInsert(periods, { ...candidate, start, end: p.start });
     }
     start = p.end;
   }
-  if (!(candidate.end > start)) return { periods: [...periods], added: null };
+  if (!(candidate.end > start)) return { periods: [...periods], added: null, backfilled: null };
   return finishInsert(periods, { ...candidate, start });
 }
 
-function finishInsert(periods: readonly PaidPeriod[], p: PaidPeriod): { periods: PaidPeriod[]; added: PaidPeriod | null } {
-  if (periods.some((q) => q.start === p.start) || !(p.end > p.start)) return { periods: [...periods], added: null };
-  return { periods: [...periods, p].sort(byStart), added: p };
+function finishInsert(
+  periods: readonly PaidPeriod[],
+  p: PaidPeriod,
+): { periods: PaidPeriod[]; added: PaidPeriod | null; backfilled: PaidPeriod | null } {
+  if (periods.some((q) => q.start === p.start) || !(p.end > p.start)) return { periods: [...periods], added: null, backfilled: null };
+  return { periods: [...periods, p].sort(byStart), added: p, backfilled: null };
 }
 
 /** Marks every live period that ends after `at` as ended at `at`: a running one is cut, a later one is revoked. */

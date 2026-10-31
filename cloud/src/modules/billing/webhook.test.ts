@@ -68,7 +68,7 @@ describe("webhook: signature", () => {
       expect(await checkFixtureConformance(new Response(JSON.stringify(b), { status: 401 }), { ...loadFixture("webhook-paddle.success"), response: { status: 401, headers: {} }, response_schema: "Error" })).toEqual([]);
     }
     expect(await app.stores.webhookEvents.get((ev as any).event_id)).toBeNull();
-    expect(await app.plan()).toBeNull();
+    expect((await app.plan())!.paidPeriods).toEqual([]);
   });
 
   it("verifies the RAW bytes: a body changed after signing is rejected, even when it parses to the same event", async () => {
@@ -79,7 +79,7 @@ describe("webhook: signature", () => {
     // Same JSON value, different bytes (whitespace): the signature does not cover them.
     const res = await app.webhook(ev, { header, rawBody: JSON.stringify(ev, null, 2) });
     expect(res.status).toBe(401);
-    expect(await app.plan()).toBeNull();
+    expect((await app.plan())!.paidPeriods).toEqual([]);
     // The exact signed bytes pass, whatever their formatting.
     const pretty = JSON.stringify(ev, null, 2);
     expect((await app.webhook(ev, { rawBody: pretty })).status).toBe(200);
@@ -92,7 +92,7 @@ describe("webhook: signature", () => {
       const res = await app.webhook(firstSubscription(), { at: T + skew });
       expect(res.status, String(skew)).toBe(401);
     }
-    expect(await app.plan()).toBeNull();
+    expect((await app.plan())!.paidPeriods).toEqual([]);
     expect((await app.webhook(firstSubscription(), { at: T - tolerance + 1000 })).status).toBe(200);
   });
 
@@ -127,7 +127,7 @@ describe("webhook: signature", () => {
     const LIVE = "whsec_live_0123456789abcdef0123456789abcdef0123";
     const live = await setup({ env: { PADDLE_ENVIRONMENT: "live", PADDLE_WEBHOOK_SECRET: LIVE, PADDLE_WEBHOOK_SECRET_PREVIOUS: undefined } });
     expect((await live.webhook(firstSubscription(), { signWith: SANDBOX })).status).toBe(401);
-    expect(await live.plan()).toBeNull();
+    expect((await live.plan())!.paidPeriods).toEqual([]);
     expect((await live.webhook(firstSubscription(), { signWith: LIVE })).status).toBe(200);
     // And the other way round.
     const sandbox = await setup({ env: { PADDLE_ENVIRONMENT: "sandbox", PADDLE_WEBHOOK_SECRET: SANDBOX, PADDLE_WEBHOOK_SECRET_PREVIOUS: undefined } });
@@ -143,7 +143,7 @@ describe("webhook: signature", () => {
     const signed = await app.webhook(null, { rawBody: big, header: await paddleSignature(WEBHOOK_SECRET, big, T) });
     expect(signed.status).toBe(413);
     expect((await body(signed)).error.code).toBe("payload_too_large");
-    expect(await app.plan()).toBeNull();
+    expect((await app.plan())!.paidPeriods).toEqual([]);
   });
 
   it("answers a signed body that is not JSON, not UTF-8, or not an event with 400/415 and stores nothing", async () => {
@@ -194,7 +194,7 @@ describe("webhook: claim, replay and parallel delivery", () => {
     // The losers that saw the claim in progress were told to retry (not to give up).
     for (const r of results.filter((x) => x.status === 503)) expect((await body(r)).error.retry_after_seconds).toBeGreaterThan(0);
     expect(await app.stores.ledger.listWindows("acc_test")).toHaveLength(1);
-    expect((await app.stores.accounts.getById("acc_test"))!.planVersion).toBe(1);
+    expect((await app.stores.accounts.getById("acc_test"))!.planVersion).toBe(2); // 1: the customer stored by checkout; 2: the purchase, once
     expect((await app.stores.webhookEvents.get((ev as any).event_id))).toMatchObject({ state: "processed", attempt: 1 });
     // Paddle's retry of a 503 then finds a finished event.
     expect((await app.webhook(ev)).status).toBe(200);
@@ -321,42 +321,42 @@ describe("webhook: ordering", () => {
 describe("webhook: mapping to an account", () => {
   it("quarantines an event for an unknown account id with a 200, alerts, and creates no account or plan", async () => {
     const app = await setup();
-    const ev = firstSubscription(T, { accountId: "acc_does_not_exist" });
+    const ev = firstSubscription(T, { accountId: "acc_does_not_exist", customerId: "ctm_unknown" });
     const res = await app.webhook(ev);
     expect(res.status).toBe(200);
     const record = await app.stores.webhookEvents.get((ev as any).event_id);
     expect(record).toMatchObject({ state: "quarantined" });
-    expect(record!.fields).toEqual({ subscription_id: "sub_1", customer_id: "ctm_1", price_id: PRICE_MONTHLY, status: "active", currency: "EUR", period_start: T, period_end: addMonthsUTC(T, 1) });
-    expect(app.notifier.alerts).toEqual([{ kind: "webhook_quarantined", eventId: (ev as any).event_id, reason: "unknown_account" }]);
+    expect(record!.fields).toEqual({ subscription_id: "sub_1", customer_id: "ctm_unknown", price_id: PRICE_MONTHLY, status: "active", currency: "EUR", period_start: T, period_end: addMonthsUTC(T, 1) });
+    expect(app.notifier.alerts).toEqual([{ kind: "webhook_quarantined", eventId: (ev as any).event_id, reason: "unknown_account", subscriptionId: "sub_1", customerId: "ctm_unknown" }]);
     expect(await app.stores.accounts.getById("acc_does_not_exist")).toBeNull();
     expect(await app.stores.accounts.findAccountIdByPaddleSubscription("sub_1")).toBeNull();
   });
 
   it("quarantines an event with no custom_data and no stored ids", async () => {
     const app = await setup();
-    const res = await app.webhook(firstSubscription(T, { accountId: null }));
+    const res = await app.webhook(firstSubscription(T, { accountId: null, customerId: "ctm_unknown" }));
     expect(res.status).toBe(200);
     expect((await app.stores.webhookEvents.listQuarantined())).toHaveLength(1);
-    expect(await app.plan()).toBeNull();
+    expect((await app.plan())!.paidPeriods).toEqual([]);
   });
 
   it("binds the first event by custom_data, then maps later events by the stored subscription id", async () => {
     const app = await setup();
-    await app.createAccount("acc_other");
+    await app.createAccount("acc_other", undefined, "ctm_other");
     await app.webhook(firstSubscription());
     expect(await app.stores.accounts.findAccountIdByPaddleSubscription("sub_1")).toBe("acc_test");
     expect(await app.stores.accounts.findAccountIdByPaddleCustomer("ctm_1")).toBe("acc_test");
     // A later event that names ANOTHER account in custom_data (crafted or stale) cannot move the subscription.
     await app.webhook(subscriptionEvent({ subscriptionId: "sub_1", occurredAt: T + DAY, accountId: "acc_other", status: "past_due", customerId: "ctm_1" }));
     expect((await app.plan("acc_test"))!.status).toBe("past_due");
-    expect(await app.plan("acc_other")).toBeNull();
+    expect((await app.plan("acc_other"))!.paidPeriods).toEqual([]);
     expect(await app.stores.accounts.findAccountIdByPaddleSubscription("sub_1")).toBe("acc_test");
   });
 
   it("maps an event without custom_data by the stored subscription, and one with only a customer id by the customer", async () => {
     const app = await setup();
     await app.webhook(firstSubscription());
-    await app.webhook(subscriptionEvent({ subscriptionId: "sub_1", occurredAt: T + DAY, accountId: null, status: "past_due", customerId: "ctm_unrelated" }));
+    await app.webhook(subscriptionEvent({ subscriptionId: "sub_1", occurredAt: T + DAY, accountId: null, status: "past_due", customerId: "ctm_1" }));
     expect((await app.plan())!.status).toBe("past_due"); // found by subscription id
     await app.webhook(adjustmentEvent({ occurredAt: T + 2 * DAY, transactionId: null, customerId: "ctm_1", action: "credit" }));
     expect(await app.stores.webhookEvents.listQuarantined()).toEqual([]); // found by customer id (and ignored: not a refund)
@@ -430,7 +430,7 @@ describe("webhook: what is persisted", () => {
     const res = await app.webhook({ event_id: "evt_x", event_type: "customer.updated", occurred_at: "2026-11-01T09:30:00Z", data: { id: "ctm_1", name: "Jane Doe" } });
     expect(res.status).toBe(200);
     expect(await app.stores.webhookEvents.get("evt_x")).toMatchObject({ state: "processed", fields: {} });
-    expect(await app.plan()).toBeNull();
+    expect((await app.plan())!.paidPeriods).toEqual([]);
   });
 });
 
@@ -559,7 +559,7 @@ describe("webhook: the purchase flows end to end", () => {
     const app = await setup();
     await app.webhook(firstSubscription(T, { status: "trialing" }));
     expect(await app.stores.ledger.listWindows("acc_test")).toEqual([]);
-    expect(await app.plan()).toBeNull();
+    expect((await app.plan())!.paidPeriods).toEqual([]);
   });
 });
 

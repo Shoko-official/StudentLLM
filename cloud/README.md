@@ -249,13 +249,21 @@ How it fits the rest:
   `accounts.applyPlanEvent` (an event older than the newest applied one is dropped) and followed by `syncWindows`. An event that
   is older than the newest one still adds what does not depend on order (a paid period, a pass, a refund) through a
   compare-and-set merge, so a late payment event cannot lose a window. Windows are keyed by start; nothing resets used credits.
-- **Mapping.** The first event of a purchase is bound to its account by `custom_data.account_id`; later events are mapped by
-  the stored subscription id, then the customer id. Unknown accounts are quarantined (200) and the operator is alerted.
+- **Mapping.** Checkout creates the Paddle customer on the server (from the verified email) and always passes it, so the
+  stored customer id is known before the first payment; a first event with another customer id is quarantined. The first
+  event of a purchase is bound to its account by `custom_data.account_id`; later events are mapped by the payment they name
+  (adjustments), the subscription id, then the customer id; the ids an account ever used keep resolving. Unknown accounts are
+  quarantined (200) and the operator is alerted; a refund or chargeback that arrived before its purchase is replayed when the
+  purchase is applied.
+- **Refunds.** A full refund or a chargeback withdraws the windows the refunded payment bought (and cancels the subscription
+  now, with a retry record); a partial refund changes nothing and alerts the operator; a chargeback also raises an owner review.
+- **Duplicates.** A second subscription is quarantined and canceled at Paddle now (`PlanRecord.extraCancels`, retried by the
+  scheduled task); deleting an account cancels every subscription it ever had. A short per-account lock narrows the checkout race.
 - **Persisted and logged.** Only `WEBHOOK_FIELD_NAMES` (ids, status, period, price id, currency). The request log has no
   body, no header and no event field. Failures log a fixed line without text from the request.
 - **Configuration.** `PADDLE_PRICE_PLUS_MONTHLY`, `PADDLE_PRICE_PLUS_SEMESTER` (required outside development, never a
   `PLACEHOLDER` value), `PLUS_MONTHLY_WINDOW_CREDITS` and `PLUS_SEMESTER_WINDOW_CREDITS` (placeholder default 12500, **verify
-  before launch**). `config.variable(name)` reads a non-secret variable. A Paddle API key of the other environment (by its
+  before launch**), and `PADDLE_CHECKOUT_HOSTS` (the checkout URL must be on one of them). `config.variable(name)` reads a non-secret variable. A Paddle API key of the other environment (by its
   prefix) is refused.
 - **Cancel seam.** `deps.billing.cancelSubscription(accountId, when)` is idempotent. `pending` leaves a `pendingCancel` on the
   plan (attempts, next try) and the Paddle ids in the plan and the tombstone; the scheduled task retries with backoff and alerts
@@ -265,7 +273,11 @@ How it fits the rest:
   `src/testing/billing-store-contract.ts` is the billing part of the store behavior (`runBillingStoreContract`).
 - **Complimentary windows (groundwork).** `grants.ts` has `createGrantWindows`, `shortenGrantWindows`, `revokeGrantWindows` and
   `planGrantWindows` for the admin service of docs/cloud-admin.md: a window with source `admin_grant`, no payment, its own budget.
-  A grant never counts as an active plan; a purchase cuts it (`syncWindows`); billing events revoke only `paddle` windows.
+  A grant never counts as an active plan; a purchase cuts the whole grant (`syncWindows` returns what it cut); billing events revoke only
+  `paddle` windows. The windows go in through one conditional ledger insert (all or none, no overlap with a live or queued window), a
+  replay with the same `grantId` returns them unchanged, and the ceilings derive from the standard window W (at most W per window, 3W
+  per grant). `toPublicPlan(plan, now, window)` reports a grant-only account as `COMPLIMENTARY_PLAN_ID` (`free` until the public
+  contract has `plus_complimentary`).
 
 ## Choices where the contract was silent
 

@@ -13,11 +13,17 @@ export type PaddleFailure = "unavailable" | "rejected" | "not_found" | "conflict
 
 export class PaddleError extends Error {
   readonly failure: PaddleFailure;
-  constructor(failure: PaddleFailure) {
+  /**
+   * Set only on a `conflict` when creating a customer: the id of the customer that already has the email, taken from
+   * Paddle's answer by a strict id pattern (nothing else of the answer is kept).
+   */
+  readonly existingId: string | undefined;
+  constructor(failure: PaddleFailure, existingId?: string) {
     // A fixed message: provider error text could carry customer data and must not reach a log.
     super(`paddle call failed: ${failure}`);
     this.name = "PaddleError";
     this.failure = failure;
+    this.existingId = existingId;
   }
 }
 
@@ -34,8 +40,13 @@ export interface PaddleSubscription {
 }
 
 export interface PaddleClient {
-  /** Creates a draft transaction and returns the hosted checkout URL. `customData` carries only the account id. */
-  createTransaction(input: { priceId: string; accountId: string; customerId: string | null }): Promise<{ transactionId: string; checkoutUrl: string }>;
+  /**
+   * Creates the Paddle customer for an account from its verified sign-in email, on the server, so the customer id
+   * is known before any payment. If Paddle already has a customer with that email, that customer's id is returned.
+   */
+  createCustomer(input: { email: string; accountId: string }): Promise<{ customerId: string }>;
+  /** Creates a draft transaction for the account's own customer and returns the hosted checkout URL. */
+  createTransaction(input: { priceId: string; accountId: string; customerId: string }): Promise<{ transactionId: string; checkoutUrl: string }>;
   /** Creates an authenticated customer-portal session. `expiresAt` is epoch ms when Paddle reports one. */
   createPortalSession(input: { customerId: string; subscriptionId: string | null }): Promise<{ url: string; expiresAt: number | null }>;
   getSubscription(subscriptionId: string): Promise<PaddleSubscription>;
@@ -103,7 +114,15 @@ export function createHttpPaddleClient(options: HttpPaddleClientOptions): Paddle
     }
     if (response.status === 401 || response.status === 403) throw new PaddleError("unauthorized");
     if (response.status === 404) throw new PaddleError("not_found");
-    if (response.status === 409) throw new PaddleError("conflict");
+    if (response.status === 409) {
+      let existing: string | undefined;
+      try {
+        existing = /\bctm_[a-z0-9]{10,40}\b/i.exec(await response.text())?.[0];
+      } catch {
+        existing = undefined;
+      }
+      throw new PaddleError("conflict", existing);
+    }
     if (response.status === 429 || response.status >= 500) throw new PaddleError("unavailable");
     if (response.status < 200 || response.status >= 300) throw new PaddleError("rejected");
     let parsed: unknown;
@@ -123,13 +142,24 @@ export function createHttpPaddleClient(options: HttpPaddleClientOptions): Paddle
   };
 
   return {
+    async createCustomer({ email, accountId }) {
+      try {
+        const data = await call("POST", "/customers", { email, custom_data: { account_id: accountId } });
+        if (typeof data.id !== "string") throw new PaddleError("unavailable");
+        return { customerId: data.id };
+      } catch (error) {
+        if (error instanceof PaddleError && error.failure === "conflict" && error.existingId) return { customerId: error.existingId };
+        throw error;
+      }
+    },
+
     async createTransaction({ priceId, accountId, customerId }) {
       const data = await call("POST", "/transactions", {
         items: [{ price_id: priceId, quantity: 1 }],
         collection_mode: "automatic",
-        // Only the opaque account id: it binds the first event of a purchase and nothing else.
+        // Only the opaque account id: it identifies the account in the operator's tools and nothing else.
         custom_data: { account_id: accountId },
-        ...(customerId ? { customer_id: customerId } : {}),
+        customer_id: customerId,
       });
       const checkout = asObject(data.checkout);
       if (typeof data.id !== "string" || typeof checkout?.url !== "string" || !checkout.url.startsWith("https://")) {

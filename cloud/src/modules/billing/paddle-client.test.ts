@@ -37,7 +37,23 @@ function client(f: typeof fetch, environment: "sandbox" | "live" = "sandbox", ap
 }
 
 describe("the Paddle HTTP client", () => {
-  it("creates a transaction with the price, the account id as the only custom data, and the customer when known", async () => {
+  it("creates the customer on the server from the email and returns its id", async () => {
+    const { fetch, seen } = fakeFetch(() => ok({ id: "ctm_01abcdefghij" }));
+    expect(await client(fetch).createCustomer({ email: "student@example.invalid", accountId: "acc_1" })).toEqual({ customerId: "ctm_01abcdefghij" });
+    expect(seen[0]).toMatchObject({ url: "https://sandbox-api.paddle.com/customers", method: "POST", body: { email: "student@example.invalid", custom_data: { account_id: "acc_1" } } });
+    expect(seen[0]!.url).not.toContain("student"); // the address is in the body, never in a URL
+  });
+
+  it("reuses the customer Paddle already has for that email (the id is read by a strict pattern, nothing else is kept)", async () => {
+    const { fetch } = fakeFetch(() => new Response(JSON.stringify({ error: { code: "conflict", detail: "customer email conflicts with customer of id ctm_01zzzzzzzzzz; Jane Doe" } }), { status: 409 }));
+    expect(await client(fetch).createCustomer({ email: "a@example.invalid", accountId: "acc_1" })).toEqual({ customerId: "ctm_01zzzzzzzzzz" });
+    const none = fakeFetch(() => new Response("{}", { status: 409 }));
+    const error = await client(none.fetch).createCustomer({ email: "a@example.invalid", accountId: "acc_1" }).catch((e: unknown) => e);
+    expect((error as PaddleError).failure).toBe("conflict");
+    expect((error as PaddleError).existingId).toBeUndefined();
+  });
+
+  it("creates a transaction with the price, the account id as the only custom data, and the account's customer", async () => {
     const { fetch, seen } = fakeFetch(() => ok({ id: "txn_1", checkout: { url: "https://pay.example.invalid/checkout?x=1" } }));
     const result = await client(fetch).createTransaction({ priceId: "pri_1", accountId: "acc_1", customerId: "ctm_1" });
     expect(result).toEqual({ transactionId: "txn_1", checkoutUrl: "https://pay.example.invalid/checkout?x=1" });
@@ -45,8 +61,6 @@ describe("the Paddle HTTP client", () => {
     expect(seen[0]).toMatchObject({ url: "https://sandbox-api.paddle.com/transactions", method: "POST", redirect: "manual" });
     expect(seen[0]!.headers.authorization).toBe(`Bearer ${KEY}`);
     expect(seen[0]!.body).toEqual({ items: [{ price_id: "pri_1", quantity: 1 }], collection_mode: "automatic", custom_data: { account_id: "acc_1" }, customer_id: "ctm_1" });
-    await client(fetch).createTransaction({ priceId: "pri_1", accountId: "acc_1", customerId: null });
-    expect((seen[1]!.body as Record<string, unknown>).customer_id).toBeUndefined();
   });
 
   it("uses the live host only for the live environment", async () => {
@@ -97,7 +111,7 @@ describe("the Paddle HTTP client", () => {
     const bad = fakeFetch(() => ok({ urls: { general: { overview: "javascript:alert(1)" } } }));
     await expect(client(bad.fetch).createPortalSession({ customerId: "ctm_1", subscriptionId: null })).rejects.toBeInstanceOf(PaddleError);
     const badCheckout = fakeFetch(() => ok({ id: "txn_1", checkout: { url: "http://insecure.example.invalid/" } }));
-    await expect(client(badCheckout.fetch).createTransaction({ priceId: "p", accountId: "a", customerId: null })).rejects.toBeInstanceOf(PaddleError);
+    await expect(client(badCheckout.fetch).createTransaction({ priceId: "p", accountId: "a", customerId: "ctm_1" })).rejects.toBeInstanceOf(PaddleError);
   });
 
   it("maps statuses to fixed failures and never carries Paddle's error text", async () => {
@@ -169,13 +183,26 @@ describe("loadBillingSettings", () => {
   it("allows missing prices in development but not in staging or production, and never a template value", () => {
     expect(loadBillingSettings(config()).prices).toEqual({ plus_monthly: null, plus_semester: null });
     for (const environment of ["staging", "production"]) {
-      const env = { ENVIRONMENT: environment, GATEWAY_ISSUER: "https://api.studentllm.example", TERMS_VERSION: "2026-11-01", GOOGLE_CLIENT_ID: "client" };
+      const env = { ENVIRONMENT: environment, GATEWAY_ISSUER: "https://api.studentllm.example", TERMS_VERSION: "2026-11-01", GOOGLE_CLIENT_ID: "client", PADDLE_CHECKOUT_HOSTS: "pay.studentllm.example" };
+      expect(() => loadBillingSettings(config({ ...env, PADDLE_CHECKOUT_HOSTS: undefined }))).toThrow(/PADDLE_CHECKOUT_HOSTS/);
+      expect(() => loadBillingSettings(config({ ...env, PADDLE_CHECKOUT_HOSTS: "PLACEHOLDER-host" }))).toThrow(/PADDLE_CHECKOUT_HOSTS/);
       expect(() => loadBillingSettings(config(env))).toThrow(/PADDLE_PRICE_PLUS_MONTHLY/);
       expect(() => loadBillingSettings(config({ ...env, PADDLE_PRICE_PLUS_MONTHLY: "pri_m" }))).toThrow(/PADDLE_PRICE_PLUS_SEMESTER/);
       expect(() => loadBillingSettings(config({ ...env, PADDLE_PRICE_PLUS_MONTHLY: "PLACEHOLDER-price", PADDLE_PRICE_PLUS_SEMESTER: "pri_s" }))).toThrow(ConfigError);
       expect(() => loadBillingSettings(config({ ...env, PADDLE_PRICE_PLUS_MONTHLY: "pri_same", PADDLE_PRICE_PLUS_SEMESTER: "pri_same" }))).toThrow(/differ/);
       expect(loadBillingSettings(config({ ...env, PADDLE_PRICE_PLUS_MONTHLY: "pri_m", PADDLE_PRICE_PLUS_SEMESTER: "pri_s" })).prices.plus_monthly).toBe("pri_m");
     }
+  });
+
+  it("reads the checkout hosts as a lower-case list, and refuses something that is not a host name", () => {
+    expect(loadBillingSettings(config({ PADDLE_CHECKOUT_HOSTS: " Pay.Example.Invalid , buy.example.invalid " })).checkoutHosts).toEqual(["pay.example.invalid", "buy.example.invalid"]);
+    expect(loadBillingSettings(config()).checkoutHosts).toBeNull();
+    expect(() => loadBillingSettings(config({ PADDLE_CHECKOUT_HOSTS: "https://pay.example.invalid/path" }))).toThrow(ConfigError);
+  });
+
+  it("is refused at start when the API key belongs to the other environment", () => {
+    // createBillingDeps checks the key's own prefix against PADDLE_ENVIRONMENT (see the billing module tests).
+    expect(() => assertApiKeyMatchesEnvironment("pdl_sdbx_apikey_x", "live")).toThrow(ConfigError);
   });
 
   it("has a short signature tolerance and conservative defaults", () => {
