@@ -70,7 +70,19 @@ export function layoutDiagram(visual: TeachingDiagram): DiagramLayout {
   const columns = new Map<number, number[]>();
   visual.nodes.forEach((_, node) => columns.set(levels[node], [...(columns.get(levels[node]) ?? []), node]));
   const row = visual.nodes.map(() => 0), rows = visual.nodes.map(() => 1);
-  for (const members of columns.values()) members.forEach((node, position) => { row[node] = position; rows[node] = members.length; });
+  // One left-to-right pass: a node with forward predecessors moves to the mean of their rows, so crossings untangle where they can.
+  // Only the slots of such nodes are reordered (stable), nodes without predecessors keep their reading order and place.
+  const predecessors = visual.nodes.map(() => [] as number[]);
+  for (const edge of visual.edges) { const from = index.get(edge.from)!, to = index.get(edge.to)!; if (levels[from] < levels[to]) predecessors[to].push(from); }
+  const mean = (node: number) => predecessors[node].reduce((sum, item) => sum + row[item], 0) / predecessors[node].length;
+  for (const [level, members] of [...columns].sort((x, y) => x[0] - y[0])) {
+    if (level > 0) {
+      const slots = members.flatMap((node, position) => predecessors[node].length ? [position] : []);
+      const ordered = slots.map((position) => members[position]).sort((x, y) => mean(x) - mean(y));
+      slots.forEach((position, order) => { members[position] = ordered[order]; });
+    }
+    members.forEach((node, position) => { row[node] = position; rows[node] = members.length; });
+  }
 
   // Nodes paint over edges, so the gap between columns has to fit the widest label.
   const longestLabel = Math.max(0, ...visual.edges.map((edge) => Math.min(edge.label?.length ?? 0, LABEL_LIMIT)));

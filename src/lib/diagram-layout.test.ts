@@ -109,4 +109,30 @@ describe('diagram layout', () => {
     expect(layout.width).toBe(2760);
     expect(layout.height).toBe(210);
   });
+
+  it('orders rows so that crossing edges are untangled and each label stays by its own arrow', () => {
+    const layout = expectReadable(diagram(['a', 'b', 'c', 'd'], [['a', 'd', 'first'], ['b', 'c', 'second']]));
+    const [a, b, c, d] = layout.nodes;
+    expect(d.y).toBeLessThan(c.y);
+    expect(d.y).toBe(a.y);
+    expect(c.y).toBe(b.y);
+    const [first, second] = [layout.edges[0].label!, layout.edges[1].label!];
+    expect(first.y).not.toBe(second.y);
+    expect(Math.abs(first.y - a.y)).toBeLessThan(20);
+    expect(Math.abs(second.y - b.y)).toBeLessThan(20);
+  });
+
+  it('keeps the reading order of a tree and of a chain', () => {
+    const tree = layoutDiagram(diagram(['s', 'r', 'b', 'rr', 'rb', 'br', 'bb'], [['s', 'r'], ['s', 'b'], ['r', 'rr'], ['r', 'rb'], ['b', 'br'], ['b', 'bb']]));
+    const row = (id: string) => tree.nodes.find((node) => node.id === id)!.y;
+    expect([row('r'), row('b')]).toEqual([...[row('r'), row('b')]].sort((x, y) => x - y));
+    expect(['rr', 'rb', 'br', 'bb'].map(row)).toEqual(['rr', 'rb', 'br', 'bb'].map(row).sort((x, y) => x - y));
+    const chain = layoutDiagram(diagram(['a', 'b', 'c'], [['a', 'b'], ['b', 'c']]));
+    expect(new Set(chain.nodes.map((node) => node.y)).size).toBe(1);
+  });
+
+  it('keeps a K2,2 readable although its edges must cross', () => {
+    const layout = expectReadable(diagram(['a', 'b', 'c', 'd'], [['a', 'c', 'ac'], ['a', 'd', 'ad'], ['b', 'c', 'bc'], ['b', 'd', 'bd']]));
+    expect(new Set(layout.edges.map((edge) => edge.label!.y)).size).toBeGreaterThanOrEqual(3);
+  });
 });
