@@ -41,6 +41,25 @@ describe('prepareTutorMarkdown', () => {
     expect(markdown).toContain('```text');
   });
 
+  it.each([
+    ['four backticks', '````'],
+    ['tildes', '~~~'],
+  ])('keeps a visual fence quoted inside a malformed %s outer fence inert', (_name, outer) => {
+    const input = [`${outer}student-visual-request`, '{broken', '```', '```student-visual-request', '{"id":"v9","type":"quiz","intent":"I","content":"C"}', '```', outer].join('\n');
+    const { markdown, jobs } = prepareTutorMarkdown(input);
+    expect(jobs).toEqual([]);
+    expect(prepareTutorMarkdown(markdown).jobs).toEqual([]);
+    expect(compactVisualFences(markdown)).toBe(markdown);
+  });
+
+  it('generates an id that does not collide with one the model already used', () => {
+    const taken = { ...brief, id: 'direct-2' };
+    const { jobs } = prepareTutorMarkdown(`${request(taken)}\n\n${direct({ ...quiz, answer: 9 })}`);
+    expect(jobs).toHaveLength(2);
+    expect(new Set(jobs.map((job) => job.brief.id)).size).toBe(2);
+    expect(jobs[0].brief.id).toBe('direct-2');
+  });
+
   it('leaves ordinary code fences untouched, even when they mention a visual fence', () => {
     const code = '```python\ntext = "```student-visual"\n```';
     expect(prepareTutorMarkdown(`Intro.\n\n${code}`).markdown).toBe(`Intro.\n\n${code}`);

@@ -76,7 +76,12 @@ function scanFences(markdown: string) {
   return { fences, demotions };
 }
 
-function fenceText(language: string, body: string) { return '```' + language + '\n' + body + '\n```'; }
+function fenceText(language: string, body: string) {
+  // A body may hold its own backtick runs; the fence must be strictly longer than any of them.
+  const longest = Math.max(0, ...(body.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = '`'.repeat(Math.max(3, longest + 1));
+  return fence + language + '\n' + body + '\n' + fence;
+}
 export function visualFence(visual: TeachingVisual) { return fenceText(DIRECT, JSON.stringify(visual)); }
 
 function sectionAround(markdown: string, fences: Fence[], target: Fence) {
@@ -123,7 +128,8 @@ export function prepareTutorMarkdown(input: string): { markdown: string; jobs: V
     let type: unknown;
     try { type = (JSON.parse(fence.raw) as { type?: unknown }).type; } catch { /* Unreadable output has no type to repair. */ }
     if (!VISUAL_TYPES.includes(type as VisualType)) { demote(fence); return; }
-    const id = `direct-${index + 1}`;
+    let id = `direct-${index + 1}`;
+    for (let n = 2; seen.has(id); n++) id = `direct-${index + 1}-${n}`;
     outputs.set(id, fence.raw);
     seen.add(id);
     const brief: VisualBrief = { id, type: type as VisualType, intent: 'Correct the supplied visual so that it renders', content: fence.raw.slice(0, 1500) };
