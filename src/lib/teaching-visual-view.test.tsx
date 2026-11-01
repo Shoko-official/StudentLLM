@@ -106,6 +106,18 @@ it('retains natural SVG widths so long diagrams and wide illustrations scroll wi
   expect(illustration.style.minWidth).toBe('1200px');
 });
 
+it('widens diagram columns to fit the longest edge label, capped at the 26 characters that are drawn', () => {
+  const chain = Array.from({ length: 5 }, (_, index) => ({ id: `n${index}`, label: `Stage ${index + 1}` }));
+  const pair = [{ id: 'a', label: 'Start' }, { id: 'b', label: 'End' }];
+  const { container } = render(<>
+    <TeachingVisualView visual={{ type: 'diagram', title: 'Mitosis chain', nodes: chain, edges: chain.slice(1).map((node, index) => ({ from: chain[index].id, to: node.id, label: index === 1 ? 'chromatids separate' : 'step' })) }} />
+    <TeachingVisualView visual={{ type: 'diagram', title: 'Long label pair', nodes: pair, edges: [{ from: 'a', to: 'b', label: 'x'.repeat(40) }] }} />
+  </>);
+  const [chainSvg, pairSvg] = Array.from(container.querySelectorAll<SVGSVGElement>('.teaching-diagram .teaching-canvas > svg'));
+  expect(chainSvg.style.minWidth).toBe('1545px');
+  expect(pairSvg.style.minWidth).toBe('716px');
+});
+
 it('renders branching/cyclic diagrams with unique arrow IDs and a complete textual equivalent', async () => {
   const user = userEvent.setup();
   const visual: TeachingVisual = { type: 'diagram', title: 'Probability tree', nodes: [{ id: 'a', label: 'Experiment' }, { id: 'b', label: 'A very long outcome name which remains available in the relationship list' }], edges: [{ from: 'a', to: 'b', label: 'p=0.3' }, { from: 'b', to: 'a', label: 'retry' }] };
