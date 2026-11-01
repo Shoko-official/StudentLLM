@@ -100,6 +100,12 @@ const nextColumnCurve = (from: { x: number; y: number }, to: { x: number; y: num
 const ys = (path: string) => (path.match(/-?\d+(?:\.\d+)?/g) ?? []).map(Number).filter((_, index) => index % 2 === 1);
 
 describe('diagram layout', () => {
+  it('cuts labels over 26 characters to 25 and an ellipsis', () => {
+    const layout = layoutDiagram({ type: 'diagram', title: 'Cut', nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], edges: [{ from: 'a', to: 'b', label: 'x'.repeat(26) }, { from: 'b', to: 'a', label: 'y'.repeat(27) }] });
+    expect(layout.edges[0].label?.text).toBe('x'.repeat(26));
+    expect(layout.edges[1].label?.text).toBe(`${'y'.repeat(25)}…`);
+  });
+
   it('keeps both labels of a 2-cycle apart', () => {
     expectReadable(diagram(['a', 'b'], [['a', 'b', 'forward'], ['b', 'a', 'back']]));
   });

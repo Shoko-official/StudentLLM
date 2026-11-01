@@ -197,7 +197,7 @@ export function layoutDiagram(visual: TeachingDiagram): DiagramLayout {
     }
 
     // Labels are placed in edge order; one that lands on a node or an earlier label moves down until it is clear.
-    const obstacles: Box[] = visual.nodes.map((_, node) => { const { x, y } = at(node); return { l: x - NODE_HALF_WIDTH, r: x + NODE_HALF_WIDTH, t: y - NODE_HALF_HEIGHT, b: y + NODE_HALF_HEIGHT }; });
+    const obstacles: Box[] = [];
     const boxOf = ({ text, x, y }: { text: string; x: number; y: number }): Box => ({ l: x - text.length * CHAR_WIDTH / 2, r: x + text.length * CHAR_WIDTH / 2, t: y - LABEL_ABOVE, b: y + LABEL_BELOW });
     visual.edges.forEach((_, position) => {
       const label = labels.get(position);
