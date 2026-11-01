@@ -222,8 +222,11 @@ function plot(value: Record<string, unknown>): TeachingPlot | null {
   if (value.outputs !== undefined && !list(value.outputs, 0, 4)) return null;
   const outputs: TeachingOutput[] = [];
   for (const item of (value.outputs ?? []) as unknown[]) {
-    if (!record(item) || !text(item.label, 100) || !validExpression(item.expression, names) || !optionalText(item.unit, 40)) return null;
-    outputs.push({ label: item.label, expression: item.expression, ...(item.unit === undefined ? {} : { unit: item.unit as string }) });
+    if (!record(item)) return null;
+    // An empty optional unit carries no display information; keep the valid calculation.
+    const unit = typeof item.unit === 'string' && item.unit.length <= 40 && !item.unit.trim() ? undefined : item.unit;
+    if (!text(item.label, 100) || !validExpression(item.expression, names) || !optionalText(unit, 40)) return null;
+    outputs.push({ label: item.label, expression: item.expression, ...(unit === undefined ? {} : { unit: unit as string }) });
   }
   return { type: 'plot', title: value.title as string, ...(value.description === undefined ? {} : { description: value.description as string }),
     x: normalizedAxis(value.x), ...(value.y === undefined ? {} : { y: normalizedAxis(value.y as TeachingPlot['x']) }),

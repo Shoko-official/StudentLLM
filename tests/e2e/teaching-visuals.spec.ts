@@ -22,7 +22,9 @@ test('renders a generated visual lesson, recalculates locally and restores the a
     const sections: Array<{ markdown: string; visual: unknown }> = [];
     let cursor = 0;
     for (const match of lesson.matchAll(/```student-visual\n([\s\S]*?)```/g)) {
-      sections.push({ markdown: lesson.slice(cursor, match.index).trim(), visual: JSON.parse(match[1]) });
+      const visual = JSON.parse(match[1]);
+      if (visual.type === 'plot') visual.outputs[0].unit = ' ';
+      sections.push({ markdown: lesson.slice(cursor, match.index).trim(), visual });
       cursor = match.index! + match[0].length;
     }
     if (lesson.slice(cursor).trim()) sections.push({ markdown: lesson.slice(cursor).trim(), visual: null });
@@ -54,6 +56,7 @@ test('renders a generated visual lesson, recalculates locally and restores the a
   await page.getByRole('button', { name: 'Check answer' }).click();
   await expect(page.locator('.teaching-feedback')).toContainText('Correct according to this exercise');
   await expect.poll(async () => (await savedWorkspace(page)).lessonWorkspaces[FIXTURE_LESSON_ID].chat.at(-1).content).toContain('"expression":"sum(k,0,n,x^k/factorial(k))"');
+  await expect.poll(async () => (await savedWorkspace(page)).lessonWorkspaces[FIXTURE_LESSON_ID].chat.at(-1).content).not.toContain('"unit"');
   await page.reload();
   await page.getByRole('tab', { name: 'Chat', exact: true }).click();
   await expect(slider).toHaveValue('1');
