@@ -19,7 +19,7 @@ Required: type ("diagram"), title (at most 180 characters), nodes (1 to 24, each
 
 Optional: description (at most 1200 characters), used as the text alternative.
 
-Ids are unique and at most 64 characters. Edge labels are at most 100 characters, but only the first 26 show on the arrow, so keep them to 26, and shorter when you can, because columns widen to fit the longest label. The layout is computed from the edges in layers, so order nodes in reading order, have arrows follow the direction of the process, and use as few nodes as the idea allows. With more than 12 nodes, ask whether a simpler view would teach it better.
+Ids are unique and at most 64 characters. Edge labels are at most 100 characters, but labels over 26 are cut on the arrow, so keep them to 26, and shorter when you can, because columns widen to fit the longest label. A cycle is fine: the closing arrow is drawn as an arc. The layout is computed from the edges in layers, so order nodes in reading order, have arrows follow the direction of the process, and use as few nodes as the idea allows. With more than 12 nodes, ask whether a simpler view would teach it better.
 
 ## Examples
 
