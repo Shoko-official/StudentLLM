@@ -9,6 +9,8 @@ The assistant can mix Markdown, LaTeX, worked examples and interactive visuals i
 
 The model chooses whether a visual helps. It must distinguish illustrative examples from measurements and keep course-specific claims grounded in the retrieved course evidence. A visual is generated educational content, not a verified reference answer.
 
+In development NVIDIA mode, **Mistral Large 4** is available in the model suggestions. Synthetic trials produced usable Taylor and binomial widgets; this does not establish universal lesson accuracy, and longer responses can be slow or time out. Its connection check uses a bounded128-token final-answer probe with the same15-second deadline. Eight tokens produced reasoning-only output in the observed endpoint, while128 returned a final answer. This profile does not change the shared default or automatically switch your selection. The endpoint is documented in [NVIDIA's Mistral Large4 API reference](https://docs.api.nvidia.com/nim/reference/mistralai-mistral-large-4-1t-a52b-infer).
+
 ## Supported interactions
 
 - **Plots:** up to four numeric series, linear numeric x coordinates, optional sliders and calculated readouts. Use integer x steps for discrete distributions. Curves and readouts recalculate locally; moving a slider makes no model or network request. The data disclosure exposes sampled, formatted values.

@@ -8,6 +8,14 @@ const answer = (content: unknown = 'OK', extra: object = {}) => new Response(JSO
 afterEach(() => vi.useRealTimers());
 
 describe('probeNimModel', () => {
+  it('lets the verified Mistral profile reach a final answer within its bounded probe budget', async () => {
+    const model = 'mistralai/mistral-large-4-1t-a52b';
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => answer(JSON.parse(init?.body as string).max_tokens === 128 ? 'OK' : null));
+    expect(await probeNimModel(model, { fetchImpl })).toEqual({ ok: true, model });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(NIM_MODELS.some(entry => entry.id === model)).toBe(true);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1]?.body as string)).not.toHaveProperty('chat_template_kwargs');
+  });
   it('checks real chat completion through the local proxy with a small synthetic prompt and no credential', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(answer());
     expect(await probeNimModel(DEFAULT_NIM_MODEL, { fetchImpl })).toEqual({ ok: true, model: DEFAULT_NIM_MODEL });
