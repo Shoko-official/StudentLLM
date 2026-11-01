@@ -9,6 +9,12 @@ import documentNotes from './document-notes';
 import documentTranscription from './document-transcription';
 import organization from './organization';
 import detection from './course-detection';
+import tutor from './tutor';
+import visualRouting from './visual-routing';
+import plotModule from './visuals/plot';
+import diagramModule from './visuals/diagram';
+import figureModule from './visuals/figure';
+import quizModule from './visuals/quiz';
 import probes from './probes.json' with { type: 'json' };
 
 export const CHAT_ASSISTANT_PROMPT = chat.trim();
@@ -22,6 +28,10 @@ export const DOCUMENT_NOTES_PROMPT = documentNotes.trim();
 export const DOCUMENT_TRANSCRIPTION_PROMPT = documentTranscription.trim();
 export const ORGANIZATION_PROMPT = organization.trim();
 export const COURSE_DETECTION_PROMPT = detection.trim();
+export const TUTOR_PROMPT = tutor.trim();
+export const VISUAL_ROUTING_PROMPT = visualRouting.trim();
+export const TUTOR_SYSTEM_PROMPT = TUTOR_PROMPT + '\n\n' + VISUAL_ROUTING_PROMPT;
+export const VISUAL_MODULES = { plot: plotModule.trim(), diagram: diagramModule.trim(), figure: figureModule.trim(), quiz: quizModule.trim() };
 export const DIRECT_ANSWER_PROMPT = probes.directAnswer;
 export const DOCUMENT_NOTE_REQUEST = probes.documentNoteRequest;
 

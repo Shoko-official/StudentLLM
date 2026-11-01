@@ -2,6 +2,23 @@
 
 This is the single source directory for StudentLLM's production model instructions. Templates are readable multiline TypeScript strings shared by browser and Node runtimes without a raw-file loader; `index.ts` exports trimmed constants and builders for structured user-level data. Protocol schemas and validation remain in the code that enforces them, not in prose alone.
 
+## Prompt standard
+
+Every prompt here follows one standard, checked by `prompt-standard.test.ts`.
+
+1. **Opening:** one to three sentences stating the role, who it serves and what success looks like.
+2. **Stable order:** purpose, inputs and trust, decision steps, output contract, frequent failures, examples, final check. Omit a section only when it has nothing to say.
+3. **Decisions as ordered steps** that stop at the first match, rather than loose lists of considerations.
+4. **Rules with reasons:** a direct instruction, plus the reason when it is not obvious, so the model can apply it to unseen cases.
+5. **Numbers for limits**, never "keep it short".
+6. **Failures first:** failures observed in testing come before the general reference. Add new ones as they are observed.
+7. **Tagged examples:** `<example>` with `<input>`, `<good_output>`, an optional `<bad_output>` and `<why>`. At least two, including a tricky case. `context-data`, `conversation-memory` and `document-transcription` travel with every request or image, so one compact example is enough. Example inputs use the format the app really sends.
+8. **Checked examples:** JSON in an example is validated by a test against the real parser or `JSON.parse`.
+9. **Honest capabilities:** no vendor identity, no fictitious tools, no talk of internal machinery in user-facing output.
+10. **Size budget:** tutor plus routing at most 6000 estimated tokens, each type module at most 6000, other prompts at most 3000, and `context-data`, `conversation-memory` and `document-transcription` at most 450 each. StudentLLM runs on small local models too: quality comes from structure and examples, not length, and a longer note takes room from course evidence and memory.
+
+Examples must never use a topic from `benchmarks/tutor/`, because that would contaminate the measurement.
+
 | File | Purpose |
 | --- | --- |
 | `chat.ts` | Educational chat, useful answers with missing evidence, provenance and technical checks |
