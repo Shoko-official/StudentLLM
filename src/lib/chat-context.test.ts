@@ -80,6 +80,18 @@ describe('chat context selection', () => {
     expect(history[1].content).toBe(content);
   });
 
+  it('compacts a visual in the conversation memory of older turns', async () => {
+    const plot = { type: 'plot', title: 'Parabole', x: { min: 0, max: 7 }, parameters: [{ name: 'v0', label: 'Vitesse', min: 5, max: 30, step: 5, value: 20 }], series: [{ label: 'h', expression: 'v0*x-4.9*x^2' }] };
+    const visual = 'La parabole decrit la hauteur.\n\n```student-visual\n' + JSON.stringify(plot) + '\n```';
+    const history: ChatMessage[] = [{ id: 'first', role: 'user', content: 'Trace la parabole de la hauteur.' }, { id: 'visual', role: 'assistant', content: visual }];
+    for (let i = 0; i < 40; i++) history.push({ id: `filler-${i}`, role: i % 2 ? 'assistant' : 'user', content: 'Ancien chapitre et explication. '.repeat(30) });
+    const context = await buildChatContext({ ...base, contextWindowTokens: 5000, documents: [], history, question: 'Reprends la parabole de la hauteur.' });
+    const memory = context.messages.find(message => message.content.startsWith(CONVERSATION_MEMORY_INSTRUCTIONS))!;
+    expect(memory.content).toContain('v0*x-4.9*x^2');
+    expect(memory.content).not.toContain('"series"');
+    expect(context.compressedMessages).toBeGreaterThan(0);
+  });
+
   it('leaves a visual fence quoted in a user message untouched', async () => {
     const content = '```student-visual\n{"type":"quiz","title":"T","question":"Q?","options":["A","B"],"answer":0,"explanation":"E"}\n```';
     const context = await buildChatContext({ ...base, documents: [], history: [{ id: 'u', role: 'user', content }], question: 'Why?' });

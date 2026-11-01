@@ -2,8 +2,14 @@ import { StrictMode, createElement, type ReactNode } from 'react';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { LLMProvider } from './llm-provider';
+import * as generation from './teaching-generation';
 import { pendingVisualKey, useVisualJobs } from './use-visual-jobs';
 import type { VisualJob } from './visual-brief';
+
+vi.mock('./teaching-generation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./teaching-generation')>();
+  return { ...actual, runVisualJobs: vi.fn(actual.runVisualJobs) };
+});
 
 const quiz = { type: 'quiz', title: 'Check', question: 'Q?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' };
 const job: VisualJob = { brief: { id: 'v1', type: 'quiz', intent: 'Check', content: 'Ask' }, section: 'Around.' };
@@ -77,5 +83,96 @@ describe('useVisualJobs', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(generate).toHaveBeenCalledTimes(2);
     expect(updateMessage).not.toHaveBeenCalled();
+  });
+  describe('shared queue', () => {
+    const jobsFor = (...ids: string[]): VisualJob[] => ids.map((id) => ({ ...job, brief: { ...job.brief, id } }));
+    const briefId = (messages: Array<{ content: string }>) => (JSON.parse(messages.at(-1)!.content) as { request: { id: string } }).request.id;
+    /** A provider whose calls stay open until released, and reject when their signal aborts. */
+    function gatedProvider() {
+      const calls: Array<{ id: string; signal: AbortSignal; release: () => void }> = [];
+      let inFlight = 0, peak = 0;
+      const generate = vi.fn((messages: Array<{ content: string }>, options?: { signal?: AbortSignal }) => new Promise<{ content: string; model: string }>((resolve, reject) => {
+        inFlight++; peak = Math.max(peak, inFlight);
+        const signal = options!.signal!;
+        const settle = (action: () => void) => () => { inFlight--; action(); };
+        signal.addEventListener('abort', settle(() => reject(new DOMException('aborted', 'AbortError'))), { once: true });
+        calls.push({ id: briefId(messages), signal, release: settle(() => resolve({ content: JSON.stringify(quiz), model: 'fixture' })) });
+      }));
+      const provider: LLMProvider = { supportsStructuredOutputs: true, generate };
+      return { provider, generate, calls, peak: () => peak };
+    }
+    const releaseAll = async (calls: Array<{ id: string; release: () => void }>, expected: number) => {
+      const released = new Set<string>();
+      await waitFor(() => {
+        for (const call of calls) if (!released.has(call.id)) { released.add(call.id); act(() => call.release()); }
+        expect(released.size).toBe(expected);
+      });
+    };
+
+    it('keeps at most two visual calls in flight across separate starts, and finishes every job', async () => {
+      const { provider, generate, calls, peak } = gatedProvider();
+      const updateMessage = vi.fn();
+      const { result } = renderHook(() => useVisualJobs({ provider, updateMessage }));
+      act(() => { result.current.start('lesson-a', 'm1', jobsFor('v1', 'v2')); result.current.start('lesson-a', 'm2', jobsFor('v3', 'v4')); });
+      await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(generate).toHaveBeenCalledTimes(2);
+      await releaseAll(calls, 4);
+      await waitFor(() => expect(result.current.pending.size).toBe(0));
+      expect(peak()).toBe(2);
+      expect(updateMessage).toHaveBeenCalledTimes(4);
+    });
+
+    it('does not count the deadline while a job waits in the queue', async () => {
+      const { provider, generate, calls } = gatedProvider();
+      const { result } = renderHook(() => useVisualJobs({ provider, deadlineMs: 150, updateMessage: vi.fn() }));
+      act(() => result.current.start('lesson-a', 'm1', jobsFor('v1', 'v2', 'v3')));
+      await waitFor(() => expect(generate).toHaveBeenCalledTimes(3), { interval: 5 });
+      expect(calls[0].signal.aborted).toBe(true);
+      expect(calls[2].signal.aborted).toBe(false);
+      await waitFor(() => expect(result.current.pending.size).toBe(0));
+    });
+
+    it('passes the deadline to the attempt', async () => {
+      const { provider, calls } = gatedProvider();
+      const updateMessage = vi.fn();
+      const { result } = renderHook(() => useVisualJobs({ provider, deadlineMs: 25, updateMessage }));
+      act(() => result.current.start('lesson-a', 'm1', jobsFor('v1')));
+      await waitFor(() => expect(calls[0].signal.aborted).toBe(true));
+      await waitFor(() => expect(result.current.pending.size).toBe(0));
+      expect(updateMessage).not.toHaveBeenCalled();
+    });
+
+    it('clears the pending key and logs when a run rejects without reporting', async () => {
+      const failure = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      vi.mocked(generation.runVisualJobs).mockImplementationOnce(() => Promise.reject(new Error('boom')));
+      const provider: LLMProvider = { supportsStructuredOutputs: true, generate: async () => ({ content: JSON.stringify(quiz), model: 'fixture' }) };
+      const { result } = renderHook(() => useVisualJobs({ provider, updateMessage: vi.fn() }));
+      act(() => result.current.start('lesson-a', 'm1', jobsFor('v1')));
+      await waitFor(() => expect(result.current.pending.size).toBe(0));
+      expect(failure).toHaveBeenCalled();
+    });
+
+    it('cancels the jobs of the named lessons, running or queued, and lets the others continue', async () => {
+      const { provider, generate, calls } = gatedProvider();
+      const updateMessage = vi.fn();
+      const { result } = renderHook(() => useVisualJobs({ provider, updateMessage }));
+      act(() => {
+        result.current.start('lesson-a', 'ma', jobsFor('a1'));
+        result.current.start('lesson-b', 'mb', jobsFor('b1', 'b2'));
+        result.current.start('lesson-a', 'ma2', jobsFor('a2'));
+      });
+      await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+      expect(calls.map((call) => call.id)).toEqual(['a1', 'b1']);
+      act(() => result.current.cancel(['lesson-a']));
+      expect(calls[0].signal.aborted).toBe(true);
+      expect(calls[1].signal.aborted).toBe(false);
+      await waitFor(() => expect(generate).toHaveBeenCalledTimes(3));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(calls.map((call) => call.id)).toEqual(['a1', 'b1', 'b2']);
+      await releaseAll(calls.slice(1), 2);
+      await waitFor(() => expect(result.current.pending.size).toBe(0));
+      expect(updateMessage.mock.calls.map(([lessonId]) => lessonId)).toEqual(['lesson-b', 'lesson-b']);
+    });
   });
 });
