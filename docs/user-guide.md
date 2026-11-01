@@ -101,7 +101,7 @@ The desktop app only talks to services on your own computer (`localhost` or `127
 
 ## 6. Asking questions and making study material
 
-- **Chat** answers from your notes and sources and shows chips under each answer. Click a chip to open the original source, at the right page when there is one. If the model is not reachable you get a message saying so and your question stays in the box so you can send it again.
+- **Chat** answers from your notes and sources and shows chips under each answer. Click a chip to open the original source, at the right page when there is one. The conversation scrolls above a multiline question box: **Enter** sends, and **Shift+Enter** adds a line. The source count opens a shortcut to the course sources. If the model is not reachable you get a message saying so and your question stays in the box so you can send it again.
 - **Study** builds a summary, guide, quiz, flashcards, concept map or glossary from what the course contains. Nothing is saved if the model fails, and no empty placeholder is created.
 - Answers come from a model and can be wrong. Check important facts against the source chips.
 

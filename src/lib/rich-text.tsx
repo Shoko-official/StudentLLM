@@ -195,12 +195,13 @@ function safeUrlTransform(url: string) {
 interface RichTextProps {
   content: string;
   highlightExtractedMath?: boolean;
+  focusableScrollRegions?: boolean;
   className?: string;
 }
 
 // Memoized: parsing Markdown and typesetting KaTeX is the expensive part of a render, and the workspace re-renders on
 // every keystroke in a search field or the chat composer. The props are plain strings, so a shallow compare is exact.
-export const RichText = memo(function RichText({ content, highlightExtractedMath = false, className }: RichTextProps) {
+export const RichText = memo(function RichText({ content, highlightExtractedMath = false, focusableScrollRegions = false, className }: RichTextProps) {
   const classes = ['rich-text', className].filter(Boolean).join(' ');
   if (highlightExtractedMath) return <div className={classes}>{renderExtractedText(content)}</div>;
 
@@ -211,6 +212,10 @@ export const RichText = memo(function RichText({ content, highlightExtractedMath
         rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore', errorColor: 'currentColor' }]]}
         urlTransform={safeUrlTransform}
         components={{
+          // A long formula or code sample must remain scrollable without a pointer in the conversation.
+          span: ({ node: _node, className, ...props }) => <span {...props} className={className} tabIndex={focusableScrollRegions && className?.split(' ').includes('katex-display') ? 0 : props.tabIndex} />,
+          pre: ({ node: _node, ...props }) => <pre {...props} tabIndex={focusableScrollRegions ? 0 : props.tabIndex} />,
+          table: ({ node: _node, ...props }) => <table {...props} tabIndex={focusableScrollRegions ? 0 : props.tabIndex} />,
           img: ({ alt }) => <span className="rich-image-alt" role="img" aria-label={alt || 'Image omitted'}>{alt || 'Image omitted'}</span>,
           // Only real external addresses are links. An empty, relative or in-page href would reload or navigate this single-page
           // app away from the course (and an empty href reloads it outright), so it is shown as plain text instead.

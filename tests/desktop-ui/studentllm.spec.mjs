@@ -57,9 +57,9 @@ describe('StudentLLM packaged desktop workflow', () => {
     await expect($$('.resource-item')).toBeElementsArrayOfSize(0);
 
     await selectTab('Chat');
-    await expect(await visible('.chat-view .empty-state')).toHaveText('Import material or record a lecture before asking a question.');
+    await expect(await visible('.chat-view .chat-empty-hint')).toHaveText('Import material or record a lecture to ask source-grounded questions.');
     await expect($$('.chat-message')).toBeElementsArrayOfSize(0);
-    const composer = await visible('input[aria-label="Ask the course chat"]');
+    const composer = await visible('textarea[aria-label="Ask the course chat"]');
     const send = await visible('button[aria-label="Send"]');
     await composer.setValue(' ');
     await expect(send).toBeDisabled();
