@@ -1,0 +1,7 @@
+{
+  "nimReadiness": "Reply exactly OK.",
+  "nimSmoke": "Reply with exactly OK.",
+  "localSmoke": "Reply with exactly one short sentence: original sources remain the source of truth. /no_think",
+  "directAnswer": "Return the final answer directly. /no_think",
+  "documentNoteRequest": "Return the complete, readable Markdown note."
+}

@@ -46,7 +46,7 @@ The browser calls the same-origin route `/nvidia-nim/v1`. The Vite dev server re
 
 - never returns the credential to the page and never logs it;
 - ignores `.env` files for the key, because the variable must come from the Windows User environment;
-- exposes only `GET /models` and non-streaming `POST /chat/completions`;
+- exposes only `GET /models`, non-streaming `POST /chat/completions`, and constrained text-only `POST /embeddings`;
 - answers only same-origin browser requests (`Sec-Fetch-Site: same-origin`) from a loopback client on a loopback host, so another website, device, script or tunnel cannot spend the key;
 - does not follow `NVIDIA_BASE_URL`, so the key cannot be redirected to another host.
 
@@ -57,7 +57,7 @@ Set the key, open a new terminal so it inherits the variable, then start the dev
 npm run dev
 ```
 
-Restart the dev server after setting or rotating the key. If the key is missing, Settings reports it and the route answers HTTP 503 with an `x-studentllm-proxy-error: missing_key` header. Retrieval uses lexical ranking with NVIDIA NIM because the route has no embeddings endpoint. Packaged desktop builds do not offer NVIDIA NIM yet.
+Restart the dev server after setting or rotating the key. If the key is missing, Settings reports it and the route answers HTTP 503 with an `x-studentllm-proxy-error: missing_key` header. Oversized course context can use NVIDIA text embeddings while this provider is selected; see the context strategy below. Packaged desktop builds do not offer NVIDIA NIM yet.
 
 **Readiness and model selection.** The app and smoke script share the default and recommended model in `src/lib/nvidia-nim-models.json`: `nvidia/nemotron-3.5-lightning-30b-a3b`, with thinking disabled. Other model IDs can still be entered. Settings sends only a short synthetic phrase, with at most eight output tokens and 15 seconds per probe; it says Connected only after a nonempty final answer. A working custom selection is kept. A retired model (HTTP 404/410) or timeout permits one probe of the recommended model; only a successful response changes and saves the selection, with a visible explanation. Thus a failed selection plus fallback can take up to 30 seconds, in addition to the local helper checks. Missing/rejected credentials, quota errors, and reasoning-only output do not switch models. A newer connection check cancels the older probe and discards late results.
 
@@ -98,7 +98,7 @@ $env:VITE_LM_STUDIO_MODEL = 'openai/gpt-oss-20b'
 npm run dev
 ```
 
-The frontend sends only course context and the user question to the configured endpoint. The browser never receives or sends an NVIDIA credential; see [NVIDIA NIM in the development app](#nvidia-nim-in-the-development-app).
+The frontend sends course context, retained conversation history and the current question to the configured endpoint. With NVIDIA selected, oversized courses can also send text passages and queries to its embedding endpoint. The browser never receives or sends an NVIDIA credential; see [NVIDIA NIM in the development app](#nvidia-nim-in-the-development-app).
 
 The Vite development server proxies `/lm-studio/*` to the origin configured by `LM_STUDIO_BASE_URL`, keeping browser requests same-origin when the local LM Studio server does not emit CORS headers. If the variable is unset or malformed, the proxy falls back to `http://127.0.0.1:1234`. An absolute `VITE_LM_STUDIO_BASE_URL` remains supported, but then the target must allow the development server origin through CORS. The automatic development default is limited to Vite development mode; production and test environments still require an explicit endpoint.
 

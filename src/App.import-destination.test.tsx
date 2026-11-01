@@ -22,9 +22,9 @@ it('keeps both PDF layouts and the previous lecture when an earlier semantic rev
   let finishFirst!: (result: { model: string; content: string }) => void;
   const firstReview = new Promise<{ model: string; content: string }>((resolve) => { finishFirst = resolve; });
   const generate = vi.fn(async (messages: ProviderMessage[]) => {
-    const prompt = messages[0].content;
-    if (prompt.includes('Document source: alpha.pdf')) return firstReview;
-    if (prompt.includes('Document source: beta.pdf')) return { model: 'fixture-model', content: JSON.stringify({ markdown: 'Beta document evidence.', visuals: [] }) };
+    const prompt = messages.filter(message => message.role === 'user').map(message => message.content).join('\n');
+    if (prompt.includes('alpha.pdf')) return firstReview;
+    if (prompt.includes('beta.pdf')) return { model: 'fixture-model', content: JSON.stringify({ markdown: 'Beta document evidence.', visuals: [] }) };
     return { model: 'fixture-model', content: JSON.stringify({ placement: 'new', title: 'Unwanted course', course: 'Other', lesson: 'Other', subject: 'Other', confidence: 1 }) };
   });
   const extract = vi.fn(async (file: Blob) => ({ model: 'fixture-extractor', pages: [{ pageNumber: 1, text: (file as File).name === 'alpha.pdf' ? 'Alpha document evidence.' : 'Beta document evidence.', blocks: [] }] }));

@@ -1,6 +1,7 @@
 import type { LLMProvider, ProviderMessage, ProviderResponse, ProviderResponseFormat } from './llm-provider';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { parseTeachingVisual } from './teaching-visuals';
+import { STRUCTURED_TEACHING_CONTRACT } from '../prompts';
 
 type Schema = Record<string, unknown>;
 const text = (maxLength: number, minLength = 1): Schema => ({ type: 'string', minLength, maxLength });
@@ -58,16 +59,6 @@ export const teachingAnswerResponseFormat: ProviderResponseFormat = {
   json_schema: { name: 'teaching_answer', strict: true, schema: teachingAnswerSchema },
 };
 
-const structuredContract = [
-  'Return the answer as the supplied JSON schema: {"sections":[{"markdown":"...","visual":null}]} .',
-  'Each section has both keys. Keep educational prose, headings, code examples and LaTeX in markdown.',
-  'For a useful visualization, put the actual visualization object in visual, after the explanation in that section; otherwise use null.',
-  'Use at most 16 sections and 8 visualizations. Preserve the logical teaching order. A concise answer can have one section and no visual.',
-  'Do not put student-visual fences or JSON visualization specifications inside markdown. Do not emit XML wrappers, HTML, image Markdown or executable JavaScript.',
-  'Use the exact schema field names and supported expression functions described in the preceding instructions. All diagram edges require from and to strings identifying existing nodes.',
-  'This structured response contract replaces earlier instructions to return plain Markdown or student-visual fences.',
-].join('\n');
-
 const invalidAnswerMessage = 'The model returned an incomplete or invalid lesson response. Try again or choose another model in Settings.';
 const visualFallback = '> This visualization could not be displayed. Ask for a simpler graph or diagram; the accompanying explanation is retained.';
 
@@ -123,6 +114,11 @@ function canonicalAnswer(content: string): string {
 /** One generation with a constrained envelope when available; never retries or repairs malformed output. */
 export async function generateTeachingAnswer(provider: LLMProvider, messages: ProviderMessage[], options: { maxTokens: number }): Promise<ProviderResponse> {
   if (!provider.supportsStructuredOutputs) return provider.generate(messages, options);
-  const response = await provider.generate([...messages, { role: 'system', content: structuredContract }], { ...options, responseFormat: teachingAnswerResponseFormat });
+  const systemIndex = messages.findIndex(message => message.role === 'system');
+  const formattedMessages = messages.map((message, index) => index === systemIndex
+    ? { ...message, content: message.content + '\n\n' + STRUCTURED_TEACHING_CONTRACT }
+    : message);
+  if (systemIndex === -1) formattedMessages.unshift({ role: 'system', content: STRUCTURED_TEACHING_CONTRACT });
+  const response = await provider.generate(formattedMessages, { ...options, responseFormat: teachingAnswerResponseFormat });
   return { ...response, content: canonicalAnswer(response.content) };
 }

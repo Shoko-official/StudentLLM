@@ -381,18 +381,14 @@ describe('StudentLLM workspace', () => {
 
     expect(await screen.findByText('A source-grounded quiz.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Transcript · 01:13:42' })).toBeInTheDocument();
-    expect(generate).toHaveBeenCalledWith([
-      {
-        role: 'system',
-        content: expect.stringContaining('Create a targeted quiz'),
-      },
-      { role: 'user', content: 'Generate the targeted quiz.' },
-    ], { maxTokens: 4096 });
+    expect(generate).toHaveBeenCalledWith(expect.any(Array), { maxTokens: 4096 });
+    expect(generate.mock.calls[0][0].at(-1)).toEqual({ role: 'user', content: 'Generate the targeted quiz.' });
     const systemPrompt = generate.mock.calls[0][0][0].content as string;
-    expect(systemPrompt).toContain('BEGIN COURSE EVIDENCE');
-    expect(systemPrompt).toContain('END COURSE EVIDENCE');
-    expect(systemPrompt).toContain('[01:13:42] Professor: We can write attention');
-    expect(systemPrompt).toContain('The evidence between BEGIN COURSE EVIDENCE and END COURSE EVIDENCE is present and authoritative.');
+    expect(systemPrompt).not.toContain('We can write attention');
+    const evidence = generate.mock.calls[0][0].find((message: { role: string; content: string }) => message.role === 'user' && message.content.includes('course_evidence'));
+    expect(evidence?.content).toContain('We can write attention');
+    expect(evidence?.content).toContain('01:13:42');
+    expect(evidence?.content).toContain('complete_text');
   });
 
   it('switches to chat and sends a grounded question', async () => {
@@ -548,16 +544,10 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByRole('button', { name: 'Source · optimization.md · part 1' })).toBeInTheDocument();
     expect(screen.getByText('LM Studio · mock-local-model')).toBeInTheDocument();
     const chatCall = generate.mock.calls.at(-1)!;
-    expect(chatCall[0]).toEqual([
-      {
-        role: 'system',
-        content: expect.stringContaining('BEGIN COURSE EVIDENCE'),
-      },
-      { role: 'user', content: 'What updates parameters using the learning rate?' },
-    ]);
+    expect(chatCall[0].at(-1)).toEqual({ role: 'user', content: 'What updates parameters using the learning rate?' });
     expect(chatCall[0][0].content).not.toContain('undefined');
-    expect(chatCall[0][0].content).toContain('END COURSE EVIDENCE');
-    expect(chatCall[0][0].content).toContain('Never claim that course evidence is unavailable when text is present.');
+    expect(chatCall[0][0].content).not.toContain('Gradient descent updates parameters');
+    expect(chatCall[0].find((message: { role: string; content: string }) => message.role === 'user' && message.content.includes('course_evidence'))?.content).toContain('Gradient descent updates parameters');
   });
 
   it('renders an injected provider failure in the chat', async () => {
@@ -573,17 +563,17 @@ describe('StudentLLM workspace', () => {
     expect(generate).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses an unanswerable question without calling the provider', async () => {
+  it('lets the provider explain an unmatched question without an application refusal', async () => {
     const user = userEvent.setup();
-    const generate = vi.fn();
+    const generate = vi.fn().mockResolvedValue({ content: 'The boiling point depends on the local pressure; specify pressure before calculating it.', model: 'test-model' });
     render(<App provider={{ generate }} />);
 
     await user.click(screen.getByRole('tab', { name: /Chat/ }));
     await user.type(screen.getByLabelText('Ask the course chat'), 'What is the boiling point of mercury on Mars?');
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByText('I could not find a supporting passage in the active course. Add a source or rephrase the question.')).toBeInTheDocument();
-    expect(generate).not.toHaveBeenCalled();
+    expect(await screen.findByText('The boiling point depends on the local pressure; specify pressure before calculating it.')).toBeInTheDocument();
+    expect(generate).toHaveBeenCalledTimes(1);
   });
 
   it('answers a general visualization request without requiring course evidence', async () => {

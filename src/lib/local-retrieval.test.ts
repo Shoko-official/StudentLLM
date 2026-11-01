@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { searchDocuments, searchDocumentsHybrid } from './local-retrieval';
 
 const documents = [
@@ -37,6 +37,7 @@ describe('local lexical retrieval', () => {
     expect(searchDocuments([importedSource], 'optimization handout pdf')).toMatchObject([
       { document: importedSource, matchedTerms: expect.arrayContaining(['optimization', 'handout', 'pdf']) },
     ]);
+    expect(searchDocuments(documents, '14:18', 1)[0].document.id).toBe('attention');
   });
 
   it('uses semantic similarity when an OpenAI-compatible embedding endpoint is available', async () => {
@@ -58,5 +59,81 @@ describe('local lexical retrieval', () => {
     }, 2);
 
     expect(hits[0].document).toBe(documents[1]);
+  });
+
+  it('normalizes French stopwords, plural terms and mathematical symbol names', () => {
+    const docs = [{ id: 'fluid', text: 'La masse volumique ρ intervient dans les pressions hydrostatiques.', metadata: {} }, { id: 'poem', text: 'Une histoire raconte une promenade et une aventure.', metadata: {} }];
+    expect(searchDocuments(docs, 'une pression hydrostatique rho', 1)[0].document.id).toBe('fluid');
+    expect(searchDocuments(docs, 'une une une', 2)).toEqual([]);
+  });
+
+  it('keeps query and passage modes separate, caches documents, and invalidates changed content', async () => {
+    const corpus = [{ id: 'a', text: 'Buoyancy equals displaced fluid weight.', metadata: {} }, { id: 'b', text: 'A historical sailing voyage.', metadata: {} }];
+    const embed = vi.fn(async (inputs: string[]) => inputs.map(() => [1, 0]));
+    const embedQuery = vi.fn(async () => [1, 0]);
+    const embedDocuments = vi.fn(async (inputs: string[]) => inputs.map(text => text.includes('Buoyancy') ? [1, 0] : [0, 1]));
+    const embedder = { embed, embedQuery, embedDocuments };
+    expect((await searchDocumentsHybrid(corpus, 'floating vessel', embedder, 1))[0].document.id).toBe('a');
+    await searchDocumentsHybrid(corpus, 'vessel floats', embedder, 1);
+    expect(embedDocuments).toHaveBeenCalledTimes(1);
+    expect(embedQuery).toHaveBeenCalledTimes(2);
+    expect(embed).not.toHaveBeenCalled();
+    corpus[0] = { ...corpus[0], text: 'Buoyancy has a revised explanation.' };
+    await searchDocumentsHybrid(corpus, 'vessel floats', embedder, 1);
+    expect(embedDocuments).toHaveBeenCalledTimes(2);
+    expect(embedDocuments.mock.calls[1][0]).toHaveLength(1);
+    expect(embedQuery).toHaveBeenCalledTimes(2);
+    expect(await searchDocumentsHybrid([], 'vessel floats', embedder, 1)).toEqual([]);
+  });
+
+  it('aborts the semantic deadline and does not begin later batches after falling back', async () => {
+    vi.useFakeTimers();
+    try {
+      const corpus = Array.from({ length: 70 }, (_, i) => ({ id: String(i), text: `Buoyancy passage ${i}`, metadata: {} }));
+      let signal: AbortSignal | undefined;
+      const embedDocuments = vi.fn((_inputs: string[], options?: { signal?: AbortSignal }) => { signal = options?.signal; return new Promise<number[][]>(() => {}); });
+      const pending = searchDocumentsHybrid(corpus, 'Buoyancy', { embed: async () => [[1]], embedQuery: async () => [1], embedDocuments }, 2);
+      await vi.advanceTimersByTimeAsync(60_001);
+      expect(await pending).toHaveLength(2);
+      expect(signal?.aborted).toBe(true);
+      expect(embedDocuments).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('propagates caller cancellation without treating it as a retrieval answer', async () => {
+    const controller = new AbortController();
+    const embedQuery = vi.fn((_input: string, options?: { signal?: AbortSignal }) => new Promise<number[]>((_resolve, reject) => options?.signal?.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')))));
+    const pending = searchDocumentsHybrid(documents, 'attention', { embed: async () => [], embedQuery }, 2, { signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toHaveProperty('name', 'AbortError');
+  });
+
+  it('combines French paraphrase vectors with lexical evidence rather than requiring shared words', async () => {
+    const corpus = [
+      { id: 'buoyancy', text: 'La poussée d’Archimède égale le poids du fluide déplacé.', metadata: {} },
+      { id: 'history', text: 'Pourquoi les bateaux du dix-huitième siècle transportaient-ils des épices ?', metadata: {} },
+    ];
+    const query = 'Pourquoi un navire reste-t-il à la surface ?';
+    const hits = await searchDocumentsHybrid(corpus, query, {
+      embed: async () => [],
+      embedQuery: async () => [1, 0],
+      embedDocuments: async inputs => inputs.map(text => text.includes('Archimède') ? [1, 0] : [0, 1]),
+    }, 2);
+    expect(hits.some(hit => hit.document.id === 'buoyancy')).toBe(true);
+    expect(hits.find(hit => hit.document.id === 'buoyancy')?.matchedTerms).toEqual([]);
+  });
+
+  it('retains the best semantic rank below an uncalibrated cosine threshold', async () => {
+    const corpus = [
+      { id: 'buoyancy', text: 'Archimedes describes displaced fluid weight.', metadata: {} },
+      { id: 'distractor', text: 'Ancient trade routes transported spices.', metadata: {} },
+    ];
+    const hits = await searchDocumentsHybrid(corpus, 'Pourquoi un navire flotte ?', {
+      embed: async () => [], embedQuery: async () => [1, 0],
+      embedDocuments: async inputs => inputs.map(text => text.includes('Archimedes') ? [0.138, Math.sqrt(1 - 0.138 ** 2)] : [0.05, Math.sqrt(1 - 0.05 ** 2)]),
+    }, 1);
+    expect(hits[0].document.id).toBe('buoyancy');
+    expect(hits[0].matchedTerms).toEqual([]);
   });
 });

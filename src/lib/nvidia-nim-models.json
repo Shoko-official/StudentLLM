@@ -1,14 +1,17 @@
 {
   "defaultModel": "nvidia/nemotron-3.5-lightning-30b-a3b",
+  "embeddingModel": "nvidia/nemotron-3.5-embed-1b",
   "models": [
     {
       "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
       "label": "Nemotron 3.5 Lightning",
+      "contextWindowTokens": 1000000,
       "chatTemplateKwargs": { "enable_thinking": false }
     },
     {
       "id": "mistralai/mistral-large-4-1t-a52b",
       "label": "Mistral Large 4",
+      "contextWindowTokens": 1000000,
       "probeMaxTokens": 128
     }
   ]

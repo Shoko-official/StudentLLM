@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildCourseNote, buildDocumentCourseNote, composeDocumentSourcesNote, courseNoteMarkdown, detectCourse, detectCourseWithProvider, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider } from './course-notes';
 import type { Lesson, TranscriptSegment } from '../types';
+import type { LLMProvider, ProviderMessage } from './llm-provider';
+import type { DocumentPage } from './document-engine';
 
 const lesson: Lesson = {
   id: 'lesson-1',
@@ -16,6 +18,101 @@ const lesson: Lesson = {
 const segment = (text: string): TranscriptSegment => ({ id: 'segment-1', timestamp: '00:01:00', speaker: 'Professor', text, status: 'review' });
 
 describe('course notes', () => {
+  it('redacts embedded images before transcript batching without changing original or fallback passages', async () => {
+    const image = `data:image/png;base64,${'PRIVATEIMAGEPAYLOAD'.repeat(900)}`;
+    const original = Object.freeze([
+      Object.freeze({ ...segment(`Before ![a force diagram](${image}) after.`), speaker: '<svg><title>Professor</title><text>PRIVATE_SVG_PAYLOAD</text></svg>' }),
+      Object.freeze({ ...segment('A second passage.'), id: 'segment-2' }),
+    ]);
+    const transcript = [...original];
+    const requests: ProviderMessage[][] = [];
+    const provider: LLMProvider = {
+      redactEmbeddedImages: true,
+      generate: async (messages) => {
+        requests.push(messages);
+        return { model: 'fake-nim', content: '{"blocks":[]}' };
+      },
+    };
+    const now = () => '2026-11-01T00:00:00.000Z';
+    const note = await formatCourseNoteWithProvider(lesson, transcript, provider, now);
+    expect(requests).toHaveLength(1);
+    const sent = JSON.stringify(requests);
+    expect(sent).not.toMatch(/PRIVATEIMAGEPAYLOAD|PRIVATE_SVG_PAYLOAD|data:image|<svg/);
+    expect(sent).toContain('a force diagram');
+    expect(sent).toContain('after.');
+    expect(sent).toContain('A second passage.');
+    expect(note).toEqual(buildCourseNote(lesson, transcript, now));
+    expect(transcript).toEqual(original);
+    expect(transcript[0].text).toContain(image);
+  });
+
+  it('keeps original uncovered transcript passages when another passage produces valid AI notes', async () => {
+    const image = 'data:image/png;base64,PRIVATEIMAGEPAYLOAD';
+    const transcript = [segment(`Keep ![diagram](${image}) unchanged.`), { ...segment('Other content'), id: 'segment-2' }];
+    const note = await formatCourseNoteWithProvider(lesson, transcript, {
+      redactEmbeddedImages: true,
+      generate: async () => ({ model: 'fake-nim', content: JSON.stringify({ blocks: [{ type: 'markdown', sourceId: 'segment-2', transcriptIds: ['segment-2'], markdown: 'Other content.' }] }) }),
+    });
+    expect(note.blocks).toContainEqual(expect.objectContaining({ type: 'paragraph', text: transcript[0].text }));
+  });
+
+  it.each([false, true])('redacts document images and source names before truncation while preserving local pages and fallback (blocks: %s)', async (hasBlocks) => {
+    const image = `data:image/png;base64,${'PRIVATEIMAGEPAYLOAD'.repeat(4000)}`;
+    const sourceName = `notes-${image}.md`;
+    const text = `${'Opening prose. '.repeat(3800)}![a pressure diagram](${image}) Tail after image.`;
+    const pages: DocumentPage[] = [{ pageNumber: 1, text, blocks: hasBlocks ? [{ x: 0, y: 0, width: 10, height: 10, text: `${text}\n<svg><text>PRIVATE_SVG_PAYLOAD</text></svg>` }] : [] }];
+    const original = JSON.stringify(pages);
+    const requests: ProviderMessage[][] = [];
+    const now = () => '2026-11-01T00:00:00.000Z';
+    const note = await formatDocumentCourseNoteWithProvider(lesson, pages, sourceName, {
+      redactEmbeddedImages: true,
+      generate: async (messages) => { requests.push(messages); return { model: 'fake-nim', content: '{}' }; },
+    }, now);
+    const sent = JSON.stringify(requests);
+    expect(sent).not.toMatch(/PRIVATEIMAGEPAYLOAD|PRIVATE_SVG_PAYLOAD|data:image|<svg/);
+    expect(sent).toContain('a pressure diagram');
+    expect(sent).toContain('Tail after image.');
+    expect(JSON.stringify(pages)).toBe(original);
+    expect(note).toEqual(buildDocumentCourseNote(lesson, pages, sourceName, now));
+  });
+
+  it('maps redacted document source IDs back to original local IDs for validated visuals', async () => {
+    const sourceName = 'chart-<svg><text>PRIVATE_SVG_PAYLOAD</text></svg>.md';
+    const note = await formatDocumentCourseNoteWithProvider(lesson, [{ pageNumber: 2, text: 'A: 2. B: 3.', blocks: [] }], sourceName, {
+      redactEmbeddedImages: true,
+      generate: async (messages) => {
+        const request = JSON.parse(messages[1].content) as { documentSource: string };
+        expect(JSON.stringify(messages).includes('PRIVATE_SVG_PAYLOAD')).toBe(false);
+        return { model: 'fake-nim', content: JSON.stringify({
+          markdown: 'A: 2. B: 3.', visuals: [{ type: 'table', sourceId: `${request.documentSource}:page-2`, columns: ['Name', 'Value'], rows: [['A', '2'], ['B', '3']] }],
+        }) };
+      },
+    });
+    expect(note.blocks).toContainEqual(expect.objectContaining({ type: 'visual', sourceId: `${sourceName}:page-2`, visual: expect.objectContaining({ sourceId: `${sourceName}:page-2` }) }));
+  });
+
+  it('keeps embedded document images in local provider evidence by default', async () => {
+    const image = 'data:image/png;base64,PRIVATEIMAGEPAYLOAD';
+    let request = '';
+    await formatDocumentCourseNoteWithProvider(lesson, [{ pageNumber: 1, text: `![diagram](${image})`, blocks: [] }], 'lecture.md', {
+      generate: async (messages) => { request = JSON.stringify(messages); return { model: 'local-test', content: '{}' }; },
+    });
+    expect(request).toContain(image);
+  });
+
+  it.each([false, true])('only redacts course detection evidence when provider requests it (%s)', async (redactEmbeddedImages) => {
+    const image = 'data:image/png;base64,PRIVATEIMAGEPAYLOAD';
+    const transcript = [segment(`Before ![an energy diagram](${image}) after.`)];
+    let request = '';
+    await detectCourseWithProvider(lesson, transcript, {
+      redactEmbeddedImages,
+      generate: async (messages) => { request = JSON.stringify(messages); return { model: 'test', content: '{}' }; },
+    });
+    expect(request.includes('PRIVATEIMAGEPAYLOAD')).toBe(!redactEmbeddedImages);
+    expect(request).toContain('an energy diagram');
+    expect(transcript[0].text).toContain(image);
+  });
+
   it('interleaves semantic text cited by segment ID with document sources and the initial unsourced transcript', () => {
     const opening = segment('Opening lecture passage.');
     const intro = { ...segment('Introduction document.'), id: 'intro:page-1', sourceId: 'intro', timestamp: 'Page 1' };

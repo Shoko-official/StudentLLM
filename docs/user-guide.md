@@ -87,6 +87,8 @@ In the development web app, Settings also offers optional NVIDIA NIM cloud model
 
 PDF and image extraction stays local by default. For complex scans, handwriting, formulas, tables or diagrams, the development app also offers **Sources > Read with NVIDIA** on an individual file. It asks before sending that file's page images to NVIDIA. The transcription is marked for review and kept beside the original, in the same course. You can cancel analysis; errors keep your earlier notes. This image-analysis choice is separate from the chat provider. See [document analysis limits](local-documents.md#analyze-a-source-with-nvidia).
 
+Chat and Study use all available course text when it fits the estimated context budget. For larger material, the app selects passages; in NVIDIA mode this can use text embeddings, with local word-based retrieval if the service fails. Chat also keeps recent exchanges and extracts relevant parts of older exchanges when needed. Your saved conversation stays unchanged. The model can give a general explanation when the course lacks an answer, while identifying missing course-specific facts. Context links show material provided to the model, not verified claim-by-claim citations. **Settings > Context window (tokens)** can match the actual allocation loaded by your local server. See [context limits and implementation](context-engine.md).
+
 StudentLLM does the following by itself, with nothing else installed: create courses, record audio, import text and Markdown, search, take notes, export and import courses.
 
 Three optional helpers add more. They are separate programs that run on your computer. Setting them up currently takes some technical steps (see [Provider configuration](providers.md), [Local transcription](local-asr.md) and [Local document extraction](local-documents.md)); the desktop app does not include them yet.
@@ -114,7 +116,7 @@ Ask for an interactive visual explanation when it helps: a Taylor approximation 
 - Everything runs on your computer by default. In local mode StudentLLM sends nothing to the internet. Your courses, recordings and files stay in this app.
 - There is no account and no cloud storage in this version.
 - Your questions, notes and transcripts go to the AI model you configured. With LM Studio that is a program on your own computer.
-- The development build offers an optional cloud provider (NVIDIA NIM). If you choose it in Settings, your transcripts, imported text, notes and questions are sent to NVIDIA until you switch back. The packaged desktop app does not offer it.
+- The development build offers an optional cloud provider (NVIDIA NIM). If you choose it in Settings, your transcripts, imported text, notes, retained conversation history and questions are sent to NVIDIA until you switch back. Large courses can also use NVIDIA text embeddings for retrieval. Images keep their separate per-file confirmation. The packaged desktop app does not offer NIM.
 - Recording other people is regulated. Only record people who have been told and agreed.
 - If you delete a course, its stored files and recordings are erased with it, unless the same file is still used by another course.
 
