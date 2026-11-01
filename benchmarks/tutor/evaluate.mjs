@@ -480,6 +480,8 @@ export function decideGate(results, expectedCells, { invalidations = [] } = {}) 
   if (missingHoldouts(expectedCells)) details.reasons.push('no holdouts');
   const unscored = rows.filter((item) => item.unscored).length;
   if (unscored) details.reasons.push(`${unscored} cells could not be scored`);
+  // Two arms that both gave no usable answer compare nothing: the model is undecided, not a pass.
+  for (const model of models) if (arm('old', model).length && arm('new', model).length && !quality.some((item) => item.model === model && !item.failed)) details.reasons.push(`no answered row in either arm for ${model}`);
   const incomplete = details.reasons.length > 0;
   const criteria = {
     moreComplete: details.complete.new > details.complete.old,

@@ -438,11 +438,11 @@ describe('decideGate', () => {
     expect(newFails.criteria.noModelWorse).toBe(true);
     expect(newFails.criteria.noMoreFailures).toBe(false);
     const bothDead = gateOf(world((entry, row) => entry.model === 'B' && entry.kind === 'quality' ? failed(row) : row));
-    // Both arms measured, none usable: the rows are decisions, not missing data.
-    expect(bothDead.incomplete).toBe(false);
-    expect(bothDead.details.reasons).toEqual([]);
+    // Neither arm answered: nothing is compared, so the model is undecided, not a pass.
+    expect(bothDead.pass).toBe(false);
+    expect(bothDead.incomplete).toBe(true);
+    expect(bothDead.details.reasons.join(' ')).toMatch(/no answered row in either arm for B/);
     expect(bothDead.details.perModel.B.failed).toEqual({ old: 3, new: 3 });
-    expect(bothDead.details.perModel.B.new).toBe(0);
   });
 
   it('keeps every measured row in both clocks, a timed out or rejected one included', () => {
@@ -480,6 +480,16 @@ describe('decideGate', () => {
     expect(quick.incomplete).toBe(false);
     expect(quick.criteria.firstText).toBe(false);
     expect(quick.pass).toBe(false);
+  });
+
+  it('leaves a model undecided only when neither arm answered a row', () => {
+    const newDead = gateOf(world((entry, row) => entry.arm === 'new' && entry.kind === 'quality' && entry.model === 'B' ? failed(row, 1) : row));
+    expect(newDead.incomplete).toBe(false);
+    expect(newDead.details.reasons).toEqual([]);
+    expect(newDead.pass).toBe(false);
+    const oneAnswer = gateOf(world((entry, row) => entry.kind === 'quality' && entry.model === 'B' && !(entry.arm === 'old' && entry.case === 'h2') ? failed(row, 1) : row));
+    expect(oneAnswer.incomplete).toBe(false);
+    expect(oneAnswer.details.reasons).toEqual([]);
   });
 
   it('is incomplete for a model with no measured row at all', () => {

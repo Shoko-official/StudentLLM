@@ -287,6 +287,22 @@ describe('real run', () => {
     }
   }, SLOW);
 
+  it('never decides a run whose rerun wait was overridden, on resume too', () => {
+    const out = outDir(), cases = casesFile(), holdouts = holdoutsFile();
+    run(real(out, cases, holdouts), { env: { TUTOR_RERUN_WAIT_MS: '0' } });
+    const gate = gateOf(out);
+    expect(gate.pass).toBe(false);
+    expect(gate.incomplete).toBe(true);
+    expect(gate.details.reasons.join(' ')).toMatch(/TUTOR_RERUN_WAIT_MS/);
+    // Resuming without the override is another configuration, not a way to launder the data.
+    const again = run(real(out, cases, holdouts));
+    expect(again.code).toBe(1);
+    expect(again.stderr).toMatch(/mismatch/i);
+    const plain = outDir();
+    run(real(plain, cases, holdouts));
+    expect(gateOf(plain).details.reasons.join(' ')).not.toMatch(/TUTOR_RERUN_WAIT_MS/);
+  }, SLOW);
+
   it('does not store a pair where both arms time out, and moves past a dead model after three such pairs', () => {
     const out = outDir(), cases = casesFile(), holdouts = holdoutsFile();
     const dead = 'nvidia/nemotron-3.5-lightning-30b-a3b';
