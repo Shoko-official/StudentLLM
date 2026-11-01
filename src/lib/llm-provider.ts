@@ -1,3 +1,5 @@
+import { DIRECT_ANSWER_PROMPT } from '../prompts';
+
 export interface ProviderMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
@@ -27,6 +29,7 @@ export interface LLMProvider {
   generate: (messages: ProviderMessage[], options?: ProviderGenerateOptions) => Promise<ProviderResponse>;
   embed?: (inputs: string[]) => Promise<number[][]>;
   supportsStructuredOutputs?: boolean;
+  contextWindowTokens?: number;
 }
 
 export interface OpenAICompatibleProviderOptions {
@@ -82,7 +85,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     const buildBody = (withReasoningSwitch: boolean) => JSON.stringify({
       model: this.model,
       messages: directAnswer
-        ? [{ role: 'system', content: 'Return the final answer directly. /no_think' }, ...messages]
+        ? [{ role: 'system', content: DIRECT_ANSWER_PROMPT }, ...messages]
         : messages,
       temperature: 0,
       max_tokens: maxTokens,

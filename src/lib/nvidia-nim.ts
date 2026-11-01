@@ -1,4 +1,5 @@
 import config from './nvidia-nim-models.json';
+import probes from '../prompts/probes.json';
 
 export const DEFAULT_NIM_MODEL = config.defaultModel;
 export const NIM_MODELS = config.models;
@@ -68,7 +69,7 @@ export async function probeNimModel(model: string, options: {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           model,
-          messages: [{ role: 'user', content: 'Reply exactly OK.' }],
+          messages: [{ role: 'user', content: probes.nimReadiness }],
           max_tokens: nimProbeMaxTokens(model),
           stream: false,
           ...(chatTemplateKwargs ? { chat_template_kwargs: chatTemplateKwargs } : {}),

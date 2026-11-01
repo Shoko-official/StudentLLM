@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import probes from '../src/prompts/probes.json' with { type: 'json' };
 
 const DEFAULT_NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1';
 const DEFAULT_LM_STUDIO_BASE_URL = 'http://127.0.0.1:1234/v1';
@@ -98,7 +99,7 @@ export async function runSmoke(env = process.env, { fetchImpl = globalThis.fetch
       baseUrl: env.NVIDIA_BASE_URL || DEFAULT_NVIDIA_BASE_URL,
       headers: nvidiaKey ? { authorization: `Bearer ${nvidiaKey}` } : {},
       requestedModel: env.NVIDIA_MODEL || nvidiaModels.defaultModel,
-      prompt: 'Reply with exactly OK.',
+      prompt: probes.nimSmoke,
     }, { fetchImpl }));
   } catch (error) {
     results.push({ name: 'NVIDIA', status: 'failed', error: error instanceof Error ? error.message : String(error), keyConfigured: Boolean(nvidiaKey) });
@@ -111,7 +112,7 @@ export async function runSmoke(env = process.env, { fetchImpl = globalThis.fetch
       headers: {},
       requestedModel: env.LM_STUDIO_MODEL || DEFAULT_LM_STUDIO_MODEL,
       preferredPatterns: [/qwen3-4b/i, /qwen/i, /gemma/i],
-      prompt: 'Reply with exactly one short sentence: original sources remain the source of truth. /no_think',
+      prompt: probes.localSmoke,
     }, { fetchImpl }));
   } catch (error) {
     results.push({ name: 'LM Studio', status: 'failed', error: error instanceof Error ? error.message : String(error) });

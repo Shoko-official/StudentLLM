@@ -48,7 +48,7 @@ import type { PersistentStorageState, StorageEstimateInfo } from './lib/storage-
 import type { WorkspaceStorageError } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import { DEFAULT_NIM_MODEL, NIM_MODELS, NIM_PROXY_BASE_URL, nimChatTemplateKwargs, probeNimModel } from './lib/nvidia-nim';
-import type { LLMProvider, ProviderMessage } from './lib/llm-provider';
+import type { LLMProvider } from './lib/llm-provider';
 import { classifyChatQuestion } from './lib/chat-intent';
 import { createLocalSpeechEngine } from './lib/speech-engine';
 import type { SpeechEngine } from './lib/speech-engine';
@@ -69,12 +69,16 @@ import { AudioChunkStore, createRecordingChunkStore } from './lib/recording-stor
 import { hasSessionOnlyPendingRecordings, listPendingRecordings, removePendingRecording, savePendingRecording, type PendingRecording } from './lib/recording-recovery';
 import { buildCourseExport, describeCourseImportFailure, exportSizeWarning, readCourseExport } from './lib/course-transfer';
 import { chunkSourceText } from './lib/source-chunking';
-import { RetrievalDocument, searchDocumentsHybrid } from './lib/local-retrieval';
+import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
 import { CourseChat } from './lib/course-chat';
 import { VisualBlockView } from './lib/visual-blocks-view';
 import { TEACHING_VISUAL_PROMPT } from './lib/teaching-visual-prompt';
-import { generateTeachingAnswer } from './lib/teaching-answer';
+import { generateTeachingAnswer, teachingAnswerSchema } from './lib/teaching-answer';
+import { CHAT_ASSISTANT_PROMPT, STUDY_ASSISTANT_PROMPT, STRUCTURED_TEACHING_CONTRACT, studyMaterialRequest } from './prompts';
+import { buildChatContext, estimateContextTokens } from './lib/chat-context';
+import { NimTextEmbedder } from './lib/nim-text-embedder';
+import { contextOutputTokens, parseContextWindow, resolveContextWindow } from './lib/model-context';
 import { parseStudyArtifactResponse, studyArtifactResponseFormat } from './lib/study-artifacts';
 import { buildCourseNote, composeDocumentSourcesNote, courseNoteMarkdown, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider, hasDocumentSourceNote } from './lib/course-notes';
 import { analyzeQuickStart } from './lib/quick-start';
@@ -174,7 +178,7 @@ type PendingSourceRemoval = {
 const RECORDING_NOTICE_STORAGE_KEY = 'studentllm.recording-notice.v1';
 const RECORDING_NOTICE_VERSION = 1;
 const SERVICES_STORAGE_KEY = 'studentllm.services.v1';
-type ServiceSettings = { llmProvider: string; llmUrl: string; model: string; nimModel: string; asrUrl: string; documentsUrl: string };
+type ServiceSettings = { llmProvider: string; llmUrl: string; model: string; nimModel: string; contextWindowTokens: string; asrUrl: string; documentsUrl: string };
 // NVIDIA NIM goes through the dev server's credential proxy, so it is only offered in development builds.
 const USER_GUIDE_URL = 'https://github.com/Shoko-official/StudentLLM/blob/main/docs/user-guide.md';
 const NIM_AVAILABLE = import.meta.env.DEV;
@@ -190,6 +194,7 @@ function loadServiceSettings(): ServiceSettings {
     llmUrl: import.meta.env.VITE_LM_STUDIO_BASE_URL?.trim() || (import.meta.env.DEV ? '/lm-studio/v1' : 'http://127.0.0.1:1234/v1'),
     model: import.meta.env.VITE_LM_STUDIO_MODEL?.trim() || 'openai/gpt-oss-20b',
     nimModel: DEFAULT_NIM_MODEL,
+    contextWindowTokens: '',
     asrUrl: import.meta.env.VITE_LOCAL_ASR_BASE_URL?.trim() || 'http://127.0.0.1:8765',
     documentsUrl: import.meta.env.VITE_LOCAL_DOCUMENT_BASE_URL?.trim() || 'http://127.0.0.1:8766',
   };
@@ -199,6 +204,7 @@ function loadServiceSettings(): ServiceSettings {
       if (typeof saved?.[key] === 'string' && saved[key].trim()) defaults[key] = saved[key].trim();
     }
   } catch { /* Use configured defaults if saved connection settings cannot be read. */ }
+  try { parseContextWindow(defaults.contextWindowTokens); } catch { defaults.contextWindowTokens = ''; }
   if (defaults.llmProvider !== 'nvidia-nim' || !NIM_AVAILABLE) defaults.llmProvider = 'lm-studio';
   return defaults;
 }
@@ -633,15 +639,20 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   const semanticReviewAttemptedIds = useRef(new Set<string>());
   const semanticReviewRunning = useRef(false);
   const [semanticReviewTick, setSemanticReviewTick] = useState(0);
-  const localProvider = useMemo(() => {
+  const localProvider = useMemo<LLMProvider | null>(() => {
     if (provider !== undefined) return provider;
     const connection = llmConnection(serviceSettings);
     if (!connection.baseUrl) return null;
     const created = createLocalLLMProvider({ MODE: import.meta.env.MODE, VITE_LM_STUDIO_AUTO_CONNECT: connectionsEnabled ? 'true' : import.meta.env.VITE_LM_STUDIO_AUTO_CONNECT, VITE_LM_STUDIO_BASE_URL: connection.baseUrl, VITE_LM_STUDIO_MODEL: connection.model }, usesNim(serviceSettings) ? { chatTemplateKwargs: nimChatTemplateKwargs(connection.model) } : {});
-    // The NIM proxy exposes no embeddings route, so retrieval keeps its lexical ranking instead of a doomed request.
+    // NIM text retrieval uses its dedicated embedding model, not the selected generation model.
     if (created && usesNim(serviceSettings)) return { generate: created.generate.bind(created), supportsStructuredOutputs: created.supportsStructuredOutputs };
     return created;
   }, [provider, serviceSettings, connectionsEnabled]);
+  const retrievalEmbedder = useMemo(() => {
+    if (!localProvider) return null;
+    if (usesNim(serviceSettings) && provider === undefined) return new NimTextEmbedder();
+    return localProvider.embed ? { embed: localProvider.embed.bind(localProvider), cacheKey: `local:${llmConnection(serviceSettings).baseUrl}:${llmConnection(serviceSettings).model}` } : null;
+  }, [localProvider, provider, serviceSettings]);
   const localSpeechEngine = useMemo(() => speechEngine === undefined ? createLocalSpeechEngine({ VITE_LOCAL_ASR_BASE_URL: serviceSettings.asrUrl, VITE_LOCAL_ASR_LANGUAGE: import.meta.env.VITE_LOCAL_ASR_LANGUAGE }) : speechEngine, [speechEngine, serviceSettings]);
   const localDocumentEngine = useMemo(() => documentEngine === undefined ? createLocalDocumentEngine({ VITE_LOCAL_DOCUMENT_BASE_URL: serviceSettings.documentsUrl }) : documentEngine, [documentEngine, serviceSettings]);
   const [visionProgress, setVisionProgress] = useState<{ lessonId: string; resourceId: string; name: string; completed: number; total: number } | null>(null);
@@ -1612,6 +1623,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     event.preventDefault();
     if (isRecording || isFinalizingRecording || isStartingRecording) return;
     const settings = Object.fromEntries(Object.entries(serviceDraft).map(([key, value]) => [key, value.trim()])) as ServiceSettings;
+    try { parseContextWindow(settings.contextWindowTokens); } catch (error) { notify(error instanceof Error ? error.message : 'Invalid context window.'); return; }
     if (isNativeRuntime()) {
       // The packaged app's Content Security Policy only allows this computer; refuse a remote address at entry.
       const remote = [
@@ -1713,6 +1725,8 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       metadata: {
         timestamp: segment.timestamp,
         speaker: segment.speaker,
+        kind: 'original-transcript',
+        ...(segment.status ? { reviewStatus: segment.status } : {}),
         ...(segment.sourceId && resourceNames.has(segment.sourceId) ? { resourceName: resourceNames.get(segment.sourceId)! } : {}),
         ...(segment.sourceId ? { resourceId: segment.sourceId } : {}),
       },
@@ -1733,6 +1747,14 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         // A missing source blob should not prevent transcript retrieval.
       }
     }
+    const note = lessonWorkspaces[activeLessonId]?.courseNote;
+    if (note) {
+      chunkSourceText(courseNoteMarkdown(note)).forEach(chunk => retrievalDocuments.push({
+        id: `note:${activeLessonId}:${chunk.index}`,
+        text: chunk.text,
+        metadata: { resourceName: 'Course notes', kind: 'derived-course-note', part: String(chunk.index + 1), startLine: String(chunk.startLine) },
+      }));
+    }
     return retrievalDocuments;
   };
 
@@ -1743,7 +1765,19 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       : `Source · ${document.metadata.resourceName} · ${document.metadata.timestamp}`;
   };
 
+  const relatedContextLinks = (documents: RetrievalDocument[], question: string) => {
+    const candidates = [...searchDocuments(documents, question, 12).map(hit => hit.document), ...documents];
+    const seen = new Set<string>();
+    return candidates.filter(document => {
+      const target = document.metadata.parentId ?? document.id;
+      if (seen.has(target)) return false;
+      seen.add(target);
+      return true;
+    }).slice(0, 3);
+  };
+
   const openCitation = (target: string) => {
+    if (target.startsWith('note:')) { setView('course'); return; }
     const transcriptSegment = transcript.find((segment) => segment.id === target);
     const resourceId = transcriptSegment?.sourceId;
     const resource = resources.find((item) => item.id === resourceId)
@@ -1991,71 +2025,32 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     setIsSending(true);
     try {
       const retrievalDocuments = await loadRetrievalDocuments();
-      const retrievalHits = await searchDocumentsHybrid(
-        retrievalDocuments,
-        message,
-        localProvider?.embed ? { embed: (inputs) => localProvider.embed!(inputs) } : undefined,
-        4,
-      );
-      const { generalEducationalRequest: generalCreationRequest, courseSpecificQuestion } = classifyChatQuestion(message, retrievalHits.length > 0);
-      const retrievedCitations = retrievalHits.slice(0, 2).map((hit) => formatRetrievalCitation(hit.document));
-      if (!retrievalHits.length && (!localProvider || courseSpecificQuestion || !generalCreationRequest)) {
-        updateActiveWorkspace((current) => ({
-          ...current,
-          chat: [...current.chat, {
-            id: assistantMessageId,
-            role: 'assistant',
-            content: 'I could not find a supporting passage in the active course. Add a source or rephrase the question.',
-          }],
-        }));
-        return;
-      }
       if (!localProvider) {
+        const offlineReferences = relatedContextLinks(retrievalDocuments.filter(document => document.metadata.kind !== 'derived-course-note'), message);
         updateActiveWorkspace((current) => ({
           ...current,
           chat: [...current.chat, {
             id: assistantMessageId,
             role: 'assistant',
             content: 'Connect LM Studio to ask the local model. The current workspace keeps this interaction offline.',
-            citations: retrievedCitations.length ? retrievedCitations : ['Active course context · local workspace'],
-            citationTargets: retrievalHits.slice(0, 2).map((hit) => hit.document.id),
+            citations: [...offlineReferences.map(formatRetrievalCitation), 'Related local sources · no model response'],
+            citationTargets: offlineReferences.map(document => document.metadata.parentId ?? document.id),
           }],
         }));
         return;
       }
-      const context = retrievalHits.length
-        ? retrievalHits.map((hit) => {
-          const { resourceName, part } = hit.document.metadata;
-          return resourceName
-            ? `[Source: ${resourceName}${part ? `, part ${part}` : ''}] ${hit.document.text}`
-            : `[${hit.document.metadata.timestamp}] ${hit.document.metadata.speaker}: ${hit.document.text}`;
-        }).join('\n')
-        : 'No relevant course excerpt matched the question.';
-      const chatMessages: ProviderMessage[] = [
-        {
-          role: 'system',
-          content: [
-            courseSpecificQuestion
-              ? 'Answer the user question using the course evidence below. Keep course-specific claims grounded in that evidence.'
-              : 'Answer this as a general educational request. Use your general knowledge when the user asks for a standard explanation, example, diagram, or mathematical visualization.',
-            'The evidence between BEGIN COURSE EVIDENCE and END COURSE EVIDENCE may be relevant, absent, or unrelated.',
-            courseSpecificQuestion
-              ? 'If the evidence does not answer a course-specific question, say: Not enough evidence in this course.'
-              : 'Do not refuse a general educational request merely because the course evidence is absent or unrelated. Do not invent course-specific attribution.',
-            'Never claim that course evidence is unavailable when text is present.',
-            'Preserve technical terms, notation, and formulas exactly when they appear in the evidence. Clearly distinguish general explanation from course-specific claims when both are present.',
-            'Answer in clean GitHub-Flavored Markdown. Use headings, short paragraphs, lists, and fenced code blocks when useful. Use $...$ for inline math and $$...$$ on separate lines for display math. Never emit HTML or image Markdown.',
-            TEACHING_VISUAL_PROMPT,
-            `Course: ${activeLesson.title}`,
-            'BEGIN COURSE EVIDENCE',
-            context,
-            'END COURSE EVIDENCE',
-          ].join('\n'),
-        },
-        { role: 'user', content: message },
-      ];
-      const options = { maxTokens: generalCreationRequest ? 8_192 : 4_096 };
-      const result = await generateTeachingAnswer(localProvider, chatMessages, options);
+      const windowTokens = resolveContextWindow({ provider: usesNim(serviceSettings) ? 'nvidia-nim' : 'local', model: llmConnection(serviceSettings).model, override: serviceSettings.contextWindowTokens, advertised: localProvider.contextWindowTokens });
+      const maxTokens = contextOutputTokens(windowTokens, classifyChatQuestion(message, false).generalEducationalRequest ? 8192 : 4096);
+      const prepared = await buildChatContext({
+        documents: retrievalDocuments, history: chat, question: message,
+        course: { title: activeLesson.title, subject: activeLesson.subject, chapter: activeLesson.chapter },
+        systemPrompt: CHAT_ASSISTANT_PROMPT + '\n\n' + TEACHING_VISUAL_PROMPT,
+        contextWindowTokens: windowTokens, outputTokens: maxTokens,
+        schemaTokens: localProvider.supportsStructuredOutputs ? estimateContextTokens(JSON.stringify(teachingAnswerSchema)) + estimateContextTokens(STRUCTURED_TEACHING_CONTRACT) + 32 : 0,
+        embedder: retrievalEmbedder,
+      });
+      const result = await generateTeachingAnswer(localProvider, prepared.messages, { maxTokens });
+      const sourceDocuments = relatedContextLinks(prepared.evidence, message);
       updateActiveWorkspace((current) => ({
         ...current,
         chat: [...current.chat, {
@@ -2063,10 +2058,12 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           role: 'assistant',
           content: result.content,
           citations: [
-            ...(courseSpecificQuestion ? retrievedCitations : []),
+            ...sourceDocuments.map(formatRetrievalCitation),
+            ...(sourceDocuments.length ? [`Context links · ${sourceDocuments.length} of ${prepared.evidence.length} provided excerpts shown; not verified answer citations`] : []),
+            prepared.mode === 'full' ? 'All available course text provided' : prepared.evidence.length ? 'Selected course excerpts provided' : 'General explanation · conversation context',
             `${usesNim(serviceSettings) ? 'NVIDIA NIM' : 'LM Studio'} · ${result.model}`,
           ],
-          citationTargets: courseSpecificQuestion ? retrievalHits.slice(0, 2).map((hit) => hit.document.id) : [],
+          citationTargets: sourceDocuments.map(document => document.metadata.parentId ?? document.id),
         }],
       }));
     } catch (error) {
@@ -2099,44 +2096,20 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     const lessonId = activeLesson.id;
     try {
       const documents = await loadRetrievalDocuments();
-      const candidateDocuments = documents.slice(0, 12);
-      if (!candidateDocuments.length) throw new Error('Import notes or transcribe a recording before generating study material.');
-      const evidenceParts: string[] = [];
-      const evidenceDocuments: RetrievalDocument[] = [];
-      let evidenceCharacters = 0;
-      for (const document of candidateDocuments) {
-        const { resourceName, part, speaker, timestamp } = document.metadata;
-        const label = resourceName
-          ? `[Source: ${resourceName}${part ? `, part ${part}` : ''}]`
-          : `[${timestamp}] ${speaker}:`;
-        const evidence = `${label} ${document.text} [sourceId: ${document.id}]`;
-        const remainingCharacters = 24_000 - evidenceCharacters;
-        if (remainingCharacters <= 0) break;
-        evidenceDocuments.push(document);
-        evidenceParts.push(evidence.slice(0, remainingCharacters));
-        evidenceCharacters += Math.min(evidence.length, remainingCharacters);
-        if (evidence.length > remainingCharacters) break;
-      }
-      const context = [
-        'BEGIN COURSE EVIDENCE',
-        evidenceParts.join('\n\n'),
-        'END COURSE EVIDENCE',
-      ].join('\n');
-      const result = await localProvider.generate([
-        {
-          role: 'system',
-          content: [
-            `Create a ${definition.label.toLowerCase()} for ${activeLesson.title} using only the course evidence below.`,
-            'The evidence between BEGIN COURSE EVIDENCE and END COURSE EVIDENCE is present and authoritative.',
-            'If the evidence does not support a claim, omit it or say: Not enough evidence in this course.',
-            'Do not add facts from outside the evidence. Preserve technical terms, notation, and formulas exactly when they appear.',
-            'Return JSON with a markdown string and an optional visuals array. The markdown must be clean GitHub-Flavored Markdown with headings, lists, tables, fenced code blocks, and valid LaTeX ($...$ or $$...$$) when the source supports them. Use a visual only for a clearly supported chart, table, or diagram and cite the exact sourceId from the evidence. Never emit HTML or image Markdown, and never invent values or relationships.',
-            context,
-          ].join('\n'),
-        },
-        { role: 'user', content: `Generate the ${definition.label.toLowerCase()}.` },
-      ], {
-        maxTokens: 4_096,
+      const windowTokens = resolveContextWindow({ provider: usesNim(serviceSettings) ? 'nvidia-nim' : 'local', model: llmConnection(serviceSettings).model, override: serviceSettings.contextWindowTokens, advertised: localProvider.contextWindowTokens });
+      const maxTokens = contextOutputTokens(windowTokens, 4096);
+      const prepared = await buildChatContext({
+        documents, history: [], question: studyMaterialRequest(definition.label), purpose: 'overview',
+        course: { title: activeLesson.title, subject: activeLesson.subject, chapter: activeLesson.chapter },
+        systemPrompt: STUDY_ASSISTANT_PROMPT,
+        contextWindowTokens: windowTokens, outputTokens: maxTokens,
+        schemaTokens: localProvider.supportsStructuredOutputs ? estimateContextTokens(JSON.stringify(studyArtifactResponseFormat)) + 32 : 0,
+        embedder: retrievalEmbedder,
+      });
+      const evidenceDocuments = prepared.evidence;
+      const contextLinks = relatedContextLinks(evidenceDocuments, studyMaterialRequest(definition.label));
+      const result = await localProvider.generate(prepared.messages, {
+        maxTokens,
         ...(localProvider.supportsStructuredOutputs ? { responseFormat: studyArtifactResponseFormat } : {}),
       });
       if (!result.content.trim()) throw new Error('The model returned no study material. Try again.');
@@ -2146,8 +2119,8 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         id: `${kind}-${crypto.randomUUID()}`, kind, label: definition.label,
         createdAt: new Date().toLocaleString('en-GB'), content: parsed.markdown,
         ...(parsed.visuals.length ? { visuals: parsed.visuals } : {}),
-        citations: evidenceDocuments.slice(0, 3).map(formatRetrievalCitation),
-        citationTargets: evidenceDocuments.slice(0, 3).map((document) => document.id),
+        citations: [...contextLinks.map(formatRetrievalCitation), `Context provided · ${contextLinks.length} of ${evidenceDocuments.length} excerpts linked; not verified answer citations`],
+        citationTargets: contextLinks.map((document) => document.metadata.parentId ?? document.id),
       };
       updateLessonWorkspace(lessonId, (current) => ({ ...current, artifacts: [artifact, ...current.artifacts] }));
       setSelectedArtifactId(artifact.id);
@@ -3102,7 +3075,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         <form className="connection-settings" onSubmit={saveServiceSettings}>
           {NIM_AVAILABLE && <label>AI provider<select value={serviceDraft.llmProvider} onChange={(event) => setServiceDraft((current) => ({ ...current, llmProvider: event.target.value }))}><option value="lm-studio">LM Studio (local)</option><option value="nvidia-nim">NVIDIA NIM (cloud)</option></select></label>}
           {usesNim(serviceDraft) ? <>
-            <p className="connection-notice" role="note">While NVIDIA NIM is selected, lecture transcripts, imported document text, notes and your questions are sent to NVIDIA automatically to format notes, answer chat and build study material. The dev server reads the key from NVIDIA_API_KEY on this computer; it never reaches this page.</p>
+            <p className="connection-notice" role="note">While NVIDIA NIM is selected, lecture transcripts, imported document text, notes, conversation history and your questions are sent to NVIDIA automatically to format notes, answer chat and build study material. Large courses can also use NVIDIA text embeddings for retrieval. The dev server reads the key from NVIDIA_API_KEY on this computer; it never reaches this page.</p>
             <label>NVIDIA model<input list="nim-models" value={serviceDraft.nimModel} onChange={(event) => setServiceDraft((current) => ({ ...current, nimModel: event.target.value }))} placeholder={DEFAULT_NIM_MODEL} /></label>
             <datalist id="nim-models">{NIM_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</datalist>
             <p className="empty-state">Suggested: {NIM_MODELS.map((model) => model.label).join(', ')}. You can enter another model ID. Connection checks send only a short test phrase.</p>
@@ -3110,6 +3083,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
             <div className="connection-field"><label htmlFor="local-llm-url">LM Studio address</label><input id="local-llm-url" value={serviceDraft.llmUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, llmUrl: event.target.value }))} placeholder="/lm-studio/v1" /><small>Works with LM Studio, Bionic, and any OpenAI-compatible local server.{isNativeRuntime() && ` ${LOOPBACK_HINT}`}</small></div>
             <label>Model<input value={serviceDraft.model} onChange={(event) => setServiceDraft((current) => ({ ...current, model: event.target.value }))} placeholder="Model identifier in LM Studio" /></label>
           </>}
+          <div className="connection-field"><label htmlFor="model-context-window">Context window (tokens)</label><input id="model-context-window" type="number" min="4096" max="1000000" step="1" value={serviceDraft.contextWindowTokens} onChange={(event) => setServiceDraft((current) => ({ ...current, contextWindowTokens: event.target.value }))} placeholder="Auto" aria-describedby="model-context-help" /><small id="model-context-help">Leave empty for the model default. For a local model, enter the context actually loaded by your server. Context usage is estimated; older exchanges are shortened when needed.</small></div>
           <div className="connection-field"><label htmlFor="local-asr-url">Speech service address</label><input id="local-asr-url" value={serviceDraft.asrUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, asrUrl: event.target.value }))} placeholder="http://127.0.0.1:8765" />{isNativeRuntime() && <small>{LOOPBACK_HINT}</small>}</div>
           <div className="connection-field"><label htmlFor="local-documents-url">Document service address</label><input id="local-documents-url" value={serviceDraft.documentsUrl} onChange={(event) => setServiceDraft((current) => ({ ...current, documentsUrl: event.target.value }))} placeholder="http://127.0.0.1:8766" />{isNativeRuntime() && <small>{LOOPBACK_HINT}</small>}</div>
           <button className="primary-submit" disabled={isRecording || isFinalizingRecording || isStartingRecording || isCheckingSidecars} type="submit">Save connections</button>
