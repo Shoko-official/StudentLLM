@@ -12,7 +12,48 @@ function diagram(ids: string[], edges: Array<[string, string, string?]>): Teachi
   return { type: 'diagram', title: 'Test', nodes: ids.map((id) => ({ id, label: id.toUpperCase() })), edges: edges.map(([from, to, label]) => ({ from, to, ...(label === undefined ? {} : { label }) })) };
 }
 
-function expectReadable(visual: TeachingDiagram) {
+type Pt = [number, number];
+
+// Samples the absolute M, L, C and Q commands that the layout emits, about every unit along each segment.
+function samplePath(path: string): Pt[] {
+  const tokens = path.match(/[MLCQ]|-?\d+(?:\.\d+)?/g)!;
+  const points: Pt[] = [];
+  let position = 0, command = '';
+  const read = (): Pt => [Number(tokens[position++]), Number(tokens[position++])];
+  while (position < tokens.length) {
+    if (/[MLCQ]/.test(tokens[position])) command = tokens[position++];
+    const from = points[points.length - 1];
+    if (command === 'M') { points.push(read()); continue; }
+    const controls = command === 'L' ? [] : command === 'Q' ? [read()] : [read(), read()];
+    const to = read();
+    const chain = [from, ...controls, to];
+    const steps = Math.max(2, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 2));
+    for (let step = 1; step <= steps; step++) {
+      const t = step / steps;
+      let level = chain;
+      while (level.length > 1) level = level.slice(1).map((point, index) => [level[index][0] + (point[0] - level[index][0]) * t, level[index][1] + (point[1] - level[index][1]) * t] as Pt);
+      points.push(level[0]);
+    }
+  }
+  return points;
+}
+
+const arrowHead = (points: Pt[]) => {
+  const end = points[points.length - 1], before = points[Math.max(0, points.length - 6)];
+  const length = Math.hypot(end[0] - before[0], end[1] - before[1]) || 1;
+  return Array.from({ length: 10 }, (_, step) => [end[0] - (end[0] - before[0]) / length * step, end[1] - (end[1] - before[1]) / length * step] as Pt);
+};
+const distance = (a: Pt, b: Pt) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+const turn = (a: Pt, b: Pt, c: Pt) => Math.sign((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
+// Touching counts: the samples of axis-aligned runs often meet exactly on the other line.
+const crosses = (first: Pt[], second: Pt[]) => first.slice(1).some((end, index) => second.slice(1).some((other, at) => {
+  const [a, b, c, d] = [first[index], end, second[at], other];
+  const apart = Math.max(a[0], b[0]) < Math.min(c[0], d[0]) || Math.max(c[0], d[0]) < Math.min(a[0], b[0]) || Math.max(a[1], b[1]) < Math.min(c[1], d[1]) || Math.max(c[1], d[1]) < Math.min(a[1], b[1]);
+  return !apart && turn(a, b, c) * turn(a, b, d) <= 0 && turn(c, d, a) * turn(c, d, b) <= 0;
+}));
+const isArc = (path: string) => path.includes('Q');
+
+function expectReadable(visual: TeachingDiagram, strict = true) {
   const layout = layoutDiagram(visual);
   const nodes = layout.nodes.map(nodeBox);
   const labels = layout.edges.flatMap((edge) => edge.label ? [labelBox(edge.label)] : []);
@@ -30,6 +71,25 @@ function expectReadable(visual: TeachingDiagram) {
     expect(box.b).toBeLessThanOrEqual(layout.height);
   });
   layout.edges.forEach((edge) => expect(edge.path).not.toMatch(/NaN|Infinity|undefined/));
+  const samples = layout.edges.map((edge) => samplePath(edge.path));
+  samples.forEach((points) => {
+    expect(points.every(([x, y]) => x >= 0 && y >= 0 && x <= layout.width && y <= layout.height)).toBe(true);
+    expect(points.some(([x, y]) => nodes.some((node) => x > node.l + 1 && x < node.r - 1 && y > node.t + 1 && y < node.b - 1))).toBe(false);
+  });
+  if (strict) {
+    visual.edges.forEach((first, one) => visual.edges.forEach((second, two) => {
+      // An arc never starts where an arrow arrives, and no line runs through another arrow's head.
+      if (first.from === second.to) expect(distance(samples[one][0], samples[two][samples[two].length - 1])).toBeGreaterThanOrEqual(12);
+      if (one === two || distance(samples[one][samples[one].length - 1], samples[two][samples[two].length - 1]) < 1) return;
+      const head = arrowHead(samples[two]);
+      expect(Math.min(...samples[one].flatMap((point) => head.map((spot) => distance(point, spot))))).toBeGreaterThanOrEqual(7);
+    }));
+    const arcs = samples.filter((_, edge) => isArc(layout.edges[edge].path));
+    arcs.forEach((first, one) => arcs.slice(one + 1).forEach((second) => {
+      expect(distance(first[0], second[0])).toBeGreaterThanOrEqual(6);
+      expect(distance(first[first.length - 1], second[second.length - 1])).toBeGreaterThanOrEqual(6);
+    }));
+  }
   return layout;
 }
 
@@ -134,5 +194,118 @@ describe('diagram layout', () => {
   it('keeps a K2,2 readable although its edges must cross', () => {
     const layout = expectReadable(diagram(['a', 'b', 'c', 'd'], [['a', 'c', 'ac'], ['a', 'd', 'ad'], ['b', 'c', 'bc'], ['b', 'd', 'bd']]));
     expect(new Set(layout.edges.map((edge) => edge.label!.y)).size).toBeGreaterThanOrEqual(3);
+  });
+
+  it('starts the return from a branch apart from the arrow that arrives there (cell cycle with G0)', () => {
+    const layout = expectReadable(diagram(['g1', 'g0', 's', 'g2', 'm'], [
+      ['g1', 's', 'phase S'], ['s', 'g2', 'replication faite'], ['g2', 'm', 'mitose'], ['m', 'g1', 'division'],
+      ['g1', 'g0', 'sortie du cycle'], ['g0', 'g1', 'signal de croissance'],
+    ]));
+    const g0 = layout.nodes[1];
+    const start = samplePath(layout.edges[5].path)[0];
+    expect(start[0]).toBe(g0.x - 84);
+    expect(Math.abs(start[1] - g0.y)).toBeGreaterThanOrEqual(14);
+    expect(Math.max(...samplePath(layout.edges[5].path).map(([, y]) => y))).toBeGreaterThan(Math.max(...layout.nodes.map((node) => node.y)) + 36);
+  });
+
+  it('keeps a water cycle with a branch readable', () => {
+    expectReadable(diagram(['evap', 'cond', 'precip', 'runoff', 'infil'], [
+      ['evap', 'cond', 'rises and cools'], ['cond', 'precip', 'droplets merge'], ['precip', 'runoff', 'flows downhill'], ['precip', 'infil', 'soaks in'],
+      ['runoff', 'evap', 'sun heats water'], ['infil', 'evap', 'springs and plants'],
+    ]));
+  });
+
+  it('keeps three returning branches of one node apart', () => {
+    const layout = expectReadable(diagram(['s', 'p', 'h', 'q', 'x', 'y', 'z'], [
+      ['s', 'p'], ['s', 'h'], ['s', 'q'], ['h', 'x'], ['h', 'y'], ['h', 'z'],
+      ['x', 'h', 'suite b'], ['y', 'h', 'correction'], ['z', 'h', 'retour'],
+    ]));
+    const hub = layout.nodes[2];
+    const arrivals = [6, 7, 8].map((edge) => { const points = samplePath(layout.edges[edge].path); return points[points.length - 1]; });
+    arrivals.forEach((point) => expect(point[0]).toBe(hub.x + 88));
+    const returns = [6, 7, 8].map((edge) => samplePath(layout.edges[edge].path));
+    returns.forEach((first, index) => returns.slice(index + 1).forEach((second) => expect(crosses(first, second)).toBe(false)));
+    const heights = arrivals.map(([, y]) => y).sort((a, b) => a - b);
+    expect(heights[1] - heights[0]).toBeGreaterThanOrEqual(9);
+    expect(heights[2] - heights[1]).toBeGreaterThanOrEqual(9);
+  });
+
+  it('nests returns to one node without crossing, whatever their order, and holds every lane in the canvas', () => {
+    const ids = ['a', 'b', 'c', 'd', 'e'];
+    const chain = ids.slice(1).map((id, index) => [ids[index], id, `s${index}`] as [string, string, string]);
+    const returns: Array<[string, string, string]> = [['e', 'a', 'four'], ['d', 'a', 'three'], ['c', 'a', 'two'], ['b', 'a', 'one']];
+    for (const order of [returns, [...returns].reverse()]) {
+      const layout = expectReadable(diagram(ids, [...chain, ...order]));
+      const arcs = layout.edges.filter((edge) => isArc(edge.path)).map((edge) => samplePath(edge.path));
+      expect(arcs).toHaveLength(4);
+      arcs.forEach((first, index) => arcs.slice(index + 1).forEach((second) => expect(crosses(first, second)).toBe(false)));
+      expect(new Set(layout.edges.slice(4).map((edge) => edge.label!.y)).size).toBe(4);
+      expect(layout.height).toBeGreaterThanOrEqual(Math.max(...arcs.flat().map(([, y]) => y)) + 6);
+    }
+  });
+
+  it('holds three skips above a row inside the canvas', () => {
+    const ids = ['a', 'b', 'c', 'd', 'e'];
+    const layout = expectReadable(diagram(ids, [['a', 'b', 'x'], ['b', 'c', 'y'], ['c', 'd', 'z'], ['d', 'e', 'w'], ['a', 'c', 'skip 1'], ['b', 'e', 'skip 3'], ['a', 'e', 'long skip']]));
+    expect(new Set(layout.edges.slice(4).map((edge) => edge.label!.y)).size).toBe(3);
+  });
+
+  it('keeps many self-loops of one column apart and inside the canvas', () => {
+    const kids = ['n0', 'n1', 'n2', 'n3', 'n4', 'n5'];
+    const layout = expectReadable(diagram(['r', 'm', ...kids], [['r', 'm'], ...kids.map((id) => ['m', id] as [string, string]), ...kids.slice(0, 5).map((id) => [id, id, 'again'] as [string, string, string])]));
+    const loops = layout.edges.filter((edge) => isArc(edge.path)).map((edge) => samplePath(edge.path));
+    expect(loops).toHaveLength(5);
+    loops.forEach((first, index) => loops.slice(index + 1).forEach((second) => expect(crosses(first, second)).toBe(false)));
+  });
+
+  it('puts a self-loop label just below its short loop instead of over it', () => {
+    const layout = expectReadable(diagram(['a'], [['a', 'a', 'retry']]));
+    const loop = samplePath(layout.edges[0].path);
+    expect(labelBox(layout.edges[0].label!).t).toBeGreaterThanOrEqual(Math.max(...loop.map(([, y]) => y)));
+  });
+
+  it('draws arcs without labels', () => {
+    const layout = expectReadable(diagram(['a', 'b', 'c'], [['a', 'b'], ['b', 'c'], ['c', 'a'], ['a', 'c']]));
+    expect(layout.edges.every((edge) => edge.label === undefined)).toBe(true);
+    expect(layout.edges.filter((edge) => isArc(edge.path))).toHaveLength(2);
+  });
+
+  it('routes a skip and a return that start or end on an inner row', () => {
+    const layout = expectReadable(diagram(['a', 'b', 'c', 'd', 'e', 'f'], [
+      ['a', 'c'], ['c', 'e'], ['a', 'b'], ['b', 'e'], ['a', 'd'], ['d', 'e'], ['e', 'f', 'last'],
+      ['c', 'f', 'inner skip'], ['e', 'c', 'inner return'], ['d', 'a', 'bottom return'],
+    ]));
+    const skip = samplePath(layout.edges[7].path);
+    expect(Math.min(...skip.map(([, y]) => y))).toBeLessThan(Math.min(...layout.nodes.map((node) => node.y)) - 36);
+    const back = samplePath(layout.edges[8].path);
+    expect(Math.max(...back.map(([, y]) => y))).toBeGreaterThan(Math.max(...layout.nodes.map((node) => node.y)) + 36);
+  });
+
+  it('keeps a self-loop on an inner row of the last column inside the canvas', () => {
+    expectReadable(diagram(['r', 'a', 'b', 'c'], [['r', 'a'], ['r', 'b'], ['r', 'c'], ['b', 'b', 'again']]));
+  });
+
+  it('moves everything inward when a label would pass the left edge', () => {
+    const layout = expectReadable(diagram(['a', 'b'], [['a', 'a', 'x'.repeat(26)], ['a', 'b', 'next'], ['b', 'a', 'back']]));
+    expect(layout.nodes[0].x).toBeGreaterThan(100);
+    expect(labelBox(layout.edges[0].label!).l).toBeGreaterThanOrEqual(0);
+  });
+
+  it('prefers the roots as the start of the search, so the entry node stays in the first column', () => {
+    const layout = expectReadable(diagram(['a', 'r', 'b', 'c'], [['a', 'b', 'ab'], ['b', 'c', 'bc'], ['c', 'a', 'ca'], ['r', 'b', 'rb']]));
+    const [a, r, b, c] = layout.nodes;
+    expect(r.x).toBeLessThan(b.x);
+    expect(b.x).toBeLessThan(c.x);
+    expect(c.x).toBeLessThan(a.x);
+  });
+
+  it('holds on random graphs, including repeated edges, self-loops and long labels', () => {
+    let seed = 12345;
+    const next = (bound: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return Math.floor(seed / 2147483648 * bound); };
+    for (let round = 0; round < 150; round++) {
+      const ids = Array.from({ length: 1 + next(9) }, (_, index) => `n${index}`);
+      const edges = Array.from({ length: next(16) }, () => [ids[next(ids.length)], ids[next(ids.length)], next(3) ? 'k'.repeat(1 + next(30)) : undefined] as [string, string, string | undefined]);
+      expectReadable(diagram(ids, edges), false);
+    }
   });
 });
