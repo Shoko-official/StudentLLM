@@ -25,7 +25,7 @@ Shapes:
 - {"type":"line" or "arrow","x1","y1","x2","y2","label"?,"color"?}
 - {"type":"text","x","y","text"} with text of at most 180 characters
 
-Label placement: a line or arrow label is centred at its midpoint, 9 units above it; a rect or circle label is centred on the shape; a text shape starts at x, on baseline y. A steep line crosses its own label, so put a separate text shape beside it instead.
+Label placement: a line or arrow label is centred at its midpoint, 9 units above it; a rect or circle label is centred on the shape; a text shape starts at x, on baseline y. Text is about 7 units wide per character, so check that it ends inside the canvas. A sloped line crosses a long label placed this way, so keep line labels for short labels on nearly flat lines and use a separate text shape beside anything else.
 
 Colours: blue, orange, green, purple, red, neutral. A canvas of 480 by 300 suits most figures. Use as few shapes as the idea allows.
 
