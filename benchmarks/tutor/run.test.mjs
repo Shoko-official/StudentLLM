@@ -38,6 +38,8 @@ const gateOf = (out) => JSON.parse(readFileSync(join(out, 'gate.json'), 'utf8'))
 // The runs of this file use --allow-dirty and --cases, which always make the decision incomplete; these are the other reasons.
 const dataReasons = (gate) => gate.details.reasons.filter((reason) => !/--allow-dirty|--cases/.test(reason));
 const ledgerOf = (out) => join(out, '..', 'posts.log');
+const stable = (list) => list.map(({ firstTextSeconds, totalSeconds, ...rest }) => rest);
+const oldCell = 'quality/nvidia/nemotron-3.5-lightning-30b-a3b/q1/old/0', newCell = 'quality/nvidia/nemotron-3.5-lightning-30b-a3b/q1/new/0';
 
 function run(args, { fake = {}, cwd = root, key = KEY } = {}) {
   const stats = join(tmp, `stats-${counter++}.jsonl`);
@@ -215,7 +217,9 @@ describe('real run', () => {
   it('keeps a call that hits the 120 s limit as a failed row with its real time, and counts it per arm', () => {
     const out = outDir();
     const result = run(real(out, casesFile(), holdoutsFile()), { fake: { hang: 'prose', speed: 400 } });
-    expect(existsSync(join(out, 'failures.jsonl'))).toBe(false);
+    // Every pair stalled once and was rerun; the second stall is the measurement.
+    expect(rows(out, 'failures.jsonl').filter((item) => item.kind === 'timeout')).toHaveLength(24);
+    expect(rows(out, 'failures.jsonl')).toHaveLength(24);
     const newRows = rows(out).filter((row) => row.arm === 'new');
     expect(newRows).toHaveLength(24);
     expect(newRows.every((row) => row.failed && row.timedOut)).toBe(true);
@@ -225,6 +229,68 @@ describe('real run', () => {
     expect(gate.criteria.noMoreFailures).toBe(false);
     expect(dataReasons(gate)).toEqual([]);
     expect(result.code).toBe(2);
+  }, SLOW);
+
+  it('discards a pair once when a call stalls and reruns it, so a stall with a healthy retry changes nothing', () => {
+    const cases = casesFile(), holdouts = holdoutsFile();
+    const baseline = outDir();
+    const reference = run(real(baseline, cases, holdouts));
+    for (const [kind, extraPosts] of [['old', 1], ['prose', 2]]) {
+      const out = outDir();
+      const result = run(real(out, cases, holdouts), { fake: { hangCalls: { [kind]: [1] }, speed: 400 } });
+      expect(stable(rows(out)), kind).toEqual(stable(rows(baseline)));
+      const failures = rows(out, 'failures.jsonl');
+      expect(failures, kind).toHaveLength(1);
+      expect(failures[0]).toMatchObject({ kind: 'timeout', cells: [oldCell, newCell] });
+      expect(rows(out).some((row) => row.failed || row.timedOut)).toBe(false);
+      expect(gateOf(out).details.timeouts).toEqual({ old: 0, new: 0 });
+      expect(gateOf(out).details.missing).toEqual([]);
+      expect(dataReasons(gateOf(out))).toEqual([]);
+      expect(result.counts.calls).toBe(reference.counts.calls + extraPosts);
+      expect(lines(ledgerOf(out))).toHaveLength(result.counts.calls);
+    }
+  }, SLOW);
+
+  it('counts a second stall of the same pair as a measurement, with its real elapsed time', () => {
+    const cases = casesFile(), holdouts = holdoutsFile();
+    const baseline = outDir();
+    run(real(baseline, cases, holdouts));
+    for (const [kind, arm, cell] of [['old', 'old', oldCell], ['prose', 'new', newCell]]) {
+      const out = outDir();
+      const result = run(real(out, cases, holdouts), { fake: { hangCalls: { [kind]: [1, 2] }, speed: 400 } });
+      const failures = rows(out, 'failures.jsonl');
+      expect(failures, kind).toHaveLength(1);
+      expect(failures[0].kind).toBe('timeout');
+      const measured = rows(out).find((row) => row.cell === cell);
+      expect(measured).toMatchObject({ failed: true, timedOut: true, arm, complete: 0 });
+      expect(measured.totalSeconds).toBeGreaterThan(100);
+      expect(measured.totalSeconds).toBeLessThan(200);
+      const others = (list) => stable(list.filter((row) => row.cell !== cell && !(arm === 'new' && row.cell === newCell)));
+      expect(others(rows(out))).toEqual(others(rows(baseline)));
+      expect(gateOf(out).details.timeouts).toEqual(arm === 'old' ? { old: 1, new: 0 } : { old: 0, new: 1 });
+      expect(gateOf(out).details.missing).toEqual([]);
+      expect(lines(ledgerOf(out))).toHaveLength(result.counts.calls);
+    }
+  }, SLOW);
+
+  it('reruns a stalled pair at most once, also across a resume', () => {
+    const out = outDir(), cases = casesFile(), holdouts = holdoutsFile();
+    // The pair stalls, is discarded, and its rerun fails on infrastructure: it stays unmeasured.
+    const first = run(real(out, cases, holdouts), { fake: { hangCalls: { old: [1] }, errorCalls: { old: [2, 3] }, speed: 400 } });
+    expect(first.code).toBe(2);
+    expect(rows(out, 'failures.jsonl').map((item) => item.kind)).toEqual(['timeout', 'http']);
+    expect(rows(out)).toHaveLength(46);
+    expect(gateOf(out).details.missing).toEqual([oldCell, newCell]);
+
+    // On resume the same stall is the measurement: no second discard.
+    const second = run(real(out, cases, holdouts), { fake: { hangCalls: { old: [1] }, speed: 400 } });
+    expect(second.counts.old).toBe(1);
+    expect(rows(out, 'failures.jsonl')).toHaveLength(2);
+    expect(rows(out)).toHaveLength(48);
+    expect(rows(out).find((row) => row.cell === oldCell)).toMatchObject({ failed: true, timedOut: true });
+    expect(gateOf(out).details.timeouts.old).toBe(1);
+    expect(dataReasons(gateOf(out))).toEqual([]);
+    expect(lines(ledgerOf(out))).toHaveLength(first.counts.calls + second.counts.calls);
   }, SLOW);
 
   it('keeps a visual that runs out of its own deadline as a measurement', () => {
@@ -264,6 +330,27 @@ describe('real run', () => {
     expect(second.code).toBe(1);
     expect(second.stderr).toMatch(/holdouts/i);
     expect(second.counts.calls).toBe(0);
+    expect(lines(join(parent, 'runs.jsonl'))).toHaveLength(1);
+  }, SLOW);
+
+  it('recognises holdouts by their content, not by their bytes', () => {
+    const parent = workDir(), cases = casesFile();
+    const list = [holdoutCase('h1', 'HOLD un a'), holdoutCase('h2', 'HOLD un b')];
+    run(real(outDir(parent), cases, jsonFile(list)), { fake: { oldMode: 'invalid' } });
+    expect(lines(join(parent, 'runs.jsonl'))).toHaveLength(1);
+    const variants = [
+      `${JSON.stringify(list)} \n`,
+      `${JSON.stringify(list, null, 4)}\n\n`,
+      JSON.stringify(list.map((item) => Object.fromEntries(Object.entries(item).reverse()))),
+    ];
+    for (const text of variants) {
+      const path = join(tmp, `variant-${counter++}.json`);
+      writeFileSync(path, text.replaceAll('\n', '\r\n'));
+      const result = run(real(outDir(parent), cases, path));
+      expect(result.code, text).toBe(1);
+      expect(result.stderr).toMatch(/holdouts/i);
+      expect(result.counts.calls).toBe(0);
+    }
     expect(lines(join(parent, 'runs.jsonl'))).toHaveLength(1);
   }, SLOW);
 

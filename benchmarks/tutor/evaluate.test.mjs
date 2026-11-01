@@ -88,6 +88,111 @@ describe('quiz values', () => {
     expect(check(volts, 'none', ['nothing'])).toBe('incomplete');
     expect(check(volts, '4 V', ['8 V'], 0)).toBe('numeric');
   });
+
+  it('does not take the first letter of a unit for the unit', () => {
+    for (const option of ['20 min', '20 mL', '20 m', '20 mol', '20 g']) expect(check(milligrams, option), option).toBe('incomplete');
+    expect(matchAmount('20 min', milligrams)).toBe('unit');
+    expect(matchAmount('20 mg', milligrams)).toBe('match');
+    const metre = { value: 5, unit: 'm' };
+    expect(check(metre, '5 m', ['5 mm', '5 cm'])).toBe('complete');
+    expect(check(metre, '5 mm', ['5 m', '5 cm'], 0)).toBe('incomplete');
+    expect(check(metre, '5 mm', ['5 cm', '5 km'])).toBe('incomplete');
+    for (const option of ['5 m', '5m', '5 mètres', '5 metres', '5 Mètres', '5 m.']) expect(check(metre, option), option).toBe('complete');
+    for (const option of ['5 min', '5 mm', '5 m2', '5 m²', '5 m/s', '5 m.s-1', '5 mol', '5 mmol']) expect(check(metre, option), option).toBe('incomplete');
+  });
+
+  it('knows common spellings, with their plural, and keeps the case that changes the meaning', () => {
+    const cases = [
+      [{ value: 8, unit: 'V' }, ['8 V', '8 Vcc', '8 volt', '8 volts', '8 Volts', 'U = 8 V'], ['8 mV', '8 MV', '8 kV', '8 v', '8 V/m', '8 A', '8 Vrms']],
+      [{ value: 3, unit: 'A' }, ['3 A', '3 ampères', '3 ampere'], ['3 mA', '3 Ah', '3 a']],
+      [{ value: 3, unit: 'W' }, ['3 W', '3 watts'], ['3 mW', '3 Wh', '3 kW']],
+      [{ value: 3, unit: 'J' }, ['3 J', '3 joules'], ['3 kJ', '3 mJ']],
+      [{ value: 3, unit: 'N' }, ['3 N', '3 newtons'], ['3 mN', '3 N.m']],
+      [{ value: 3, unit: 'Pa' }, ['3 Pa', '3 pascals'], ['3 kPa', '3 hPa', '3 P']],
+      [{ value: 3, unit: 'Hz' }, ['3 Hz', '3 hertz'], ['3 kHz', '3 MHz']],
+      [{ value: 3, unit: 's' }, ['3 s', '3 secondes', '3 seconds', '3 sec'], ['3 ms', '3 min', '3 S']],
+      [{ value: 3, unit: 'g' }, ['3 g', '3 grammes'], ['3 kg', '3 mg', '3 G']],
+      [{ value: 3, unit: 'kg' }, ['3 kg', '3 kilogrammes'], ['3 g', '3 Kg', '3 mg']],
+      [{ value: 3, unit: 'L' }, ['3 L', '3 l', '3 litres'], ['3 mL', '3 dL', '3 cl']],
+      [{ value: 3, unit: 'mol' }, ['3 mol', '3 moles'], ['3 mmol', '3 m', '3 mole/L']],
+      [{ value: 3, unit: 'K' }, ['3 K', '3 kelvins'], ['3 k', '3 mK']],
+      [{ value: 3, unit: '%' }, ['3 %', '3%', '3 pour cent', '3 pourcents', '3 percent'], ['3 V', '3 %o']],
+      [{ value: 3, unit: 'mV' }, ['3 mV', '3 millivolts'], ['3 MV', '3 V', '3 mv']],
+      [{ value: 3, unit: 'volts' }, ['3 V', '3 volts'], ['3 mV']],
+    ];
+    for (const [correct, fine, wrong] of cases) {
+      for (const option of fine) expect(check(correct, option), `${correct.unit}: ${option}`).toBe('complete');
+      for (const option of wrong) expect(check(correct, option), `${correct.unit}: ${option}`).toBe('incomplete');
+    }
+  });
+
+  it('compares a unit that is not in the table by its exact spelling', () => {
+    const custom = { value: 4, unit: 'N.m' };
+    expect(check(custom, '4 N.m')).toBe('complete');
+    expect(check(custom, '4 N')).toBe('incomplete');
+    expect(check({ value: 4, unit: 'm/s' }, '4 m/s')).toBe('complete');
+    expect(check({ value: 4, unit: 'm/s' }, '4 m')).toBe('incomplete');
+    expect(check({ value: 4, unit: ' V ' }, '4 V')).toBe('complete');
+    expect(check({ value: 4, unit: 'foo' }, '4 foo bar')).toBe('complete');
+    expect(check({ value: 4, unit: 'foo' }, '4 fo')).toBe('incomplete');
+  });
+
+  it('calls a right number with a unit it does not know incomplete, and a unitless value followed by a unit too', () => {
+    expect(check(volts, '8 foo')).toBe('incomplete');
+    expect(check(volts, '8 restants')).toBe('incomplete');
+    expect(check(plain, '2,5 m')).toBe('incomplete');
+    expect(check(plain, '2,5 environ')).toBe('complete');
+    expect(check({ value: 16.8, unit: '%' }, '16,8 V')).toBe('incomplete');
+  });
+
+  it('reads thousands groups, powers of ten and fractions', () => {
+    const joules = { value: 1000, unit: 'J' }, big = { value: 2500, unit: '' }, half = { value: 2.5, unit: '' };
+    for (const option of ['1 000 J', '1 000', '1000 J', '1\u00a0000 J', '1\u202f000 J', '1 000,0 J']) expect(check(joules, option), option).toBe('complete');
+    expect(check({ value: 1000.5, unit: 'J' }, '1 000,5 J')).toBe('complete');
+    expect(check({ value: 1000000, unit: '' }, '1 000 000')).toBe('complete');
+    for (const option of ['2,5 x 10^3', '2,5 x 10^3 ', '2.5 \u00d7 10^3', '2,5\u00d710^3', '2,5 * 10^3', '2,5 \u00b7 10^3', '2,5 x 10\u00b3', '2.5e3', '2,5E3', '2,5 x 10^(3)', '2500']) expect(check(big, option), option).toBe('complete');
+    expect(check({ value: 0.0025, unit: '' }, '2,5 x 10^-3')).toBe('complete');
+    expect(check({ value: 0.0025, unit: '' }, '2,5 x 10\u207b\u00b3')).toBe('complete');
+    expect(check({ value: 2500, unit: 'm' }, '2,5 x 10^3 m')).toBe('complete');
+    expect(check({ value: 2500, unit: 'm' }, '2,5 x 10^3 mm')).toBe('incomplete');
+    for (const option of ['5/2', '5 / 2', '5/2 ', '\u2248 5/2', 'P = 5/2']) expect(check(half, option), option).toBe('complete');
+    expect(check({ value: 0.5, unit: '' }, '\u00bd')).toBe('complete');
+    expect(check({ value: 2.5, unit: 'V' }, '5/2 V')).toBe('complete');
+    expect(check(half, '2,5 x 10^3')).toBe('numeric');
+    expect(check(big, '25 x 10^3')).toBe('numeric');
+    expect(check(half, '3/2')).toBe('numeric');
+    expect(check({ value: 8, unit: 'V' }, '2^3 V')).toBe('complete');
+  });
+
+  it('calls numeric only when the keyed number is read cleanly and is wrong, or several options clearly equal the value', () => {
+    expect(check(volts, '4 V', ['6 V'])).toBe('numeric');
+    expect(check(volts, '-8 V', ['6 V'])).toBe('numeric');
+    expect(check(volts, '8 V', ['8 volts'])).toBe('numeric');
+    expect(check({ value: 5, unit: 'm' }, '5 m', ['5 m\u00e8tres', '5 mm'], 2)).toBe('numeric');
+    expect(check(volts, '8 V', ['4 V', '8,0 Vcc'], 1)).toBe('numeric');
+    // in doubt: incomplete
+    expect(check(volts, '4 + 4 V', ['6 V'])).toBe('incomplete');
+    expect(check(volts, '2 x 3 = 6 V', ['5 V'])).toBe('incomplete');
+    expect(check(volts, '5-10 V', ['5 V'])).toBe('incomplete');
+    expect(check(volts, '2,500 V', ['5 V'])).toBe('incomplete');
+    expect(check(volts, '1.234.567 V', ['5 V'])).toBe('numeric');
+    expect(check(volts, '1.2.3 V', ['5 V'])).toBe('incomplete');
+    expect(check({ value: 1000, unit: 'J' }, '1,000 J', ['5 J'])).toBe('incomplete');
+    expect(check({ value: 1, unit: 'J' }, '1,000 J', ['5 J'])).toBe('incomplete');
+    expect(check(volts, '4 V', ['huit volts'], 1)).toBe('incomplete');
+    expect(check(volts, '8 V', ['8 volts', '8 mV'], 0)).toBe('numeric');
+    expect(check(volts, '8 V', ['8 mV', '4 V'], 1)).toBe('incomplete');
+    expect(check(volts, '4 V', ['8 mV'], 0)).toBe('incomplete');
+    expect(check(volts, '8 mV', ['4 V'], 1)).toBe('incomplete');
+    expect(check(volts, '12 - 4 V', ['5 V'], 0)).toBe('incomplete');
+    expect(check(volts, 'U = 2 x 4 = 8 V', ['5 V'], 0)).toBe('complete');
+  });
+
+  it('ignores digits that belong to a name or a power', () => {
+    expect(check({ value: 2, unit: '' }, 'H2O', ['zzz'])).toBe('incomplete');
+    expect(check({ value: 2, unit: '' }, 'x^2', ['zzz'])).toBe('incomplete');
+    expect(check({ value: 2, unit: '' }, 'CO2 = 5', ['zzz'])).toBe('numeric');
+  });
 });
 
 describe('scoreSafely', () => {
@@ -121,6 +226,50 @@ describe('validateCases', () => {
     expect(errors([{ ...good, artefacts: [{ ...good.artefacts[0], sliders: [{ key: 'a', min: 0, max: 2, step: 1, value: 5 }] }] }])).toMatch(/slider/);
     expect(errors([{ ...good, proseFacts: ['('] }])).toMatch(/proseFacts/);
     expect(errors([{ ...good, artefacts: [{ type: 'video' }] }])).toMatch(/type/);
+  });
+
+  const plotWith = (change) => [{ ...good, artefacts: [{ ...good.artefacts[0], ...change }, ...good.artefacts.slice(1)] }];
+  const slider = (change = {}) => ({ key: 'a', min: 0, max: 2, step: 1, value: 1, ...change });
+
+  it('checks the names of every expression against the sliders, with the compiler of the app', () => {
+    expect(errors(plotWith({ curves: ['b*x'] }))).toMatch(/undeclared names: b/);
+    expect(errors(plotWith({ curves: ['a*x', 'a*x+c'] }))).toMatch(/undeclared names: c/);
+    expect(errors(plotWith({ readouts: ['x'] }))).toMatch(/undeclared names: x/);
+    expect(errors(plotWith({ readouts: ['a*x'] }))).toMatch(/undeclared names: x/);
+    expect(errors(plotWith({ readouts: ['b'] }))).toMatch(/undeclared names: b/);
+    expect(errors(plotWith({ curves: ['sum(k,1,3,k*a)*x+pi+e'], readouts: ['sqrt(a)+sum(k,0,2,k)'] }))).toBe('');
+    expect(errors(plotWith({ curves: ['k*x'] }))).toMatch(/undeclared names: k/);
+    expect(errors(plotWith({ curves: ['x'], sliders: [], readouts: [] }))).toBe('');
+    expect(errors(plotWith({ curves: ['a*x'], sliders: [], readouts: undefined }))).toMatch(/undeclared names: a/);
+  });
+
+  it('refuses the sliders that the app parser would refuse', () => {
+    expect(errors(plotWith({ sliders: [slider({ value: 0.5 })] }))).toMatch(/whole number of steps/);
+    expect(errors(plotWith({ sliders: [slider({ min: 0, max: 1, step: 0.3, value: 0.5 })] }))).toMatch(/whole number of steps/);
+    expect(errors(plotWith({ sliders: [slider({ min: 0, max: 1, step: 0.1, value: 0.3 })] }))).toBe('');
+    expect(errors(plotWith({ sliders: [slider({ key: 'x' })], curves: ['x'], readouts: [] }))).toMatch(/reserved/);
+    for (const key of ['pi', 'e', 'k', 'sin', 'constructor']) expect(errors(plotWith({ sliders: [slider({ key })], curves: ['x'], readouts: [] })), key).toMatch(/reserved/);
+    expect(errors(plotWith({ sliders: [slider({ step: 5 })] }))).toMatch(/no larger than max - min/);
+    expect(errors(plotWith({ sliders: [slider({ min: 2, max: 2, value: 2 })] }))).toMatch(/min < max/);
+    expect(errors(plotWith({ sliders: [slider(), slider()] }))).toMatch(/declared twice/);
+    expect(errors(plotWith({ sliders: [slider({ key: 'a' }), slider({ key: 'b' }), slider({ key: 'c' }), slider({ key: 'd' }), slider({ key: 'f' })] }))).toMatch(/at most 4/);
+    expect(errors(plotWith({ sliders: [slider({ key: 'a'.repeat(25) })], curves: ['x'], readouts: [] }))).toMatch(/at most 24/);
+  });
+
+  it('refuses a plot the app would refuse to draw', () => {
+    expect(errors(plotWith({ x: { min: 0, max: 4, step: '0.5' } }))).toMatch(/x needs/);
+    expect(errors(plotWith({ x: { min: 0, max: 4, step: 0 } }))).toMatch(/x needs/);
+    expect(errors(plotWith({ x: { min: 0, max: 4, step: -1 } }))).toMatch(/x needs/);
+    expect(errors(plotWith({ x: { min: 0, max: 4, step: 0.001 } }))).toMatch(/161 samples/);
+    expect(errors(plotWith({ x: { min: 0, max: 4, step: 0.5 } }))).toBe('');
+    expect(errors(plotWith({ x: { min: 0, max: 4, step: null } }))).toMatch(/x needs/);
+    expect(errors(plotWith({ curves: ['a', 'a', 'a', 'a', 'a'] }))).toMatch(/1 to 4/);
+    expect(errors(plotWith({ readouts: ['a', 'a', 'a', 'a', 'a'] }))).toMatch(/at most 4/);
+  });
+
+  it('does not repeat an expression error', () => {
+    expect(validateCases(plotWith({ curves: ['nosuchfn(x)'] }))).toHaveLength(1);
+    expect(validateCases(plotWith({ readouts: ['1+'] }))).toHaveLength(1);
   });
 });
 

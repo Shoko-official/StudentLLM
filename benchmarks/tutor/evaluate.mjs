@@ -1,5 +1,5 @@
 import { fromMarkdown } from 'mdast-util-from-markdown';
-import { compileExpression, parseTeachingVisual, plotSampleXs } from '../../src/lib/teaching-visuals.ts';
+import { compileExpression, diagnoseTeachingVisual, parseTeachingVisual, plotSampleXs } from '../../src/lib/teaching-visuals.ts';
 import { prepareTutorMarkdown } from '../../src/lib/visual-brief.ts';
 
 export const REQUIRED_HOLDOUTS = 2;
@@ -40,22 +40,138 @@ export function requestedVisual(content) {
   return visuals.length > 0 || requests.length > 0;
 }
 
-/**
- * Compares one quiz option with the expected amount. 'match': some number of the option equals the expected value and its
- * unit is absent or starts with the same letter (V, Vcc, volts; mg, milligrammes). 'unit': the right number with another unit.
- */
-export function matchAmount(option, { value, unit = '', tolerance }) {
-  const allowed = tolerance ?? 1e-9 * Math.max(1, Math.abs(value));
-  const text = String(option);
-  let result = 'none';
-  for (const found of text.matchAll(/[-+−]?\d+(?:[.,]\d+)?/g)) {
-    if (!(Math.abs(Number(found[0].replace('−', '-').replace(',', '.')) - value) <= allowed)) continue;
-    const written = /^\s*([\p{L}%°]+)/u.exec(text.slice(found.index + found[0].length))?.[1];
-    if (!unit || !written || written[0].toLowerCase() === unit[0].toLowerCase()) return 'match';
-    result = 'unit';
-  }
-  return result;
+// Known spellings of common units: [symbols, words]. A symbol is case-sensitive (mV, MV and V are three units), a word is
+// not. Nothing is inferred from a prefix: a prefixed unit is an entry of its own. A unit that is not here is compared by
+// its exact spelling.
+const UNIT_TABLE = [
+  [['V', 'Vcc', 'Vdc'], ['volt', 'volts']],
+  [['mV'], ['millivolt', 'millivolts']],
+  [['kV'], ['kilovolt', 'kilovolts']],
+  [['A'], ['ampere', 'amperes', 'ampère', 'ampères', 'amp', 'amps']],
+  [['mA'], ['milliampere', 'milliamperes', 'milliampère', 'milliampères']],
+  [['W'], ['watt', 'watts']],
+  [['kW'], ['kilowatt', 'kilowatts']],
+  [['J'], ['joule', 'joules']],
+  [['kJ'], ['kilojoule', 'kilojoules']],
+  [['N'], ['newton', 'newtons']],
+  [['Pa'], ['pascal', 'pascals']],
+  [['kPa'], ['kilopascal', 'kilopascals']],
+  [['Hz'], ['hertz']],
+  [['kHz'], ['kilohertz']],
+  [['MHz'], ['megahertz', 'mégahertz']],
+  [['m'], ['metre', 'metres', 'mètre', 'mètres', 'meter', 'meters']],
+  [['cm'], ['centimetre', 'centimetres', 'centimètre', 'centimètres', 'centimeter', 'centimeters']],
+  [['mm'], ['millimetre', 'millimetres', 'millimètre', 'millimètres', 'millimeter', 'millimeters']],
+  [['km'], ['kilometre', 'kilometres', 'kilomètre', 'kilomètres', 'kilometer', 'kilometers']],
+  [['s'], ['sec', 'seconde', 'secondes', 'second', 'seconds']],
+  [['ms'], ['milliseconde', 'millisecondes', 'millisecond', 'milliseconds']],
+  [['min'], ['minute', 'minutes']],
+  [['h'], ['heure', 'heures', 'hour', 'hours']],
+  [['g'], ['gramme', 'grammes', 'gram', 'grams']],
+  [['mg'], ['milligramme', 'milligrammes', 'milligram', 'milligrams']],
+  [['kg'], ['kilogramme', 'kilogrammes', 'kilogram', 'kilograms', 'kilo', 'kilos']],
+  [['L', 'l'], ['litre', 'litres', 'liter', 'liters']],
+  [['mL', 'ml'], ['millilitre', 'millilitres', 'milliliter', 'milliliters']],
+  [['mol'], ['mole', 'moles']],
+  [['K'], ['kelvin', 'kelvins']],
+  [['°C'], ['degré celsius', 'degrés celsius', 'degree celsius', 'degrees celsius']],
+  [['Ω', 'Ω'], ['ohm', 'ohms']],
+  [['%'], ['pourcent', 'pourcents', 'pour cent', 'percent']],
+];
+const spellingsOf = ([symbols, words]) => [...symbols.map((text) => ({ text, exact: true })), ...words.map((text) => ({ text, exact: false }))];
+const ALL_SPELLINGS = UNIT_TABLE.flatMap(spellingsOf);
+
+// A spelling must end the word: a letter, a digit, an exponent or a compound mark after it (mm, m2, m/s, N.m) makes it another unit.
+const spelled = (rest, { text, exact }) => {
+  if (!(exact ? rest.startsWith(text) : rest.slice(0, text.length).toLowerCase() === text)) return false;
+  const tail = rest.slice(text.length);
+  return !/^[\p{L}\p{N}_/^·*⋅²³¹⁰-ⁿ]/u.test(tail) && !/^\.\p{L}/u.test(tail);
+};
+
+/** The text right after a number is compatible with the expected unit when it holds no unit, or spells the expected one. */
+function compatible(rest, unit) {
+  if (!/^[\p{L}%°]/u.test(rest)) return true;
+  if (!unit) return !ALL_SPELLINGS.some((spelling) => spelled(rest, spelling));
+  const group = UNIT_TABLE.find(([symbols, words]) => symbols.includes(unit) || words.includes(unit.toLowerCase()));
+  return (group ? spellingsOf(group) : [{ text: unit, exact: true }]).some((spelling) => spelled(rest, spelling));
 }
+
+const SUPERSCRIPT = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+const superscriptValue = (text) => (text.startsWith('⁻') ? -1 : 1) * Number([...text.replace(/[⁺⁻]/, '')].map((digit) => SUPERSCRIPT.indexOf(digit)).join(''));
+const decimalOf = (text) => Number(text.replace(',', '.'));
+const integerOf = (text) => Number(text.replace('−', '-'));
+const DECIMAL = '(\\d+(?:[.,]\\d+)?)';
+const MARKS = '[x×*·⋅]';
+const SUPER_RUN = `([⁺⁻]?[${SUPERSCRIPT}]+)`;
+// What can start at a digit, longest reading first. A form that gives no finite number is skipped.
+const FORMS = [
+  { pattern: new RegExp(`${DECIMAL}\\s*${MARKS}\\s*10\\s*(?:\\^|\\*\\*)\\s*[{(]?([-+−]?\\d+)[})]?`, 'y'), value: (m) => decimalOf(m[1]) * 10 ** integerOf(m[2]) },
+  { pattern: new RegExp(`${DECIMAL}\\s*${MARKS}\\s*10${SUPER_RUN}`, 'y'), value: (m) => decimalOf(m[1]) * 10 ** superscriptValue(m[2]) },
+  { pattern: new RegExp(`${DECIMAL}[eE]([-+−]?\\d+)(?![\\p{L}\\p{N}])`, 'yu'), value: (m) => decimalOf(m[1]) * 10 ** integerOf(m[2]) },
+  { pattern: new RegExp(`${DECIMAL}\\s*\\^\\s*[{(]?([-+−]?\\d+)[})]?`, 'y'), value: (m) => decimalOf(m[1]) ** integerOf(m[2]) },
+  { pattern: new RegExp(`${DECIMAL}${SUPER_RUN}`, 'y'), value: (m) => decimalOf(m[1]) ** superscriptValue(m[2]) },
+  { pattern: new RegExp(`${DECIMAL}\\s*/\\s*${DECIMAL}(?![\\d.,]*\\d)`, 'y'), value: (m) => (decimalOf(m[2]) === 0 ? NaN : decimalOf(m[1]) / decimalOf(m[2])) },
+  { pattern: /\d{1,3}(?:[.,]\d{3}){2,}(?!\d)/y, value: (m) => Number(m[0].replace(/[.,]/g, '')) },
+  { pattern: /\d{1,3}(?: \d{3})+(?!\d)(?:[.,]\d+)?/y, value: (m) => decimalOf(m[0].replace(/ /g, '')) },
+];
+const VULGAR = { '½': 0.5, '¼': 0.25, '¾': 0.75 };
+
+/**
+ * Every amount written in an option, in order. `ambiguous` marks a number with two readings (2,500 is 2.5 or 2500) or none
+ * (1.2.3): it can match, but it is never evidence that an option is wrong.
+ */
+function amountsIn(option) {
+  const text = String(option).replace(/[  ]/g, ' ');
+  const found = [];
+  let index = 0;
+  while (index < text.length) {
+    const character = text[index];
+    if (VULGAR[character] !== undefined) { found.push({ candidates: [VULGAR[character]], ambiguous: false, start: index, end: index + 1 }); index++; continue; }
+    if (!/\d/.test(character) || /\d/.test(text[index - 1] ?? '')) { index++; continue; }
+    const plain = /\d+(?:[.,]\d+)*/y;
+    plain.lastIndex = index;
+    const run = plain.exec(text)[0];
+    // A digit that belongs to a name (H2O, P2, x1) or to an exponent (x^2) is not an amount.
+    if (/[\p{L}_^]/u.test(text[index - 1] ?? '')) { index += run.length; continue; }
+    let candidates, ambiguous = false, end;
+    for (const { pattern, value } of FORMS) {
+      pattern.lastIndex = index;
+      const match = pattern.exec(text);
+      const number = match && value(match);
+      if (match && Number.isFinite(number)) { candidates = [number]; end = index + match[0].length; break; }
+    }
+    if (!candidates) {
+      const parts = run.split(/[.,]/);
+      end = index + run.length;
+      if (parts.length === 1) candidates = [Number(run)];
+      else if (parts.length === 2 && !(parts[1].length === 3 && parts[0].length <= 3 && !parts[0].startsWith('0'))) candidates = [decimalOf(run)];
+      else { ambiguous = true; candidates = parts.length === 2 ? [decimalOf(run), Number(parts.join(''))] : []; }
+    }
+    const signed = /[-+−]/.test(text[index - 1] ?? '') && !/[\p{L}\p{N})\]]/u.test(text[index - 2] ?? '');
+    const sign = signed && text[index - 1] !== '+' ? -1 : 1;
+    found.push({ candidates: candidates.map((number) => sign * number), ambiguous, start: index, end });
+    index = end;
+  }
+  return found.map((item, position) => ({ ...item, before: text.slice(0, item.start), rest: text.slice(item.end).trimStart(), gap: position ? text.slice(found[position - 1].end, item.start) : '' }));
+}
+
+/**
+ * Reads one quiz option against the expected amount. kind: 'match' (an amount equals the value and its unit is absent or a
+ * known spelling of the expected unit), 'unit' (the value with another or an unknown unit) or 'none'. `clear` says a match
+ * is certain, `clean` that the whole option was read without doubt: only then can its number be called wrong.
+ */
+function readOption(option, { value, unit = '', tolerance }) {
+  const allowed = tolerance ?? 1e-9 * Math.max(1, Math.abs(value));
+  const amounts = amountsIn(option);
+  const chain = amounts.some((item) => /^\s*[-+−×x*·⋅/÷^]\s*$/.test(item.gap));
+  const clean = amounts.length > 0 && !chain && amounts.every((item) => !item.ambiguous);
+  const hits = amounts.filter((item) => item.candidates.some((number) => Math.abs(number - value) <= allowed));
+  const accepted = hits.filter((item) => compatible(item.rest, unit.trim()));
+  if (accepted.length) return { kind: 'match', clear: accepted.some((item) => !item.ambiguous && (!chain || /[=≈~→]\s*$/.test(item.before))), clean };
+  return { kind: hits.length ? 'unit' : 'none', clear: false, clean };
+}
+
+export const matchAmount = (option, correct) => readOption(option, correct).kind;
 
 function sliderCombinations(sliders) {
   return sliders.reduce((combos, slider) => combos.flatMap((combo) => [...new Set([slider.min, slider.value, slider.max])].map((value) => ({ ...combo, [slider.key]: value }))), [{}]);
@@ -119,17 +235,22 @@ function evaluatePlot(spec, visuals) {
 function evaluateQuiz(spec, visuals) {
   const quizzes = visuals.filter((visual) => visual.type === 'quiz');
   if (!quizzes.length) return { type: 'quiz', status: 'missing', errors: ['no quiz'] };
-  const outcomes = (quiz) => quiz.options.map((option) => matchAmount(option, spec.correct));
-  const quiz = quizzes.find((item) => outcomes(item).includes('match')) ?? quizzes[0];
-  const found = outcomes(quiz);
-  const matching = found.filter((outcome) => outcome === 'match').length;
-  if (matching > 1) return { type: 'quiz', status: 'numeric', errors: [`${matching} options match the correct value`] };
-  if (matching === 0) {
-    if (found.includes('unit')) return { type: 'quiz', status: 'incomplete', errors: ['the right number has an incompatible unit'] };
-    const numbered = quiz.options.some((option) => /\d/.test(option));
-    return numbered ? { type: 'quiz', status: 'numeric', errors: ['no option has the correct value'] } : { type: 'quiz', status: 'incomplete', errors: ['no option holds a number'] };
+  const readAll = (quiz) => quiz.options.map((option) => readOption(option, spec.correct));
+  const quiz = quizzes.find((item) => readAll(item).some((option) => option.kind === 'match')) ?? quizzes[0];
+  const found = readAll(quiz);
+  const matching = found.filter((option) => option.kind === 'match');
+  const keyed = found[quiz.answer];
+  // numeric is a false accusation if it is wrong, and both arms are scored the same way: in doubt the quiz is incomplete.
+  const numeric = (message) => ({ type: 'quiz', status: 'numeric', errors: [message] });
+  const doubt = (message) => ({ type: 'quiz', status: 'incomplete', errors: [message] });
+  const wrongKey = keyed.kind === 'none' && keyed.clean;
+  if (matching.length > 1) return matching.filter((option) => option.clear).length > 1 ? numeric(`${matching.length} options match the correct value`) : doubt('several options may match the correct value');
+  if (matching.length === 1) {
+    if (keyed !== matching[0]) return wrongKey ? numeric('the key points to a wrong option') : doubt('the key points to an option that cannot be read with certainty');
+    return keyed.clear ? { type: 'quiz', status: 'complete', errors: [] } : doubt('the keyed option holds the value but not with certainty');
   }
-  return found[quiz.answer] === 'match' ? { type: 'quiz', status: 'complete', errors: [] } : { type: 'quiz', status: 'numeric', errors: ['the key points to a wrong option'] };
+  if (found.some((option) => option.kind === 'unit')) return doubt('the right number has an incompatible unit');
+  return wrongKey ? numeric('no option has the correct value') : doubt('the keyed option cannot be read with certainty');
 }
 
 function evaluateDiagram(spec, visuals) {
@@ -160,6 +281,22 @@ export function scoreSafely(testCase, content) {
 const finite = (value) => typeof value === 'number' && Number.isFinite(value);
 const KEYS = { plot: ['type', 'x', 'sliders', 'curves', 'readouts', 'yCovers', 'chartType'], quiz: ['type', 'correct'], diagram: ['type', 'minLeaves'] };
 
+/**
+ * What the app would have to accept for a model to draw this plot: the sliders become parameters, the curves series and the
+ * readouts outputs, and the app's own parser judges them. Reusing it keeps this check from drifting from the app.
+ */
+function plotProblems(spec) {
+  const probe = {
+    type: 'plot',
+    title: 'case',
+    x: { min: spec.x.min, max: spec.x.max, ...(spec.x.step === undefined ? {} : { step: spec.x.step }) },
+    parameters: spec.sliders.map((slider) => ({ name: slider.key, label: 'slider', min: slider.min, max: slider.max, step: slider.step, value: slider.value })),
+    series: spec.curves.map((expression, index) => ({ label: `curve ${index + 1}`, expression })),
+    outputs: (spec.readouts ?? []).map((expression, index) => ({ label: `readout ${index + 1}`, expression })),
+  };
+  return diagnoseTeachingVisual(JSON.stringify(probe)).errors;
+}
+
 /** Checks a list of cases before any request: the exact format, unique ids and expressions the app language compiles. */
 export function validateCases(list, { taken = [], allowSplit = false } = {}) {
   if (!Array.isArray(list)) return ['the file must be a JSON array of cases'];
@@ -188,6 +325,7 @@ export function validateCases(list, { taken = [], allowSplit = false } = {}) {
       } else if (spec.type === 'diagram') {
         if (spec.minLeaves !== undefined && !(Number.isInteger(spec.minLeaves) && spec.minLeaves >= 0)) bad('diagram.minLeaves must be a whole number');
       } else {
+        const before = problems.length;
         if (!spec.x || !finite(spec.x.min) || !finite(spec.x.max) || spec.x.min >= spec.x.max) bad('plot.x needs min < max');
         if (spec.chartType !== undefined && !['line', 'bar'].includes(spec.chartType)) bad('plot.chartType must be line or bar');
         if (spec.yCovers !== undefined && !(Array.isArray(spec.yCovers) && spec.yCovers.length === 2 && spec.yCovers.every(finite))) bad('plot.yCovers must be two numbers');
@@ -200,6 +338,7 @@ export function validateCases(list, { taken = [], allowSplit = false } = {}) {
         for (const curve of Array.isArray(spec.curves) ? spec.curves : []) if (typeof curve !== 'string' || !compileExpression(curve)) bad(`curve ${curve} does not compile`);
         if (spec.readouts !== undefined && !Array.isArray(spec.readouts)) bad('plot.readouts must be an array');
         for (const readout of Array.isArray(spec.readouts) ? spec.readouts : []) if (typeof readout !== 'string' || !compileExpression(readout)) bad(`readout ${readout} does not compile`);
+        if (problems.length === before) for (const message of plotProblems(spec)) bad(`plot: ${message}`);
       }
     }
     if (!Array.isArray(item.proseFacts)) bad('proseFacts must be an array');
