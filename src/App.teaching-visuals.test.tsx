@@ -197,6 +197,24 @@ describe('visual jobs in the app', () => {
     expect(saved()['fixture-context']?.chat ?? []).toEqual([]);
   });
 
+  it('starts no visual call when the course is deleted while its answer is being written', async () => {
+    seedChat('Earlier answer.');
+    const user = userEvent.setup();
+    let release: (content: string) => void = () => undefined;
+    const generate = vi.fn(() => new Promise<{ content: string; model: string }>((resolve) => { release = (content) => resolve({ content, model: 'fixture' }); }));
+    render(<App provider={{ generate, supportsStructuredOutputs: true }} />);
+    await openChat(user);
+    await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), 'Explique la parabole');
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByText('More'));
+    await user.click(screen.getByRole('button', { name: /Delete course$/ }));
+    await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
+    release(manyRequests(2));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
   it('stops the visual calls of a course when it is deleted', async () => {
     seedChat(manyRequests(3));
     const user = userEvent.setup();

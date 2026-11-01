@@ -16,7 +16,7 @@ interface VisualJobsOptions {
 
 /** One `start` call: its lesson, and the controller that stops every job it queued. */
 interface Run { lessonId: string; controller: AbortController; remaining: number }
-interface QueuedJob { run: Run; messageId: string; job: VisualJob; provider: LLMProvider; deadlineMs: number | undefined }
+interface QueuedJob { run: Run; messageId: string; job: VisualJob }
 
 /** Running-job state stays in memory: a request fence with no running job is what offers a retry after a reload. */
 export function useVisualJobs(options: VisualJobsOptions) {
@@ -38,10 +38,17 @@ export function useVisualJobs(options: VisualJobsOptions) {
   }, []);
   // A single pump serves all runs. An aborted item still goes through it: it reports the stop without a model call
   // and clears its pending key. The deadline starts inside the attempt, so it does not tick while an item waits.
+  // The provider is read when a job leaves the queue: course text must not reach a provider the learner has left.
   const pump = useCallback(() => {
     while (active.current < MAX_CONCURRENT_VISUAL_CALLS && queue.current.length) {
-      const { run, messageId, job, provider, deadlineMs } = queue.current.shift()!;
+      const { run, messageId, job } = queue.current.shift()!;
       const key = pendingVisualKey(messageId, job.brief.id);
+      const { provider, deadlineMs } = latest.current;
+      if (!provider) {
+        change([key], false);
+        if (--run.remaining === 0) runs.current.delete(run);
+        continue;
+      }
       let reported = false;
       active.current++;
       runVisualJobs(provider, [job], {
@@ -68,12 +75,11 @@ export function useVisualJobs(options: VisualJobsOptions) {
     }
   }, []);
   const start = useCallback((lessonId: string, messageId: string, jobs: VisualJob[]) => {
-    const { provider, deadlineMs } = latest.current;
-    if (!provider || !jobs.length) return;
+    if (!latest.current.provider || !jobs.length) return;
     const run: Run = { lessonId, controller: new AbortController(), remaining: jobs.length };
     runs.current.add(run);
     change(jobs.map((job) => pendingVisualKey(messageId, job.brief.id)), true);
-    queue.current.push(...jobs.map((job) => ({ run, messageId, job, provider, deadlineMs })));
+    queue.current.push(...jobs.map((job) => ({ run, messageId, job })));
     pump();
   }, [pump]);
   const cancel = useCallback((lessonIds: string[]) => {
