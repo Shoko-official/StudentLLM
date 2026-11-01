@@ -153,6 +153,24 @@ describe('useVisualJobs', () => {
       expect(failure).toHaveBeenCalled();
     });
 
+    it('sends a queued job to the current provider, and none at all when the provider is gone', async () => {
+      const first = gatedProvider();
+      const second = gatedProvider();
+      const updateMessage = vi.fn();
+      const { result, rerender } = renderHook(({ provider }: { provider: LLMProvider | null }) => useVisualJobs({ provider, updateMessage }), { initialProps: { provider: first.provider as LLMProvider | null } });
+      act(() => result.current.start('lesson-a', 'm1', jobsFor('a', 'b', 'c', 'd')));
+      await waitFor(() => expect(first.generate).toHaveBeenCalledTimes(2));
+      rerender({ provider: second.provider });
+      await releaseAll(first.calls, 2);
+      await waitFor(() => expect(second.generate).toHaveBeenCalledTimes(2));
+      expect(first.generate).toHaveBeenCalledTimes(2);
+      act(() => result.current.start('lesson-a', 'm2', jobsFor('e')));
+      rerender({ provider: null });
+      await releaseAll(second.calls, 2);
+      await waitFor(() => expect(result.current.pending.size).toBe(0));
+      expect(second.generate).toHaveBeenCalledTimes(2);
+    });
+
     it('cancels the jobs of the named lessons, running or queued, and lets the others continue', async () => {
       const { provider, generate, calls } = gatedProvider();
       const updateMessage = vi.fn();
