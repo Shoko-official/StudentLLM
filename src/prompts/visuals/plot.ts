@@ -15,7 +15,7 @@ Check these first.
 3. **Slider default off its grid.** value must equal min plus a whole number of steps. With min 1 and step 2, the value 2 is invalid.
 4. **Continuous curve for whole-number data.** For anything defined on integers, use chartType "bar" with x.step 1.
 5. **Clipped curve.** Leave y out so the plot autoscales. If you set y, it must cover the curve at every slider extreme, not only at the default.
-6. **Wrong function call.** min, max and pow take exactly 2 arguments. sum takes 4. log is the natural logarithm and trigonometry uses radians. comb, choose, C, ln and log10 do not exist, even when the request writes them: use binomial(n,x,p) for a binomial probability, and factorial for a coefficient.
+6. **Wrong function call.** min, max and pow take exactly 2 arguments. sum takes 4. log is the natural logarithm and trigonometry uses radians. comb, choose, C(n,k), ln and log10 do not exist, even when the request writes them: use binomial(n,x,p) for a binomial probability, and factorial for a coefficient.
 7. **Implicit multiplication.** Write every multiplication: 2*x and 2*(x+1). Writing 2x or 2(x+1) does not parse.
 8. **Math notation in text.** Titles, labels and units are plain text. Do not write dollar signs or LaTeX in them.
 
