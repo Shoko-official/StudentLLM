@@ -1,6 +1,7 @@
 // Compares the single-envelope pipeline with the two-step tutor pipeline on real hosted models.
 // Synthetic text only. NVIDIA_API_KEY comes from the process environment and never reaches a file or a stream.
 // Usage: node benchmarks/tutor/run.mjs --out <dir> [--holdouts <file>] [--dry-run]
+// --holdouts is an array of quality cases, or { quality, rate } where rate replaces the committed rate prompts for this run.
 // Test aids: --cases <file> replaces cases.json, --allow-dirty skips the clean tree check. Either one makes the
 // result incomplete, never a decision.
 // Exit codes: 0 a decision was reached (pass or fail), 1 a refusal or an error, 2 the data is incomplete.
@@ -69,9 +70,38 @@ const casesText = text(argument('--cases') ?? fileURLToPath(new URL('./cases.jso
 const holdoutsPath = argument('--holdouts');
 const holdoutsText = holdoutsPath ? text(holdoutsPath) : '';
 let cases, holdouts;
-try { cases = JSON.parse(casesText); holdouts = holdoutsPath ? JSON.parse(holdoutsText) : []; }
+try { cases = JSON.parse(casesText); }
 catch (error) { fail(`A cases or holdouts file is not valid JSON: ${error instanceof Error ? error.message : 'unreadable'}`); }
-const quality = [...cases.quality, ...(Array.isArray(holdouts) ? holdouts : []).map((item) => ({ ...item, split: 'holdout' }))];
+// No parser detail for the holdouts: it quotes the text, and the hidden rate questions must not reach a stream.
+try { holdouts = holdoutsPath ? JSON.parse(holdoutsText) : []; }
+catch { fail('A cases or holdouts file is not valid JSON (the holdouts file is not quoted: it may hold hidden questions).'); }
+// The holdouts are an array of quality cases, or { quality, rate } where rate replaces cases.rate for this run.
+const objectForm = Boolean(holdouts) && typeof holdouts === 'object' && !Array.isArray(holdouts);
+const holdoutCases = objectForm ? holdouts.quality ?? [] : holdouts;
+const promptKey = (value) => value.trim().replace(/\s+/g, ' ').toLowerCase();
+// Positions only, never the questions: nothing here may print them.
+function rateProblems(rate, committed) {
+  if (!rate || typeof rate !== 'object' || Array.isArray(rate)) return ['rate must be an object with the groups of cases.rate'];
+  const groups = Object.keys(committed), errors = [];
+  for (const name of Object.keys(rate)) if (!groups.includes(name)) errors.push(`rate has an unknown group (${groups.join(', ')} expected)`);
+  const known = new Set(Object.values(committed).flat().map(promptKey)), seen = new Set();
+  for (const name of groups) {
+    const list = rate[name];
+    if (!Array.isArray(list) || list.length !== committed[name].length) { errors.push(`rate.${name} must be a list of ${committed[name].length} prompts`); continue; }
+    list.forEach((prompt, index) => {
+      const label = `rate.${name}[${index}]`;
+      if (typeof prompt !== 'string' || !prompt.trim()) { errors.push(`${label} must be non-empty text`); return; }
+      if (seen.has(promptKey(prompt))) errors.push(`${label} is a duplicate of another rate prompt`);
+      else if (known.has(promptKey(prompt))) errors.push(`${label} equals a prompt of cases.rate`);
+      seen.add(promptKey(prompt));
+    });
+  }
+  return errors;
+}
+const rateErrors = objectForm && 'rate' in holdouts ? rateProblems(holdouts.rate, cases.rate) : [];
+const hidden = objectForm && 'rate' in holdouts && !rateErrors.length;
+const rateCases = hidden ? holdouts.rate : cases.rate;
+const quality = [...cases.quality, ...(Array.isArray(holdoutCases) ? holdoutCases : []).map((item) => ({ ...item, split: 'holdout' }))];
 
 // A pair is the old and the new arm of one prompt. Cells run one at a time; a pair is stored or discarded as a whole.
 const pairs = [], expected = [];
@@ -83,7 +113,7 @@ for (const model of MODELS) {
       pairs.push({ model, testCase, prompt: testCase.prompt, cells: { old: cell('old'), new: cell('new') }, order: pairs.length % 2 ? ['new', 'old'] : ['old', 'new'] });
     }
   }
-  for (const [group, prompts_] of Object.entries(cases.rate)) {
+  for (const [group, prompts_] of Object.entries(rateCases)) {
     prompts_.forEach((prompt, index) => {
       const cell = (arm) => cellOf({ cell: `rate/${model.id}/${group}/${index}/${arm}`, kind: 'rate', model: model.id, arm, group, index });
       pairs.push({ model, prompt, cells: { old: cell('old'), new: cell('new') }, order: pairs.length % 2 ? ['new', 'old'] : ['old', 'new'] });
@@ -109,7 +139,8 @@ const [{ OpenAICompatibleProvider }, { buildChatContext, estimateContextTokens }
 ]);
 
 // Nothing is sent before every case can be scored.
-const problems = [...validateCases(cases.quality, { allowSplit: true }), ...validateCases(holdouts, { taken: cases.quality.map((item) => item.id) })];
+const topKeys = objectForm ? Object.keys(holdouts).filter((name) => !['quality', 'rate'].includes(name)).map((name) => `the holdouts object has an unknown key ${name}`) : [];
+const problems = [...validateCases(cases.quality, { allowSplit: true }), ...validateCases(holdoutCases, { taken: cases.quality.map((item) => item.id) }), ...topKeys, ...rateErrors];
 if (problems.length) fail(['The cases cannot be scored, so nothing was sent:', ...problems.map((problem) => `  ${problem}`)].join('\n'));
 if (dryRun) { await server.close(); process.exit(0); }
 
