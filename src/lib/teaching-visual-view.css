@@ -66,3 +66,5 @@ g.teaching-series > rect { fill: currentColor; stroke-width: 0; }
 .teaching-feedback:empty { margin: 0; }
 [data-theme="dark"] .teaching-visual, .dark .teaching-visual { --teaching-blue: #8bbcff; --teaching-orange: #f3b273; --teaching-green: #81cba8; --teaching-purple: #c4a4e4; --teaching-red: #f58f98; }
 @media (max-width: 480px) { .teaching-visual { margin-block: 18px; } .teaching-controls { grid-template-columns: 1fr; gap: 12px; } .teaching-legend { gap: 8px 14px; } }
+.teaching-visual-request { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 16px 0; padding: 12px 14px; border: 1px dashed var(--line); border-radius: 7px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.teaching-visual-request svg { flex-shrink: 0; }

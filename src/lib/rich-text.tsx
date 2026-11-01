@@ -1,5 +1,5 @@
-import { Fragment, isValidElement, memo, type ReactNode } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { Fragment, isValidElement, memo, useMemo, type ReactNode } from 'react';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -9,6 +9,7 @@ import { isExtractedMathSourceLine } from './extracted-math';
 import { decodeMojibakeUtf8, repairBareLatexCommandPrefixes, repairCorruptedLatexCommands } from './document-text';
 import { parseTeachingVisual } from './teaching-visuals';
 import { TeachingVisualView } from './teaching-visual-view';
+import { VisualRequestView } from './visual-request-view';
 
 // Mark code nodes before rendering so the budget stays stable across React renders.
 function remarkTeachingVisualBudget() {
@@ -239,13 +240,41 @@ interface RichTextProps {
   highlightExtractedMath?: boolean;
   focusableScrollRegions?: boolean;
   allowTeachingVisuals?: boolean;
+  messageId?: string;
   className?: string;
 }
 
 // Memoized: parsing Markdown and typesetting KaTeX is the expensive part of a render, and the workspace re-renders on
 // every keystroke in a search field or the chat composer. The props are plain strings, so a shallow compare is exact.
-export const RichText = memo(function RichText({ content, highlightExtractedMath = false, focusableScrollRegions = false, allowTeachingVisuals = false, className }: RichTextProps) {
+export const RichText = memo(function RichText({ content, highlightExtractedMath = false, focusableScrollRegions = false, allowTeachingVisuals = false, messageId, className }: RichTextProps) {
   const classes = ['rich-text', className].filter(Boolean).join(' ');
+  // A stable map lets a finished visual keep its slider and quiz state when another visual of the answer arrives.
+  const components = useMemo<Components>(() => ({
+    // A long formula or code sample must remain scrollable without a pointer in the conversation.
+    span: ({ node: _node, className, ...props }) => <span {...props} className={className} tabIndex={focusableScrollRegions && className?.split(' ').includes('katex-display') ? 0 : props.tabIndex} />,
+    pre: ({ node: _node, ...props }) => {
+      const child = isValidElement<{ className?: string; children?: ReactNode; 'data-visual-allowed'?: string }>(props.children) ? props.children : null;
+      if (allowTeachingVisuals && child?.props.className === 'language-student-visual-request') {
+        return <VisualRequestView raw={String(child.props.children ?? '').trim()} messageId={messageId} />;
+      }
+      if (allowTeachingVisuals && child?.props.className === 'language-student-visual') {
+        const raw = String(child.props.children ?? '').trim();
+        const visual = child.props['data-visual-allowed'] === 'true' ? parseTeachingVisual(raw) : null;
+        return visual ? <TeachingVisualView key={raw} visual={visual} /> : <div className="teaching-visual-fallback">
+          <p>This visualization could not be displayed. The explanation remains available.</p>
+          <details><summary>View generated specification</summary><pre tabIndex={0}><code>{raw}</code></pre></details>
+        </div>;
+      }
+      return <pre {...props} tabIndex={focusableScrollRegions ? 0 : props.tabIndex} />;
+    },
+    table: ({ node: _node, ...props }) => <table {...props} tabIndex={focusableScrollRegions ? 0 : props.tabIndex} />,
+    img: ({ alt }) => <span className="rich-image-alt" role="img" aria-label={alt || 'Image omitted'}>{alt || 'Image omitted'}</span>,
+    // Only real external addresses are links. An empty, relative or in-page href would reload or navigate this single-page
+    // app away from the course (and an empty href reloads it outright), so it is shown as plain text instead.
+    a: ({ href, children }) => (typeof href === 'string' && /^(?:https?:|mailto:)/i.test(href.trim())
+      ? <a href={href}>{children}</a>
+      : <span className="rich-link-inert">{children}</span>),
+  }), [allowTeachingVisuals, focusableScrollRegions, messageId]);
   if (highlightExtractedMath) return <div className={classes}>{renderExtractedText(content)}</div>;
 
   return (
@@ -254,29 +283,7 @@ export const RichText = memo(function RichText({ content, highlightExtractedMath
         remarkPlugins={allowTeachingVisuals ? [remarkGfm, remarkMath, remarkTeachingVisualBudget] : [remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore', errorColor: 'currentColor' }]]}
         urlTransform={safeUrlTransform}
-        components={{
-          // A long formula or code sample must remain scrollable without a pointer in the conversation.
-          span: ({ node: _node, className, ...props }) => <span {...props} className={className} tabIndex={focusableScrollRegions && className?.split(' ').includes('katex-display') ? 0 : props.tabIndex} />,
-          pre: ({ node: _node, ...props }) => {
-            const child = isValidElement<{ className?: string; children?: ReactNode; 'data-visual-allowed'?: string }>(props.children) ? props.children : null;
-            if (allowTeachingVisuals && child?.props.className === 'language-student-visual') {
-              const raw = String(child.props.children ?? '').trim();
-              const visual = child.props['data-visual-allowed'] === 'true' ? parseTeachingVisual(raw) : null;
-              return visual ? <TeachingVisualView key={raw} visual={visual} /> : <div className="teaching-visual-fallback">
-                <p>This visualization could not be displayed. The explanation remains available.</p>
-                <details><summary>View generated specification</summary><pre tabIndex={0}><code>{raw}</code></pre></details>
-              </div>;
-            }
-            return <pre {...props} tabIndex={focusableScrollRegions ? 0 : props.tabIndex} />;
-          },
-          table: ({ node: _node, ...props }) => <table {...props} tabIndex={focusableScrollRegions ? 0 : props.tabIndex} />,
-          img: ({ alt }) => <span className="rich-image-alt" role="img" aria-label={alt || 'Image omitted'}>{alt || 'Image omitted'}</span>,
-          // Only real external addresses are links. An empty, relative or in-page href would reload or navigate this single-page
-          // app away from the course (and an empty href reloads it outright), so it is shown as plain text instead.
-          a: ({ href, children }) => (typeof href === 'string' && /^(?:https?:|mailto:)/i.test(href.trim())
-            ? <a href={href}>{children}</a>
-            : <span className="rich-link-inert">{children}</span>),
-        }}
+        components={components}
       >
         {normalizeRichMarkdown(content)}
       </ReactMarkdown>
