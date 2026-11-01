@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { estimateContextTokens } from '../lib/chat-context';
 import { parseTeachingVisual } from '../lib/teaching-visuals';
+import { checkVisualAgainstBrief } from '../lib/visual-checks';
 import { parseVisualBrief, VISUAL_TYPES } from '../lib/visual-brief';
 import { TUTOR_PROMPT, TUTOR_SYSTEM_PROMPT, VISUAL_MODULES, VISUAL_ROUTING_PROMPT } from './index';
 
@@ -36,6 +37,17 @@ describe('prompt standard: tutor prompts', () => {
     }
   });
 
+  it('keeps every module example consistent with the request it answers', () => {
+    for (const type of VISUAL_TYPES) {
+      for (const example of examples(VISUAL_MODULES[type])) {
+        const { request } = JSON.parse(/<input>([\s\S]*?)<\/input>/.exec(example)![1]);
+        const visual = parseTeachingVisual(goodOutput(example));
+        expect(visual).not.toBeNull();
+        expect(checkVisualAgainstBrief(visual!, request)).toEqual([]);
+      }
+    }
+  });
+
   it('keeps every request example valid and teaches each visual type', () => {
     const briefs = fences(VISUAL_ROUTING_PROMPT, 'student-visual-request').map(parseVisualBrief);
     expect(briefs.length).toBeGreaterThanOrEqual(2);
@@ -53,5 +65,11 @@ describe('prompt standard: tutor prompts', () => {
     expect(VISUAL_ROUTING_PROMPT).toContain('Never emit HTML');
     expect(VISUAL_MODULES.plot).toContain('sum(k,start,end,body)');
     expect(VISUAL_MODULES.plot).toContain('binomial(n,x,p)');
+  });
+
+  it('routes explicit requests to see or practise before the text-only rule', () => {
+    const textOnly = VISUAL_ROUTING_PROMPT.indexOf('Text alone is complete');
+    expect(VISUAL_ROUTING_PROMPT.indexOf('asked to see')).toBeLessThan(textOnly);
+    expect(VISUAL_ROUTING_PROMPT.indexOf('wants to be tested')).toBeLessThan(textOnly);
   });
 });
