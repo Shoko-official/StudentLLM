@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { generateTutorProse, generateVisual, runVisualJobs } from './teaching-generation';
 import type { LLMProvider, ProviderMessage } from './llm-provider';
 import type { VisualJob } from './visual-brief';
@@ -102,10 +102,108 @@ describe('generateVisual', () => {
     expect(generate).toHaveBeenCalledTimes(1);
   });
 
-  it('redacts embedded images from the section when the provider requires it', async () => {
-    const provider = { ...replying(JSON.stringify(quiz)), redactEmbeddedImages: true };
-    await generateVisual(provider, job({}, { section: 'See ![x](data:image/png;base64,AAAA) here.' }));
-    expect(payload(provider, 0).surroundingExplanation).not.toContain('base64,AAAA');
+  it('never sends image payloads, even when the section is long enough to be sliced', async () => {
+    const image = `![x](data:image/png;base64,${'AAAA'.repeat(1500)})`;
+    const fence = '```';
+    const prose = `${image}\n\nBefore the visual.\n\n${fence}student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n${fence}\n\n${'Z'.repeat(300)} ${image}`;
+    const { jobs } = await generateTutorProse(replying(prose), [], { maxTokens: 4096 });
+    const provider = replying(JSON.stringify(quiz));
+    await generateVisual(provider, jobs[0]);
+    expect(JSON.stringify(provider.generate.mock.calls[0][0])).not.toContain('AAAA');
+  });
+
+  it.each([
+    ['prose around the object', 'Here it is: ' + JSON.stringify(quiz) + '\nDone.'],
+    ['a trailing remark', JSON.stringify(quiz) + '\nDone.'],
+    ['three backticks inside strings', JSON.stringify({ ...quiz, options: ['A ```', 'B ```'] }, null, 2)],
+    ['a fence with a trailing remark', '```json\n' + JSON.stringify(quiz) + '\n```\nDone.'],
+  ])('parses a reply with %s', async (_name, content) => {
+    const result = await generateVisual(replying(content), job());
+    expect(result.visual).toMatchObject({ type: 'quiz' });
+    expect(result.attempts).toBe(1);
+  });
+
+  it('truncates the invalid output echoed to the repair call', async () => {
+    const provider = replying('x'.repeat(20000), JSON.stringify(quiz));
+    await generateVisual(provider, job());
+    expect(payload(provider, 1).invalidOutput).toHaveLength(16384);
+  });
+
+  it('returns instead of throwing when the repair call fails', async () => {
+    let calls = 0;
+    const generate = vi.fn<LLMProvider['generate']>(async () => {
+      if (++calls === 1) return { content: '{"bad":', model: 'fixture' };
+      throw new Error('Provider request failed (500)');
+    });
+    const result = await generateVisual({ generate }, job());
+    expect(result).toEqual({ visual: null, attempts: 2, errors: ['Provider request failed (500)'] });
+  });
+
+  describe('stop and deadline', () => {
+    const stopped = 'Visual generation was stopped.';
+    const abortedController = () => { const controller = new AbortController(); controller.abort(); return controller; };
+    const rejectOnAbort = (options?: { signal?: AbortSignal }) => new Promise<never>((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new DOMException('This operation was aborted', 'AbortError')));
+    });
+
+    afterEach(() => vi.useRealTimers());
+
+    it('makes no call when already stopped', async () => {
+      const provider = replying(JSON.stringify(quiz));
+      const result = await generateVisual(provider, job(), { signal: abortedController().signal });
+      expect(result).toEqual({ visual: null, attempts: 0, errors: [stopped] });
+      expect(provider.generate).not.toHaveBeenCalled();
+    });
+
+    it('makes no call when already stopped, even with an initial output', async () => {
+      const provider = replying(JSON.stringify(quiz));
+      const result = await generateVisual(provider, job({}, { initialOutput: '{"type":"quiz"}' }), { signal: abortedController().signal });
+      expect(result).toEqual({ visual: null, attempts: 0, errors: [stopped] });
+      expect(provider.generate).not.toHaveBeenCalled();
+    });
+
+    it('does not repair after a stop that arrives during the first attempt', async () => {
+      const controller = new AbortController();
+      const generate = vi.fn<LLMProvider['generate']>(async () => { controller.abort(); return { content: '{"bad":', model: 'fixture' }; });
+      const result = await generateVisual({ generate }, job(), { signal: controller.signal });
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ visual: null, attempts: 1, errors: [stopped] });
+    });
+
+    it('reports a stop, not the abort error, when the provider rejects on abort', async () => {
+      const controller = new AbortController();
+      const generate = vi.fn<LLMProvider['generate']>((_messages, options) => {
+        const pending = rejectOnAbort(options);
+        controller.abort();
+        return pending;
+      });
+      const result = await generateVisual({ generate }, job(), { signal: controller.signal });
+      expect(result).toEqual({ visual: null, attempts: 1, errors: [stopped] });
+    });
+
+    it('reports the deadline, not the abort error, when an attempt times out', async () => {
+      vi.useFakeTimers();
+      const generate = vi.fn<LLMProvider['generate']>((_messages, options) => rejectOnAbort(options));
+      const pending = generateVisual({ generate }, job(), { deadlineMs: 2000 });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(await pending).toEqual({ visual: null, attempts: 1, errors: ['The visual request timed out after 2 s.'] });
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears the timer and removes the parent listener after success and after failure', async () => {
+      vi.useFakeTimers();
+      const parent = new AbortController();
+      const added = vi.spyOn(parent.signal, 'addEventListener');
+      const removed = vi.spyOn(parent.signal, 'removeEventListener');
+      await generateVisual(replying(JSON.stringify(quiz)), job(), { deadlineMs: 60_000, signal: parent.signal });
+      expect(vi.getTimerCount()).toBe(0);
+      expect(added).toHaveBeenCalledTimes(1);
+      expect(removed).toHaveBeenCalledTimes(1);
+      const failing: LLMProvider = { generate: async () => { throw new Error('Provider request failed (500)'); } };
+      await generateVisual(failing, job(), { deadlineMs: 60_000, signal: parent.signal });
+      expect(vi.getTimerCount()).toBe(0);
+      expect(removed).toHaveBeenCalledTimes(added.mock.calls.length);
+    });
   });
 });
 
@@ -130,5 +228,64 @@ describe('runVisualJobs', () => {
     const results: Array<boolean> = [];
     await runVisualJobs(provider, [job({ id: 'a' }), job({ id: 'b' })], { concurrency: 1, onResult: (_brief, result) => results.push(Boolean(result.visual)) });
     expect(results).toEqual([false, true]);
+  });
+
+  it('runs two jobs at a time by default', async () => {
+    let running = 0, peak = 0;
+    const generate = vi.fn<LLMProvider['generate']>(async () => {
+      running++; peak = Math.max(peak, running);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      running--;
+      return { content: JSON.stringify(quiz), model: 'fixture' };
+    });
+    await runVisualJobs({ generate }, ['a', 'b', 'c', 'd', 'e'].map((id) => job({ id })), { onResult: vi.fn() });
+    expect(peak).toBe(2);
+  });
+
+  it('forwards the deadline and the signal to every job', async () => {
+    const hanging: LLMProvider = { generate: vi.fn<LLMProvider['generate']>((_messages, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new DOMException('This operation was aborted', 'AbortError')));
+    })) };
+    const errors: string[][] = [];
+    await runVisualJobs(hanging, [job()], { deadlineMs: 5, onResult: (_brief, result) => errors.push(result.errors) });
+    expect(errors).toEqual([['The visual request timed out after 1 s.']]);
+    const stopped = new AbortController();
+    stopped.abort();
+    const quick = replying(JSON.stringify(quiz));
+    await runVisualJobs(quick, [job()], { signal: stopped.signal, onResult: (_brief, result) => errors.push(result.errors) });
+    expect(errors[1]).toEqual(['Visual generation was stopped.']);
+    expect(quick.generate).not.toHaveBeenCalled();
+  });
+
+  it('makes no call for queued jobs after a stop but still reports each one', async () => {
+    const stopped = new AbortController();
+    stopped.abort();
+    const provider = replying(JSON.stringify(quiz));
+    const results: Array<[string, string[]]> = [];
+    await runVisualJobs(provider, ['a', 'b', 'c', 'd'].map((id) => job({ id })), { signal: stopped.signal, onResult: (brief, result) => results.push([brief.id, result.errors]) });
+    expect(provider.generate).not.toHaveBeenCalled();
+    expect(results).toHaveLength(4);
+    expect(results.every(([, errors]) => errors[0] === 'Visual generation was stopped.')).toBe(true);
+  });
+
+  it('stops queued jobs when the stop arrives mid-run', async () => {
+    const controller = new AbortController();
+    const provider = replying(JSON.stringify(quiz));
+    const seen: string[] = [];
+    await runVisualJobs(provider, ['a', 'b', 'c', 'd'].map((id) => job({ id })), { concurrency: 1, signal: controller.signal, onResult: (brief) => { seen.push(brief.id); controller.abort(); } });
+    expect(provider.generate).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('still runs every job and resolves when onResult throws', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const provider = replying(JSON.stringify(quiz), JSON.stringify(quiz), JSON.stringify(quiz));
+      const seen: string[] = [];
+      await runVisualJobs(provider, ['a', 'b', 'c'].map((id) => job({ id })), { concurrency: 1, onResult: (brief) => { seen.push(brief.id); if (brief.id === 'a') throw new Error('update failed'); } });
+      expect(seen).toEqual(['a', 'b', 'c']);
+      expect(provider.generate).toHaveBeenCalledTimes(3);
+      expect(error).toHaveBeenCalled();
+    } finally { error.mockRestore(); }
   });
 });
