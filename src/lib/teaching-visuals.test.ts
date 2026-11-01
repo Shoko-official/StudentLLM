@@ -67,6 +67,26 @@ describe('bounded teaching expressions', () => {
 });
 
 describe('teaching visualization JSON contract', () => {
+  it.each(['', ' ', '\t\n'])('omits a blank optional readout unit %j without rejecting the plot', (unit) => {
+    const result = parseTeachingVisual(JSON.stringify({ ...validPlot, outputs: [{ label: 'Approximation', expression: 'sum(k,0,n,1/factorial(k))', unit }] }));
+    expect(result?.type).toBe('plot');
+    if (result?.type !== 'plot') throw new Error('Expected the complete plot to remain available.');
+    expect(result.outputs).toEqual([{ label: 'Approximation', expression: 'sum(k,0,n,1/factorial(k))' }]);
+    expect(result.series).toEqual(validPlot.series);
+    expect(compileExpression(result.outputs![0].expression)!({ n: 5 })).toBeCloseTo(163 / 60);
+  });
+
+  it('preserves real units and rejects wrong types, oversized units and invalid required fields', () => {
+    const output = { label: 'Pressure', expression: 'n', unit: ' Pa ' };
+    const real = parseTeachingVisual(JSON.stringify({ ...validPlot, outputs: [output] }));
+    expect(real?.type === 'plot' && real.outputs?.[0].unit).toBe(' Pa ');
+    for (const unit of [null, 42, {}, ' '.repeat(41), 'P'.repeat(41)]) {
+      expect(parseTeachingVisual(JSON.stringify({ ...validPlot, outputs: [{ ...output, unit }] }))).toBeNull();
+    }
+    expect(parseTeachingVisual(JSON.stringify({ ...validPlot, outputs: [{ ...output, label: ' ', unit: ' ' }] }))).toBeNull();
+    expect(parseTeachingVisual(JSON.stringify({ ...validPlot, outputs: [{ ...output, expression: 'missing', unit: ' ' }] }))).toBeNull();
+  });
+
   it('normalizes a generic interactive Taylor plot and strips executable extras', () => {
     const result = parseTeachingVisual(JSON.stringify({ ...validPlot, onChange: 'alert(1)' }));
     expect(result).toEqual(validPlot);
