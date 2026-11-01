@@ -61,6 +61,7 @@ const MODELS = [
 ];
 const SAMPLES = 2, POST_CAP = 360, SPACING_MS = 1700, DEADLINE_MS = 120_000, VISUAL_DEADLINE_MS = 60_000, WINDOW = 1_000_000, OUTPUT = 8192, MAX_CONSECUTIVE_FAILURES = 3;
 // Wait before a stalled pair is rerun, so the rerun is not inside the same outage. The environment variable is a test aid.
+const rerunWaitOverridden = Boolean(process.env.TUTOR_RERUN_WAIT_MS);
 const RERUN_WAIT_MS = process.env.TUTOR_RERUN_WAIT_MS && Number.isFinite(Number(process.env.TUTOR_RERUN_WAIT_MS)) ? Number(process.env.TUTOR_RERUN_WAIT_MS) : 60_000;
 
 mkdirSync(out, { recursive: true });
@@ -115,6 +116,7 @@ if (dryRun) { await server.close(); process.exit(0); }
 const invalidations = [];
 if (allowDirty) invalidations.push('run with --allow-dirty: not a valid decision');
 if (customCases) invalidations.push('run with --cases: not the committed cases');
+if (rerunWaitOverridden) invalidations.push('run with TUTOR_RERUN_WAIT_MS: not the 60 s wait, not a valid decision');
 
 if (missingHoldouts(expected)) {
   // gate.json says so as well, so a gate left in this directory by an earlier run cannot be read as the answer.
@@ -143,7 +145,7 @@ if (earlier) fail(`These holdouts were already used by ${earlier.out}. A second 
 const filesIn = (dir) => readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1)).flatMap((entry) => (entry.isDirectory() ? filesIn(join(dir, entry.name)) : [join(dir, entry.name)]));
 const promptsDir = join(process.cwd(), 'src', 'prompts');
 const meta = {
-  commit, dirty, allowDirty, customCases,
+  commit, dirty, allowDirty, customCases, rerunWaitOverridden,
   promptsHash: sha256(filesIn(promptsDir).map((file) => `${relative(promptsDir, file).replaceAll('\\', '/')}\0${text(file)}`).join('\0\0')),
   casesHash: sha256(`${casesText}\0${holdoutsText}`),
   models: MODELS, samples: SAMPLES, postCap: POST_CAP,
