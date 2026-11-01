@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Course chat can generate inline interactive plots, calculated readouts, relationship diagrams, typed illustrations and quizzes alongside Markdown and LaTeX. A bounded data contract keeps visual interactions local and preserves the explanation when a generated block is invalid.
+
 - Course chat has a bounded reading column, a scrolling conversation, secondary source context and an anchored multiline composer. Enter sends, Shift+Enter adds a line, and long drafts stay usable in short windows.
 - Local OCR uses multilingual PP-OCRv6 small on CPU and reuses its engine across a document's pages. Mixed PDFs retain native text while reading substantial scanned regions, including cropped/rotated pages. The development app offers explicit per-file NVIDIA vision analysis for complex sources; local extraction remains the default and originals stay available for review.
 

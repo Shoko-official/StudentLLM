@@ -1,4 +1,4 @@
-import { Fragment, memo, type ReactNode } from 'react';
+import { Fragment, isValidElement, memo, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
@@ -7,6 +7,24 @@ import katex from 'katex';
 import 'katex/dist/katex.min.css';
 import { isExtractedMathSourceLine } from './extracted-math';
 import { decodeMojibakeUtf8, repairBareLatexCommandPrefixes, repairCorruptedLatexCommands } from './document-text';
+import { parseTeachingVisual } from './teaching-visuals';
+import { TeachingVisualView } from './teaching-visual-view';
+
+// Mark code nodes before rendering so the budget stays stable across React renders.
+function remarkTeachingVisualBudget() {
+  return (tree: { children?: unknown[] }) => {
+    let count = 0;
+    const visit = (value: unknown) => {
+      if (!value || typeof value !== 'object') return;
+      const node = value as Record<string, unknown>;
+      if (node.type === 'code' && node.lang === 'student-visual') {
+        node.data = { hProperties: { 'data-visual-allowed': count++ < 8 ? 'true' : 'false' } };
+      }
+      if (Array.isArray(node.children)) node.children.forEach(visit);
+    };
+    visit(tree);
+  };
+}
 
 const mathPattern = /(\$\$[\s\S]*?\$\$|(?<!\\)\\\[[\s\S]*?\\\]|(?<!\\)\\\([\s\S]*?\\\)|\$(?!\$)(?:\\.|[^$\\\n])+\$)/g;
 const renderedMathCache = new Map<string, string>();
@@ -192,29 +210,65 @@ function safeUrlTransform(url: string) {
   return '';
 }
 
+function normalizeRichMarkdown(content: string) {
+  // Code/specifications are literal: repairing math delimiters there can corrupt JSON escapes.
+  const parts: string[] = [];
+  let prose: string[] = [];
+  let fence: { char: string; length: number } | null = null;
+  const flush = () => {
+    parts.push(normalizeMathDelimiters(repairUnclosedInlineLatex(normalizeMarkdownLatex(prose.join('\n')))));
+    prose = [];
+  };
+  for (const line of content.split('\n')) {
+    const marker = /^[ \t>]*(?:(?:[-+*]|\d+[.)])[ \t]+)?(`{3,}|~{3,})(.*)$/.exec(line);
+    if (fence) {
+      parts.push(line);
+      if (marker && marker[1][0] === fence.char && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+    } else if (marker) {
+      if (prose.length) flush();
+      fence = { char: marker[1][0], length: marker[1].length };
+      parts.push(line);
+    } else prose.push(line);
+  }
+  if (prose.length) flush();
+  return parts.join('\n');
+}
+
 interface RichTextProps {
   content: string;
   highlightExtractedMath?: boolean;
   focusableScrollRegions?: boolean;
+  allowTeachingVisuals?: boolean;
   className?: string;
 }
 
 // Memoized: parsing Markdown and typesetting KaTeX is the expensive part of a render, and the workspace re-renders on
 // every keystroke in a search field or the chat composer. The props are plain strings, so a shallow compare is exact.
-export const RichText = memo(function RichText({ content, highlightExtractedMath = false, focusableScrollRegions = false, className }: RichTextProps) {
+export const RichText = memo(function RichText({ content, highlightExtractedMath = false, focusableScrollRegions = false, allowTeachingVisuals = false, className }: RichTextProps) {
   const classes = ['rich-text', className].filter(Boolean).join(' ');
   if (highlightExtractedMath) return <div className={classes}>{renderExtractedText(content)}</div>;
 
   return (
     <div className={classes}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
+        remarkPlugins={allowTeachingVisuals ? [remarkGfm, remarkMath, remarkTeachingVisualBudget] : [remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore', errorColor: 'currentColor' }]]}
         urlTransform={safeUrlTransform}
         components={{
           // A long formula or code sample must remain scrollable without a pointer in the conversation.
           span: ({ node: _node, className, ...props }) => <span {...props} className={className} tabIndex={focusableScrollRegions && className?.split(' ').includes('katex-display') ? 0 : props.tabIndex} />,
-          pre: ({ node: _node, ...props }) => <pre {...props} tabIndex={focusableScrollRegions ? 0 : props.tabIndex} />,
+          pre: ({ node: _node, ...props }) => {
+            const child = isValidElement<{ className?: string; children?: ReactNode; 'data-visual-allowed'?: string }>(props.children) ? props.children : null;
+            if (allowTeachingVisuals && child?.props.className === 'language-student-visual') {
+              const raw = String(child.props.children ?? '').trim();
+              const visual = child.props['data-visual-allowed'] === 'true' ? parseTeachingVisual(raw) : null;
+              return visual ? <TeachingVisualView key={raw} visual={visual} /> : <div className="teaching-visual-fallback">
+                <p>This visualization could not be displayed. The explanation remains available.</p>
+                <details><summary>View generated specification</summary><pre tabIndex={0}><code>{raw}</code></pre></details>
+              </div>;
+            }
+            return <pre {...props} tabIndex={focusableScrollRegions ? 0 : props.tabIndex} />;
+          },
           table: ({ node: _node, ...props }) => <table {...props} tabIndex={focusableScrollRegions ? 0 : props.tabIndex} />,
           img: ({ alt }) => <span className="rich-image-alt" role="img" aria-label={alt || 'Image omitted'}>{alt || 'Image omitted'}</span>,
           // Only real external addresses are links. An empty, relative or in-page href would reload or navigate this single-page
@@ -224,7 +278,7 @@ export const RichText = memo(function RichText({ content, highlightExtractedMath
             : <span className="rich-link-inert">{children}</span>),
         }}
       >
-        {normalizeMathDelimiters(repairUnclosedInlineLatex(normalizeMarkdownLatex(content)))}
+        {normalizeRichMarkdown(content)}
       </ReactMarkdown>
     </div>
   );
