@@ -67,7 +67,7 @@ export async function testProvider({ name, baseUrl, headers, requestedModel, pre
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0,
-        max_tokens: isNvidia ? 8 : 128,
+        max_tokens: isNvidia ? nvidiaModels.models.find((entry) => entry.id === model)?.probeMaxTokens ?? 8 : 128,
         stream: false,
         ...(chatTemplateKwargs ? { chat_template_kwargs: chatTemplateKwargs } : {}),
       }),

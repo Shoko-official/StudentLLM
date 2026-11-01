@@ -12,6 +12,10 @@ export function nimChatTemplateKwargs(model: string): { enable_thinking: boolean
   return NIM_MODELS.find(({ id }) => id === model)?.chatTemplateKwargs;
 }
 
+export function nimProbeMaxTokens(model: string): number {
+  return NIM_MODELS.find(entry => entry.id === model)?.probeMaxTokens ?? 8;
+}
+
 function unavailable(kind: string, message: string, canFallback = false): NimProbeResult {
   return { ok: false, kind, message, canFallback };
 }
@@ -65,7 +69,7 @@ export async function probeNimModel(model: string, options: {
         body: JSON.stringify({
           model,
           messages: [{ role: 'user', content: 'Reply exactly OK.' }],
-          max_tokens: 8,
+          max_tokens: nimProbeMaxTokens(model),
           stream: false,
           ...(chatTemplateKwargs ? { chat_template_kwargs: chatTemplateKwargs } : {}),
         }),
