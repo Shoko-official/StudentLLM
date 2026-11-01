@@ -6,7 +6,7 @@
       "prompt": "En francais, cree un mini-cours de 250 mots maximum sur l'approximation de exp(x) par son polynome de Taylor en zero. Il faut un graphique interactif comparant les deux fonctions sur [-2,2], un curseur entier de degre 0 a 8 (valeur initiale 2), un resultat calcule de l'approximation en x=1, puis un quiz a choix multiples sur la valeur du polynome de degre 2 en x=1. Donne aussi dans le texte la valeur du polynome de degre 5 en x=1 avec cinq decimales. Explique la nature locale de cette approximation. Utilise des expressions analytiques pour les courbes.",
       "artefacts": [
         { "type": "plot", "x": { "min": -2, "max": 2 }, "sliders": [{ "key": "n", "min": 0, "max": 8, "step": 1, "value": 2 }], "curves": ["exp(x)", "sum(k,0,n,x^k/factorial(k))"], "readouts": ["sum(k,0,n,1/factorial(k))"] },
-        { "type": "quiz", "correct": "2[.,]5" }
+        { "type": "quiz", "correct": { "value": 2.5, "unit": "" } }
       ],
       "proseFacts": ["2[.,]71667"]
     },
@@ -17,7 +17,7 @@
       "artefacts": [
         { "type": "plot", "chartType": "bar", "x": { "min": 0, "max": 20, "step": 1 }, "sliders": [{ "key": "n", "min": 1, "max": 20, "step": 1, "value": 5 }, { "key": "p", "min": 0, "max": 1, "step": 0.05, "value": 0.3 }], "curves": ["binomial(n,x,p)"], "readouts": ["1-(1-p)^n"] },
         { "type": "diagram", "minLeaves": 4 },
-        { "type": "quiz", "correct": "0[.,]168" }
+        { "type": "quiz", "correct": { "value": 0.16807, "unit": "", "tolerance": 0.0005 } }
       ],
       "proseFacts": []
     },
@@ -27,9 +27,9 @@
       "prompt": "Crée un mini-cours en français, avec au plus 180 mots de prose hors données JSON des widgets, sur une substance fictive dont la quantité initiale est de 80 mg et qui suit une décroissance exponentielle de demi-vie h. Fais un seul graphique calculé de la quantité restante en fonction du temps, de 0 à 32 minutes. Ajoute un curseur de demi-vie h de 4 à 12 minutes, pas 2, valeur initiale 8, et un curseur du temps de lecture t de 0 à 32 minutes, pas 4, valeur initiale 24. Le graphique doit suivre h. Deux résultats calculés doivent suivre les deux curseurs : quantité restante au temps t en mg et pourcentage de la quantité initiale qui a disparu. Les courbes doivent rester visibles sur toutes les plages demandées. Explique ce que signifie la demi-vie, puis donne la quantité restante après 24 minutes pour la demi-vie initiale. Termine par un quiz interactif à une seule bonne réponse : pour une demi-vie fixée à 8 minutes, quelle quantité reste après 16 minutes ? Garde ces paramètres explicites dans la question du quiz et ne donne pas sa correction dans la prose avant le quiz. Utilise les widgets réellement pris en charge, sans code exécutable ni valeurs de courbe inventées.",
       "artefacts": [
         { "type": "plot", "x": { "min": 0, "max": 32 }, "yCovers": [0.3125, 80], "sliders": [{ "key": "h", "min": 4, "max": 12, "step": 2, "value": 8 }, { "key": "t", "min": 0, "max": 32, "step": 4, "value": 24 }], "curves": ["80*2^(-x/h)"], "readouts": ["80*2^(-t/h)", "100*(1-2^(-t/h))"] },
-        { "type": "quiz", "correct": "\\b20\\b" }
+        { "type": "quiz", "correct": { "value": 20, "unit": "mg" } }
       ],
-      "proseFacts": ["\\b10\\b"]
+      "proseFacts": ["\\b10(?:[.,]0+)?\\s*mg"]
     },
     {
       "id": "voltage",
@@ -37,7 +37,7 @@
       "prompt": "Crée un mini-cours en français, avec au plus 180 mots de prose hors données JSON des widgets, sur la tension idéale u(t)=A cos(2 pi f t), sans composante continue. A est l'amplitude crête en volts, f la fréquence en hertz et t le temps en secondes. Fais un seul graphique calculé de u en fonction du temps entre 0 et 2 secondes. Ajoute trois curseurs : A de 2 à 6 V, pas 1, valeur initiale 4 ; f de 1 à 3 Hz, pas 1, valeur initiale 2 ; temps de lecture t de 0 à 2 s, pas 0,125, valeur initiale 0,25. Trois résultats calculés doivent montrer la tension instantanée au temps choisi, la tension efficace sur une période complète et la période, avec leurs unités. Le graphe doit rester visible pour toutes les positions autorisées des curseurs. Explique brièvement la différence entre tension instantanée et tension efficace, puis donne la tension efficace initiale arrondie à trois décimales. Termine par un quiz interactif : pour A fixé à 4 V et f fixé à 2 Hz, quelle est la tension crête-à-crête ? Une seule option doit être juste. Garde ces valeurs explicites dans la question et ne dévoile pas la correction du quiz dans la prose. Utilise les widgets pris en charge et des expressions analytiques, sans code exécutable.",
       "artefacts": [
         { "type": "plot", "x": { "min": 0, "max": 2 }, "yCovers": [-6, 6], "sliders": [{ "key": "A", "min": 2, "max": 6, "step": 1, "value": 4 }, { "key": "f", "min": 1, "max": 3, "step": 1, "value": 2 }, { "key": "t", "min": 0, "max": 2, "step": 0.125, "value": 0.25 }], "curves": ["A*cos(2*pi*f*x)"], "readouts": ["A*cos(2*pi*f*t)", "A/sqrt(2)", "1/f"] },
-        { "type": "quiz", "correct": "\\b8\\b" }
+        { "type": "quiz", "correct": { "value": 8, "unit": "V" } }
       ],
       "proseFacts": ["2[.,]828"]
     }

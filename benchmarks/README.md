@@ -1092,8 +1092,53 @@ The checkpoint is automatically loaded when it already exists. Its run metadata 
 
 ## Tutor pipeline
 
-`tutor/run.mjs` compares the single-envelope pipeline with the two-step tutor pipeline on hosted models, using synthetic text only. It needs `NVIDIA_API_KEY` in the process environment, resumes from its results file and stops at its request cap. Keep `--out` outside Git. The gate criteria live in `tutor/evaluate.mjs` and were fixed before the first run.
+`tutor/run.mjs` compares the single-envelope pipeline (old) with the two-step tutor pipeline (new) on hosted models, using synthetic text only. The gate criteria live in `tutor/evaluate.mjs` and were fixed before the first run; the harness only decides which data is valid.
 
 ```bash
-node benchmarks/tutor/run.mjs --out ../tutor-bench/run-1 --holdouts ../tutor-bench/holdouts.json
+node benchmarks/tutor/run.mjs --out "$HOME/tutor-bench/run-1" --holdouts "$HOME/tutor-bench/holdouts.json"
+node benchmarks/tutor/run.mjs --out "$HOME/tutor-bench/dry" --dry-run
 ```
+
+`--out` must be an absolute path outside the repository (a relative path resolves against the current directory, which may be a worktree inside the repository). `NVIDIA_API_KEY` is read from the process environment only and is replaced by `[key]` before anything is written to a file, stdout or stderr.
+
+### What a run does
+
+- Cells run one at a time, an old and a new cell per pair; inside a new cell the visual calls run two at a time, as in the app. A pair is stored whole or not at all.
+- A real run refuses a dirty working tree and needs two holdout cases (`--holdouts`). Without them it stops before any request with `incomplete: true, reasons: ["no holdouts"]`. `--dry-run` needs neither, sends nothing and prints the cell count (108, or 132 with two holdouts).
+- `run.json` records the commit, a hash of `src/prompts/`, a hash of the cases and holdouts, the models and the sample count. Resuming with any difference, with a stale or duplicated row, or with half a pair in `results.jsonl` is an error.
+- `run.lock` (created exclusively) stops two runs sharing a directory. `posts.log` receives one line before each POST and is the request count: at most 360 POSTs across all processes and resumes.
+- Exit code 0 means a decision (pass or fail), 2 means the data is incomplete (`gate.json` has `incomplete: true` and the reasons), 1 means a refusal or an error.
+
+### What counts as a measurement
+
+- Infrastructure failures are not measurements: any HTTP error status, a network error, the request cap, and a timeout of the tutor or old call. They go to `failures.jsonl`, the whole pair is discarded and rerun on resume, and the decision is blocked until every expected cell is measured. A visual call that hits one of these invalidates its cell the same way. Three failed pairs in a row stop the run.
+- Model output failures are measurements and are never retried: an old envelope rejected, a new reply with no answer, a visual that fails its repair, a visual that runs out of its own 60 s deadline. They are saved with their real elapsed time. A failed row counts as not complete and not requested, and is left out of the clocks and of the definition rate. A model needs at least half of its new-arm rows valid to be judged; below that the result is incomplete.
+- `gate.json` reports `details.duplicates`: how many sample pairs (sample 1 and 2 of the same model, case and arm) are identical, because temperature 0 may make them duplicates. It is information, not a criterion.
+
+### Writing a case (also for holdouts)
+
+A holdout file is a JSON array of cases; the runner sets `split` to `holdout`.
+
+```json
+{
+  "id": "short-slug",
+  "prompt": "The synthetic request, with every number the answer must use.",
+  "artefacts": [
+    { "type": "plot", "x": { "min": 0, "max": 4 }, "yCovers": [0, 16], "sliders": [{ "key": "a", "min": 1, "max": 4, "step": 1, "value": 2 }], "curves": ["a*x"], "readouts": ["a^2"] },
+    { "type": "quiz", "correct": { "value": 8, "unit": "V" } },
+    { "type": "diagram", "minLeaves": 2 }
+  ],
+  "proseFacts": ["\\b42\\b"]
+}
+```
+
+- `sliders` are matched to the plot parameters by range, step and initial value, one parameter per slider, never by name. `curves` and `readouts` are expressions of the slider keys (and `x`); they are compared numerically at the minimum, initial and maximum of every slider.
+- `quiz.correct` is a number and a unit, not a pattern: `value`, `unit` (empty string for none) and an optional absolute `tolerance` (default a relative 1e-9). An option matches when the whole option is one number with a comma or dot decimal, then an optional space, then exactly that unit: `"8 V"`, `"8V"` and `"8,0 V"` all equal 8 V; `"2,8 V"`, `"1,8 V"`, `"8"` (no unit) or `"16,8 %"` do not. The quiz is complete when exactly one option matches and the key points to it. A value that a model could round (such as 0.16807) needs a `tolerance` (here 0.0005); keep it below the gap to a plausible wrong answer.
+- `proseFacts` are regular expressions run against the prose only: every `student-visual` and `student-visual-request` fence, and any code block quoting one, is removed first. They are for review, not a gate criterion. Prefer a pattern that carries the unit (`\\b10\\s*mg`), since a bare number also matches an unrelated sentence.
+- A visual counts only as the app counts it: top-level fences of `student-visual` or `student-visual-request` (backticks or tildes, CRLF, an info string after the name), a valid brief for a request, at most 8 visuals per message. A fence quoted inside a longer code block, or nested in a list, does not count.
+
+### Limits of these checks
+
+- Prose correctness is not proven by `proseFacts` and diagram label quality is not checked at all (a diagram counts its leaves). Both rest on the blind prose review in the next task.
+- Comparability: both arms use a fixed 1,000,000 token window and an 8192 token output, not the output limit and window the app derives per model and question; both omit the `course` metadata the app passes; `nemotron-3.5-super-vl-120b-a12b` is not a chat model of the app's catalogue (it is the document vision model), so it is run here as a text chat model with `enable_thinking: false`, the setting the app gives Lightning; Mistral gets no template setting, as in the app. Temperature is 0, so two samples may be identical.
+- A quiz option written with extra words ("environ 8 V") does not match; this penalizes both arms alike.
