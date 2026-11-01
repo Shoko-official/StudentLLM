@@ -27,6 +27,8 @@
 
 The code in Tasks 1 to 8, 11 and 12, including the browser-test changes, was applied to a throwaway worktree on 2026-11-01: typecheck, all 997 unit tests and 52 Chromium browser tests passed, and the benchmark dry run counted 108 cells. No real model was called, so prompt quality remains unmeasured until Tasks 9 and 13.
 
+The prompt texts in Task 4 were corrected after independent review, so `src/prompts/` is the source of truth for them, not this plan.
+
 ## File Structure
 
 | File | Action | Responsibility |
