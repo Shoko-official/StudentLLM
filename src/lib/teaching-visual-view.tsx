@@ -126,10 +126,13 @@ function DiagramView({ visual }: { visual: Diagram }) {
   const cyclic = processed !== visual.nodes.length;
   const groups = new Map<number, typeof visual.nodes>();
   visual.nodes.forEach((node, index) => { const level = cyclic ? index % 3 : levels.get(node.id)!; groups.set(level, [...(groups.get(level) ?? []), node]); });
-  const width = Math.max(580, groups.size * 230);
+  // Nodes paint over edges, so the gap between columns has to fit the widest label.
+  const longestLabel = Math.max(0, ...visual.edges.map((edge) => Math.min(edge.label?.length ?? 0, 26)));
+  const columnStep = Math.max(230, 176 + longestLabel * 7);
+  const width = Math.max(580, groups.size * columnStep);
   const height = Math.max(210, Math.max(...Array.from(groups.values(), (nodes) => nodes.length)) * 110 + 50);
   const positions = new Map<string, { x: number; y: number }>();
-  for (const [level, nodes] of groups) nodes.forEach((node, index) => positions.set(node.id, { x: 100 + level * 230, y: 30 + (index + .5) * (height - 60) / nodes.length }));
+  for (const [level, nodes] of groups) nodes.forEach((node, index) => positions.set(node.id, { x: 100 + level * columnStep, y: 30 + (index + .5) * (height - 60) / nodes.length }));
   const names = new Map(visual.nodes.map((node) => [node.id, node.label]));
   return <figure className="teaching-visual teaching-diagram" aria-labelledby={`${id}-title`}>
     <figcaption><strong id={`${id}-title`}>{visual.title}</strong><span className="teaching-kind">Diagram</span></figcaption>
