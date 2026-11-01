@@ -73,9 +73,11 @@ import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
 import { CourseChat } from './lib/course-chat';
 import { VisualBlockView } from './lib/visual-blocks-view';
-import { TEACHING_VISUAL_PROMPT } from './lib/teaching-visual-prompt';
-import { generateTeachingAnswer, teachingAnswerSchema } from './lib/teaching-answer';
-import { CHAT_ASSISTANT_PROMPT, STUDY_ASSISTANT_PROMPT, STRUCTURED_TEACHING_CONTRACT, studyMaterialRequest } from './prompts';
+import { generateTutorProse } from './lib/teaching-generation';
+import { jobFromMarkdown, MAX_AUTOMATIC_VISUALS } from './lib/visual-brief';
+import { VisualJobsContext, type VisualJobControls } from './lib/visual-request-view';
+import { pendingVisualKey, useVisualJobs } from './lib/use-visual-jobs';
+import { STUDY_ASSISTANT_PROMPT, TUTOR_SYSTEM_PROMPT, studyMaterialRequest } from './prompts';
 import { buildChatContext, estimateContextTokens } from './lib/chat-context';
 import { NimTextEmbedder } from './lib/nim-text-embedder';
 import { contextOutputTokens, parseContextWindow, resolveContextWindow } from './lib/model-context';
@@ -736,6 +738,19 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   };
 
   const updateActiveWorkspace = (update: (current: LessonWorkspace) => LessonWorkspace) => updateLessonWorkspace(activeLessonId, update);
+
+  const updateChatMessage = (lessonId: string, messageId: string, update: (content: string) => string) => updateLessonWorkspace(lessonId, (current) => ({
+    ...current,
+    chat: current.chat.map((message) => message.id === messageId ? { ...message, content: update(message.content) } : message),
+  }));
+  const visualJobs = useVisualJobs({ provider: localProvider, deadlineMs: usesNim(serviceSettings) ? 60_000 : undefined, updateMessage: updateChatMessage });
+  const visualControls: VisualJobControls = {
+    isPending: (messageId, briefId) => visualJobs.pending.has(pendingVisualKey(messageId, briefId)),
+    ...(localProvider ? { retry: (messageId: string, briefId: string) => {
+      const job = jobFromMarkdown(chat.find((message) => message.id === messageId)?.content ?? '', briefId);
+      if (job) visualJobs.start(activeLessonId, messageId, [job]);
+    } } : {}),
+  };
 
   async function formatPlacedCourseNote<T extends { targetLesson: Lesson; lessonWorkspaces: Record<string, LessonWorkspace> }>(placement: T): Promise<T> {
     if (!localProvider) return placement;
@@ -2054,20 +2069,19 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       const prepared = await buildChatContext({
         documents: retrievalDocuments, history: chat, question: message,
         course: { title: activeLesson.title, subject: activeLesson.subject, chapter: activeLesson.chapter },
-        systemPrompt: CHAT_ASSISTANT_PROMPT + '\n\n' + TEACHING_VISUAL_PROMPT,
+        systemPrompt: TUTOR_SYSTEM_PROMPT,
         contextWindowTokens: windowTokens, outputTokens: maxTokens,
-        schemaTokens: localProvider.supportsStructuredOutputs ? estimateContextTokens(JSON.stringify(teachingAnswerSchema)) + estimateContextTokens(STRUCTURED_TEACHING_CONTRACT) + 32 : 0,
         embedder: retrievalEmbedder,
         redactImages: localProvider.redactEmbeddedImages,
       });
-      const result = await generateTeachingAnswer(localProvider, prepared.messages, { maxTokens });
+      const result = await generateTutorProse(localProvider, prepared.messages, { maxTokens });
       const sourceDocuments = relatedContextLinks(prepared.evidence, message);
       updateActiveWorkspace((current) => ({
         ...current,
         chat: [...current.chat, {
           id: assistantMessageId,
           role: 'assistant',
-          content: result.content,
+          content: result.markdown,
           citations: [
             ...sourceDocuments.map(formatRetrievalCitation),
             ...(sourceDocuments.length ? [`Context links · ${sourceDocuments.length} of ${prepared.evidence.length} provided excerpts shown; not verified answer citations`] : []),
@@ -2077,6 +2091,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           citationTargets: sourceDocuments.map(document => document.metadata.parentId ?? document.id),
         }],
       }));
+      visualJobs.start(chatLessonId, assistantMessageId, result.jobs.slice(0, MAX_AUTOMATIC_VISUALS));
     } catch (error) {
       // A failed request is not an answer: keep it out of the saved history, show it as an alert, and hand
       // the question back to the composer so it can be sent again with one key press.
@@ -3062,7 +3077,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
               </div>)}</div>
               {resources.length > 3 && <button className="text-action" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`}</button>}
             </section>}
-            {view === 'chat' && <CourseChat key={activeLessonId} messages={chat} sourceCount={resources.length} hasMaterial={Boolean(resources.length || transcript.length)} providerName={localProvider ? (usesNim(serviceSettings) ? 'NVIDIA NIM' : 'Local AI') : null} draft={composerValue} isSending={isSending} error={chatError?.lessonId === activeLessonId ? chatError.message : null} onDraftChange={(value) => { setComposerValue(value); if (chatError) setChatError(null); }} onSubmit={submitComposer} onOpenSources={() => setView('sources')} onOpenSettings={() => setShowSettingsPanel(true)} onOpenCitation={openCitation} />}
+            {view === 'chat' && <VisualJobsContext.Provider value={visualControls}><CourseChat key={activeLessonId} messages={chat} sourceCount={resources.length} hasMaterial={Boolean(resources.length || transcript.length)} providerName={localProvider ? (usesNim(serviceSettings) ? 'NVIDIA NIM' : 'Local AI') : null} draft={composerValue} isSending={isSending} error={chatError?.lessonId === activeLessonId ? chatError.message : null} onDraftChange={(value) => { setComposerValue(value); if (chatError) setChatError(null); }} onSubmit={submitComposer} onOpenSources={() => setView('sources')} onOpenSettings={() => setShowSettingsPanel(true)} onOpenCitation={openCitation} /></VisualJobsContext.Provider>}
             {view === 'study' && <section className="study-view" id="view-panel-study" role="tabpanel" aria-labelledby="view-tab-study">
               <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>
               {!hasStudyMaterial && <p className="study-empty-hint"><AnimatedIcon name="star" size={22} intro className="hint-icon" />Import notes or finish a transcription to enable study material generation.</p>}

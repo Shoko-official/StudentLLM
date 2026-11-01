@@ -14,9 +14,13 @@ test('full context retains later sources and exact dialogue while generated plot
   let embeddingCalls = 0;
   await page.route('**/fixture-context/v1/models', route => route.fulfill({ json: { data: [{ id: 'test-context-model' }] } }));
   await page.route('**/fixture-context/v1/embeddings', route => { embeddingCalls++; return route.fulfill({ status: 503 }); });
+  const contextPlot = { type: 'plot', title: 'Droite parametree', x: { min: 0, max: 2 }, parameters: [{ name: 'a', label: 'Pente', min: 1, max: 3, step: 1, value: 1 }], series: [{ label: 'Droite', expression: 'a*x' }] };
+  const contextBrief = { id: 'v1', type: 'plot', intent: 'Tracer la droite', content: 'y=a*x, x de 0 a 2, curseur a de 1 a 3, pas 1, valeur initiale 1' };
   await page.route('**/fixture-context/v1/chat/completions', route => {
-    requests.push(route.request().postDataJSON());
-    return route.fulfill({ json: { model: 'test-context-model', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ sections: [{ markdown: 'Exemple illustratif avec la temperature choisie.', visual: { type: 'plot', title: 'Droite parametree', x: { min: 0, max: 2 }, parameters: [{ name: 'a', label: 'Pente', min: 1, max: 3, step: 1, value: 1 }], series: [{ label: 'Droite', expression: 'a*x' }] } }] }) } }] } });
+    const request = route.request().postDataJSON();
+    if (request.response_format) return route.fulfill({ json: { model: 'test-context-model', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(contextPlot) } }] } });
+    requests.push(request);
+    return route.fulfill({ json: { model: 'test-context-model', choices: [{ finish_reason: 'stop', message: { content: 'Exemple illustratif avec la temperature choisie.\n\n```student-visual-request\n' + JSON.stringify(contextBrief) + '\n```' } }] } });
   });
   await page.goto('/');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -55,8 +59,8 @@ test('NIM text requests omit embedded image payloads while the imported original
   await page.route('**/nvidia-nim/v1/chat/completions', route => {
     const request = route.request().postDataJSON();
     requests.push(request);
-    const content = request.response_format?.json_schema?.name === 'teaching_answer'
-      ? JSON.stringify({ sections: [{ markdown: 'The surrounding text is available.', visual: null }] })
+    const content = request.messages[0].content.startsWith('# StudentLLM tutor')
+      ? 'The surrounding text is available.'
       : request.messages.some((message: { content: string }) => message.content === 'Reply exactly OK.') ? 'OK' : JSON.stringify({ blocks: [] });
     return route.fulfill({ json: { model, choices: [{ finish_reason: 'stop', message: { content } }] } });
   });

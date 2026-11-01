@@ -1,6 +1,7 @@
 import type { ChatMessage } from '../types';
 import type { ProviderMessage } from './llm-provider';
 import { redactContextImages } from './context-text';
+import { compactVisualFences } from './visual-brief';
 import { CONTEXT_DATA_INSTRUCTIONS, CONVERSATION_MEMORY_INSTRUCTIONS } from '../prompts';
 import { retrievalTerms, searchDocuments, searchDocumentsHybrid, SEMANTIC_CANDIDATE_LIMIT, type RetrievalDocument, type RetrievalEmbedder } from './local-retrieval';
 
@@ -62,7 +63,7 @@ function historyTurns(history: ChatMessage[]) {
   }
   return turns;
 }
-function plain(message: ChatMessage): ProviderMessage { return { role: message.role, content: message.content }; }
+function plain(message: ChatMessage): ProviderMessage { return { role: message.role, content: message.role === 'assistant' ? compactVisualFences(message.content) : message.content }; }
 function snippets(text: string, query: string, preferConstraints: boolean) {
   if (text.length <= 700) return [text];
   const terms = new Set(retrievalTerms(query));
@@ -100,13 +101,14 @@ function snippets(text: string, query: string, preferConstraints: boolean) {
 }
 function makeMemory(history: ChatMessage[], question: string, tokenBudget: number) {
   if (tokenBudget <= 0 || !history.length) return null;
-  const documents = history.map((message, index) => ({ id: String(index), text: message.content, metadata: { role: message.role } }));
+  const compacted = history.map(message => ({ ...message, content: message.role === 'assistant' ? compactVisualFences(message.content) : message.content }));
+  const documents = compacted.map((message, index) => ({ id: String(index), text: message.content, metadata: { role: message.role } }));
   const relevant = searchDocuments(documents, question, 12).map(hit => Number(hit.document.id));
   const constraints = history.flatMap((message, index) => message.role === 'user' && /\b(?:toujours|jamais|prefere|préfère|corrige|correction|rectifi|plutôt|plutot|utilise|garde|sans|do not|don't|always|never|prefer|instead|remember)\b/iu.test(message.content) ? [index] : []).reverse();
   const candidates = [...new Set([...constraints.slice(0, 12), ...relevant, 0, history.length - 1])];
   const records: Array<{ id: string; role: string; excerpts: string[]; shortened: boolean }> = [];
   for (const index of candidates) {
-    const message = history[index];
+    const message = compacted[index];
     const record = { id: message.id, role: message.role, excerpts: snippets(message.content, question, message.role === 'user'), shortened: message.content.length > 700 };
     const trial = [...records, record].sort((a, b) => history.findIndex(item => item.id === a.id) - history.findIndex(item => item.id === b.id));
     const memory = memoryMessage(trial)!;
