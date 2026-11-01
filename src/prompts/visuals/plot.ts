@@ -29,6 +29,7 @@ Optional: description (at most 1200 characters), y {min, max, label?}, chartType
 - parameters: {name, label, min, max, step, value}. name is an ASCII identifier such as v0, at most 24 characters, and cannot be x, k, pi, e or a function name. label can use any characters and should include the unit.
 - outputs: {label, expression, unit?}. Use the exact labels from the request. Expressions use parameters only.
 - x.step must give at most 161 samples. Without it, the plot uses 161 samples.
+- Axis labels are at most 80 characters, series, parameter and output labels at most 100, a unit at most 40. points holds 2 to 161 pairs.
 
 Expression grammar, at most 300 characters: numbers, + - * / ^, parentheses, pi, e, and sin, cos, tan, exp, log, sqrt, abs, floor, ceil, round, min(a,b), max(a,b), pow(a,b), factorial(n) for whole n up to 170, binomial(n,x,p) which returns a probability, and sum(k,start,end,body) with at most 64 terms. No comparisons, strings, assignments or property access. A domain error appears as a gap in the curve.
 
