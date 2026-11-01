@@ -5,6 +5,11 @@
       "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
       "label": "Nemotron 3.5 Lightning",
       "chatTemplateKwargs": { "enable_thinking": false }
+    },
+    {
+      "id": "mistralai/mistral-large-4-1t-a52b",
+      "label": "Mistral Large 4",
+      "probeMaxTokens": 128
     }
   ]
 }

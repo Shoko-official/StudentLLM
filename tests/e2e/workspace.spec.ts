@@ -59,7 +59,7 @@ async function connectFixtureProvider(page: Page, content: string, status = 200)
   await page.route('**/fixture-provider/v1/chat/completions', (route) => route.fulfill({
     status,
     json: status === 200
-      ? { model: 'fixture-model', choices: [{ message: { content } }] }
+      ? { model: 'fixture-model', choices: [{ message: { content: route.request().postDataJSON()?.response_format?.json_schema?.name === 'teaching_answer' ? JSON.stringify({ sections: [{ markdown: content, visual: null }] }) : content } }] }
       : { error: { message: content } },
   }));
   await page.getByRole('button', { name: 'Settings', exact: true }).click();

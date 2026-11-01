@@ -103,6 +103,8 @@ The desktop app only talks to services on your own computer (`localhost` or `127
 
 ## 6. Asking questions and making study material
 
+Ask for an interactive visual explanation when it helps: a Taylor approximation with a degree slider, a binomial distribution with adjustable n/p, a weighted tree, a physical schematic or a quiz with a hint and correction. The assistant can place these beside its explanation and formulas. Sliders recalculate locally without another AI request. Answers are saved; slider positions and quiz attempts reset on reload. Generated curves and answer keys still need checking. See [teaching visuals](teaching-visuals.md) for capabilities and limits.
+
 - **Chat** answers from your notes and sources and shows chips under each answer. Click a chip to open the original source, at the right page when there is one. The conversation scrolls above a multiline question box: **Enter** sends, and **Shift+Enter** adds a line. The source count opens a shortcut to the course sources. If the model is not reachable you get a message saying so and your question stays in the box so you can send it again.
 - **Study** builds a summary, guide, quiz, flashcards, concept map or glossary from what the course contains. Nothing is saved if the model fails, and no empty placeholder is created.
 - Answers come from a model and can be wrong. Check important facts against the source chips.

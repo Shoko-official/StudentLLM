@@ -48,7 +48,7 @@ import type { PersistentStorageState, StorageEstimateInfo } from './lib/storage-
 import type { WorkspaceStorageError } from './lib/workspace-storage';
 import { createLocalLLMProvider } from './lib/llm-provider';
 import { DEFAULT_NIM_MODEL, NIM_MODELS, NIM_PROXY_BASE_URL, nimChatTemplateKwargs, probeNimModel } from './lib/nvidia-nim';
-import type { LLMProvider } from './lib/llm-provider';
+import type { LLMProvider, ProviderMessage } from './lib/llm-provider';
 import { classifyChatQuestion } from './lib/chat-intent';
 import { createLocalSpeechEngine } from './lib/speech-engine';
 import type { SpeechEngine } from './lib/speech-engine';
@@ -73,6 +73,8 @@ import { RetrievalDocument, searchDocumentsHybrid } from './lib/local-retrieval'
 import { RichText } from './lib/rich-text';
 import { CourseChat } from './lib/course-chat';
 import { VisualBlockView } from './lib/visual-blocks-view';
+import { TEACHING_VISUAL_PROMPT } from './lib/teaching-visual-prompt';
+import { generateTeachingAnswer } from './lib/teaching-answer';
 import { parseStudyArtifactResponse, studyArtifactResponseFormat } from './lib/study-artifacts';
 import { buildCourseNote, composeDocumentSourcesNote, courseNoteMarkdown, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider, hasDocumentSourceNote } from './lib/course-notes';
 import { analyzeQuickStart } from './lib/quick-start';
@@ -2029,7 +2031,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
             : `[${hit.document.metadata.timestamp}] ${hit.document.metadata.speaker}: ${hit.document.text}`;
         }).join('\n')
         : 'No relevant course excerpt matched the question.';
-      const result = await localProvider.generate([
+      const chatMessages: ProviderMessage[] = [
         {
           role: 'system',
           content: [
@@ -2043,6 +2045,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
             'Never claim that course evidence is unavailable when text is present.',
             'Preserve technical terms, notation, and formulas exactly when they appear in the evidence. Clearly distinguish general explanation from course-specific claims when both are present.',
             'Answer in clean GitHub-Flavored Markdown. Use headings, short paragraphs, lists, and fenced code blocks when useful. Use $...$ for inline math and $$...$$ on separate lines for display math. Never emit HTML or image Markdown.',
+            TEACHING_VISUAL_PROMPT,
             `Course: ${activeLesson.title}`,
             'BEGIN COURSE EVIDENCE',
             context,
@@ -2050,7 +2053,9 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           ].join('\n'),
         },
         { role: 'user', content: message },
-      ], { maxTokens: 2_048 });
+      ];
+      const options = { maxTokens: generalCreationRequest ? 8_192 : 4_096 };
+      const result = await generateTeachingAnswer(localProvider, chatMessages, options);
       updateActiveWorkspace((current) => ({
         ...current,
         chat: [...current.chat, {

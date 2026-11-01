@@ -29,6 +29,16 @@ const nvidiaOptions = (overrides = {}) => ({
   preferredPatterns: [/other/], prompt: 'Reply with OK.', ...overrides,
 });
 
+test('the Mistral profile shares the app bounded final-answer probe without unsupported thinking flags', async () => {
+  const model = 'mistralai/mistral-large-4-1t-a52b';
+  const fake = fakeProvider({ models: [model] });
+  const result = await testProvider(nvidiaOptions({ requestedModel: model }), fake);
+  assert.equal(result.sample, 'OK');
+  assert.equal(fake.calls[1].body.max_tokens, 128);
+  assert.equal(fake.calls[1].body.chat_template_kwargs, undefined);
+  assert.equal(fake.calls[1].body.reasoning_effort, undefined);
+});
+
 test('a catalog entry does not establish readiness when its completion is retired', async () => {
   const fake = fakeProvider({ completionStatus: 410 });
   await assert.rejects(testProvider(nvidiaOptions(), fake), /HTTP 410/);
