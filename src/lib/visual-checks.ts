@@ -1,7 +1,8 @@
 import { compileExpression, plotSampleXs, type TeachingVisual } from './teaching-visuals';
 import type { VisualBrief } from './visual-brief';
 
-// Labels and quiz answers come from two models: ignore case, accents, spacing and a decimal comma. Parameter names stay exact.
+// Labels and quiz answers come from two models: ignore case, spacing and a decimal comma. Readout labels and node names also ignore accents, because the brief and the built visual spell the same name differently. Quiz text keeps them (a/à, ou/où are different answers). Parameter names stay exact.
+const simplified = (value: string) => value.normalize('NFC').replace(/(\d),(\d)/g, '$1.$2').toLowerCase().trim().replace(/\s+/g, ' ');
 const normalized = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').replace(/(\d),(\d)/g, '$1.$2').toLowerCase().trim().replace(/\s+/g, ' ');
 
 type Plot = Extract<TeachingVisual, { type: 'plot' }>;
@@ -11,7 +12,15 @@ function plotProblems(visual: Plot, brief: VisualBrief) {
   const declared = visual.parameters ?? [];
   const outputs = visual.outputs ?? [];
   for (const name of brief.parameters ?? []) if (!declared.some((item) => item.name === name)) errors.push(`missing parameter "${name}"`);
-  for (const label of brief.outputs ?? []) if (!outputs.some((item) => normalized(item.label) === normalized(label))) errors.push(`missing readout "${label}"`);
+  const claimed = new Set<number>();
+  const labels = [...new Set(brief.outputs ?? [])];
+  const claim = (label: string, same: (item: string) => boolean) => {
+    const index = outputs.findIndex((item, at) => !claimed.has(at) && same(item.label));
+    if (index >= 0) claimed.add(index);
+    return index >= 0;
+  };
+  const unmatched = labels.filter((label) => !claim(label, (item) => item === label));
+  for (const label of unmatched) if (!claim(label, (item) => normalized(item) === normalized(label))) errors.push(`missing readout "${label}"`);
   const defaults = Object.fromEntries(declared.map((item) => [item.name, item.value]));
   for (const series of visual.series) {
     if (series.expression === undefined) continue;
@@ -19,7 +28,7 @@ function plotProblems(visual: Plot, brief: VisualBrief) {
     if (!plotSampleXs(visual.x).some((x) => Number.isFinite(compute?.({ ...defaults, x })))) errors.push(`series "${series.label}" has no finite value at the default parameters`);
   }
   for (const check of brief.checks ?? []) {
-    const output = outputs.find((item) => normalized(item.label) === normalized(check.output));
+    const output = outputs.find((item) => item.label === check.output) ?? outputs.find((item) => normalized(item.label) === normalized(check.output));
     if (!output) { if (!(brief.outputs ?? []).some((label) => normalized(label) === normalized(check.output))) errors.push(`missing readout "${check.output}"`); continue; }
     const undeclared = Object.keys(check.at).find((name) => !declared.some((item) => item.name === name));
     if (undeclared) { errors.push(`check on "${check.output}" uses undeclared parameter "${undeclared}"`); continue; }
@@ -42,9 +51,13 @@ export function checkVisualAgainstBrief(visual: TeachingVisual, brief: VisualBri
   }
   if (visual.type === 'quiz') {
     const errors: string[] = [];
-    if (new Set(visual.options.map(normalized)).size !== visual.options.length) errors.push('quiz options must be distinct');
+    if (new Set(visual.options.map(simplified)).size !== visual.options.length) errors.push('quiz options must be distinct');
     const keyed = visual.options[visual.answer];
-    if (brief.correctAnswer !== undefined && normalized(keyed) !== normalized(brief.correctAnswer)) errors.push(`the keyed option is "${keyed}", expected "${brief.correctAnswer}"`);
+    const expected = brief.correctAnswer;
+    if (expected !== undefined && simplified(keyed) !== simplified(expected)) {
+      const accentOnly = normalized(keyed) === normalized(expected) && !visual.options.some((option, index) => index !== visual.answer && normalized(option) === normalized(keyed));
+      if (!accentOnly) errors.push(`the keyed option is "${keyed}", expected "${expected}"`);
+    }
     return errors;
   }
   return [];
