@@ -13,6 +13,19 @@ const options = { maxTokens: 4096 };
 const providerFor = (content: string) => ({ supportsStructuredOutputs: true, generate: vi.fn<LLMProvider['generate']>(async () => ({ content, model: 'fixture-model' })) });
 
 describe('structured teaching generation', () => {
+  it('renders the complete plot when a dimensionless readout has a blank optional unit', async () => {
+    const visual = { type: 'plot', title: 'Taylor', x: { min: -2, max: 2 }, series: [{ label: 'Polynomial', expression: 'sum(k,0,n,x^k/factorial(k))' }], parameters: [{ name: 'n', label: 'Degree', min: 0, max: 8, step: 1, value: 2 }], outputs: [{ label: 'At one', expression: 'sum(k,0,n,1/factorial(k))', unit: ' ' }] };
+    const provider = providerFor(JSON.stringify({ sections: [{ markdown: 'A dimensionless approximation.', visual }] }));
+    const result = await generateTeachingAnswer(provider, messages, options);
+    expect(result.content).not.toContain('could not be displayed');
+    expect(result.content).not.toContain('"unit"');
+    const view = render(createElement(RichText, { content: result.content, allowTeachingVisuals: true }));
+    expect(view.getByRole('slider', { name: 'Degree' })).toHaveValue('2');
+    expect(view.container.querySelector('.teaching-outputs dd')).toHaveTextContent('2.5');
+    expect(provider.generate).toHaveBeenCalledTimes(1);
+    expect(visual.outputs[0].unit).toBe(' ');
+  });
+
   it('requests the strict schema once and preserves ordered prose and actual visualization objects', async () => {
     const provider = providerFor(JSON.stringify({ sections: [
       { markdown: '# Principle\n\nA connects to B.', visual: diagram },
