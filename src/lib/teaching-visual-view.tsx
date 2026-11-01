@@ -1,5 +1,5 @@
 import { useId, useMemo, useState } from 'react';
-import { compileExpression, type TeachingVisual } from './teaching-visuals';
+import { compileExpression, plotSampleXs, type TeachingVisual } from './teaching-visuals';
 import { RichText } from './rich-text';
 import './teaching-visual-view.css';
 
@@ -7,7 +7,6 @@ type Plot = Extract<TeachingVisual, { type: 'plot' }>;
 type Diagram = Extract<TeachingVisual, { type: 'diagram' }>;
 type Figure = Extract<TeachingVisual, { type: 'figure' }>;
 type Quiz = Extract<TeachingVisual, { type: 'quiz' }>;
-const SAMPLE_COUNT = 161;
 const DASHES = ['', '9 4', '3 4', '11 3 2 3'];
 
 function numberLabel(value: number) {
@@ -27,10 +26,7 @@ function PlotView({ visual }: { visual: Plot }) {
   // Four series, 161 samples each, and the evaluator's per-call budget bound the total work.
   const sampled = useMemo(() => visual.series.map((series, index) => ({
     label: series.label,
-    points: series.points ?? Array.from({ length: visual.x.step ? Math.min(SAMPLE_COUNT, Math.floor((visual.x.max - visual.x.min) / visual.x.step + 1e-9) + 1) : SAMPLE_COUNT }, (_, sample) => {
-      const x = visual.x.step ? visual.x.min + sample * visual.x.step : visual.x.min + sample / (SAMPLE_COUNT - 1) * (visual.x.max - visual.x.min);
-      return [x, functions[index]?.({ ...parameters, x }) ?? NaN] as [number, number];
-    }),
+    points: series.points ?? plotSampleXs(visual.x).map((x) => [x, functions[index]?.({ ...parameters, x }) ?? NaN] as [number, number]),
   })), [visual, functions, parameters]);
   const validPoint = ([x, y]: [number, number]) => Number.isFinite(x) && Number.isFinite(y) && Math.abs(y) < 1e100;
   const finiteValues = sampled.flatMap((series) => series.points.filter((point) => validPoint(point) && point[0] >= visual.x.min && point[0] <= visual.x.max).map(([, y]) => y));

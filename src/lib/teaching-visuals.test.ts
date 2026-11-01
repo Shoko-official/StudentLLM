@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileExpression, parseTeachingVisual } from './teaching-visuals';
+import { compileExpression, diagnoseTeachingVisual, parseTeachingVisual, plotSampleXs } from './teaching-visuals';
 
 const validPlot = {
   type: 'plot', title: 'Taylor', x: { min: -2, max: 2 },
@@ -156,5 +156,53 @@ describe('teaching visualization JSON contract', () => {
   it('rejects invalid or oversized answer choices', () => {
     const quiz = { type: 'quiz', title: 'Quiz', question: 'Which?', options: ['A', 'B'], answer: 1, explanation: 'B is correct.' };
     for (const change of [{ answer: -1 }, { answer: 2 }, { answer: 0.5 }, { options: ['A'] }, { options: Array(7).fill('A') }]) expect(parseTeachingVisual(JSON.stringify({ ...quiz, ...change }))).toBeNull();
+  });
+});
+
+describe('diagnoseTeachingVisual', () => {
+  const basePlot = { type: 'plot', title: 'T', x: { min: 0, max: 1 }, series: [{ label: 'y', expression: 'x' }] };
+  const errorsFor = (value: unknown) => diagnoseTeachingVisual(JSON.stringify(value)).errors.join(' | ');
+
+  it('returns the normalized visual and no errors for a valid object', () => {
+    const result = diagnoseTeachingVisual(JSON.stringify(basePlot));
+    expect(result.errors).toEqual([]);
+    expect(result.visual).toEqual(parseTeachingVisual(JSON.stringify(basePlot)));
+  });
+
+  it('reports invalid JSON and unknown types', () => {
+    expect(diagnoseTeachingVisual('{"type":').errors).toEqual(['the output is not valid JSON']);
+    expect(errorsFor({ type: 'mermaid', title: 'T' })).toContain('type must be plot, diagram, figure or quiz');
+  });
+
+  it('names undeclared variables, including x inside a readout', () => {
+    expect(errorsFor({ ...basePlot, series: [{ label: 'y', expression: 'a*x' }] })).toContain('series "y": expression uses undeclared names: a');
+    expect(errorsFor({ ...basePlot, outputs: [{ label: 'At x', expression: 'x+1' }] })).toContain('outputs "At x": expression uses undeclared names: x');
+  });
+
+  it('reports a bad function call, an off-grid slider and a missing series', () => {
+    expect(errorsFor({ ...basePlot, series: [{ label: 'y', expression: 'binomial(5,x)' }] })).toContain('series "y": expression cannot be parsed');
+    expect(errorsFor({ ...basePlot, parameters: [{ name: 'n', label: 'N', min: 0, max: 4, step: 1, value: 1.5 }] })).toContain('value must equal min plus a whole number of steps');
+    const { series: _series, ...withoutSeries } = basePlot;
+    expect(errorsFor(withoutSeries)).toContain('series needs 1 to 4 entries');
+  });
+
+  it('collects several errors in one pass so one repair can fix them together', () => {
+    const errors = diagnoseTeachingVisual(JSON.stringify({ ...basePlot, x: { min: 2, max: 1 }, series: [{ label: 'y', expression: 'a' }] })).errors;
+    expect(errors.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('reports diagram endpoints, figure bounds and quiz keys', () => {
+    expect(errorsFor({ type: 'diagram', title: 'T', nodes: [{ id: 'a', label: 'A' }], edges: [{ from: 'a', to: 'ss' }] })).toContain('edges[0]: to names unknown node "ss"');
+    expect(errorsFor({ type: 'figure', title: 'T', width: 300, height: 200, shapes: [{ type: 'circle', x: 10, y: 10, r: 50 }] })).toContain('shapes[0]');
+    expect(errorsFor({ type: 'quiz', title: 'T', question: 'Q?', options: ['A', 'B'], answer: 2, explanation: 'E' })).toContain('answer must be a zero-based index of options');
+  });
+});
+
+describe('plotSampleXs', () => {
+  it('samples 161 points by default and follows an explicit step', () => {
+    const continuous = plotSampleXs({ min: 0, max: 1 });
+    expect(continuous).toHaveLength(161);
+    expect(continuous.at(-1)).toBe(1);
+    expect(plotSampleXs({ min: 0, max: 20, step: 1 })).toHaveLength(21);
   });
 });
