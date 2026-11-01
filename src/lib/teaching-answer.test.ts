@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createElement } from 'react';
+import { render } from '@testing-library/react';
 import type { LLMProvider, ProviderMessage, ProviderResponse } from './llm-provider';
 import { generateTeachingAnswer, teachingAnswerResponseFormat, teachingAnswerSchema } from './teaching-answer';
+import { RichText } from './rich-text';
 
 const messages: ProviderMessage[] = [{ role: 'system', content: 'Teach accurately.' }, { role: 'user', content: 'Explain a visual concept.' }];
 const quiz = { type: 'quiz', title: 'Check', question: 'Which?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' };
@@ -80,12 +83,80 @@ describe('structured teaching generation', () => {
     }
   });
 
-  it('does not let visual fences inside prose bypass the structured visual field or count limit', async () => {
-    for (const markdown of ['```student-visual\n{}\n```', '> ~~~student-visual\n{}\n> ~~~']) {
+  it('retains a real-world redundant placeholder as inert code while rendering the typed visual', async () => {
+    const markdown = '## Pression\n\nÀ 10 m, la pression relative vaut 98100 Pa.\n\n```student-visual\n(voir bloc visuel ci-joint)\n```';
+    const provider = providerFor(JSON.stringify({ sections: [{ markdown, visual: diagram }] }));
+    const result = await generateTeachingAnswer(provider, messages, options);
+    expect(result.content).toContain('98100 Pa.');
+    expect(result.content).toContain('```text\n(voir bloc visuel ci-joint)\n```');
+    const { container, unmount } = render(createElement(RichText, { content: result.content, allowTeachingVisuals: true }));
+    expect(container.querySelectorAll('.teaching-visual')).toHaveLength(1);
+    expect(container.querySelector('pre code')).toHaveTextContent('(voir bloc visuel ci-joint)');
+    expect(provider.generate).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it('demotes prose visual fences in quoted, listed, tilde and escaped-language forms', async () => {
+    const raw = JSON.stringify({ ...diagram, title: 'Hidden visual' });
+    for (const markdown of [
+      '```student-visual\n' + raw + '\n```',
+      '> ~~~student-visual\n> ' + raw + '\n> ~~~',
+      '- ```student-visual\n  ' + raw + '\n  ```',
+      '```` \tstudent-visual metadata\n' + raw + '\n````',
+      '```student\\-visual\n' + raw + '\n```',
+      '```student&#45;visual\n' + raw + '\n```',
+      ...['student-visual&#32;metadata', 'student-visual&Tab;metadata', 'student-visual&NewLine;metadata', 'student-visual&#160;metadata', '&#32;student-visual', '&Tab;student-visual'].map((language) => '```' + language + '\n' + raw + '\n```'),
+    ]) {
       const provider = providerFor(JSON.stringify({ sections: [{ markdown, visual: null }] }));
-      await expect(generateTeachingAnswer(provider, messages, options)).rejects.toThrow('incomplete or invalid lesson response');
+      const result = await generateTeachingAnswer(provider, messages, options);
+      const { container, unmount } = render(createElement(RichText, { content: result.content, allowTeachingVisuals: true }));
+      expect(container.querySelectorAll('.teaching-visual')).toHaveLength(0);
+      expect(container.querySelector('pre code')).toHaveTextContent(raw);
+      expect(container.querySelector('pre code')).toHaveClass('language-text');
       expect(provider.generate).toHaveBeenCalledTimes(1);
+      unmount();
     }
+  });
+
+  it('preserves ordinary Python fence info and literal visual fences inside its body', async () => {
+    const markdown = 'Exemple 🧪\r\n\r\n````python linenos\r\nexample = """\r\n```student-visual\r\n{}\r\n```\r\n"""\r\nprint(example)\r\n````';
+    const provider = providerFor(JSON.stringify({ sections: [{ markdown, visual: null }] }));
+    const result = await generateTeachingAnswer(provider, messages, options);
+    expect(result.content).toBe(markdown);
+    const { container, unmount } = render(createElement(RichText, { content: result.content, allowTeachingVisuals: true }));
+    expect(container.querySelectorAll('.teaching-visual')).toHaveLength(0);
+    expect(container.querySelector('pre code')).toHaveClass('language-python');
+    expect(container.querySelector('pre code')).toHaveTextContent('```student-visual');
+    unmount();
+  });
+
+  it('finds actual visual fences after implicit quoted or list code-block endings and keeps CRLF offsets', async () => {
+    for (const markdown of [
+      '> ```python\r\n> print(1)\r\n\r\n```student-visual\r\n{}\r\n```',
+      '- Item\r\n  ```python\r\n  print(1)\r\n\r\n```student-visual\r\n{}\r\n```',
+    ]) {
+      const provider = providerFor(JSON.stringify({ sections: [{ markdown, visual: null }] }));
+      const result = await generateTeachingAnswer(provider, messages, options);
+      expect(result.content).toBe(markdown.replace('```student-visual', '```text'));
+      const { container, unmount } = render(createElement(RichText, { content: result.content, allowTeachingVisuals: true }));
+      expect(container.querySelectorAll('.teaching-visual')).toHaveLength(0);
+      expect(container.querySelector('pre code')).toHaveClass('language-python');
+      unmount();
+    }
+  });
+
+  it('does not let a valid visualization hidden in prose bypass the eight typed visual limit', async () => {
+    const provider = providerFor(JSON.stringify({ sections: [
+      { markdown: '```student-visual\n' + JSON.stringify(diagram) + '\n```', visual: null },
+      ...Array.from({ length: 9 }, () => ({ markdown: '', visual: quiz })),
+    ] }));
+    const result = await generateTeachingAnswer(provider, messages, options);
+    const { container, unmount } = render(createElement(RichText, { content: result.content, allowTeachingVisuals: true }));
+    expect(container.querySelectorAll('.teaching-visual')).toHaveLength(8);
+    expect(container.querySelector('pre code')).toHaveTextContent(JSON.stringify(diagram));
+    expect(result.content).toContain('This visualization could not be displayed.');
+    expect(provider.generate).toHaveBeenCalledTimes(1);
+    unmount();
   });
 
   it('propagates provider failure without a second generation', async () => {
