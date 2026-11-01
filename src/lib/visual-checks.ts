@@ -1,7 +1,8 @@
 import { compileExpression, plotSampleXs, type TeachingVisual } from './teaching-visuals';
 import type { VisualBrief } from './visual-brief';
 
-const normalized = (value: string) => value.trim().toLowerCase();
+// Labels and quiz answers come from two models: ignore case, accents, spacing and a decimal comma. Parameter names stay exact.
+const normalized = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').replace(/(\d),(\d)/g, '$1.$2').toLowerCase().trim().replace(/\s+/g, ' ');
 
 type Plot = Extract<TeachingVisual, { type: 'plot' }>;
 
@@ -10,7 +11,7 @@ function plotProblems(visual: Plot, brief: VisualBrief) {
   const declared = visual.parameters ?? [];
   const outputs = visual.outputs ?? [];
   for (const name of brief.parameters ?? []) if (!declared.some((item) => item.name === name)) errors.push(`missing parameter "${name}"`);
-  for (const label of brief.outputs ?? []) if (!outputs.some((item) => item.label === label)) errors.push(`missing readout "${label}"`);
+  for (const label of brief.outputs ?? []) if (!outputs.some((item) => normalized(item.label) === normalized(label))) errors.push(`missing readout "${label}"`);
   const defaults = Object.fromEntries(declared.map((item) => [item.name, item.value]));
   for (const series of visual.series) {
     if (series.expression === undefined) continue;
@@ -18,8 +19,8 @@ function plotProblems(visual: Plot, brief: VisualBrief) {
     if (!plotSampleXs(visual.x).some((x) => Number.isFinite(compute?.({ ...defaults, x })))) errors.push(`series "${series.label}" has no finite value at the default parameters`);
   }
   for (const check of brief.checks ?? []) {
-    const output = outputs.find((item) => item.label === check.output);
-    if (!output) { if (!(brief.outputs ?? []).includes(check.output)) errors.push(`missing readout "${check.output}"`); continue; }
+    const output = outputs.find((item) => normalized(item.label) === normalized(check.output));
+    if (!output) { if (!(brief.outputs ?? []).some((label) => normalized(label) === normalized(check.output))) errors.push(`missing readout "${check.output}"`); continue; }
     const undeclared = Object.keys(check.at).find((name) => !declared.some((item) => item.name === name));
     if (undeclared) { errors.push(`check on "${check.output}" uses undeclared parameter "${undeclared}"`); continue; }
     const actual = compileExpression(output.expression)?.({ ...defaults, ...check.at }) ?? NaN;
@@ -37,7 +38,7 @@ export function checkVisualAgainstBrief(visual: TeachingVisual, brief: VisualBri
   if (visual.type !== brief.type) return [`expected a ${brief.type}, received a ${visual.type}`];
   if (visual.type === 'plot') return plotProblems(visual, brief);
   if (visual.type === 'diagram') {
-    return (brief.nodes ?? []).filter((label) => !visual.nodes.some((node) => normalized(node.label) === normalized(label))).map((label) => `missing node labelled "${label}"`);
+    return (brief.nodes ?? []).filter((label) => !visual.nodes.some((node) => normalized(node.label) === normalized(label) || normalized(node.id) === normalized(label))).map((label) => `missing node labelled "${label}"`);
   }
   if (visual.type === 'quiz') {
     const errors: string[] = [];
