@@ -1089,3 +1089,11 @@ python benchmarks/run_asr_hf.py `
 ```
 
 The checkpoint is automatically loaded when it already exists. Its run metadata is validated before any examples are skipped, so a checkpoint cannot silently resume a different dataset, split, model, or runtime configuration. A `KeyboardInterrupt` also saves the latest aggregate state before exiting. Keep the checkpoint next to the raw result until the final result has been independently reviewed.
+
+## Tutor pipeline
+
+`tutor/run.mjs` compares the single-envelope pipeline with the two-step tutor pipeline on hosted models, using synthetic text only. It needs `NVIDIA_API_KEY` in the process environment, resumes from its results file and stops at its request cap. Keep `--out` outside Git. The gate criteria live in `tutor/evaluate.mjs` and were fixed before the first run.
+
+```bash
+node benchmarks/tutor/run.mjs --out ../tutor-bench/run-1 --holdouts ../tutor-bench/holdouts.json
+```
