@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { RichText } from './rich-text';
 
 describe('RichText', () => {
+  it('lets a conversation opt into keyboard scrolling for formulas, code and tables', () => {
+    const { container } = render(<RichText focusableScrollRegions content={'$$y=\\frac{x}{2}$$\n\n```text\na long code line\n```\n\n| A | B |\n| --- | --- |\n| one | two |'} />);
+    for (const selector of ['.katex-display', 'pre', 'table']) expect(container.querySelector(selector)).toHaveAttribute('tabindex', '0');
+    expect(container.querySelector('.katex-html')).toHaveAttribute('aria-hidden', 'true');
+  });
   it('renders GitHub-flavored Markdown, code, tables, and LaTeX together', () => {
     const { container } = render(<RichText content={'## Key ideas\n\n- Scale by $\\sqrt{d_k}$\n- Keep the source visible\n\n```ts\nconst answer = 42;\n```\n\n| Term | Value |\n| --- | ---: |\n| Batch | 32 |'} />);
 
