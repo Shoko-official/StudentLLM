@@ -1,5 +1,6 @@
 import type { ChatMessage } from '../types';
 import type { ProviderMessage } from './llm-provider';
+import { redactContextImages } from './context-text';
 import { CONTEXT_DATA_INSTRUCTIONS, CONVERSATION_MEMORY_INSTRUCTIONS } from '../prompts';
 import { retrievalTerms, searchDocuments, searchDocumentsHybrid, SEMANTIC_CANDIDATE_LIMIT, type RetrievalDocument, type RetrievalEmbedder } from './local-retrieval';
 
@@ -10,6 +11,7 @@ export interface ChatContextInput {
   systemPrompt: string;
   course?: { title: string; subject: string; chapter: string };
   purpose?: 'question' | 'overview';
+  redactImages?: boolean;
   contextWindowTokens: number;
   outputTokens: number;
   schemaTokens?: number;
@@ -181,6 +183,13 @@ function distributedOverview(chunks: RetrievalDocument[]) {
 
 export async function buildChatContext(input: ChatContextInput): Promise<ChatContextResult> {
   cancelled(input.signal);
+  if (input.redactImages) input = {
+    ...input,
+    documents: input.documents.map(document => ({ ...document, text: redactContextImages(document.text), metadata: Object.fromEntries(Object.entries(document.metadata).map(([key, value]) => [key, redactContextImages(value)])) })),
+    history: input.history.map(message => ({ ...message, content: redactContextImages(message.content) })),
+    question: redactContextImages(input.question),
+    course: input.course && { title: redactContextImages(input.course.title), subject: redactContextImages(input.course.subject), chapter: redactContextImages(input.course.chapter) },
+  };
   const windowTokens = Math.floor(input.contextWindowTokens), outputTokens = Math.ceil(input.outputTokens), schemaTokens = Math.max(0, Math.ceil(input.schemaTokens ?? 0));
   if (!Number.isFinite(windowTokens) || !Number.isFinite(outputTokens) || windowTokens < 128 || outputTokens < 1 || !Number.isFinite(schemaTokens)) throw new Error('Configure a valid context window and output budget.');
   const reserve = Math.max(64, Math.ceil(windowTokens * .1));

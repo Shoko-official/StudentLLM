@@ -30,6 +30,8 @@ export interface LLMProvider {
   embed?: (inputs: string[]) => Promise<number[][]>;
   supportsStructuredOutputs?: boolean;
   contextWindowTokens?: number;
+  /** Enforce the separate image-consent boundary on transient text copies before splitting. */
+  redactEmbeddedImages?: boolean;
 }
 
 export interface OpenAICompatibleProviderOptions {

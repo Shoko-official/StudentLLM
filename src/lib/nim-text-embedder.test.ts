@@ -37,6 +37,8 @@ describe('NIM text retrieval embeddings', () => {
     const fetchImpl = vi.fn<typeof fetch>();
     const embedder = new NimTextEmbedder({ fetchImpl, minIntervalMs: 0 });
     await expect(embedder.embedDocuments(['data:image/png;base64,abc'])).rejects.toThrow(/text only/i);
+    await expect(embedder.embedDocuments(['data&#58;image&#47;png;base64,abc'])).rejects.toThrow(/text only/i);
+    await expect(embedder.embedDocuments(['<svg><path d="private-vector" /></svg>'])).rejects.toThrow(/text only/i);
     await expect(embedder.embedDocuments(['<img src="https://example.org/a.png">'])).rejects.toThrow(/text only/i);
     await expect(embedder.embedDocuments(Array(33).fill('text'))).rejects.toThrow(/32/);
     expect(fetchImpl).not.toHaveBeenCalled();

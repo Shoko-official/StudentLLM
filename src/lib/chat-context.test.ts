@@ -167,4 +167,26 @@ describe('chat context selection', () => {
     const ordinary = await buildChatContext({ ...base, documents: docs, history: [], question: 'Guide', contextWindowTokens: 5000 });
     expect(ordinary.evidence.some(item => item.id === 'end-source')).toBe(false);
   });
+
+  it('redacts image payloads before source splitting, history compaction, and metadata or question packing', async () => {
+    const payload = 'PRIVATEIMAGEBYTES'.repeat(4000);
+    const image = `![Pressure diagram](data:image/png;base64,${payload})`;
+    const docs = [document('source', `Before source ${image} after source.`, { resourceName: 'Before metadata <svg><path d="M1 2"/></svg> after metadata' })];
+    const history: ChatMessage[] = [{ id: 'old-user', role: 'user', content: `Before history ${image} after history.` }];
+    const question = `Explain this ${image} please.`;
+    const context = await buildChatContext({ ...base, documents: docs, history, question, course: { title: image, subject: 'Physics', chapter: 'Fluids' }, redactImages: true });
+    const packed = JSON.stringify(context.messages);
+    expect(packed).not.toContain('PRIVATEIMAGEBYTES');
+    expect(packed).not.toContain('data:image');
+    expect(packed).not.toContain('<svg');
+    expect(context.mode).toBe('full');
+    expect(context.compressedMessages).toBe(0);
+    expect(context.evidence[0]).toMatchObject({ id: 'source', text: 'Before source ![Pressure diagram]([image payload omitted]) after source.' });
+    expect(context.messages).toContainEqual({ role: 'user', content: 'Before history ![Pressure diagram]([image payload omitted]) after history.' });
+    expect(context.messages.at(-1)?.content).toBe('Explain this ![Pressure diagram]([image payload omitted]) please.');
+    expect(docs[0].text).toContain(payload);
+    expect(history[0].content).toContain(payload);
+    const unchanged = await buildChatContext({ ...base, documents: [], history: [], question: '![Known](data:image/png;base64,AAAA)' });
+    expect(unchanged.messages.at(-1)?.content).toBe('![Known](data:image/png;base64,AAAA)');
+  });
 });

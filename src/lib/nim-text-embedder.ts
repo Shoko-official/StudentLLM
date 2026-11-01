@@ -1,5 +1,6 @@
 import config from './nvidia-nim-models.json';
 import { readJsonResponse } from './response-json';
+import { hasEmbeddedImages } from './context-text';
 
 export const NIM_TEXT_EMBEDDING_MODEL = config.embeddingModel;
 
@@ -29,7 +30,7 @@ export class NimTextEmbedder {
     if (!inputs.length) return Promise.resolve([]);
     if (inputs.length > 32) return Promise.reject(new Error('Text embedding batches are limited to 32 passages.'));
     if (inputs.some(input => typeof input !== 'string' || !input.trim() || new TextEncoder().encode(input).length > 32_768)) return Promise.reject(new Error('Text embedding input is empty or too large.'));
-    if (inputs.some(input => /data:image\/|<img\b/i.test(input))) return Promise.reject(new Error('Retrieval embeddings accept text only; image analysis requires its separate consent.'));
+    if (inputs.some(input => hasEmbeddedImages(input) || /<img\b/i.test(input))) return Promise.reject(new Error('Retrieval embeddings accept text only; image analysis requires its separate consent.'));
     const result = this.queue.then(() => this.run(inputs, mode, options));
     this.queue = result.catch(() => undefined);
     return result;

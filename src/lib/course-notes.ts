@@ -5,6 +5,7 @@ import { normalizeDocumentLine, normalizeExtractedDocumentText } from './documen
 import { isExtractedMathSourceLine } from './extracted-math';
 import { parseVisualEnvelope, type VisualBlock } from './visual-blocks';
 import { groupTranscript, speakerLabel } from './live-transcript';
+import { redactContextImages } from './context-text';
 import { COURSE_DETECTION_PROMPT, DOCUMENT_NOTES_PROMPT, TRANSCRIPT_NOTES_PROMPT, courseDetectionInput, documentReconstructionInput } from '../prompts';
 
 export const DOCUMENT_NOTE_LAYOUT_VERSION = 'layout-v11';
@@ -579,19 +580,30 @@ export async function formatCourseNoteWithProvider(
 ): Promise<CourseNote> {
   const fallback = buildCourseNote(lesson, transcript, now);
   if (!provider || !transcript.length) return fallback;
+  // Keep originals for local fallback; redact complete fields before batching can split an image representation.
+  const sourceSegments = new Map(transcript.map((segment) => [segment, provider.redactEmbeddedImages ? {
+    ...segment,
+    text: redactContextImages(segment.text),
+    speaker: redactContextImages(segment.speaker),
+    timestamp: redactContextImages(segment.timestamp),
+  } : segment]));
   // Process all passages, sequentially, instead of silently truncating long lectures.
   const batches: TranscriptSegment[][] = [[]];
   let batchSize = 0;
   for (const segment of transcript) {
-    if (batchSize + segment.text.length > 6000 && batches.at(-1)!.length) { batches.push([]); batchSize = 0; }
+    const sourceLength = sourceSegments.get(segment)!.text.length;
+    if (batchSize + sourceLength > 6000 && batches.at(-1)!.length) { batches.push([]); batchSize = 0; }
     batches.at(-1)!.push(segment);
-    batchSize += segment.text.length;
+    batchSize += sourceLength;
   }
   const generated: CourseNoteBlock[] = [];
   let model = '';
   for (const batch of batches) {
     if (signal?.aborted) return fallback;
-    const evidence = batch.map((segment) => `SOURCE ${segment.id} | ${segment.timestamp}${speakerLabel(segment.speaker) ? ` | ${segment.speaker}` : ''}\n${segment.text}`).join('\n\n');
+    const evidence = batch.map((original) => {
+      const segment = sourceSegments.get(original)!;
+      return `SOURCE ${segment.id} | ${segment.timestamp}${speakerLabel(segment.speaker) ? ` | ${segment.speaker}` : ''}\n${segment.text}`;
+    }).join('\n\n');
     try {
       const result = await provider.generate([
         {
@@ -657,23 +669,30 @@ export async function formatDocumentCourseNoteWithProvider(
 ): Promise<CourseNote> {
   const fallback = buildDocumentCourseNote(lesson, pages, sourceName, now);
   if (!provider || !pages.length) return fallback;
-  const evidence = pages
+  const requestSourceName = provider.redactEmbeddedImages ? redactContextImages(sourceName) : sourceName;
+  const sourcePages = provider.redactEmbeddedImages ? pages.map((page) => ({
+    ...page,
+    text: redactContextImages(page.text),
+    blocks: page.blocks.map((block) => ({ ...block, text: redactContextImages(block.text) })),
+  })) : pages;
+  const evidence = sourcePages
     .slice()
     .sort((left, right) => left.pageNumber - right.pageNumber)
-    .map((page) => `SOURCE ${sourceName}:page-${page.pageNumber} | PAGE ${page.pageNumber}\n${page.blocks.length ? page.blocks.slice().sort((left, right) => left.y - right.y || left.x - right.x).map((block) => block.text).join('\n') : page.text}`)
+    .map((page) => `SOURCE ${requestSourceName}:page-${page.pageNumber} | PAGE ${page.pageNumber}\n${page.blocks.length ? page.blocks.slice().sort((left, right) => left.y - right.y || left.x - right.x).map((block) => block.text).join('\n') : page.text}`)
     .join('\n\n')
     .slice(0, 60_000);
-  const sourceIds = new Set(pages.map((page) => `${sourceName}:page-${page.pageNumber}`));
+  const originalSourceIds = new Map(pages.map((page) => [`${requestSourceName}:page-${page.pageNumber}`, `${sourceName}:page-${page.pageNumber}`]));
   try {
     const result = await provider.generate([
       {
         role: 'system',
         content: DOCUMENT_NOTES_PROMPT,
       },
-      { role: 'user', content: documentReconstructionInput(sourceName, evidence) },
+      { role: 'user', content: documentReconstructionInput(requestSourceName, evidence) },
     ], { responseFormat: documentMarkdownResponseFormat, maxTokens: 8_192 });
-    const parsed = parseDocumentResult(result.content, sourceIds);
+    const parsed = parseDocumentResult(result.content, new Set(originalSourceIds.keys()));
     if (!parsed) return fallback;
+    const visuals = parsed.visuals.map((visual) => ({ ...visual, sourceId: originalSourceIds.get(visual.sourceId)! }));
     return {
       ...fallback,
       updatedAt: now(),
@@ -681,7 +700,7 @@ export async function formatDocumentCourseNoteWithProvider(
       blocks: [
         ...fallback.blocks.filter((block) => block.id === 'note-title' || block.id === 'document-source-title' || block.id === 'note-context'),
         { id: 'document-semantic-markdown', type: 'markdown', markdown: parsed.markdown, sourceName },
-        ...parsed.visuals.map((visual, index) => ({ id: `document-visual-${index}`, type: 'visual' as const, visual, sourceId: visual.sourceId })),
+        ...visuals.map((visual, index) => ({ id: `document-visual-${index}`, type: 'visual' as const, visual, sourceId: visual.sourceId })),
       ],
     };
   } catch {
@@ -690,11 +709,17 @@ export async function formatDocumentCourseNoteWithProvider(
 }
 
 export async function detectCourseWithProvider(lesson: Lesson, transcript: TranscriptSegment[], provider: LLMProvider): Promise<CourseNote | null> {
-  const excerpt = transcript.slice(-12).map((segment) => `${segment.timestamp} ${segment.text}`).join('\n');
+  const sourceTranscript = provider.redactEmbeddedImages ? transcript.map((segment) => ({
+    ...segment, timestamp: redactContextImages(segment.timestamp), text: redactContextImages(segment.text),
+  })) : transcript;
+  const sourceLesson = provider.redactEmbeddedImages ? {
+    ...lesson, title: redactContextImages(lesson.title), subject: redactContextImages(lesson.subject), chapter: redactContextImages(lesson.chapter),
+  } : lesson;
+  const excerpt = sourceTranscript.slice(-12).map((segment) => `${segment.timestamp} ${segment.text}`).join('\n');
   if (!excerpt.trim()) return null;
   const result = await provider.generate([
     { role: 'system', content: COURSE_DETECTION_PROMPT },
-    { role: 'user', content: courseDetectionInput(lesson, excerpt) },
+    { role: 'user', content: courseDetectionInput(sourceLesson, excerpt) },
   ]);
   const match = result.content.match(/\{[\s\S]*\}/);
   if (!match) return null;

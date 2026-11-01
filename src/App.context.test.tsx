@@ -90,3 +90,27 @@ it('opens a notes context link after its course identifier changed during transf
   await user.click(screen.getByRole('button', { name: 'Course notes' }));
   expect(screen.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'true');
 });
+
+it('omits embedded image bytes before splitting cloud context while preserving the original source', async () => {
+  localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(createFixtureWorkspace()));
+  const source = 'Before the figure.\n\n![SCHEMA_ALT](data:image/png;base64,' + 'QUJD'.repeat(1800) + 'VISIBLEIMAGEPAYLOADMARKER)\n\nAfter the figure.';
+  const file = new File([source], 'embedded-image.md', { type: 'text/markdown' });
+  const blobs = new Map<string, Blob>();
+  const sourceBlobStore = { durability: 'durable' as const, save: async (id: string, blob: Blob) => { blobs.set(id, blob); }, load: async (id: string) => blobs.get(id) ?? null, remove: async () => {} };
+  const generate = vi.fn(async (_messages: ProviderMessage[]) => ({ content: 'A useful text explanation.', model: 'cloud-text-test' }));
+  const user = userEvent.setup();
+  render(<App provider={{ generate, redactEmbeddedImages: true }} sourceBlobStore={sourceBlobStore} />);
+  await user.upload(screen.getByLabelText('Select course source'), file);
+  await waitFor(() => expect(blobs.size).toBe(1));
+  await user.click(screen.getByRole('tab', { name: 'Chat' }));
+  await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), 'Explain the text around the figure.');
+  await user.click(screen.getByRole('button', { name: 'Send' }));
+  expect(await screen.findByText('A useful text explanation.')).toBeInTheDocument();
+  const outbound = JSON.stringify(generate.mock.calls);
+  expect(outbound).not.toContain('VISIBLEIMAGEPAYLOADMARKER');
+  expect(outbound).not.toContain('QUJDQUJD');
+  expect(outbound).toContain('SCHEMA_ALT');
+  expect(outbound).toContain('Before the figure.'); expect(outbound).toContain('After the figure.');
+  expect([...blobs.values()][0]).toBe(file);
+  expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toContain('VISIBLEIMAGEPAYLOADMARKER');
+});

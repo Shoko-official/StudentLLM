@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from '../../src/test/workspace-fixture';
+import { savedWorkspace } from './workspace-store';
 
 test('full context retains later sources and exact dialogue while generated plots remain interactive', async ({ page }) => {
   const workspace = createFixtureWorkspace();
@@ -44,4 +45,53 @@ test('full context retains later sources and exact dialogue while generated plot
   await slider.focus(); await slider.press('ArrowRight');
   await expect(slider).toHaveValue('2');
   expect(requests).toHaveLength(1);
+});
+
+test('NIM text requests omit embedded image payloads while the imported original stays intact', async ({ page }) => {
+  await page.addInitScript(value => localStorage.setItem('studentllm.workspace.v1', JSON.stringify(value)), createFixtureWorkspace());
+  const requests: unknown[] = [];
+  const model = 'nvidia/nemotron-3.5-lightning-30b-a3b';
+  await page.route('**/nvidia-nim/v1/models', route => route.fulfill({ json: { data: [{ id: model }] } }));
+  await page.route('**/nvidia-nim/v1/chat/completions', route => {
+    const request = route.request().postDataJSON();
+    requests.push(request);
+    const content = request.response_format?.json_schema?.name === 'teaching_answer'
+      ? JSON.stringify({ sections: [{ markdown: 'The surrounding text is available.', visual: null }] })
+      : request.messages.some((message: { content: string }) => message.content === 'Reply exactly OK.') ? 'OK' : JSON.stringify({ blocks: [] });
+    return route.fulfill({ json: { model, choices: [{ finish_reason: 'stop', message: { content } }] } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByLabel('AI provider').selectOption('nvidia-nim');
+  await page.getByRole('button', { name: 'Save connections' }).click();
+  await expect(page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('status')).toContainText(`Connected. ${model} answered the connection test.`);
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  const source = 'Before the figure.\n\n![VISIBLE_ALT](data:image/png;base64,' + 'QUJD'.repeat(1800) + 'BROWSERIMAGEPAYLOADMARKER)\n\nAfter the figure.';
+  await page.getByLabel('Select course source').setInputFiles({ name: 'embedded-image.md', mimeType: 'text/markdown', buffer: Buffer.from(source) });
+  await expect(page.getByRole('region', { name: 'Course notes document' })).toContainText('Before the figure.');
+  await page.getByRole('tab', { name: 'Chat', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Ask the course chat' }).fill('Explain the text around the figure.');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect(page.getByText('The surrounding text is available.', { exact: true })).toBeVisible();
+  const outbound = JSON.stringify(requests);
+  expect(outbound).not.toContain('BROWSERIMAGEPAYLOADMARKER'); expect(outbound).not.toContain('QUJDQUJD');
+  expect(outbound).toContain('VISIBLE_ALT'); expect(outbound).toContain('After the figure.');
+  const saved = await savedWorkspace(page);
+  expect(JSON.stringify(saved.lessonWorkspaces[FIXTURE_LESSON_ID].transcript)).toContain('BROWSERIMAGEPAYLOADMARKER');
+  const blobIsOriginal = await page.evaluate(async expected => {
+    return new Promise<boolean>((resolve, reject) => {
+      const request = indexedDB.open('studentllm-sources', 1);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const read = db.transaction('source-blobs', 'readonly').objectStore('source-blobs').getAll();
+        read.onsuccess = async () => {
+          const texts = await Promise.all(read.result.map((record: { blob: Blob }) => record.blob.text()));
+          db.close(); resolve(texts.includes(expected));
+        };
+        read.onerror = () => { db.close(); reject(read.error); };
+      };
+    });
+  }, source);
+  expect(blobIsOriginal).toBe(true);
 });

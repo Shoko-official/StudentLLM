@@ -79,6 +79,7 @@ import { CHAT_ASSISTANT_PROMPT, STUDY_ASSISTANT_PROMPT, STRUCTURED_TEACHING_CONT
 import { buildChatContext, estimateContextTokens } from './lib/chat-context';
 import { NimTextEmbedder } from './lib/nim-text-embedder';
 import { contextOutputTokens, parseContextWindow, resolveContextWindow } from './lib/model-context';
+import { redactContextImages } from './lib/context-text';
 import { parseStudyArtifactResponse, studyArtifactResponseFormat } from './lib/study-artifacts';
 import { buildCourseNote, composeDocumentSourcesNote, courseNoteMarkdown, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider, hasDocumentSourceNote } from './lib/course-notes';
 import { analyzeQuickStart } from './lib/quick-start';
@@ -640,13 +641,21 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   const semanticReviewRunning = useRef(false);
   const [semanticReviewTick, setSemanticReviewTick] = useState(0);
   const localProvider = useMemo<LLMProvider | null>(() => {
-    if (provider !== undefined) return provider;
+    const protectImageConsent = (selected: LLMProvider | null): LLMProvider | null => {
+      if (!selected || (!usesNim(serviceSettings) && !selected.redactEmbeddedImages)) return selected;
+      return {
+        supportsStructuredOutputs: selected.supportsStructuredOutputs,
+        contextWindowTokens: selected.contextWindowTokens,
+        redactEmbeddedImages: true,
+        generate: (messages, options) => selected.generate(messages.map(message => ({ ...message, content: redactContextImages(message.content) })), options),
+      };
+    };
+    if (provider !== undefined) return protectImageConsent(provider);
     const connection = llmConnection(serviceSettings);
     if (!connection.baseUrl) return null;
     const created = createLocalLLMProvider({ MODE: import.meta.env.MODE, VITE_LM_STUDIO_AUTO_CONNECT: connectionsEnabled ? 'true' : import.meta.env.VITE_LM_STUDIO_AUTO_CONNECT, VITE_LM_STUDIO_BASE_URL: connection.baseUrl, VITE_LM_STUDIO_MODEL: connection.model }, usesNim(serviceSettings) ? { chatTemplateKwargs: nimChatTemplateKwargs(connection.model) } : {});
     // NIM text retrieval uses its dedicated embedding model, not the selected generation model.
-    if (created && usesNim(serviceSettings)) return { generate: created.generate.bind(created), supportsStructuredOutputs: created.supportsStructuredOutputs };
-    return created;
+    return protectImageConsent(created);
   }, [provider, serviceSettings, connectionsEnabled]);
   const retrievalEmbedder = useMemo(() => {
     if (!localProvider) return null;
@@ -1721,7 +1730,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     const resourceNames = new Map(resources.map((resource) => [resource.id, resource.name]));
     const retrievalDocuments: RetrievalDocument[] = transcript.map((segment) => ({
       id: segment.id,
-      text: segment.text,
+      text: localProvider?.redactEmbeddedImages ? redactContextImages(segment.text) : segment.text,
       metadata: {
         timestamp: segment.timestamp,
         speaker: segment.speaker,
@@ -1737,7 +1746,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         const blob = await sourceBlobStore.load(resource.id);
         const text = await blob?.text();
         if (text?.trim()) {
-          chunkSourceText(text).forEach((chunk) => retrievalDocuments.push({
+          chunkSourceText(localProvider?.redactEmbeddedImages ? redactContextImages(text) : text).forEach((chunk) => retrievalDocuments.push({
             id: `${resource.id}:${chunk.index}`,
             text: chunk.text,
             metadata: { resourceName: resource.name, resourceId: resource.id, part: String(chunk.index + 1), startLine: String(chunk.startLine) },
@@ -1749,7 +1758,8 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     }
     const note = lessonWorkspaces[activeLessonId]?.courseNote;
     if (note) {
-      chunkSourceText(courseNoteMarkdown(note)).forEach(chunk => retrievalDocuments.push({
+      const text = courseNoteMarkdown(note);
+      chunkSourceText(localProvider?.redactEmbeddedImages ? redactContextImages(text) : text).forEach(chunk => retrievalDocuments.push({
         id: `note:${activeLessonId}:${chunk.index}`,
         text: chunk.text,
         metadata: { resourceName: 'Course notes', kind: 'derived-course-note', part: String(chunk.index + 1), startLine: String(chunk.startLine) },
@@ -2048,6 +2058,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         contextWindowTokens: windowTokens, outputTokens: maxTokens,
         schemaTokens: localProvider.supportsStructuredOutputs ? estimateContextTokens(JSON.stringify(teachingAnswerSchema)) + estimateContextTokens(STRUCTURED_TEACHING_CONTRACT) + 32 : 0,
         embedder: retrievalEmbedder,
+        redactImages: localProvider.redactEmbeddedImages,
       });
       const result = await generateTeachingAnswer(localProvider, prepared.messages, { maxTokens });
       const sourceDocuments = relatedContextLinks(prepared.evidence, message);
@@ -2105,6 +2116,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         contextWindowTokens: windowTokens, outputTokens: maxTokens,
         schemaTokens: localProvider.supportsStructuredOutputs ? estimateContextTokens(JSON.stringify(studyArtifactResponseFormat)) + 32 : 0,
         embedder: retrievalEmbedder,
+        redactImages: localProvider.redactEmbeddedImages,
       });
       const evidenceDocuments = prepared.evidence;
       const contextLinks = relatedContextLinks(evidenceDocuments, studyMaterialRequest(definition.label));

@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 import nimModels from '../src/lib/nvidia-nim-models.json' with { type: 'json' };
+import { hasEmbeddedImages } from '../src/lib/context-text.ts';
 
 export const NIM_PROXY_PREFIX = '/nvidia-nim/v1';
 // Fixed on purpose: the credential must never be forwarded to a configurable host.
@@ -92,7 +93,7 @@ function validateEmbeddingBody(raw: string) {
   const body = value as Record<string, unknown>;
   const keys = new Set(['model', 'input', 'input_type', 'modality', 'dimensions', 'encoding_format', 'embedding_type', 'truncate']);
   if (Object.keys(body).some(key => !keys.has(key)) || body.model !== nimModels.embeddingModel || !['query', 'passage'].includes(String(body.input_type)) || body.modality !== 'text' || body.dimensions !== 512 || body.encoding_format !== 'float' || body.embedding_type !== 'float' || body.truncate !== 'NONE'
-    || !Array.isArray(body.input) || body.input.length < 1 || body.input.length > 32 || body.input.some(input => typeof input !== 'string' || !input.trim() || Buffer.byteLength(input, 'utf8') > 32_768 || /data:image\/|<img\b/i.test(input))) {
+    || !Array.isArray(body.input) || body.input.length < 1 || body.input.length > 32 || body.input.some(input => typeof input !== 'string' || !input.trim() || Buffer.byteLength(input, 'utf8') > 32_768 || hasEmbeddedImages(input) || /<img\b/i.test(input))) {
     throw new ProxyError(400, 'bad_request', 'Only bounded text retrieval embeddings are supported.');
   }
   return raw;

@@ -129,7 +129,7 @@ describe('NVIDIA NIM dev proxy', () => {
     const fetchImpl = upstreamOk();
     const port = await startProxy({ readKey: () => TEST_KEY, fetchImpl });
     const valid = { model: 'nvidia/nemotron-3.5-embed-1b', input: ['text'], input_type: 'query', modality: 'text', dimensions: 512, encoding_format: 'float', embedding_type: 'float', truncate: 'NONE' };
-    for (const patch of [{ input: ['data:image/png;base64,AA'] }, { input: ['<img src="image.png">'] }, { input: Array(33).fill('text') }, { input: ['x'.repeat(32769)] }, { input: [{ image: 'image.png' }] }, { input_type: 'other' }, { modality: 'image' }, { model: 'different-model' }, { truncate: 'END' }, { dimensions: 2048 }, { extra: 'https://other.example' }]) {
+    for (const patch of [{ input: ['data:image/png;base64,AA'] }, { input: ['data&#58;image&#47;png;base64,AA'] }, { input: ['<svg><path d="private-vector" /></svg>'] }, { input: ['<img src="image.png">'] }, { input: Array(33).fill('text') }, { input: ['x'.repeat(32769)] }, { input: [{ image: 'image.png' }] }, { input_type: 'other' }, { modality: 'image' }, { model: 'different-model' }, { truncate: 'END' }, { dimensions: 2048 }, { extra: 'https://other.example' }]) {
       expect((await send(port, '/embeddings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...valid, ...patch }) })).status).toBe(400);
     }
     expect(fetchImpl).not.toHaveBeenCalled();
