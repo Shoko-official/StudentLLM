@@ -139,7 +139,8 @@ const [{ OpenAICompatibleProvider }, { buildChatContext, estimateContextTokens }
 ]);
 
 // Nothing is sent before every case can be scored.
-const topKeys = objectForm ? Object.keys(holdouts).filter((name) => !['quality', 'rate'].includes(name)).map((name) => `the holdouts object has an unknown key ${name}`) : [];
+// A key name could be a pasted question: report its position, never the name.
+const topKeys = objectForm ? Object.keys(holdouts).flatMap((name, index) => (['quality', 'rate'].includes(name) ? [] : [`the holdouts object has an unknown key (position ${index + 1})`])) : [];
 const problems = [...validateCases(cases.quality, { allowSplit: true }), ...validateCases(holdoutCases, { taken: cases.quality.map((item) => item.id) }), ...topKeys, ...rateErrors];
 if (problems.length) fail(['The cases cannot be scored, so nothing was sent:', ...problems.map((problem) => `  ${problem}`)].join('\n'));
 if (dryRun) { await server.close(); process.exit(0); }
@@ -152,7 +153,7 @@ if (rerunWaitOverridden) invalidations.push('run with TUTOR_RERUN_WAIT_MS: not t
 if (missingHoldouts(expected)) {
   // gate.json says so as well, so a gate left in this directory by an earlier run cannot be read as the answer.
   const gate = decideGate(stored, expected, { invalidations });
-  save('gate.json', JSON.stringify({ ...gate, dirty, allowDirty, customCases, posts: lineCount(ledgerPath), cells: stored.length, expected: expected.length, pendingFailures: 0, stopped: null, skippedModels: [] }, null, 2));
+  save('gate.json', JSON.stringify({ ...gate, dirty, allowDirty, customCases, hiddenRate: hidden, posts: lineCount(ledgerPath), cells: stored.length, expected: expected.length, pendingFailures: 0, stopped: null, skippedModels: [] }, null, 2));
   console.log(JSON.stringify({ pass: false, incomplete: true, reasons: ['no holdouts'] }));
   await server.close();
   process.exit(2);
@@ -166,17 +167,21 @@ for (const path of [join(out, 'run.lock'), join(parent, 'run.lock')]) {
   catch { fail(`Another run holds ${path}. Remove it only if no run is active.`); }
 }
 
-// The hash of the parsed holdouts, keys sorted: a trailing space, a reformat or a key order cannot hide a reuse.
+// Hashes of the parsed holdouts, keys sorted: a trailing space, a reformat or a key order cannot hide a reuse.
+// holdoutsHash covers the quality cases only, in both file forms; the hidden rate questions have their own hash, order of a group ignored.
 const canonical = (value) => JSON.stringify(value, (_, item) => (item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => (a < b ? -1 : 1))) : item));
-const holdoutsHash = sha256(canonical(holdouts));
+const holdoutsHash = sha256(canonical(holdoutCases));
+const rateHash = hidden ? sha256(canonical(Object.fromEntries(Object.entries(holdouts.rate).map(([name, list]) => [name, [...list].sort()])))) : undefined;
 const register = readRows(runsPath);
 const earlier = register.find((item) => item.holdoutsHash === holdoutsHash && item.out !== target);
 if (earlier) fail(`These holdouts were already used by ${earlier.out}. A second run on the same holdouts is not allowed: write new holdouts. If that run made no measurement at all, delete its line from ${runsPath}.`);
+const earlierRate = rateHash && register.find((item) => item.rateHash === rateHash && item.out !== target);
+if (earlierRate) fail(`These hidden rate questions were already used by ${earlierRate.out}. A second run on the same questions is not allowed: write new ones. If that run made no measurement at all, delete its line from ${runsPath}.`);
 
 const filesIn = (dir) => readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1)).flatMap((entry) => (entry.isDirectory() ? filesIn(join(dir, entry.name)) : [join(dir, entry.name)]));
 const promptsDir = join(process.cwd(), 'src', 'prompts');
 const meta = {
-  commit, dirty, allowDirty, customCases, rerunWaitOverridden,
+  commit, dirty, allowDirty, customCases, hiddenRate: hidden, rerunWaitOverridden,
   promptsHash: sha256(filesIn(promptsDir).map((file) => `${relative(promptsDir, file).replaceAll('\\', '/')}\0${text(file)}`).join('\0\0')),
   casesHash: sha256(`${casesText}\0${holdoutsText}`),
   models: MODELS, samples: SAMPLES, postCap: POST_CAP,
@@ -186,7 +191,7 @@ if (existsSync(join(out, 'run.json'))) {
   const differing = Object.keys(meta).filter((name) => JSON.stringify(previous[name]) !== JSON.stringify(meta[name]));
   if (differing.length) fail(`This directory belongs to another run (mismatch in ${differing.join(', ')}). Use a new --out.`);
 } else save('run.json', JSON.stringify(meta, null, 2));
-if (!register.some((item) => item.out === target)) appendAt(runsPath, `${JSON.stringify({ at: new Date().toISOString(), out: target, commit, dirty, allowDirty, customCases, holdoutsHash, casesHash: meta.casesHash })}\n`);
+if (!register.some((item) => item.out === target)) appendAt(runsPath, `${JSON.stringify({ at: new Date().toISOString(), out: target, commit, dirty, allowDirty, customCases, holdoutsHash, ...(rateHash ? { rateHash } : {}), casesHash: meta.casesHash })}\n`);
 
 const expectedIds = new Set(expected.map((item) => item.cell));
 const stale = stored.filter((item) => !expectedIds.has(item.cell));
@@ -363,7 +368,7 @@ for (const pair of pairs.filter((item) => !done.has(item.cells.old.cell))) {
 
 const gate = decideGate(results, expected, { invalidations: [...invalidations, ...skipped.values()] });
 const pending = readRows(join(out, 'failures.jsonl')).filter((item) => item.cells.some((cell) => !results.some((row) => row.cell === cell))).length;
-save('gate.json', JSON.stringify({ ...gate, dirty, allowDirty, customCases, posts: postCount, cells: results.length, expected: expected.length, pendingFailures: pending, stopped, skippedModels: [...skipped.keys()] }, null, 2));
+save('gate.json', JSON.stringify({ ...gate, dirty, allowDirty, customCases, hiddenRate: hidden, posts: postCount, cells: results.length, expected: expected.length, pendingFailures: pending, stopped, skippedModels: [...skipped.keys()] }, null, 2));
 console.log(JSON.stringify(gate, null, 2));
 if (stopped) console.log(`Stopped early: ${stopped}.`);
 if (gate.incomplete) console.log(`INCOMPLETE, no decision: ${gate.details.reasons.join('; ')}. Missing cells: ${gate.details.missing.slice(0, 10).join(', ') || 'none'}${gate.details.missing.length > 10 ? ' ...' : ''}.`);

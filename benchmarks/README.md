@@ -1136,7 +1136,7 @@ The rate questions of `cases.json` have been read during prompt tuning, so a mea
 - `quality` is the array of holdout cases described below. The array form of the file still works and keeps the rate prompts of `cases.json`.
 - `rate` replaces `cases.rate` for this run only. It needs exactly the groups of `cases.rate` with the same number of prompts each (6 and 4), so the cell ids and the cell count do not change (132 with two holdout cases). Every prompt is non-empty text, no prompt appears twice, and none equals a prompt of `cases.rate` (case, spacing and surrounding whitespace ignored). Any other key in the object, or any other shape of `rate`, is refused before any request, and the message names the position of the prompt, never the prompt.
 - The rate questions are as secret as the holdout cases: the runner prints none of them to stdout or stderr, and a holdouts file that is not valid JSON is reported without the parser's quote of the text. The per-cell files in `--out` and `results.jsonl` are written as before.
-- The holdouts hash that blocks a second run and the cases hash in `run.json` cover the rate questions too.
+- Two hashes block a second run: `holdoutsHash` covers the quality cases only, in both file forms, and `rateHash` covers the hidden rate questions (the order inside a group does not matter). Reusing either under another `--out` is refused, so a new `rate` key or new rate questions around the same two cases do not make them fresh. The cases hash in `run.json` covers the rate questions too, and `run.json` and `gate.json` record `hiddenRate`.
 
 ### Writing a case (also for holdouts)
 
