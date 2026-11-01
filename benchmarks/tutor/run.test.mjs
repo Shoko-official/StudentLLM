@@ -140,20 +140,79 @@ describe('hidden rate questions', () => {
     expect(result.counts.calls).toBe(0);
   }, SLOW);
 
-  it('counts the rate questions in the holdouts hash and in the run metadata', () => {
-    const parent = workDir(), cases = casesFile(), out = outDir(parent);
-    run(real(out, cases, hiddenFile(rateOf(['HOLD e one'], ['HOLD d one']))), { fake: { oldMode: 'invalid' } });
+  it('refuses reused holdout cases or reused hidden rate questions under another --out, in either file form', () => {
+    const parent = workDir(), cases = casesFile(), out = outDir(parent), fast = { fake: { oldMode: 'invalid' } };
+    const fresh = (tag) => [holdoutCase('h1', `${tag} un a`), holdoutCase('h2', `${tag} un b`)];
+    run(real(out, cases, hiddenFile(rateOf(['HOLD e one'], ['HOLD d one']))), fast);
     expect(lines(join(parent, 'runs.jsonl'))).toHaveLength(1);
+
     const same = run(real(outDir(parent), cases, hiddenFile(rateOf(['HOLD e one'], ['HOLD d one']))));
     expect(same.code).toBe(1);
     expect(same.stderr).toMatch(/holdouts.*already used/i);
-    const array = run(real(outDir(parent), cases, holdoutsFile('HOLD un')));
-    expect(array.stderr).not.toMatch(/already used/i);
+    // The same two cases are used again: as an array, or in an object with other or no rate questions.
+    for (const file of [holdoutsFile('HOLD un'), hiddenFile(rateOf(['HOLD e two'], ['HOLD d two'])), jsonFile({ quality: fresh('HOLD') })]) {
+      const reused = run(real(outDir(parent), cases, file));
+      expect(reused.code).toBe(1);
+      expect(reused.stderr).toMatch(/holdouts.*already used/i);
+      expect(reused.counts.calls).toBe(0);
+    }
+    // New cases with the same hidden rate questions.
+    const sameRate = run(real(outDir(parent), cases, hiddenFile(rateOf(['HOLD e one'], ['HOLD d one']), fresh('NEWQ'))));
+    expect(sameRate.code).toBe(1);
+    expect(sameRate.stderr).toMatch(/hidden rate questions.*already used/i);
+    expect(sameRate.counts.calls).toBe(0);
     const changed = run(real(out, cases, hiddenFile(rateOf(['HOLD e two'], ['HOLD d one']))));
     expect(changed.code).toBe(1);
     expect(changed.stderr).toMatch(/mismatch in .*casesHash/);
-    const other = run(real(outDir(parent), cases, hiddenFile(rateOf(['HOLD e two'], ['HOLD d one']))), { fake: { oldMode: 'invalid' } });
-    expect(other.stderr).not.toMatch(/already used/i);
+    const fresher = run(real(outDir(parent), cases, hiddenFile(rateOf(['HOLD e three'], ['HOLD d three']), fresh('NEWQ'))), fast);
+    expect(fresher.stderr).not.toMatch(/already used/i);
+  }, SLOW);
+
+  it('treats the same hidden rate questions in another order as reused', () => {
+    const path = join(tmp, `cases-${counter++}.json`);
+    writeFileSync(path, JSON.stringify({ quality: [{ ...holdoutCase('q1', 'QCASE un'), split: 'dev' }], rate: { explanatory: ['EXPL un', 'EXPL deux'], definitions: ['DEF un'] } }));
+    const parent = workDir();
+    run(real(outDir(parent), path, hiddenFile(rateOf(['HOLD e one', 'HOLD e two'], ['HOLD d one']))), { fake: { oldMode: 'invalid' } });
+    const reordered = run(real(outDir(parent), path, hiddenFile(rateOf(['HOLD e two', 'HOLD e one'], ['HOLD d one']), [holdoutCase('h1', 'NEWQ un a'), holdoutCase('h2', 'NEWQ un b')])));
+    expect(reordered.code).toBe(1);
+    expect(reordered.stderr).toMatch(/hidden rate questions.*already used/i);
+    expect(reordered.counts.calls).toBe(0);
+  }, SLOW);
+
+  it('registers the same holdoutsHash for both file forms, and a rateHash only for hidden rate questions', () => {
+    const arrayParent = workDir(), objectParent = workDir(), fast = { fake: { oldMode: 'invalid' } };
+    run(real(outDir(arrayParent), casesFile(), holdoutsFile('HOLD un')), fast);
+    run(real(outDir(objectParent), casesFile(), hiddenFile(rateOf(['HOLD e one'], ['HOLD d one']))), fast);
+    const [arrayRow] = rows(arrayParent, 'runs.jsonl'), [objectRow] = rows(objectParent, 'runs.jsonl');
+    expect(arrayRow.holdoutsHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(objectRow.holdoutsHash).toBe(arrayRow.holdoutsHash);
+    expect(arrayRow.rateHash).toBeUndefined();
+    expect(objectRow.rateHash).toMatch(/^[0-9a-f]{64}$/);
+    // The array run came first: wrapping the same cases in an object is a reuse.
+    const wrapped = run(real(outDir(arrayParent), casesFile(), hiddenFile(rateOf(['HOLD e one'], ['HOLD d one']))));
+    expect(wrapped.code).toBe(1);
+    expect(wrapped.stderr).toMatch(/holdouts.*already used/i);
+  }, SLOW);
+
+  it('records whether the hidden rate questions were used, in run.json and gate.json', () => {
+    const hiddenOut = outDir(), plainOut = outDir(), fast = { fake: { oldMode: 'invalid' } };
+    run(real(hiddenOut, casesFile(), hiddenFile(rateOf(['HOLD e one'], ['HOLD d one']))), fast);
+    run(real(plainOut, casesFile(), holdoutsFile('HOLD deux')), fast);
+    for (const [dir, expected] of [[hiddenOut, true], [plainOut, false]]) {
+      expect(JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')).hiddenRate).toBe(expected);
+      expect(gateOf(dir).hiddenRate).toBe(expected);
+    }
+    const none = outDir();
+    expect(run(real(none, casesFile())).code).toBe(2);
+    expect(gateOf(none).hiddenRate).toBe(false);
+  }, SLOW);
+
+  it('does not print the name of an unknown top-level key of the holdouts object', () => {
+    const result = run(real(outDir(), casesFile(), jsonFile({ quality: [], rate: rateOf(['x'], ['y']), 'SECRET question?': 1 })));
+    expect(result.code).toBe(1);
+    expect(result.stderr).toMatch(/unknown key/);
+    expect(result.stdout + result.stderr).not.toMatch(/SECRET/i);
+    expect(result.counts.calls).toBe(0);
   }, SLOW);
 });
 
