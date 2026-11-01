@@ -1,4 +1,5 @@
 import { fromMarkdown } from 'mdast-util-from-markdown';
+import { redactContextImages } from './context-text';
 import { diagnoseTeachingVisual, parseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 
 export const VISUAL_TYPES = ['plot', 'diagram', 'figure', 'quiz'] as const;
@@ -95,8 +96,8 @@ function sectionAround(markdown: string, fences: Fence[], target: Fence) {
     }
     return text + markdown.slice(cursor, end);
   };
-  const before = without(0, target.start).trim().slice(-1200);
-  const after = without(target.end, markdown.length).trim().slice(0, 400);
+  const before = redactContextImages(without(0, target.start)).trim().slice(-1200);
+  const after = redactContextImages(without(target.end, markdown.length)).trim().slice(0, 400);
   return `${before}\n\n[the requested visual appears here]\n\n${after}`.trim();
 }
 

@@ -34,6 +34,13 @@ describe('prepareTutorMarkdown', () => {
     expect(markdown).toContain('Middle text.');
   });
 
+  it('removes image payloads from the section before slicing it', () => {
+    const image = `![x](data:image/png;base64,${'AAAA'.repeat(1500)})`;
+    const { jobs } = prepareTutorMarkdown(`${image}\n\nBefore text.\n\n${request()}\n\n${'Z'.repeat(300)} ${image}`);
+    expect(jobs[0].section).toContain('Before text.');
+    expect(jobs[0].section).not.toContain('AAAA');
+  });
+
   it('demotes malformed requests, duplicate ids and nested fences to inert text', () => {
     const { markdown, jobs } = prepareTutorMarkdown(`${request()}\n\n${request()}\n\n> ${request({ ...brief, id: 'v3' }).replaceAll('\n', '\n> ')}\n\n` + '```student-visual-request\n{broken\n```');
     expect(jobs.map((job) => job.brief.id)).toEqual(['v1']);

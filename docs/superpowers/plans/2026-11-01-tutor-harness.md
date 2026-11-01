@@ -29,6 +29,8 @@ The code in Tasks 1 to 8, 11 and 12, including the browser-test changes, was app
 
 The prompt texts in Task 4 were corrected after independent review, so `src/prompts/` is the source of truth for them, not this plan.
 
+The Task 5 code was corrected after independent review, so `src/lib/teaching-generation.ts` is the source of truth for it.
+
 ## File Structure
 
 | File | Action | Responsibility |
@@ -2052,8 +2054,11 @@ export function useVisualJobs(options: VisualJobsOptions) {
       deadlineMs,
       onResult: (brief, result) => {
         const { visual } = result;
-        if (visual) latest.current.updateMessage(lessonId, messageId, (content) => replaceVisualFence(content, brief.id, visualFence(visual)));
-        change([pendingVisualKey(messageId, brief.id)], false);
+        try {
+          if (visual) latest.current.updateMessage(lessonId, messageId, (content) => replaceVisualFence(content, brief.id, visualFence(visual)));
+        } finally {
+          change([pendingVisualKey(messageId, brief.id)], false);
+        }
       },
     });
   }, []);
