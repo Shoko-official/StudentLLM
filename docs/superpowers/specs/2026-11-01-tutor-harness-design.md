@@ -23,6 +23,7 @@ Reference prompt documents kept outside the repository inspire the structure and
 
 ## Goals
 
+- Every production prompt meets one written quality standard (see "Prompt standard"), not only the tutor and visual prompts.
 - A failed visual never loses the explanation.
 - Each visual type gets detailed guidance without inflating every chat request.
 - Generated visuals are checked locally for syntax and for agreement with what the tutor asked for.
@@ -33,7 +34,7 @@ Reference prompt documents kept outside the repository inspire the structure and
 ## Non-goals
 
 - New widget types, including steppers, comparisons and timelines. They arrive with slice 2.
-- Changes to the Study tab, learner profile, persistent memory, mastery or spaced review.
+- Changes to the Study tab's interface, learner profile, persistent memory, mastery or spaced review. The Study prompt text is in scope, its renderers are not.
 - Proving mathematical correctness. Local checks detect contradictions only.
 - Changing the saved or default model. That stays the user's decision, informed by the benchmark.
 - Token streaming. Text appears when the tutor call completes.
@@ -136,6 +137,23 @@ A model that writes a direct `student-visual` fence instead of a request is hand
 - Jobs continue if the student switches course. A job whose course or message no longer exists discards its result.
 - In `chat-context.ts`, a visual in history becomes a compact record with its type, title, expressions and parameters. It remains usable for follow-ups such as "same thing with degree 5", without replaying full JSON or teaching the model to copy it. Saved history is unchanged. A pending request fence is compacted to its intent.
 
+## Prompt standard
+
+Every production prompt in `src/prompts/` follows this standard, written into `src/prompts/README.md`. It applies to the tutor, routing and type modules, and also to `study`, `context-data`, `conversation-memory`, `transcript-notes`, `document-notes`, `document-transcription`, `organization` and `course-detection`. Exact health-check phrases in `probes.json` are excluded.
+
+1. **Opening:** one to three sentences stating the role, who it serves and what success looks like.
+2. **Stable order:** purpose, inputs and trust, decision steps, output contract, frequent failures, examples, final check. A section is omitted only when it has nothing to say.
+3. **Decisions as ordered steps** that stop at the first match, rather than loose lists of considerations.
+4. **Rules with reasons:** a direct instruction, plus the reason when it is not obvious, so the model can apply it to unseen cases.
+5. **Numbers for limits:** hard limits are stated as numbers, never as "keep it short".
+6. **Failures first:** the failures observed in testing come before the general reference.
+7. **Tagged examples:** `<example>` blocks with `<input>`, `<good_output>`, an optional `<bad_output>` and `<why>`. Each prompt has at least two, including one tricky case, except `context-data`, `conversation-memory` and `document-transcription`, which travel with every request or image and need one compact example. Example inputs use the format the app really sends.
+8. **Checked examples:** JSON in an example is validated by tests against the real parser or by `JSON.parse`.
+9. **Honest capabilities:** no vendor identity, no fictitious tools, no talk of internal machinery in user-facing output.
+10. **Size budget:** the reference documents are long because they run on very large models. StudentLLM also runs on small local models, so quality comes from structure and examples, not length. Estimated with `estimateContextTokens`: tutor plus routing at most 6000, each type module at most 6000, other prompts at most 3000, and `context-data`, `conversation-memory` and `document-transcription` at most 450 each, because a longer note takes room from course evidence and memory on small windows.
+
+The non-tutor prompts land in their own PR after the tutor PR. Faithful reconstruction prompts keep their existing guarantees: they must still refuse to add general knowledge or guess missing content.
+
 ## Prompts
 
 All prompts are English instruction text, and the model answers in the learner's language. `chat.ts` becomes `tutor.ts`. `visuals.ts` and `structured-teaching.ts` are removed once the old pipeline is deleted.
@@ -221,8 +239,13 @@ The old pipeline stays reachable from the benchmark until the gate is decided. B
 
 These are small exploratory samples. The result supports a decision and is not a statistical claim. A failed criterion stops the slice for diagnosis, and the metrics do not change after results are seen.
 
+### Other prompts
+
+The rewritten non-tutor prompts are compared with their current versions on real models with synthetic input: one transcript, one document, one organisation excerpt, one course detection and one request for each of the six study materials, on Lightning and Mistral Large 4, old and new. This is about 40 requests, counted inside the 400 cap. An independent agent reviews the outputs blind, without knowing which version produced which. A new prompt replaces the old one only if the review finds no new fabrication and at least the same coverage. Otherwise that prompt keeps its old version and the result is reported. `document-transcription` is not run, because that would mean adding an image path to the benchmark, so its new version is checked by tests only and reported as unmeasured.
+
 ### Tests
 
+- Prompt standard: every prompt has at least the required number of tagged examples, respects its size budget and has parsable JSON examples.
 - Unit: brief parsing and limits, diagnostics, every semantic check, orchestration with a fake provider (success, repair success, repair failure, tutor failure, abort, over-limit requests, direct valid and invalid fences, concurrency cap).
 - Component: placeholder, retry, inert user fences, and existing renderer tests unchanged.
 - App: progressive display, job completion after switching course, deleted course, reload with a pending fence.
