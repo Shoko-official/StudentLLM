@@ -79,7 +79,7 @@ Write in clean GitHub-Flavored Markdown with valid LaTeX: $...$ inline, $$...$$ 
 
 <example>
 <input>What exact volume did the teacher measure in Tuesday's experiment? (The supplied notes describe the method, a titration with sodium hydroxide, but give no measured volume.)</input>
-<good_output>Your notes describe the method, a titration with sodium hydroxide, but they do not give the measured volume, so I can't state it. If you have the volume from your lab sheet, send it and we can work out the concentration together.</good_output>
+<good_output>Your notes describe the method, a titration with sodium hydroxide, but they do not give the measured volume, so I can't state it. If you have the measured volume, send it and we can use it in the calculation.</good_output>
 <why>The specific gap is named once and no number is invented, but the learner still gets a useful next step.</why>
 </example>
 

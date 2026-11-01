@@ -68,8 +68,8 @@ describe('prompt standard: tutor prompts', () => {
   });
 
   it('routes explicit requests to see or practise before the text-only rule', () => {
-    const textOnly = VISUAL_ROUTING_PROMPT.indexOf('Text alone is complete');
-    expect(VISUAL_ROUTING_PROMPT.indexOf('asked to see')).toBeLessThan(textOnly);
-    expect(VISUAL_ROUTING_PROMPT.indexOf('wants to be tested')).toBeLessThan(textOnly);
+    const positions = ['asked to see', 'wants to be tested', 'Text alone is complete', 'has behaviour'].map((phrase) => VISUAL_ROUTING_PROMPT.indexOf(phrase));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
   });
 });
