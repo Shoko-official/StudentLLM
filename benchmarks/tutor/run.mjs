@@ -275,6 +275,7 @@ const failedInARow = new Map(), skipped = new Map();
 let stopped = null;
 // A pair whose 120 s stall was already discarded (kept in failures.jsonl, so it also holds across a resume) is rerun no more.
 const stalled = new Set(readRows(join(out, 'failures.jsonl')).filter((item) => item.kind === 'timeout').flatMap((item) => item.cells));
+const retriedBothStalled = new Set(readRows(join(out, 'failures.jsonl')).filter((item) => item.kind === 'both-timeout').flatMap((item) => item.cells));
 
 // An attempt stops at the first cell that is not a measurement. A stall counts as one only when the pair was already rerun.
 async function attempt(pair, mayDiscard) {
@@ -303,8 +304,9 @@ for (const pair of pairs.filter((item) => !done.has(item.cells.old.cell))) {
     outcomes = await attempt(pair, false);
   }
   const failure = outcomes.find((item) => item.infra)?.infra;
-  // Both arms timing out compares nothing: the endpoint is down for this model, not a measurement of either arm.
-  const bothStalled = !failure && outcomes.length === 2 && outcomes.every((item) => item.row?.timedOut);
+  // Both arms timing out compares nothing: the endpoint may be down, so the pair gets one more run on resume.
+  // After that it is a measurement, or a prompt too slow for both arms could never be decided.
+  const bothStalled = !failure && !retriedBothStalled.has(cells[0]) && outcomes.length === 2 && outcomes.every((item) => item.row?.timedOut);
   if (failure || bothStalled) {
     if (failure) {
       append('failures.jsonl', `${JSON.stringify({ at: new Date().toISOString(), cells, ...failure })}\n`);

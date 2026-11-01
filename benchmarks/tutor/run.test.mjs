@@ -303,6 +303,21 @@ describe('real run', () => {
     expect(gateOf(plain).details.reasons.join(' ')).not.toMatch(/TUTOR_RERUN_WAIT_MS/);
   }, SLOW);
 
+  it('measures a pair whose arms time out again on resume, and lets the later pairs of that model run', () => {
+    const out = outDir(), cases = casesFile(), holdouts = holdoutsFile();
+    const dead = 'nvidia/nemotron-3.5-lightning-30b-a3b';
+    run(real(out, cases, holdouts), { fake: { hangModels: [dead], speed: 400 } });
+    expect(rows(out).filter((row) => row.model === dead)).toHaveLength(0);
+    const second = run(real(out, cases, holdouts), { fake: { hangModels: [dead], speed: 400 } });
+    expect(second.code).toBe(2);
+    const measured = rows(out).filter((row) => row.model === dead);
+    // The three retried pairs are final now, then three later pairs get their first chance.
+    expect(measured).toHaveLength(6);
+    expect(measured.every((row) => row.timedOut && row.failed)).toBe(true);
+    expect(rows(out, 'failures.jsonl').filter((item) => item.kind === 'both-timeout')).toHaveLength(6);
+    expect(gateOf(out).details.reasons.join(' ')).toMatch(/lightning/);
+  }, SLOW);
+
   it('does not store a pair where both arms time out, and moves past a dead model after three such pairs', () => {
     const out = outDir(), cases = casesFile(), holdouts = holdoutsFile();
     const dead = 'nvidia/nemotron-3.5-lightning-30b-a3b';
