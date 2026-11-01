@@ -74,7 +74,7 @@ import { RetrievalDocument, searchDocumentsHybrid } from './lib/local-retrieval'
 import { RichText } from './lib/rich-text';
 import { VisualBlockView } from './lib/visual-blocks-view';
 import { parseStudyArtifactResponse, studyArtifactResponseFormat } from './lib/study-artifacts';
-import { buildCourseNote, courseNoteMarkdown, DOCUMENT_NOTE_LAYOUT_VERSION, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider } from './lib/course-notes';
+import { buildCourseNote, composeDocumentSourcesNote, courseNoteMarkdown, formatCourseNoteWithProvider, formatDocumentCourseNoteWithProvider, hasDocumentSourceNote } from './lib/course-notes';
 import { analyzeQuickStart } from './lib/quick-start';
 import { applyRecordingPlacement, canAutoRouteRecording } from './lib/recording-routing';
 import type { QuickStartProposal } from './lib/quick-start';
@@ -285,11 +285,6 @@ function isExtractableDocument(resource: Resource) {
     'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     'text/html',
   ].includes(resource.mimeType ?? '') || /\.(pdf|rtf|html?|docx|pptx)$/i.test(resource.name);
-}
-
-function hasCurrentDocumentNote(workspace: LessonWorkspace) {
-  return workspace.courseNote?.blocks.some((block) => block.id === 'document-source-title') === true
-    && workspace.courseNote.detection.basis.includes(DOCUMENT_NOTE_LAYOUT_VERSION);
 }
 
 export interface AppProps {
@@ -620,11 +615,8 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   const resourcePreviewRequest = useRef(0);
   const sourceInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
-  // A folder import creates each course when its file starts importing, not all up front: a reload or crash in the middle
-  // then leaves no empty courses for the files that were never reached.
+  // A batch captures one destination so switching courses cannot redirect its remaining files.
   const [importQueue, setImportQueue] = useState<Array<{ file: File; lesson: Lesson }>>([]);
-  const batchLessonIdsRef = useRef(new Set<string>());
-  const activateNextBatchLessonRef = useRef(false);
   const [importTotals, setImportTotals] = useState<{ done: number; total: number } | null>(null);
   const importRunningRef = useRef(false);
   const courseActionsRef = useRef<HTMLDetailsElement | null>(null);
@@ -696,14 +688,13 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       if (!current[lessonId] && !lesson) return current;
       const previous = current[lessonId] ?? emptyLessonWorkspace;
       const next = update(previous);
-      const hasDocumentNote = next.courseNote?.blocks?.some((block) => block.id === 'document-source-title');
       // Rebuild the deterministic note when it is not AI-written or the set of segments changed; status-only edits (review toggles) keep an AI note.
       const segmentIds = (items: TranscriptSegment[]) => items.map((segment) => segment.id).join('\u0000');
       const needsRebuild = next.courseNote?.detection.method !== 'LM Studio' || segmentIds(next.transcript) !== segmentIds(previous.transcript);
       return {
         ...current,
-        [lessonId]: lesson && next.transcript !== previous.transcript && needsRebuild && !hasDocumentNote
-          ? { ...next, courseNote: buildCourseNote(lesson, next.transcript) }
+        [lessonId]: lesson && next.transcript !== previous.transcript && needsRebuild
+          ? { ...next, courseNote: composeDocumentSourcesNote(lesson, next.transcript, next.resources, next.courseNote) }
           : next,
       };
     });
@@ -779,14 +770,21 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     if (!localProvider || !candidateTranscript.length) return;
     const lesson = lessons.find((item) => item.id === lessonId);
     if (!lesson) return;
-    void formatCourseNoteWithProvider(lesson, candidateTranscript, localProvider).then((formatted) => {
+    const original = lessonWorkspacesRef.current[lessonId];
+    const uncovered = candidateTranscript.filter((segment) => !segment.sourceId || !hasDocumentSourceNote(original?.courseNote, segment.sourceId));
+    if (!uncovered.length) return;
+    void formatCourseNoteWithProvider(lesson, uncovered, localProvider).then((formatted) => {
       if (formatted.detection.method !== 'LM Studio') return;
       setLessonWorkspaces((current) => {
+        const currentLesson = lessonsRef.current.find((item) => item.id === lessonId);
+        if (!currentLesson) return current;
         const workspace = current[lessonId] ?? emptyLessonWorkspace;
         const currentIds = JSON.stringify(workspace.transcript);
         const candidateIds = JSON.stringify(candidateTranscript);
         if (currentIds !== candidateIds) return current;
-        return { ...current, [lessonId]: { ...workspace, courseNote: formatted } };
+        const currentUncovered = workspace.transcript.filter((segment) => !segment.sourceId || !hasDocumentSourceNote(workspace.courseNote, segment.sourceId));
+        if (JSON.stringify(currentUncovered) !== JSON.stringify(uncovered)) return current;
+        return { ...current, [lessonId]: { ...workspace, courseNote: composeDocumentSourcesNote(currentLesson, workspace.transcript, workspace.resources, workspace.courseNote, undefined, formatted) } };
       });
     }).catch(() => undefined);
   };
@@ -1130,13 +1128,12 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     const attemptKey = (resourceId: string) => `${resourceId}:${localProvider ? 'model' : 'layout'}`;
     const candidate = lessons.flatMap((lesson) => {
       const workspace = lessonWorkspaces[lesson.id] ?? emptyLessonWorkspace;
-      const noteNeedsSemanticReview = Boolean(localProvider
-        && hasCurrentDocumentNote(workspace)
-        && workspace.courseNote?.detection.method !== 'LM Studio'
-        && !workspace.courseNote?.blocks.some((block) => block.type === 'markdown'));
-      if (hasCurrentDocumentNote(workspace) && !noteNeedsSemanticReview) return [];
       return workspace.resources.flatMap((resource) => {
         const isExtractable = isExtractableDocument(resource);
+        const hasLayout = hasDocumentSourceNote(workspace.courseNote, resource.id);
+        const hasSemantic = workspace.courseNote?.blocks.some((block) => block.id === `${resource.id}:document-semantic-markdown`);
+        const noteNeedsSemanticReview = Boolean(localProvider && hasLayout && !hasSemantic);
+        if (hasLayout && !noteNeedsSemanticReview) return [];
         const pending = noteNeedsSemanticReview || !rebuiltDocumentSourceIds.current.has(resource.id);
         return isExtractable && pending && !semanticReviewAttemptedIds.current.has(attemptKey(resource.id)) ? [{ lesson, resource }] : [];
       });
@@ -1163,15 +1160,16 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         }
         const formattedNote = await formatDocumentCourseNoteWithProvider(candidate.lesson, pages, candidate.resource.name, localProvider);
         setLessonWorkspaces((current) => {
+          const currentLesson = lessonsRef.current.find((item) => item.id === candidate.lesson.id);
+          if (!currentLesson) return current;
           const workspace = current[candidate.lesson.id] ?? emptyLessonWorkspace;
-          const hasLayoutNote = hasCurrentDocumentNote(workspace);
           const hasResource = workspace.resources.some((resource) => resource.id === candidate.resource.id);
-          if ((hasLayoutNote && formattedNote.detection.method !== 'LM Studio') || !hasResource) return current;
+          if (!hasResource) return current;
           return {
             ...current,
             [candidate.lesson.id]: {
               ...workspace,
-              courseNote: formattedNote,
+              courseNote: composeDocumentSourcesNote(currentLesson, workspace.transcript, workspace.resources, workspace.courseNote, { resourceId: candidate.resource.id, note: formattedNote }),
             },
           };
         });
@@ -2142,68 +2140,6 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     }
   };
 
-  const routeImportedMaterial = async (
-    sourceLesson: Lesson,
-    resource: Resource,
-    segments: TranscriptSegment[],
-    documentPages?: DocumentPage[],
-  ) => {
-    if (!localProvider || !segments.length) return false;
-    try {
-      const proposal = await analyzeQuickStart(
-        segments.map((segment) => `${segment.timestamp} ${segment.text}`).join('\n'),
-        lessons,
-        localProvider,
-      );
-      if (!canAutoRouteRecording(proposal)) return false;
-      const sourceWorkspace = lessonWorkspaces[sourceLesson.id] ?? emptyLessonWorkspace;
-      const routingWorkspaces = {
-        ...lessonWorkspaces,
-        [sourceLesson.id]: {
-          ...sourceWorkspace,
-          resources: sourceWorkspace.resources.some((candidate) => candidate.id === resource.id)
-            ? sourceWorkspace.resources
-            : [...sourceWorkspace.resources, resource],
-          transcript: [
-            ...sourceWorkspace.transcript.filter((segment) => segment.sourceId !== resource.id),
-            ...segments,
-          ],
-        },
-      };
-      const routed = applyRecordingPlacement({
-        sourceLesson,
-        lessons,
-        lessonWorkspaces: routingWorkspaces,
-        proposal,
-        resource,
-        segments,
-        sourceType: 'material',
-      });
-      const formatted = documentPages
-        ? {
-            ...routed,
-            lessonWorkspaces: {
-              ...routed.lessonWorkspaces,
-              [routed.targetLesson.id]: {
-                ...routed.lessonWorkspaces[routed.targetLesson.id],
-                courseNote: await formatDocumentCourseNoteWithProvider(routed.targetLesson, documentPages, resource.name, localProvider),
-              },
-            },
-          }
-        : await formatPlacedCourseNote(routed);
-      commitPlacedCourse(formatted, sourceLesson.id, resource, segments);
-      setActiveLessonId(formatted.targetLesson.id);
-      setSelectedArtifactId(formatted.lessonWorkspaces[formatted.targetLesson.id]?.artifacts[0]?.id ?? null);
-      setView('course');
-      setShowAllResources(false);
-      notify(`Imported material routed to ${formatted.targetLesson.title}.`);
-      return true;
-    } catch {
-      // Keep imported material in the selected course when classification is unavailable or uncertain.
-      return false;
-    }
-  };
-
   const importFiles = (files: File[]) => {
     if (files.length > 1) {
       enqueueBatchImport(files);
@@ -2254,7 +2190,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     };
   }, []);
 
-  const importSourceFile = async (file: File, targetLesson: Lesson, routeMaterial = true) => {
+  const importSourceFile = async (file: File, targetLesson: Lesson) => {
     setActionError('');
     const lessonId = targetLesson.id;
     if (file.size === 0) {
@@ -2286,7 +2222,6 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           const segment: TranscriptSegment = {
             id: `${resource.id}:text`, sourceId: resource.id, timestamp: 'Notes', speaker: resource.name, text, status: 'review',
           };
-          if (routeMaterial && await routeImportedMaterial(targetLesson, resource, [segment])) return;
           const nextTranscript = mergeSegments((lessonWorkspacesRef.current[lessonId] ?? emptyLessonWorkspace).transcript, [segment]);
           updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: mergeSegments(current.transcript, [segment]) }));
           formatExistingCourseNote(lessonId, nextTranscript);
@@ -2303,44 +2238,6 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
             id: `${resource.id}:${segment.id || index}`,
             sourceId: resource.id,
           }));
-          if (segments.length && localProvider && routeMaterial) {
-            try {
-              const proposal = await analyzeQuickStart(
-                segments.map((segment) => `${segment.timestamp} ${segment.text}`).join('\n'),
-                lessons,
-                localProvider,
-              );
-              if (canAutoRouteRecording(proposal)) {
-                const sourceWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
-                const routingWorkspaces = {
-                  ...lessonWorkspaces,
-                  [lessonId]: {
-                    ...sourceWorkspace,
-                    resources: [...sourceWorkspace.resources, resource],
-                    transcript: [...sourceWorkspace.transcript, ...segments],
-                  },
-                };
-                const routed = applyRecordingPlacement({
-                  sourceLesson: targetLesson,
-                  lessons,
-                  lessonWorkspaces: routingWorkspaces,
-                  proposal,
-                  resource,
-                  segments,
-                });
-                const formatted = await formatPlacedCourseNote(routed);
-                commitPlacedCourse(formatted, lessonId, resource, segments);
-                setActiveLessonId(formatted.targetLesson.id);
-                setSelectedArtifactId(formatted.lessonWorkspaces[formatted.targetLesson.id]?.artifacts[0]?.id ?? null);
-                setView('course');
-                setShowAllResources(false);
-                notify(`Local transcription added and routed to ${formatted.targetLesson.title}.`);
-                return;
-              }
-            } catch {
-              // Keep imported audio in the selected course when classification is unavailable or uncertain.
-            }
-          }
           const nextTranscript = mergeSegments((lessonWorkspacesRef.current[lessonId] ?? emptyLessonWorkspace).transcript, segments);
           updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: mergeSegments(current.transcript, segments) }));
           formatExistingCourseNote(lessonId, nextTranscript);
@@ -2377,15 +2274,17 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
               text: page.text.trim(),
               status: 'review' as const,
             }));
-          if (routeMaterial && pageSegments.length && await routeImportedMaterial(targetLesson, resource, pageSegments, extraction.pages)) return;
           extractedDocumentPages.current.set(resource.id, extraction.pages);
           // Show the extracted note right away; the background review rewrites it with the model.
           const documentCourseNote = await formatDocumentCourseNoteWithProvider(targetLesson, extraction.pages, resource.name, null);
-          updateLessonWorkspace(lessonId, (current) => ({
-            ...current,
-            transcript: mergeSegments(current.transcript, pageSegments),
-            courseNote: documentCourseNote,
-          }));
+          updateLessonWorkspace(lessonId, (current) => {
+            const transcript = mergeSegments(current.transcript, pageSegments);
+            return {
+              ...current,
+              transcript,
+              courseNote: composeDocumentSourcesNote(targetLesson, transcript, current.resources, current.courseNote, { resourceId: resource.id, note: documentCourseNote }),
+            };
+          });
           notify(pageSegments.length > 0
             ? `${resource.name} indexed ${pageSegments.length} page${pageSegments.length === 1 ? '' : 's'} locally.`
             : `${resource.name} contains no extractable text.`);
@@ -2410,25 +2309,30 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       setActionError('None of these files can be imported. Use PDF, Word, PowerPoint, text, image or audio files.');
       return;
     }
-    if (plan.length > LARGE_BATCH_IMPORT && !window.confirm(`Import ${plan.length} files as ${plan.length} lessons?`)) return;
-    const subject = folderNameOf(files) || (hasCourse ? activeLesson.subject : '') || 'Imported course';
-    const date = new Date().toLocaleDateString('en-GB');
-    const planned = plan.map(({ file, title, chapter }) => ({
-      file,
-      lesson: { id: `lesson-${crypto.randomUUID()}`, subject, chapter, title, teacher: '', duration: '00:00:00', date, progress: 0 } satisfies Lesson,
-    }));
-    setExpandedSubjects((expanded) => ({ ...expanded, [subject]: true }));
-    activateNextBatchLessonRef.current = true;
+    const title = folderNameOf(files) || 'Imported course';
+    const targetLesson: Lesson = hasCourse ? activeLesson : {
+      id: `lesson-${crypto.randomUUID()}`, subject: title, chapter: 'Course material', title,
+      teacher: '', duration: '00:00:00', date: new Date().toLocaleDateString('en-GB'), progress: 0,
+    };
+    if (plan.length > LARGE_BATCH_IMPORT && !window.confirm(`Import ${plan.length} files into ${targetLesson.title}?`)) return;
+    if (!hasCourse) {
+      setLessons((current) => [targetLesson, ...current]);
+      setLessonWorkspaces((current) => ({ ...current, [targetLesson.id]: emptyLessonWorkspace }));
+      setActiveLessonId(targetLesson.id);
+      setSelectedArtifactId(null);
+      setExpandedSubjects((expanded) => ({ ...expanded, [targetLesson.subject]: true }));
+    }
+    const planned = plan.map(({ file }) => ({ file, lesson: targetLesson }));
     setView('course');
     setActionError('');
     setImportQueue((current) => [...current, ...planned]);
     setImportTotals((current) => ({ done: current?.done ?? 0, total: (current?.total ?? 0) + planned.length }));
     const skipped = files.length - plan.length;
-    notify(`Importing ${planned.length} file${planned.length === 1 ? '' : 's'} into ${subject}, one lesson each${skipped ? `, ${skipped} unsupported file${skipped === 1 ? '' : 's'} skipped` : ''}.`);
+    notify(`Importing ${planned.length} file${planned.length === 1 ? '' : 's'} into ${targetLesson.title}${skipped ? `, ${skipped} unsupported file${skipped === 1 ? '' : 's'} skipped` : ''}.`);
   };
 
   const stopBatchImport = () => {
-    // Courses are only created when their file starts, so the files that are still waiting have nothing to clean up.
+    // Queued files have not been stored yet; keep only the file currently being processed.
     const dropped = Math.max(0, importQueue.length - 1);
     setImportQueue((current) => current.slice(0, 1));
     setImportTotals((current) => current && { ...current, total: current.done + 1 });
@@ -2446,11 +2350,8 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   useEffect(() => {
     if (importRunningRef.current) return;
     if (!importQueue.length) {
-      // The next folder starts afresh: its courses go to the top and its first course is the one shown.
-      batchLessonIdsRef.current.clear();
-      activateNextBatchLessonRef.current = false;
       if (importTotals) {
-        notify(`${importTotals.total} source${importTotals.total === 1 ? '' : 's'} imported.`);
+        notify(`Import finished. ${importTotals.total} file${importTotals.total === 1 ? '' : 's'} processed.`);
         setImportTotals(null);
       }
       return;
@@ -2460,27 +2361,9 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     // `finally` resets the running flag; it sees the old queue head and must not restart it.
     if (startedImportRef.current === next) return;
     const lesson = lessons.find((candidate) => candidate.id === next.lesson.id);
-    if (!lesson && !batchLessonIdsRef.current.has(next.lesson.id)) {
-      // This file's turn has come: create its course now and start the import on the next render, when it exists.
-      batchLessonIdsRef.current.add(next.lesson.id);
-      const planned = next.lesson;
-      setLessons((current) => {
-        // Keep the courses of a folder in the order of the folder: each one goes after the ones created before it.
-        let at = 0;
-        current.forEach((item, index) => { if (batchLessonIdsRef.current.has(item.id)) at = index + 1; });
-        return [...current.slice(0, at), planned, ...current.slice(at)];
-      });
-      setLessonWorkspaces((current) => ({ ...current, [planned.id]: emptyLessonWorkspace }));
-      if (activateNextBatchLessonRef.current) {
-        activateNextBatchLessonRef.current = false;
-        setActiveLessonId(planned.id);
-        setSelectedArtifactId(null);
-      }
-      return;
-    }
     startedImportRef.current = next;
     importRunningRef.current = true;
-    void (lesson ? importSourceFile(next.file, lesson, false) : Promise.resolve()).finally(() => {
+    void (lesson ? importSourceFile(next.file, lesson) : Promise.resolve()).finally(() => {
       importRunningRef.current = false;
       setImportTotals((current) => current && { ...current, done: current.done + 1 });
       setImportQueue((current) => current.slice(1));
@@ -2511,46 +2394,6 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       const result = await localSpeechEngine.transcribe(audio);
       if (!result.segments.length) throw new Error('No speech was detected in this recording.');
       const segments = result.segments.map((segment, index) => ({ ...segment, id: `${resource.id}:${segment.id || index}`, sourceId: resource.id }));
-      if (localProvider) {
-        try {
-          const proposal = await analyzeQuickStart(
-            segments.map((segment) => `${segment.timestamp} ${segment.text}`).join('\n'),
-            lessons,
-            localProvider,
-          );
-          if (canAutoRouteRecording(proposal)) {
-            const sourceWorkspace = lessonWorkspaces[lessonId] ?? emptyLessonWorkspace;
-            const routingWorkspaces = {
-              ...lessonWorkspaces,
-              [lessonId]: {
-                ...sourceWorkspace,
-                resources: sourceWorkspace.resources.some((candidate) => candidate.id === resource.id)
-                  ? sourceWorkspace.resources
-                  : [...sourceWorkspace.resources, resource],
-                transcript: [...sourceWorkspace.transcript.filter((segment) => segment.sourceId !== resource.id), ...segments],
-              },
-            };
-            const routed = applyRecordingPlacement({
-              sourceLesson: activeLesson,
-              lessons,
-              lessonWorkspaces: routingWorkspaces,
-              proposal,
-              resource,
-              segments,
-            });
-            const formatted = await formatPlacedCourseNote(routed);
-            commitPlacedCourse(formatted, lessonId, resource, segments);
-            setActiveLessonId(formatted.targetLesson.id);
-            setSelectedArtifactId(formatted.lessonWorkspaces[formatted.targetLesson.id]?.artifacts[0]?.id ?? null);
-            setView('course');
-            setShowAllResources(false);
-            notify(`Transcription added and routed to ${formatted.targetLesson.title}.`);
-            return;
-          }
-        } catch {
-          // Keep the source in its current course when classification is unavailable or uncertain.
-        }
-      }
       const nextTranscript = mergeSegments((lessonWorkspacesRef.current[lessonId] ?? emptyLessonWorkspace).transcript, segments, { replaceSourceId: resource.id });
       updateLessonWorkspace(lessonId, (current) => ({ ...current, transcript: mergeSegments(current.transcript, segments, { replaceSourceId: resource.id }) }));
       formatExistingCourseNote(lessonId, nextTranscript);
@@ -2647,17 +2490,24 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       resources: restoreAtPositions(workspace.resources, [pending.resourceEntry]),
       transcript: restoreAtPositions(workspace.transcript, pending.segmentEntries),
     });
+    const documentSection = hasDocumentSourceNote(pending.courseNote, pending.resource.id)
+      ? takeWithPositions(pending.courseNote!.blocks, (block) => block.id.startsWith(`${pending.resource.id}:`)).removed : [];
     if (noteChoice === 'rebuild') {
       updateLessonWorkspace(pending.lessonId, restoreInto);
       formatExistingCourseNote(pending.lessonId, restoredTranscript);
     } else {
       // 'snapshot': the same segments are back, so the pre-removal note (possibly AI-written) is still right.
-      // 'keep': the note changed during the window; do not overwrite it, but ask the provider to refresh it.
+      // 'keep': restore only this original's section; retain newer imports and edits verbatim.
       setLessonWorkspaces((current) => {
         const workspace = restoreInto(current[pending.lessonId] ?? emptyLessonWorkspace);
-        return { ...current, [pending.lessonId]: noteChoice === 'snapshot' ? { ...workspace, courseNote: pending.courseNote } : workspace };
+        const keptNote = workspace.courseNote && documentSection.length ? {
+          ...workspace.courseNote,
+          updatedAt: new Date().toISOString(),
+          blocks: restoreAtPositions(workspace.courseNote.blocks, documentSection),
+        } : workspace.courseNote;
+        return { ...current, [pending.lessonId]: { ...workspace, courseNote: noteChoice === 'snapshot' ? pending.courseNote : keptNote } };
       });
-      if (noteChoice === 'keep') formatExistingCourseNote(pending.lessonId, restoredTranscript);
+      if (noteChoice === 'keep' && !documentSection.length) formatExistingCourseNote(pending.lessonId, restoredTranscript);
     }
     setFocusRestoredSourceId(pending.resource.id);
     notify(`${pending.resource.name} restored.`);
