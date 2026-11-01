@@ -68,6 +68,95 @@ describe('dry run', () => {
   }, SLOW);
 });
 
+const rateOf = (explanatory, definitions) => ({ explanatory, definitions });
+const hiddenFile = (rate, quality = [holdoutCase('h1', 'HOLD un a'), holdoutCase('h2', 'HOLD un b')]) => jsonFile({ quality, rate });
+
+describe('hidden rate questions', () => {
+  it('replaces the rate prompts of this run and keeps the cells the same shape', () => {
+    const parent = workDir();
+    const dry = run(['--dry-run', '--holdouts', hiddenFile({ explanatory: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'].map((item) => `SECRET ${item}`), definitions: ['d1', 'd2', 'd3', 'd4'].map((item) => `SECRET ${item}`) }), '--out', outDir(parent)], { key: null });
+    expect(dry.code).toBe(0);
+    expect(dry.stdout).toContain('132 cells');
+    expect(dry.stdout + dry.stderr).not.toContain('SECRET');
+
+    const out = outDir(parent);
+    const result = run(real(out, casesFile(), hiddenFile(rateOf(['HOLD secret e'], ['HOLD secret d']))));
+    expect(result.code).toBe(2);
+    const rate = rows(out).filter((row) => row.kind === 'rate');
+    expect(rate).toHaveLength(12);
+    expect(rate.filter((row) => row.arm === 'old').every((row) => row.requested)).toBe(true);
+    expect(rate.map((row) => row.cell)).toContain('rate/nvidia/nemotron-3.5-lightning-30b-a3b/explanatory/0/old');
+    expect(result.stdout + result.stderr).not.toContain('secret');
+  }, SLOW);
+
+  it('keeps the committed rate prompts when the holdouts are an array or have no rate', () => {
+    const out = outDir(), noRate = outDir();
+    run(real(out, casesFile(), holdoutsFile()));
+    run(real(noRate, casesFile(), jsonFile({ quality: [holdoutCase('h1', 'HOLD un a'), holdoutCase('h2', 'HOLD un b')] })));
+    for (const dir of [out, noRate]) expect(rows(dir).filter((row) => row.kind === 'rate' && row.arm === 'old').some((row) => row.requested)).toBe(false);
+  }, SLOW);
+
+  it('refuses invalid rate data before any request, without printing the questions', () => {
+    const cases = casesFile();
+    const attempts = [
+      [{ explanatory: ['SECRET a'] }, /rate/],
+      [{ explanatory: ['SECRET a'], definitions: ['SECRET b'], extra: ['SECRET c'] }, /rate/],
+      [rateOf(['SECRET a', 'SECRET b'], ['SECRET c']), /explanatory.*1/],
+      [rateOf(['SECRET a'], []), /definitions.*1/],
+      [rateOf([42], ['SECRET c']), /explanatory\[0\]/],
+      [rateOf(['SECRET a'], ['   ']), /definitions\[0\]/],
+      [rateOf(['SECRET a'], ['  secret   A ']), /definitions\[0\].*duplicate/],
+      [rateOf(['expl UN'], ['SECRET c']), /explanatory\[0\].*cases/],
+      [['SECRET a'], /rate/],
+    ];
+    for (const [rate, message] of attempts) {
+      const out = outDir();
+      const result = run(real(out, cases, hiddenFile(rate)));
+      expect(result.code, JSON.stringify(rate)).toBe(1);
+      expect(result.stderr).toMatch(message);
+      expect(result.stdout + result.stderr).not.toMatch(/secret a|secret b|secret c/i);
+      expect(result.counts.calls).toBe(0);
+      expect(existsSync(ledgerOf(out))).toBe(false);
+    }
+    expect(run(['--dry-run', '--holdouts', hiddenFile(attempts[0][0]), '--out', outDir()], { key: null }).code).toBe(1);
+    const unknown = run(real(outDir(), cases, jsonFile({ quality: [], rate: rateOf(['SECRET a'], ['SECRET b']), rates: [] })));
+    expect(unknown.code).toBe(1);
+    expect(unknown.stdout + unknown.stderr).not.toContain('SECRET');
+  }, SLOW);
+
+  it('does not echo the questions when the holdouts file is not valid JSON', () => {
+    const path = join(tmp, `broken-${counter++}.json`);
+    writeFileSync(path, '{"quality": [], "rate": {"explanatory": ["SECRET question", ], "definitions": []}}');
+    const result = run(['--dry-run', '--holdouts', path, '--out', outDir()], { key: null });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toMatch(/not valid JSON/);
+    expect(result.stdout + result.stderr).not.toContain('SECRET');
+  }, SLOW);
+
+  it('still requires two holdout cases', () => {
+    const result = run(real(outDir(), casesFile(), hiddenFile(rateOf(['HOLD e'], ['HOLD d']), [holdoutCase('h1', 'HOLD un a')])));
+    expect(result.code).toBe(2);
+    expect(result.stdout).toContain('no holdouts');
+    expect(result.counts.calls).toBe(0);
+  }, SLOW);
+
+  it('counts the rate questions in the holdouts hash and in the run metadata', () => {
+    const parent = workDir(), cases = casesFile(), out = outDir(parent);
+    run(real(out, cases, hiddenFile(rateOf(['HOLD e one'], ['HOLD d one']))), { fake: { oldMode: 'invalid' } });
+    expect(lines(join(parent, 'runs.jsonl'))).toHaveLength(1);
+    const same = run(real(outDir(parent), cases, hiddenFile(rateOf(['HOLD e one'], ['HOLD d one']))));
+    expect(same.code).toBe(1);
+    expect(same.stderr).toMatch(/holdouts.*already used/i);
+    const array = run(real(outDir(parent), cases, holdoutsFile('HOLD un')));
+    expect(array.stderr).not.toMatch(/already used/i);
+    const changed = run(real(out, cases, hiddenFile(rateOf(['HOLD e two'], ['HOLD d one']))));
+    expect(changed.code).toBe(1);
+    expect(changed.stderr).toMatch(/mismatch in .*casesHash/);
+    const other = run(real(outDir(parent), cases, hiddenFile(rateOf(['HOLD e two'], ['HOLD d one']))), { fake: { oldMode: 'invalid' } });
+    expect(other.stderr).not.toMatch(/already used/i);
+  }, SLOW);
+});
+
 describe('real run', () => {
   it('measures every cell once, keeps provenance, counts each POST and resumes without duplicates', () => {
     const out = outDir(), cases = casesFile(), holdouts = holdoutsFile();

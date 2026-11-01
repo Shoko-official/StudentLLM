@@ -1104,7 +1104,7 @@ node benchmarks/tutor/run.mjs --out "$HOME/tutor-bench/dry" --dry-run
 ### What a run does
 
 - Cells run one at a time, an old and a new cell per pair; inside a new cell the visual calls run two at a time, as in the app. A pair is stored whole or not at all.
-- Before any request, every case and holdout is validated (format below). A real run also refuses a dirty working tree and needs two holdout cases (`--holdouts`); without them it stops with `incomplete: true, reasons: ["no holdouts"]`, after writing a `gate.json` that says so (a gate left in that directory by an earlier run is not the answer). `--dry-run` validates, sends nothing, writes no ledger and prints the cell count (108, or 132 with two holdouts).
+- Before any request, every case and holdout is validated (format below). A real run also refuses a dirty working tree and needs two holdout cases (`--holdouts`, an array of cases or the object form with hidden rate questions below); without them it stops with `incomplete: true, reasons: ["no holdouts"]`, after writing a `gate.json` that says so (a gate left in that directory by an earlier run is not the answer). `--dry-run` validates, sends nothing, writes no ledger and prints the cell count (108, or 132 with two holdouts).
 - Exit codes: `0` a decision was reached (the gate passed or failed), `2` the data is incomplete (no decision; `gate.json` has `incomplete: true`, the reasons and the missing cells), `1` a refusal or an error (dirty tree, invalid cases, a lock, a mismatch, a damaged results file).
 - Where things live. In `--out`: `run.json`, `results.jsonl`, `failures.jsonl`, `gate.json`, one `.md` per stored cell and `run.lock`. In the parent directory of `--out`, shared by every run under it: `posts.log` (the ledger, one line before each POST), `runs.jsonl` (one line per real run) and its own `run.lock`. The cap of 360 POSTs counts the whole ledger, so it holds across resumes and across `--out` directories under the same parent. The ledger and the register belong to the parent directory, not to the repository: a run whose `--out` sits under another parent starts a new count of 360 and a new register, so keep every run of one decision under one parent. A real run is refused if the hash of its holdouts is already in `runs.jsonl` under another `--out`: holdouts are used once. The hash is taken over the parsed JSON with its keys sorted, so spacing, line endings, a trailing space or a key order do not make the same holdouts look new. If that earlier run made no measurement at all, delete its line from `runs.jsonl` by hand.
 - `run.json` records the commit, a hash of `src/prompts/`, a hash of the cases and holdouts, the models and the sample count. Resuming with any difference, with a stale or duplicated row, or with half a pair in `results.jsonl` is an error. A `results.jsonl` that ends in a truncated line (a killed run) is an error that says what to delete.
@@ -1118,6 +1118,25 @@ node benchmarks/tutor/run.mjs --out "$HOME/tutor-bench/dry" --dry-run
 - Seventh criterion, `noMoreFailures`: a model with more failed new-arm rows than failed old-arm rows fails the gate. There is no slack: with no failed old-arm row, one real no-answer from the new arm (a reply with no answer, or a second timeout of a pair) fails the criterion for that model, and the decision goes to the human, who reads the failed row; nothing is retried to make it pass. Failures in both arms cancel each other, so one failed row in each arm never blocks the gate.
 - A model is incomplete only if it has expected cells without a measurement, or if neither arm gave a usable answer on any quality row (nothing is compared: reason `no answered row in either arm for <model>`); a model where only one arm answered is decided. A cell that the scorer could not score (a harness fault) is saved with `unscored: true` and also leaves the gate incomplete.
 - `gate.json` reports `details.duplicates`: how many sample pairs (sample 1 and 2 of the same model, case and arm) are identical, because temperature 0 may make them duplicates. It is information, not a criterion.
+
+### Hidden rate questions
+
+The rate questions of `cases.json` have been read during prompt tuning, so a measured run replaces them. `--holdouts` then takes an object instead of an array:
+
+```json
+{
+  "quality": [ { "id": "h1", "...": "..." }, { "id": "h2", "...": "..." } ],
+  "rate": {
+    "explanatory": ["6 new prompts"],
+    "definitions": ["4 new prompts"]
+  }
+}
+```
+
+- `quality` is the array of holdout cases described below. The array form of the file still works and keeps the rate prompts of `cases.json`.
+- `rate` replaces `cases.rate` for this run only. It needs exactly the groups of `cases.rate` with the same number of prompts each (6 and 4), so the cell ids and the cell count do not change (132 with two holdout cases). Every prompt is non-empty text, no prompt appears twice, and none equals a prompt of `cases.rate` (case, spacing and surrounding whitespace ignored). Any other key in the object, or any other shape of `rate`, is refused before any request, and the message names the position of the prompt, never the prompt.
+- The rate questions are as secret as the holdout cases: the runner prints none of them to stdout or stderr, and a holdouts file that is not valid JSON is reported without the parser's quote of the text. The per-cell files in `--out` and `results.jsonl` are written as before.
+- The holdouts hash that blocks a second run and the cases hash in `run.json` cover the rate questions too.
 
 ### Writing a case (also for holdouts)
 
