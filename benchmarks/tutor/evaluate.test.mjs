@@ -78,7 +78,7 @@ describe('quiz values', () => {
     for (const option of ['2,8 V', '1,8 V']) expect(check(volts, option)).toBe('numeric');
     expect(check(milligrams, '5,20 mg')).toBe('numeric');
     for (const option of ['2.54', '12,5']) expect(check(plain, option)).toBe('numeric');
-    for (const option of ['16,8 %', '0,17']) expect(check(probability, option)).toBe('numeric');
+    for (const option of ['1,6 %', '0,2', '0,5']) expect(check(probability, option), option).toBe('numeric');
   });
 
   it('calls the right number with an incompatible unit incomplete, and a wrong key numeric', () => {
@@ -174,7 +174,7 @@ describe('quiz values', () => {
     expect(check(volts, '4 + 4 V', ['6 V'])).toBe('incomplete');
     expect(check(volts, '2 x 3 = 6 V', ['5 V'])).toBe('incomplete');
     expect(check(volts, '5-10 V', ['5 V'])).toBe('incomplete');
-    expect(check(volts, '2,500 V', ['5 V'])).toBe('incomplete');
+    expect(check(volts, '2,500 V', ['5 V'])).toBe('numeric');
     expect(check(volts, '1.234.567 V', ['5 V'])).toBe('numeric');
     expect(check(volts, '1.2.3 V', ['5 V'])).toBe('incomplete');
     expect(check({ value: 1000, unit: 'J' }, '1,000 J', ['5 J'])).toBe('incomplete');
@@ -186,6 +186,56 @@ describe('quiz values', () => {
     expect(check(volts, '8 mV', ['4 V'], 1)).toBe('incomplete');
     expect(check(volts, '12 - 4 V', ['5 V'], 0)).toBe('incomplete');
     expect(check(volts, 'U = 2 x 4 = 8 V', ['5 V'], 0)).toBe('complete');
+  });
+
+  it('reads Markdown emphasis, math delimiters and simple LaTeX, and thin or no-break spaces', () => {
+    const half = { value: 2.5, unit: '' };
+    for (const option of ['$2{,}5$', '$\\frac{5}{2}$', '\\frac{5}{2}', '$\\dfrac{5}{2}$', '**2,5**', '2\u00bd', '$2{,}5\\times 10^{0}$']) expect(check(half, option), option).toBe('complete');
+    for (const option of ['**8 V**', '*8 V*', '__8 V__', '`8 V`', '$8\\,\\text{V}$', '$8\\ \\mathrm{V}$', '\\(8\\) V', '**8** V']) expect(check(volts, option, ['**5 V**']), option).toBe('complete');
+    expect(check(milligrams, '**20 mg**')).toBe('complete');
+    expect(check({ value: 2500, unit: '' }, '$2{,}5 \\times 10^{3}$')).toBe('complete');
+    for (const space of ['\u2009', '\u00a0', '\u202f', '\u2007', '\\,']) expect(check({ value: 1000, unit: 'J' }, `1${space}000 J`), space).toBe('complete');
+    expect(check({ value: 1000, unit: 'J' }, '$1\\,000\\ \\text{J}$')).toBe('complete');
+    expect(check(volts, '**4 V**', ['6 V'])).toBe('numeric');
+    expect(check(volts, '$4\\,\\text{V}$', ['6 V'])).toBe('numeric');
+  });
+
+  it('does not call an unevaluated expression, a mixed number or another unit numeric', () => {
+    const probabilityValue = { value: 0.16807, unit: '', tolerance: 0.0005 };
+    for (const option of ['(0,7)^5', '$(0{,}7)^5$', 'C(5,3) x 0,7^3', '$\\binom{5}{3}$', '$\\sqrt{2}$', '\u221a2', '5!', 'x^2', '$\\frac{a}{b}$']) expect(check(probabilityValue, option, ['zzz']), option).toBe('incomplete');
+    expect(check(probabilityValue, '0,7^5', ['zzz'])).toBe('complete');
+    expect(check({ value: 0.5, unit: 's' }, '500 ms', ['zzz'])).toBe('incomplete');
+    expect(check({ value: 0.5, unit: 's' }, '0,5 s', ['500 ms'])).toBe('complete');
+    expect(check({ value: 0.5, unit: 's' }, '0,5 s', ['500 ms'], 1)).toBe('incomplete');
+    expect(check({ value: 2.5, unit: '' }, '2 1/2', ['zzz'])).toBe('incomplete');
+    expect(check({ value: 2.5, unit: '' }, '$2\\frac{1}{2}$', ['zzz'])).toBe('incomplete');
+    expect(check(volts, '4 restants', ['zzz'])).toBe('incomplete');
+    expect(check(volts, '4 mV', ['zzz'])).toBe('incomplete');
+    expect(check(volts, '$\\alpha$ 4 V', ['zzz'])).toBe('incomplete');
+  });
+
+  it('calls a wrong key with three decimals numeric when neither reading of the comma is the value', () => {
+    expect(check(volts, '2,828 V', ['5 V'])).toBe('numeric');
+    expect(check(volts, '2,718', ['5 V'])).toBe('numeric');
+    expect(check(volts, '2.718 V', ['5 V'])).toBe('numeric');
+    expect(check({ value: 20, unit: 'mg' }, '1,250 mg', ['5 mg'])).toBe('numeric');
+    expect(check({ value: 1.75, unit: '' }, '2,667', ['5'])).toBe('numeric');
+    // one reading is the value: certain only when the comma is not ambiguous
+    expect(check({ value: 2.5, unit: '' }, '2,500', ['5'])).toBe('incomplete');
+    expect(check({ value: 2500, unit: '' }, '2,500', ['5'])).toBe('incomplete');
+  });
+
+  it('does not turn a right value in another form into a numeric error', () => {
+    const probabilityValue = { value: 0.16807, unit: '', tolerance: 0.0005 };
+    expect(check(probabilityValue, '16,8 %', ['zzz'])).toBe('complete');
+    expect(check(probabilityValue, '\u2248 16,81 %', ['zzz'])).toBe('complete');
+    expect(check(probabilityValue, '0,17', ['zzz'])).toBe('incomplete');
+    expect(check(probabilityValue, '0,168', ['zzz'])).toBe('complete');
+    expect(check(probabilityValue, '0,17', ['16,8 %'], 1)).toBe('complete');
+    expect(check(probabilityValue, '17 %', ['zzz'])).toBe('incomplete');
+    expect(check({ value: 16.8, unit: '%' }, '16,8 %', ['zzz'])).toBe('complete');
+    expect(check({ value: 16.8, unit: '%' }, '0,168', ['zzz'])).toBe('incomplete');
+    expect(check({ value: 16.8, unit: '%' }, '25 %', ['zzz'])).toBe('numeric');
   });
 
   it('ignores digits that belong to a name or a power', () => {
@@ -388,19 +438,54 @@ describe('decideGate', () => {
     expect(newFails.criteria.noModelWorse).toBe(true);
     expect(newFails.criteria.noMoreFailures).toBe(false);
     const bothDead = gateOf(world((entry, row) => entry.model === 'B' && entry.kind === 'quality' ? failed(row) : row));
-    expect(bothDead.pass).toBe(false);
-    expect(bothDead.incomplete).toBe(true);
+    // Both arms measured, none usable: the rows are decisions, not missing data.
+    expect(bothDead.incomplete).toBe(false);
+    expect(bothDead.details.reasons).toEqual([]);
+    expect(bothDead.details.perModel.B.failed).toEqual({ old: 3, new: 3 });
+    expect(bothDead.details.perModel.B.new).toBe(0);
   });
 
-  it('ignores the clock of a failed old row', () => {
-    const fastFailures = gateOf(world((entry, row) => entry.arm === 'old' && entry.kind === 'quality' && entry.case === 'd1' ? failed(row, 1) : row));
-    expect(fastFailures.details.perModel.A.oldTotal).toBe(10);
-    expect(fastFailures.criteria.firstText).toBe(true);
-    const allOldFailed = gateOf(world((entry, row) => entry.arm === 'old' && entry.kind === 'quality' && entry.model === 'B' ? failed(row, 1) : row));
-    expect(allOldFailed.pass).toBe(false);
-    expect(allOldFailed.incomplete).toBe(true);
-    expect(allOldFailed.details.reasons.join(' ')).toMatch(/no valid old-arm row for B/);
-    expect(allOldFailed.criteria.firstText).toBe(true);
+  it('keeps every measured row in both clocks, a timed out or rejected one included', () => {
+    const cases = [...'abcdefghij'].map((id) => [id, 'dev']).concat([['h1', 'holdout'], ['h2', 'holdout']]);
+    const slowOld = (newSeconds) => world((entry, row) => {
+      if (entry.kind !== 'quality' || entry.model !== 'A') return row;
+      if (entry.arm === 'old') return ['a', 'b'].includes(entry.case) ? row : failed({ ...row, timedOut: true }, 120);
+      return { ...row, firstTextSeconds: newSeconds };
+    }, MODELS, cases);
+    const fine = gateOf(slowOld(80));
+    expect(fine.details.perModel.A.oldTotal).toBe(120);
+    expect(fine.criteria.firstText).toBe(true);
+    expect(fine.incomplete).toBe(false);
+    expect(fine.details.timeouts.old).toBe(10);
+    const slow = gateOf(slowOld(130));
+    expect(slow.criteria.firstText).toBe(false);
+    expect(slow.pass).toBe(false);
+    expect(slow.incomplete).toBe(false);
+  });
+
+  it('counts a failed new row at its real elapsed time in the first text clock', () => {
+    const cases = [['d1', 'dev'], ['d2', 'dev'], ['d3', 'dev'], ['h1', 'holdout'], ['h2', 'holdout']];
+    const gate = gateOf(world((entry, row) => entry.kind === 'quality' && entry.model === 'A' && entry.arm === 'new' && ['d1', 'd2', 'd3'].includes(entry.case) ? failed({ ...row, timedOut: true }, 120) : row, MODELS, cases));
+    expect(gate.details.perModel.A.firstText).toBe(120);
+    expect(gate.criteria.firstText).toBe(false);
+  });
+
+  it('decides a model whose old arm only fails: its failed rows are measured, not missing', () => {
+    const gate = gateOf(world((entry, row) => entry.arm === 'old' && entry.kind === 'quality' && entry.model === 'B' ? failed({ ...row, timedOut: true }, 120) : row));
+    expect(gate.incomplete).toBe(false);
+    expect(gate.details.reasons).toEqual([]);
+    expect(gate.details.perModel.B.oldTotal).toBe(120);
+    expect(gate.criteria.firstText).toBe(true);
+    const quick = gateOf(world((entry, row) => entry.arm === 'old' && entry.kind === 'quality' && entry.model === 'B' ? failed(row, 1) : row));
+    expect(quick.incomplete).toBe(false);
+    expect(quick.criteria.firstText).toBe(false);
+    expect(quick.pass).toBe(false);
+  });
+
+  it('is incomplete for a model with no measured row at all', () => {
+    const gate = gateOf(world((entry, row) => entry.model === 'B' && entry.arm === 'old' && entry.kind === 'quality' ? null : row));
+    expect(gate.incomplete).toBe(true);
+    expect(gate.criteria.firstText).toBe(false);
   });
 
   it('does not pass the definition rate when its rows fail', () => {

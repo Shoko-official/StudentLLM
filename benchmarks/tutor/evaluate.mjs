@@ -110,64 +110,128 @@ const FORMS = [
   { pattern: new RegExp(`${DECIMAL}[eE]([-+−]?\\d+)(?![\\p{L}\\p{N}])`, 'yu'), value: (m) => decimalOf(m[1]) * 10 ** integerOf(m[2]) },
   { pattern: new RegExp(`${DECIMAL}\\s*\\^\\s*[{(]?([-+−]?\\d+)[})]?`, 'y'), value: (m) => decimalOf(m[1]) ** integerOf(m[2]) },
   { pattern: new RegExp(`${DECIMAL}${SUPER_RUN}`, 'y'), value: (m) => decimalOf(m[1]) ** superscriptValue(m[2]) },
-  { pattern: new RegExp(`${DECIMAL}\\s*/\\s*${DECIMAL}(?![\\d.,]*\\d)`, 'y'), value: (m) => (decimalOf(m[2]) === 0 ? NaN : decimalOf(m[1]) / decimalOf(m[2])) },
+  { pattern: new RegExp(`${DECIMAL}\\s*/\\s*${DECIMAL}(?![\\d.,]*\\d)`, 'y'), value: (m) => (decimalOf(m[2]) === 0 ? NaN : decimalOf(m[1]) / decimalOf(m[2])), fraction: true },
   { pattern: /\d{1,3}(?:[.,]\d{3}){2,}(?!\d)/y, value: (m) => Number(m[0].replace(/[.,]/g, '')) },
   { pattern: /\d{1,3}(?: \d{3})+(?!\d)(?:[.,]\d+)?/y, value: (m) => decimalOf(m[0].replace(/ /g, '')) },
 ];
 const VULGAR = { '½': 0.5, '¼': 0.25, '¾': 0.75 };
 
 /**
- * Every amount written in an option, in order. `ambiguous` marks a number with two readings (2,500 is 2.5 or 2500) or none
- * (1.2.3): it can match, but it is never evidence that an option is wrong.
+ * An option as a learner reads it: Markdown emphasis, math delimiters and simple LaTeX (\frac, \times, \text, {,}, thin
+ * spaces) are removed. `unreadable` is set when LaTeX is left that this cannot read.
+ */
+function plainText(option) {
+  const text = String(option)
+    .replace(/\p{Zs}/gu, ' ')
+    .replace(/\\[dt]?frac\s*\{\s*([^{}]*?)\s*\}\s*\{\s*([^{}]*?)\s*\}/g, ' $1/$2 ')
+    .replace(/\\(?:times|cdot)(?![A-Za-z])/g, '×')
+    .replace(/\\approx(?![A-Za-z])/g, '≈')
+    .replace(/\\(?:text|textrm|textit|textbf|mathrm|mathit|mathbf|operatorname)\s*\{([^{}]*)\}/g, '$1')
+    .replace(/\\(?:left|right)(?![A-Za-z])/g, '')
+    .replace(/\\%/g, '%')
+    .replace(/\\[,;:! ]|~/g, ' ')
+    .replace(/\{,\}/g, ',')
+    .replace(/\^\{\s*([^{}]*?)\s*\}/g, '^$1')
+    .replace(/\\[()[\]]|\$/g, '')
+    .replace(/\*\*|__|~~|`/g, '')
+    .replace(/^\s*[*_]([^*_]+)[*_]\s*$/, '$1');
+  return { text, unreadable: /\\[A-Za-z]|[{}]/.test(text) };
+}
+
+/**
+ * Every amount written in an option, in order. `ambiguous` marks a number with two readings (2,500 is 2.5 or 2500, 2 1/2 is
+ * a mixed number or two numbers) or none (1.2.3). `decimals` is the number of decimals as written.
  */
 function amountsIn(option) {
-  const text = String(option).replace(/[  ]/g, ' ');
+  const { text, unreadable } = plainText(option);
   const found = [];
+  const masked = [...text];
   let index = 0;
   while (index < text.length) {
     const character = text[index];
-    if (VULGAR[character] !== undefined) { found.push({ candidates: [VULGAR[character]], ambiguous: false, start: index, end: index + 1 }); index++; continue; }
+    if (VULGAR[character] !== undefined) {
+      const last = found.at(-1);
+      // A whole number glued to a vulgar fraction is one number.
+      if (last?.integer && last.end === index) { last.candidates = [last.candidates[0] + Math.sign(last.candidates[0] || 1) * VULGAR[character]]; last.integer = false; last.end = index + 1; }
+      else found.push({ candidates: [VULGAR[character]], ambiguous: false, fraction: true, start: index, end: index + 1 });
+      masked[index] = ' ';
+      index++;
+      continue;
+    }
     if (!/\d/.test(character) || /\d/.test(text[index - 1] ?? '')) { index++; continue; }
     const plain = /\d+(?:[.,]\d+)*/y;
     plain.lastIndex = index;
     const run = plain.exec(text)[0];
     // A digit that belongs to a name (H2O, P2, x1) or to an exponent (x^2) is not an amount.
     if (/[\p{L}_^]/u.test(text[index - 1] ?? '')) { index += run.length; continue; }
-    let candidates, ambiguous = false, end;
-    for (const { pattern, value } of FORMS) {
-      pattern.lastIndex = index;
-      const match = pattern.exec(text);
-      const number = match && value(match);
-      if (match && Number.isFinite(number)) { candidates = [number]; end = index + match[0].length; break; }
+    let candidates, ambiguous = false, end, fraction = false, integer = false, decimals;
+    for (const form of FORMS) {
+      form.pattern.lastIndex = index;
+      const match = form.pattern.exec(text);
+      const number = match && form.value(match);
+      if (match && Number.isFinite(number)) {
+        candidates = [number]; end = index + match[0].length; fraction = form.fraction === true;
+        for (let at = index; at < end; at++) masked[at] = ' ';
+        break;
+      }
     }
     if (!candidates) {
       const parts = run.split(/[.,]/);
       end = index + run.length;
-      if (parts.length === 1) candidates = [Number(run)];
-      else if (parts.length === 2 && !(parts[1].length === 3 && parts[0].length <= 3 && !parts[0].startsWith('0'))) candidates = [decimalOf(run)];
-      else { ambiguous = true; candidates = parts.length === 2 ? [decimalOf(run), Number(parts.join(''))] : []; }
+      if (parts.length === 1) { candidates = [Number(run)]; integer = true; }
+      else if (parts.length === 2 && !(parts[1].length === 3 && parts[0].length <= 3 && !parts[0].startsWith('0'))) { candidates = [decimalOf(run)]; decimals = parts[1].length; }
+      else {
+        ambiguous = true;
+        candidates = parts.length === 2 ? [decimalOf(run), Number(parts.join(''))] : [];
+        if (parts.length === 2) decimals = parts[1].length;
+      }
     }
     const signed = /[-+−]/.test(text[index - 1] ?? '') && !/[\p{L}\p{N})\]]/u.test(text[index - 2] ?? '');
     const sign = signed && text[index - 1] !== '+' ? -1 : 1;
-    found.push({ candidates: candidates.map((number) => sign * number), ambiguous, start: index, end });
+    found.push({ candidates: candidates.map((number) => sign * number), ambiguous, fraction, integer, decimals, start: index, end });
     index = end;
   }
-  return found.map((item, position) => ({ ...item, before: text.slice(0, item.start), rest: text.slice(item.end).trimStart(), gap: position ? text.slice(found[position - 1].end, item.start) : '' }));
+  // 2 1/2: a whole number and a fraction apart by spaces may be one mixed number.
+  found.forEach((item, position) => {
+    const next = found[position + 1];
+    if (item.integer && next?.fraction && /^ +$/.test(text.slice(item.end, next.start))) {
+      item.candidates = [...item.candidates, item.candidates[0] + Math.sign(item.candidates[0] || 1) * next.candidates[0]];
+      item.ambiguous = true;
+      next.ambiguous = true;
+    }
+  });
+  const leftover = masked.join('');
+  const expression = unreadable || /[\^√]|sqrt|\d\s*!|[A-Za-z]\(\s*\d+\s*[,;]\s*\d+\s*\)/.test(leftover);
+  const items = found.map((item, position) => ({ ...item, before: text.slice(0, item.start), rest: text.slice(item.end).trimStart(), gap: position ? text.slice(found[position - 1].end, item.start) : '' }));
+  return { items, expression };
 }
 
 /**
  * Reads one quiz option against the expected amount. kind: 'match' (an amount equals the value and its unit is absent or a
  * known spelling of the expected unit), 'unit' (the value with another or an unknown unit) or 'none'. `clear` says a match
- * is certain, `clean` that the whole option was read without doubt: only then can its number be called wrong.
+ * is certain, `clean` that the whole option was read without doubt: only then can its number be called wrong. A number that
+ * could be the value in another form (rounded, in another unit, a percentage, an unevaluated expression) is never wrong.
  */
 function readOption(option, { value, unit = '', tolerance }) {
   const allowed = tolerance ?? 1e-9 * Math.max(1, Math.abs(value));
-  const amounts = amountsIn(option);
-  const chain = amounts.some((item) => /^\s*[-+−×x*·⋅/÷^]\s*$/.test(item.gap));
-  const clean = amounts.length > 0 && !chain && amounts.every((item) => !item.ambiguous);
-  const hits = amounts.filter((item) => item.candidates.some((number) => Math.abs(number - value) <= allowed));
-  const accepted = hits.filter((item) => compatible(item.rest, unit.trim()));
-  if (accepted.length) return { kind: 'match', clear: accepted.some((item) => !item.ambiguous && (!chain || /[=≈~→]\s*$/.test(item.before))), clean };
+  const target = unit.trim();
+  const { items, expression } = amountsIn(option);
+  const chain = items.some((item) => /^\s*[-+−×x*·⋅/÷^]\s*$/.test(item.gap));
+  const percent = (item) => !target && /^%(?![\p{L}\p{N}])/u.test(item.rest);
+  const reads = (item) => (percent(item) ? [...item.candidates, ...item.candidates.map((number) => number / 100)] : item.candidates);
+  const equal = (item) => reads(item).some((number) => Math.abs(number - value) <= allowed);
+  // A figure that is the value rounded to the decimals it is written with (0,17 for 0.16807) is a rounding, not an error.
+  const rounded = (item) => {
+    const figures = String(Math.abs(item.candidates[0])).replace(/\D|^0+/g, '').length;
+    const readings = [[item.candidates[0], item.decimals], ...(percent(item) ? [[item.candidates[0] / 100, (item.decimals ?? 0) + 2]] : [])];
+    return readings.some(([number, decimals]) => decimals >= 1 && (decimals >= 2 || figures >= 2) && Math.abs(Number(value.toFixed(decimals)) - number) <= 1e-12 * Math.max(1, Math.abs(value)));
+  };
+  const scaled = (item) => target === '%' && item.candidates.some((number) => Math.abs(number * 100 - value) <= allowed * 100);
+  const understood = (item) => equal(item) || (!(item.ambiguous && item.candidates.length === 0) && !rounded(item) && !scaled(item) && (percent(item) || compatible(item.rest, target)));
+  const clean = items.length > 0 && !chain && !expression && items.every(understood);
+  const hits = items.filter(equal);
+  const accepted = hits.filter((item) => percent(item) || compatible(item.rest, target));
+  if (accepted.length) return { kind: 'match', clear: !expression && accepted.some((item) => !item.ambiguous && (!chain || /[=≈→]\s*$/.test(item.before))), clean };
   return { kind: hits.length ? 'unit' : 'none', clear: false, clean };
 }
 
@@ -400,9 +464,10 @@ export function decideGate(results, expectedCells, { invalidations = [] } = {}) 
       old: total(arm('old', model), 'complete'),
       new: total(arm('new', model), 'complete'),
       failed: { old: everyRow('old', model).filter((item) => item.failed).length, new: everyRow('new', model).filter((item) => item.failed).length },
-      firstText: median(valid(arm('new', model)).map((item) => item.firstTextSeconds)),
-      oldTotal: median(valid(arm('old', model)).map((item) => item.totalSeconds)),
-      newTotal: median(valid(arm('new', model)).map((item) => item.totalSeconds)),
+      // Every measured row is in the clocks, a timed out or rejected one at its real elapsed time: the learner waited that long.
+      firstText: median(arm('new', model).map((item) => item.firstTextSeconds)),
+      oldTotal: median(arm('old', model).map((item) => item.totalSeconds)),
+      newTotal: median(arm('new', model).map((item) => item.totalSeconds)),
     }])),
     timeouts: { old: rows.filter((item) => item.arm === 'old' && item.timedOut).length, new: rows.filter((item) => item.arm === 'new' && item.timedOut).length },
     explanatoryRate,
@@ -415,9 +480,6 @@ export function decideGate(results, expectedCells, { invalidations = [] } = {}) 
   if (missingHoldouts(expectedCells)) details.reasons.push('no holdouts');
   const unscored = rows.filter((item) => item.unscored).length;
   if (unscored) details.reasons.push(`${unscored} cells could not be scored`);
-  // A model whose old arm never produced a valid row has no old clock to compare with: the data is incomplete, not failed.
-  const noOldClock = (model) => arm('old', model).length > 0 && valid(arm('old', model)).length === 0;
-  for (const model of models) if (noOldClock(model)) details.reasons.push(`no valid old-arm row for ${model}`);
   const incomplete = details.reasons.length > 0;
   const criteria = {
     moreComplete: details.complete.new > details.complete.old,
@@ -425,7 +487,7 @@ export function decideGate(results, expectedCells, { invalidations = [] } = {}) 
     noNewNumericErrors: details.numeric.new <= details.numeric.old,
     visualRate: explanatoryRate >= .8,
     definitionRate: definitionRate <= .2,
-    firstText: models.filter((model) => !noOldClock(model)).every((model) => details.perModel[model].firstText <= details.perModel[model].oldTotal),
+    firstText: models.every((model) => details.perModel[model].firstText <= details.perModel[model].oldTotal),
     noMoreFailures: models.every((model) => details.perModel[model].failed.new <= details.perModel[model].failed.old),
   };
   return { pass: !incomplete && Object.values(criteria).every(Boolean), incomplete, criteria, details };

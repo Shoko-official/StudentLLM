@@ -41,13 +41,13 @@ const ledgerOf = (out) => join(out, '..', 'posts.log');
 const stable = (list) => list.map(({ firstTextSeconds, totalSeconds, ...rest }) => rest);
 const oldCell = 'quality/nvidia/nemotron-3.5-lightning-30b-a3b/q1/old/0', newCell = 'quality/nvidia/nemotron-3.5-lightning-30b-a3b/q1/new/0';
 
-function run(args, { fake = {}, cwd = root, key = KEY } = {}) {
+function run(args, { fake = {}, cwd = root, key = KEY, env: extra = {} } = {}) {
   const stats = join(tmp, `stats-${counter++}.jsonl`);
-  const env = { ...process.env, TUTOR_FAKE: JSON.stringify(fake), TUTOR_FAKE_STATS: stats };
+  const env = { ...process.env, ...extra, TUTOR_FAKE: JSON.stringify(fake), TUTOR_FAKE_STATS: stats };
   delete env.NVIDIA_API_KEY;
   if (key) env.NVIDIA_API_KEY = key;
   const result = spawnSync(process.execPath, ['--import', fakeFetch, runner, ...args], { cwd, env, encoding: 'utf8', timeout: SLOW });
-  const counts = lines(stats).map((line) => JSON.parse(line)).at(-1) ?? { calls: 0, old: 0, prose: 0, visual: 0 };
+  const counts = lines(stats).map((line) => JSON.parse(line)).at(-1) ?? { calls: 0, old: 0, prose: 0, visual: 0, times: [] };
   return { code: result.status, stdout: result.stdout, stderr: result.stderr, counts };
 }
 const real = (out, cases, holdouts) => ['--cases', cases, ...(holdouts ? ['--holdouts', holdouts] : []), '--allow-dirty', '--out', out];
@@ -125,6 +125,11 @@ describe('real run', () => {
     expect(result.stdout).toContain('no holdouts');
     expect(result.counts.calls).toBe(0);
     expect(existsSync(ledgerOf(out))).toBe(false);
+    // gate.json says so too, so a gate left by an earlier run in this directory cannot be read as the answer.
+    const gate = gateOf(out);
+    expect(gate).toMatchObject({ pass: false, incomplete: true, posts: 0, cells: 0, expected: 24 });
+    expect(gate.details.reasons).toContain('no holdouts');
+    expect(gate.details.missing).toHaveLength(24);
   }, SLOW);
 
   it('refuses invalid holdouts before any request', () => {
@@ -207,9 +212,9 @@ describe('real run', () => {
     expect(failedQuality).toHaveLength(18);
     expect(failedQuality.every((row) => row.totalSeconds > 0 && row.totalSeconds < 10 && row.complete === 0)).toBe(true);
     expect(failedOld.filter((row) => row.kind === 'rate').every((row) => row.requested === false)).toBe(true);
-    const reasons = dataReasons(gateOf(out));
-    expect(reasons).toHaveLength(3);
-    expect(reasons.every((reason) => /no valid old-arm row/.test(reason))).toBe(true);
+    // Rejected old rows are measured, with their real elapsed time: the gate is decided on them, not incomplete.
+    expect(dataReasons(gateOf(out))).toEqual([]);
+    expect(gateOf(out).details.perModel['nvidia/nemotron-3.5-lightning-30b-a3b'].failed.old).toBe(8);
     expect(result.counts.old).toBe(24);
     expect(existsSync(join(out, 'failures.jsonl'))).toBe(false);
   }, SLOW);
@@ -271,6 +276,62 @@ describe('real run', () => {
       expect(gateOf(out).details.missing).toEqual([]);
       expect(lines(ledgerOf(out))).toHaveLength(result.counts.calls);
     }
+  }, SLOW);
+
+  it('waits before rerunning a stalled pair, so the rerun is not inside the same outage', () => {
+    const cases = casesFile(), holdouts = holdoutsFile();
+    for (const [wait, env] of [[60_000, {}], [90_000, { TUTOR_RERUN_WAIT_MS: '90000' }]]) {
+      const result = run(real(outDir(), cases, holdouts), { fake: { hangCalls: { old: [1] }, speed: 400 }, env });
+      // The fake clock is compressed 400 times: these are the milliseconds of the real run. 120 s is the stalled call itself.
+      expect(result.counts.times[1] - result.counts.times[0], String(wait)).toBeGreaterThanOrEqual(120_000 + wait - 15_000);
+    }
+  }, SLOW);
+
+  it('does not store a pair where both arms time out, and moves past a dead model after three such pairs', () => {
+    const out = outDir(), cases = casesFile(), holdouts = holdoutsFile();
+    const dead = 'nvidia/nemotron-3.5-lightning-30b-a3b';
+    const first = run(real(out, cases, holdouts), { fake: { hangModels: [dead], speed: 400 } });
+    expect(first.code).toBe(2);
+    const stored = rows(out);
+    expect(stored).toHaveLength(32);
+    expect(stored.some((row) => row.model === dead)).toBe(false);
+    expect(new Set(stored.map((row) => row.model)).size).toBe(2);
+    // Three pairs of wait at most: one discarded call, then the rerun of both arms.
+    const waits = lines(ledgerOf(out)).map((line) => JSON.parse(line)).filter((entry) => entry.cell?.includes(dead));
+    expect(waits.length).toBeLessThanOrEqual(9);
+    expect(rows(out, 'failures.jsonl').map((item) => item.kind)).toEqual(['timeout', 'both-timeout', 'timeout', 'both-timeout', 'timeout', 'both-timeout']);
+    const gate = gateOf(out);
+    expect(gate.incomplete).toBe(true);
+    expect(gate.details.missing).toHaveLength(16);
+    expect(gate.details.reasons.join(' ')).toMatch(/lightning.*3 pairs in a row/);
+    expect(gate.skippedModels).toEqual([dead]);
+    expect(first.stdout).toMatch(/lightning.*skipped/);
+    const others = () => lines(ledgerOf(out)).map((line) => JSON.parse(line)).filter((entry) => !entry.cell?.includes(dead)).length;
+    const before = others();
+
+    // A resume retries that model only.
+    const second = run(real(out, cases, holdouts));
+    expect(rows(out)).toHaveLength(48);
+    expect(others()).toBe(before);
+    expect(dataReasons(gateOf(out))).toEqual([]);
+    expect(gateOf(out).skippedModels).toEqual([]);
+    expect(second.counts.calls).toBeGreaterThan(0);
+  }, SLOW);
+
+  it('decides an old arm that always times out while the new arm answers', () => {
+    const out = outDir();
+    const result = run(real(out, casesFile(), holdoutsFile()), { fake: { hang: 'old', speed: 400 } });
+    expect(rows(out)).toHaveLength(48);
+    const oldRows = rows(out).filter((row) => row.arm === 'old');
+    expect(oldRows.every((row) => row.failed && row.timedOut)).toBe(true);
+    expect(rows(out).filter((row) => row.arm === 'new').some((row) => row.failed)).toBe(false);
+    expect(rows(out, 'failures.jsonl').map((item) => item.kind)).toEqual(Array(24).fill('timeout'));
+    const gate = gateOf(out);
+    expect(dataReasons(gate)).toEqual([]);
+    expect(gate.details.timeouts).toEqual({ old: 24, new: 0 });
+    expect(gate.criteria.firstText).toBe(true);
+    expect(gate.criteria.noMoreFailures).toBe(true);
+    expect(result.code).toBe(2);
   }, SLOW);
 
   it('reruns a stalled pair at most once, also across a resume', () => {

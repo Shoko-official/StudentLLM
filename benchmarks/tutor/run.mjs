@@ -60,6 +60,8 @@ const MODELS = [
   { id: 'mistralai/mistral-large-4-1t-a52b' },
 ];
 const SAMPLES = 2, POST_CAP = 360, SPACING_MS = 1700, DEADLINE_MS = 120_000, VISUAL_DEADLINE_MS = 60_000, WINDOW = 1_000_000, OUTPUT = 8192, MAX_CONSECUTIVE_FAILURES = 3;
+// Wait before a stalled pair is rerun, so the rerun is not inside the same outage. The environment variable is a test aid.
+const RERUN_WAIT_MS = process.env.TUTOR_RERUN_WAIT_MS && Number.isFinite(Number(process.env.TUTOR_RERUN_WAIT_MS)) ? Number(process.env.TUTOR_RERUN_WAIT_MS) : 60_000;
 
 mkdirSync(out, { recursive: true });
 const casesText = text(argument('--cases') ?? fileURLToPath(new URL('./cases.json', import.meta.url)));
@@ -110,7 +112,14 @@ const problems = [...validateCases(cases.quality, { allowSplit: true }), ...vali
 if (problems.length) fail(['The cases cannot be scored, so nothing was sent:', ...problems.map((problem) => `  ${problem}`)].join('\n'));
 if (dryRun) { await server.close(); process.exit(0); }
 
+const invalidations = [];
+if (allowDirty) invalidations.push('run with --allow-dirty: not a valid decision');
+if (customCases) invalidations.push('run with --cases: not the committed cases');
+
 if (missingHoldouts(expected)) {
+  // gate.json says so as well, so a gate left in this directory by an earlier run cannot be read as the answer.
+  const gate = decideGate(stored, expected, { invalidations });
+  save('gate.json', JSON.stringify({ ...gate, dirty, allowDirty, customCases, posts: lineCount(ledgerPath), cells: stored.length, expected: expected.length, pendingFailures: 0, stopped: null, skippedModels: [] }, null, 2));
   console.log(JSON.stringify({ pass: false, incomplete: true, reasons: ['no holdouts'] }));
   await server.close();
   process.exit(2);
@@ -260,7 +269,8 @@ async function runCell(pair, arm) {
 }
 
 const results = [...stored];
-let consecutive = 0, stopped = null;
+const failedInARow = new Map(), skipped = new Map();
+let stopped = null;
 // A pair whose 120 s stall was already discarded (kept in failures.jsonl, so it also holds across a resume) is rerun no more.
 const stalled = new Set(readRows(join(out, 'failures.jsonl')).filter((item) => item.kind === 'timeout').flatMap((item) => item.cells));
 
@@ -276,39 +286,49 @@ async function attempt(pair, mayDiscard) {
 }
 
 for (const pair of pairs.filter((item) => !done.has(item.cells.old.cell))) {
+  const model = pair.model.id;
+  if (skipped.has(model)) continue;
   const cells = [pair.cells.old.cell, pair.cells.new.cell];
   let outcomes = await attempt(pair, !stalled.has(cells[0]));
   const stall = outcomes.find((item) => item.row?.timedOut && !stalled.has(cells[0]));
   if (stall) {
-    // One stalled call (a 120 s timeout, either arm) must not decide the gate: discard the pair, once, and rerun it at once.
-    // The rerun is final: a second timeout is the model's, saved as a failed row with its real elapsed time.
+    // One stalled call (a 120 s timeout, either arm) must not decide the gate: discard the pair, once, wait, and rerun it.
+    // The rerun is final: a timeout there is the model's, saved as a failed row with its real elapsed time.
     append('failures.jsonl', `${JSON.stringify({ at: new Date().toISOString(), cells, kind: 'timeout', cell: stall.row.cell, error: stall.row.error })}\n`);
     stalled.add(cells[0]);
-    console.log(`${stall.row.cell}: hit the 120 s limit, the pair is discarded and rerun once`);
+    console.log(`${stall.row.cell}: hit the 120 s limit, the pair is discarded and rerun once after ${RERUN_WAIT_MS / 1000} s`);
+    await new Promise((resolve) => setTimeout(resolve, RERUN_WAIT_MS));
     outcomes = await attempt(pair, false);
   }
   const failure = outcomes.find((item) => item.infra)?.infra;
-  if (failure) {
-    append('failures.jsonl', `${JSON.stringify({ at: new Date().toISOString(), cells, ...failure })}\n`);
-    console.log(`${failure.cell}: not a measurement (${failure.kind}), the pair will be rerun on resume`);
-    consecutive++;
-    if (failure.kind === 'cap') { stopped = 'the request cap was reached'; break; }
-    if (consecutive >= MAX_CONSECUTIVE_FAILURES) { stopped = `${MAX_CONSECUTIVE_FAILURES} pairs in a row failed before any measurement`; break; }
+  // Both arms timing out compares nothing: the endpoint is down for this model, not a measurement of either arm.
+  const bothStalled = !failure && outcomes.length === 2 && outcomes.every((item) => item.row?.timedOut);
+  if (failure || bothStalled) {
+    if (failure) {
+      append('failures.jsonl', `${JSON.stringify({ at: new Date().toISOString(), cells, ...failure })}\n`);
+      console.log(`${failure.cell}: not a measurement (${failure.kind}), the pair will be rerun on resume`);
+    } else {
+      append('failures.jsonl', `${JSON.stringify({ at: new Date().toISOString(), cells, kind: 'both-timeout', error: outcomes[0].row.error })}\n`);
+      console.log(`${cells[0]}: both arms hit the 120 s limit, nothing is stored, the pair will be rerun on resume`);
+    }
+    if (failure?.kind === 'cap') { stopped = 'the request cap was reached'; break; }
+    failedInARow.set(model, (failedInARow.get(model) ?? 0) + 1);
+    if (failedInARow.get(model) >= MAX_CONSECUTIVE_FAILURES) {
+      skipped.set(model, `${model} skipped: ${MAX_CONSECUTIVE_FAILURES} pairs in a row failed before any measurement (a resume retries it)`);
+      console.log(skipped.get(model));
+    }
     continue;
   }
-  consecutive = 0;
+  failedInARow.set(model, 0);
   for (const outcome of outcomes) if (outcome.content !== undefined) save(`${outcome.row.cell.replaceAll('/', '--')}.md`, outcome.content);
   append('results.jsonl', outcomes.map((outcome) => `${JSON.stringify(outcome.row)}\n`).join(''));
   results.push(...outcomes.map((outcome) => outcome.row));
   console.log(`${pair.cells.old.cell}: posts ${postCount}${outcomes.some((outcome) => outcome.row.failed) ? ' (model output failure recorded)' : ''}`);
 }
 
-const invalidations = [];
-if (allowDirty) invalidations.push('run with --allow-dirty: not a valid decision');
-if (customCases) invalidations.push('run with --cases: not the committed cases');
-const gate = decideGate(results, expected, { invalidations });
+const gate = decideGate(results, expected, { invalidations: [...invalidations, ...skipped.values()] });
 const pending = readRows(join(out, 'failures.jsonl')).filter((item) => item.cells.some((cell) => !results.some((row) => row.cell === cell))).length;
-save('gate.json', JSON.stringify({ ...gate, dirty, allowDirty, customCases, posts: postCount, cells: results.length, expected: expected.length, pendingFailures: pending, stopped }, null, 2));
+save('gate.json', JSON.stringify({ ...gate, dirty, allowDirty, customCases, posts: postCount, cells: results.length, expected: expected.length, pendingFailures: pending, stopped, skippedModels: [...skipped.keys()] }, null, 2));
 console.log(JSON.stringify(gate, null, 2));
 if (stopped) console.log(`Stopped early: ${stopped}.`);
 if (gate.incomplete) console.log(`INCOMPLETE, no decision: ${gate.details.reasons.join('; ')}. Missing cells: ${gate.details.missing.slice(0, 10).join(', ') || 'none'}${gate.details.missing.length > 10 ? ' ...' : ''}.`);
