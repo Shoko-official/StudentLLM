@@ -2667,12 +2667,13 @@ git -c user.name=Shoko -c user.email=a.breyton.pro@gmail.com commit -m "test(ben
 
 **Interfaces:**
 - Consumes: Task 8 runner and the format of `cases.json`.
+- Gate: the six checks of the design (`moreComplete`, `noModelWorse`, `noNewNumericErrors`, `visualRate` at least 80% on explanatory, `definitionRate` at most 20%, `firstText` no later than the old total) plus a seventh, `noMoreFailures`: a model with more failed new-arm rows than failed old-arm rows fails. A model output failure is a measurement and is saved, never retried; a call that hits the 120 s limit is one too (a failed row with its real elapsed time, counted per arm in `gate.json`). Infrastructure failures are not measurements: the pair is rerun and the decision stays incomplete until every expected cell is measured. A run made with `--allow-dirty` or `--cases` can never decide.
 
 - [ ] **Step 1: Have an independent agent write two holdouts**
 
 Spawn a fresh agent with this brief. It must not read `src/prompts/` and must not be told the new prompt text:
 
-> Write two synthetic French or English educational cases for a benchmark of an interactive tutor, in `F:\StudentLLM\tutor-bench\holdouts.json`, in the format of the `quality` entries of `benchmarks/tutor/cases.json` (`id`, `prompt`, `artefacts`, `proseFacts`). Read only `benchmarks/tutor/cases.json`, `benchmarks/tutor/evaluate.mjs` and `src/lib/teaching-visuals.ts`. Do not read `src/prompts/`. Avoid these topics: Taylor series, binomial law, half-life, sinusoidal voltage, projectile height, geometric distribution, mitosis, card draws, inclined plane, ideal gas, means, isotopes, pH. Each case asks for one plot with sliders and calculated readouts, and one quiz. Compute every reference by hand, then verify each expression with the real `compileExpression` and record what you ran. Do not paste references anywhere except that file. Do not edit the repository.
+> Write two synthetic French or English educational cases for a benchmark of an interactive tutor, in `F:\StudentLLM\tutor-bench\holdouts.json`, in the format of the `quality` entries of `benchmarks/tutor/cases.json` (`id`, `prompt`, `artefacts`, `proseFacts`). Read only `benchmarks/README.md` (it documents the case format, including how a quiz answer is written as a number and a unit), `benchmarks/tutor/cases.json`, `benchmarks/tutor/evaluate.mjs` and `src/lib/teaching-visuals.ts`. Do not read `src/prompts/`. Avoid these topics: Taylor series, binomial law, half-life, sinusoidal voltage, projectile height, geometric distribution, mitosis, card draws, inclined plane, ideal gas, means, isotopes, pH. Each case asks for one plot with sliders and calculated readouts, and one quiz. Compute every reference by hand, then verify each expression with the real `compileExpression` and record what you ran. Do not paste references anywhere except that file. Do not edit the repository.
 
 Do not read the file yourself until the gate has been decided.
 

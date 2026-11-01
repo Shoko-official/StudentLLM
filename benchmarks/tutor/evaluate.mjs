@@ -3,8 +3,6 @@ import { compileExpression, parseTeachingVisual, plotSampleXs } from '../../src/
 import { prepareTutorMarkdown } from '../../src/lib/visual-brief.ts';
 
 export const REQUIRED_HOLDOUTS = 2;
-// A model is measurable only if at least this share of its new-arm rows is a valid measurement.
-const MIN_VALID_SHARE = 0.5;
 // rich-text.tsx renders at most this many student-visual fences per message.
 const APP_VISUAL_BUDGET = 8;
 const VISUAL_LANGUAGES = ['student-visual', 'student-visual-request'];
@@ -42,12 +40,21 @@ export function requestedVisual(content) {
   return visuals.length > 0 || requests.length > 0;
 }
 
-/** Reads "8 V", "8V", "2,5" or "0.168": one number with a comma or dot decimal, then an optional unit. */
-export function parseAmount(text) {
-  const match = /^\s*([-+−]?\d+(?:[.,]\d+)?)\s*(.*?)\s*\.?\s*$/.exec(String(text));
-  if (!match) return null;
-  const value = Number(match[1].replace('−', '-').replace(',', '.'));
-  return Number.isFinite(value) ? { value, unit: match[2] } : null;
+/**
+ * Compares one quiz option with the expected amount. 'match': some number of the option equals the expected value and its
+ * unit is absent or starts with the same letter (V, Vcc, volts; mg, milligrammes). 'unit': the right number with another unit.
+ */
+export function matchAmount(option, { value, unit = '', tolerance }) {
+  const allowed = tolerance ?? 1e-9 * Math.max(1, Math.abs(value));
+  const text = String(option);
+  let result = 'none';
+  for (const found of text.matchAll(/[-+−]?\d+(?:[.,]\d+)?/g)) {
+    if (!(Math.abs(Number(found[0].replace('−', '-').replace(',', '.')) - value) <= allowed)) continue;
+    const written = /^\s*([\p{L}%°]+)/u.exec(text.slice(found.index + found[0].length))?.[1];
+    if (!unit || !written || written[0].toLowerCase() === unit[0].toLowerCase()) return 'match';
+    result = 'unit';
+  }
+  return result;
 }
 
 function sliderCombinations(sliders) {
@@ -112,16 +119,17 @@ function evaluatePlot(spec, visuals) {
 function evaluateQuiz(spec, visuals) {
   const quizzes = visuals.filter((visual) => visual.type === 'quiz');
   if (!quizzes.length) return { type: 'quiz', status: 'missing', errors: ['no quiz'] };
-  const { value, unit = '', tolerance } = spec.correct;
-  const allowed = tolerance ?? 1e-9 * Math.max(1, Math.abs(value));
-  const isCorrect = (option) => {
-    const amount = parseAmount(option);
-    return Boolean(amount) && amount.unit === unit && Math.abs(amount.value - value) <= allowed;
-  };
-  const quiz = quizzes.find((item) => item.options.some(isCorrect)) ?? quizzes[0];
-  const matching = quiz.options.filter(isCorrect);
-  if (matching.length !== 1) return { type: 'quiz', status: 'numeric', errors: [`${matching.length} options match the correct value`] };
-  return isCorrect(quiz.options[quiz.answer]) ? { type: 'quiz', status: 'complete', errors: [] } : { type: 'quiz', status: 'numeric', errors: ['the key points to a wrong option'] };
+  const outcomes = (quiz) => quiz.options.map((option) => matchAmount(option, spec.correct));
+  const quiz = quizzes.find((item) => outcomes(item).includes('match')) ?? quizzes[0];
+  const found = outcomes(quiz);
+  const matching = found.filter((outcome) => outcome === 'match').length;
+  if (matching > 1) return { type: 'quiz', status: 'numeric', errors: [`${matching} options match the correct value`] };
+  if (matching === 0) {
+    if (found.includes('unit')) return { type: 'quiz', status: 'incomplete', errors: ['the right number has an incompatible unit'] };
+    const numbered = quiz.options.some((option) => /\d/.test(option));
+    return numbered ? { type: 'quiz', status: 'numeric', errors: ['no option has the correct value'] } : { type: 'quiz', status: 'incomplete', errors: ['no option holds a number'] };
+  }
+  return found[quiz.answer] === 'match' ? { type: 'quiz', status: 'complete', errors: [] } : { type: 'quiz', status: 'numeric', errors: ['the key points to a wrong option'] };
 }
 
 function evaluateDiagram(spec, visuals) {
@@ -141,6 +149,66 @@ export function evaluateAnswer(testCase, content) {
     return visuals.some((visual) => visual.type === spec.type) ? { type: spec.type, status: 'complete', errors: [] } : { type: spec.type, status: 'missing', errors: [`no ${spec.type}`] };
   });
   return { artefacts, prose: { missing: (testCase.proseFacts ?? []).filter((fact) => !new RegExp(fact).test(prose)) } };
+}
+
+/** A scoring exception is a harness fault, not a model failure: the caller records it and the gate stays incomplete. */
+export function scoreSafely(testCase, content) {
+  try { return { evaluation: evaluateAnswer(testCase, content) }; }
+  catch (error) { return { error: error instanceof Error ? error.message : 'scoring failed' }; }
+}
+
+const finite = (value) => typeof value === 'number' && Number.isFinite(value);
+const KEYS = { plot: ['type', 'x', 'sliders', 'curves', 'readouts', 'yCovers', 'chartType'], quiz: ['type', 'correct'], diagram: ['type', 'minLeaves'] };
+
+/** Checks a list of cases before any request: the exact format, unique ids and expressions the app language compiles. */
+export function validateCases(list, { taken = [], allowSplit = false } = {}) {
+  if (!Array.isArray(list)) return ['the file must be a JSON array of cases'];
+  const errors = [], ids = new Set(taken);
+  list.forEach((item, index) => {
+    const problems = [];
+    const bad = (message) => problems.push(message);
+    if (!item || typeof item !== 'object' || Array.isArray(item)) { errors.push(`case ${index + 1}: must be an object`); return; }
+    const label = `case ${index + 1} (${item.id})`;
+    const allowed = ['id', 'prompt', 'artefacts', 'proseFacts', ...(allowSplit ? ['split'] : [])];
+    for (const name of Object.keys(item)) if (!allowed.includes(name)) bad(`unknown key ${name}`);
+    for (const name of ['id', 'prompt', 'artefacts', 'proseFacts']) if (!(name in item)) bad(`missing key ${name}`);
+    if (typeof item.id !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(item.id)) bad('id must be 1 to 40 letters, digits, - or _');
+    else if (ids.has(item.id)) bad(`id ${item.id} is already used`);
+    else ids.add(item.id);
+    if (typeof item.prompt !== 'string' || !item.prompt.trim()) bad('prompt must be non-empty text');
+    if (!Array.isArray(item.artefacts) || !item.artefacts.length) bad('artefacts must be a non-empty array');
+    for (const spec of Array.isArray(item.artefacts) ? item.artefacts : []) {
+      if (!spec || !KEYS[spec.type]) { bad(`unknown artefact type ${spec?.type}`); continue; }
+      for (const name of Object.keys(spec)) if (!KEYS[spec.type].includes(name)) bad(`${spec.type}: unknown key ${name}`);
+      if (spec.type === 'quiz') {
+        const correct = spec.correct;
+        if (typeof correct === 'string') bad('quiz.correct is the old regex format; use { "value": number, "unit": "..." }');
+        else if (!correct || !finite(correct.value)) bad('quiz.correct.value must be a number');
+        else if (typeof correct.unit !== 'string' || (correct.tolerance !== undefined && !(finite(correct.tolerance) && correct.tolerance >= 0)) || Object.keys(correct).some((name) => !['value', 'unit', 'tolerance'].includes(name))) bad('quiz.correct must be { value, unit, tolerance? } with a text unit');
+      } else if (spec.type === 'diagram') {
+        if (spec.minLeaves !== undefined && !(Number.isInteger(spec.minLeaves) && spec.minLeaves >= 0)) bad('diagram.minLeaves must be a whole number');
+      } else {
+        if (!spec.x || !finite(spec.x.min) || !finite(spec.x.max) || spec.x.min >= spec.x.max) bad('plot.x needs min < max');
+        if (spec.chartType !== undefined && !['line', 'bar'].includes(spec.chartType)) bad('plot.chartType must be line or bar');
+        if (spec.yCovers !== undefined && !(Array.isArray(spec.yCovers) && spec.yCovers.length === 2 && spec.yCovers.every(finite))) bad('plot.yCovers must be two numbers');
+        if (!Array.isArray(spec.sliders)) bad('plot.sliders must be an array');
+        for (const slider of Array.isArray(spec.sliders) ? spec.sliders : []) {
+          const fine = slider && /^[A-Za-z_][A-Za-z0-9_]*$/.test(slider.key) && ['min', 'max', 'step', 'value'].every((name) => finite(slider[name])) && slider.step > 0 && slider.min <= slider.value && slider.value <= slider.max;
+          if (!fine) bad(`slider ${slider?.key} needs a key, min <= value <= max and step > 0`);
+        }
+        if (!Array.isArray(spec.curves) || !spec.curves.length) bad('plot.curves must be a non-empty array');
+        for (const curve of Array.isArray(spec.curves) ? spec.curves : []) if (typeof curve !== 'string' || !compileExpression(curve)) bad(`curve ${curve} does not compile`);
+        if (spec.readouts !== undefined && !Array.isArray(spec.readouts)) bad('plot.readouts must be an array');
+        for (const readout of Array.isArray(spec.readouts) ? spec.readouts : []) if (typeof readout !== 'string' || !compileExpression(readout)) bad(`readout ${readout} does not compile`);
+      }
+    }
+    if (!Array.isArray(item.proseFacts)) bad('proseFacts must be an array');
+    for (const fact of Array.isArray(item.proseFacts) ? item.proseFacts : []) {
+      try { new RegExp(fact); } catch { bad(`proseFacts entry ${fact} is not a valid regular expression`); }
+    }
+    errors.push(...problems.map((message) => `${label}: ${message}`));
+  });
+  return errors;
 }
 
 // An empty list has no median: NaN fails every comparison, so a missing arm can never satisfy a criterion.
@@ -170,9 +238,9 @@ function duplicateSamples(quality) {
 
 /**
  * Criteria fixed before any result was seen; see the design document. Data validity is decided here, not in the
- * criteria: every expected cell must be measured, and a model must have enough valid new-arm rows to be judged.
+ * criteria: every expected cell must be measured, and `invalidations` lists reasons the whole run cannot decide.
  */
-export function decideGate(results, expectedCells) {
+export function decideGate(results, expectedCells, { invalidations = [] } = {}) {
   const expected = new Map(expectedCells.map((item) => [item.cell, item]));
   const rows = results.filter((item) => expected.has(item.cell)).map((item) => ({ ...expected.get(item.cell), ...item }));
   const present = new Set(rows.map((item) => item.cell));
@@ -180,8 +248,9 @@ export function decideGate(results, expectedCells) {
   const quality = rows.filter((item) => item.kind === 'quality');
   const valid = (list) => list.filter((item) => !item.failed);
   const arm = (name, model) => quality.filter((item) => item.arm === name && (model === undefined || item.model === model));
+  const everyRow = (name, model) => rows.filter((item) => item.arm === name && item.model === model);
   const models = [...new Set(expectedCells.filter((item) => item.kind === 'quality').map((item) => item.model))];
-  const rateRows = (group, model) => rows.filter((item) => item.kind === 'rate' && item.arm === 'new' && item.group === group && (model === undefined || item.model === model));
+  const rateRows = (group) => rows.filter((item) => item.kind === 'rate' && item.arm === 'new' && item.group === group);
   const fraction = (list, test) => (list.length ? list.filter(test).length / list.length : NaN);
   const explanatoryRate = fraction(rateRows('explanatory'), (item) => !item.failed && item.requested);
   const definitionRate = fraction(valid(rateRows('definitions')), (item) => item.requested);
@@ -191,26 +260,25 @@ export function decideGate(results, expectedCells) {
     perModel: Object.fromEntries(models.map((model) => [model, {
       old: total(arm('old', model), 'complete'),
       new: total(arm('new', model), 'complete'),
+      failed: { old: everyRow('old', model).filter((item) => item.failed).length, new: everyRow('new', model).filter((item) => item.failed).length },
       firstText: median(valid(arm('new', model)).map((item) => item.firstTextSeconds)),
       oldTotal: median(valid(arm('old', model)).map((item) => item.totalSeconds)),
       newTotal: median(valid(arm('new', model)).map((item) => item.totalSeconds)),
     }])),
+    timeouts: { old: rows.filter((item) => item.arm === 'old' && item.timedOut).length, new: rows.filter((item) => item.arm === 'new' && item.timedOut).length },
     explanatoryRate,
     definitionRate,
     duplicates: duplicateSamples(quality),
     missing,
-    reasons: [],
+    reasons: [...invalidations],
   };
   if (missing.length) details.reasons.push(`${missing.length} expected cells have no measurement`);
   if (missingHoldouts(expectedCells)) details.reasons.push('no holdouts');
-  const measurable = (list, expectedCount) => valid(list).length >= Math.max(1, Math.ceil(expectedCount * MIN_VALID_SHARE));
-  for (const model of models) {
-    const planned = (test) => expectedCells.filter((item) => item.model === model && item.arm === 'new' && test(item)).length;
-    if (!measurable(arm('new', model), planned((item) => item.kind === 'quality'))) details.reasons.push(`too few valid new-arm quality rows for ${model}`);
-    for (const group of ['explanatory', 'definitions']) {
-      if (!measurable(rateRows(group, model), planned((item) => item.kind === 'rate' && item.group === group))) details.reasons.push(`too few valid ${group} rows for ${model}`);
-    }
-  }
+  const unscored = rows.filter((item) => item.unscored).length;
+  if (unscored) details.reasons.push(`${unscored} cells could not be scored`);
+  // A model whose old arm never produced a valid row has no old clock to compare with: the data is incomplete, not failed.
+  const noOldClock = (model) => arm('old', model).length > 0 && valid(arm('old', model)).length === 0;
+  for (const model of models) if (noOldClock(model)) details.reasons.push(`no valid old-arm row for ${model}`);
   const incomplete = details.reasons.length > 0;
   const criteria = {
     moreComplete: details.complete.new > details.complete.old,
@@ -218,7 +286,8 @@ export function decideGate(results, expectedCells) {
     noNewNumericErrors: details.numeric.new <= details.numeric.old,
     visualRate: explanatoryRate >= .8,
     definitionRate: definitionRate <= .2,
-    firstText: models.every((model) => details.perModel[model].firstText <= details.perModel[model].oldTotal),
+    firstText: models.filter((model) => !noOldClock(model)).every((model) => details.perModel[model].firstText <= details.perModel[model].oldTotal),
+    noMoreFailures: models.every((model) => details.perModel[model].failed.new <= details.perModel[model].failed.old),
   };
   return { pass: !incomplete && Object.values(criteria).every(Boolean), incomplete, criteria, details };
 }
