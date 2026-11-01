@@ -744,6 +744,14 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     chat: current.chat.map((message) => message.id === messageId ? { ...message, content: update(message.content) } : message),
   }));
   const visualJobs = useVisualJobs({ provider: localProvider, deadlineMs: usesNim(serviceSettings) ? 60_000 : undefined, updateMessage: updateChatMessage });
+  // A deleted course must stop spending model calls on its text, like vision work for a removed source.
+  const cancelVisualJobs = visualJobs.cancel;
+  const knownLessonIds = useRef(lessons.map((lesson) => lesson.id));
+  useEffect(() => {
+    const present = new Set(lessons.map((lesson) => lesson.id));
+    cancelVisualJobs(knownLessonIds.current.filter((id) => !present.has(id)));
+    knownLessonIds.current = [...present];
+  }, [lessons, cancelVisualJobs]);
   const visualControls: VisualJobControls = {
     isPending: (messageId, briefId) => visualJobs.pending.has(pendingVisualKey(messageId, briefId)),
     ...(localProvider ? { retry: (messageId: string, briefId: string) => {

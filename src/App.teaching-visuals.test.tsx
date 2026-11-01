@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, vi } from 'vitest';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
@@ -107,4 +107,109 @@ it('keeps a user-pasted visual specification as code rather than a second intera
   await user.click(screen.getByRole('tab', { name: /^Chat$/ }));
   expect(screen.queryByRole('radio')).toBeNull();
   expect(screen.getByLabelText('Your message').querySelector('code.language-student-visual')).toBeInTheDocument();
+});
+
+describe('visual jobs in the app', () => {
+  const manyRequests = (count: number) => 'Voici des courbes.\n\n' + Array.from({ length: count }, (_, index) => requestFence({ ...plotBrief, id: `v${index + 1}`, intent: `Curve ${index + 1}` })).join('\n\n');
+  const seedChat = (content: string) => {
+    const workspace = createFixtureWorkspace();
+    workspace.lessonWorkspaces![workspace.activeLessonId].chat = [{ id: 'old', role: 'assistant', content }];
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(workspace));
+  };
+  /** Visual calls stay open until released and reject when their signal aborts. */
+  function gatedVisuals(prose: string) {
+    const open: Array<{ signal: AbortSignal; release: () => void }> = [];
+    let inFlight = 0, peak = 0, total = 0;
+    const generate = vi.fn((_messages: ProviderMessage[], options?: { responseFormat?: unknown; signal?: AbortSignal }) => {
+      if (!isVisualCall(options)) return Promise.resolve({ content: prose, model: 'test-model' });
+      total++; inFlight++; peak = Math.max(peak, inFlight);
+      return new Promise<{ content: string; model: string }>((resolve, reject) => {
+        const done = () => { inFlight--; };
+        options?.signal?.addEventListener('abort', () => { done(); reject(new DOMException('aborted', 'AbortError')); }, { once: true });
+        open.push({ signal: options!.signal!, release: () => { done(); resolve({ content: JSON.stringify(plotVisual), model: 'test-model' }); } });
+      });
+    });
+    return { generate, open, peak: () => peak, total: () => total };
+  }
+  const openChat = async (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole('tab', { name: /^Chat$/ }));
+
+  it('keeps at most two visual calls in flight across three retry clicks, and finishes all of them', async () => {
+    seedChat(manyRequests(3));
+    const user = userEvent.setup();
+    const { generate, open, peak, total } = gatedVisuals('');
+    render(<App provider={{ generate, supportsStructuredOutputs: true }} />);
+    await openChat(user);
+    for (let click = 0; click < 3; click++) await user.click(screen.getAllByRole('button', { name: 'Retry this visual' })[0]);
+    await waitFor(() => expect(total()).toBe(2));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(total()).toBe(2);
+    let released = 0;
+    await waitFor(() => {
+      while (released < open.length) open[released++].release();
+      expect(screen.getAllByRole('slider')).toHaveLength(3);
+    });
+    expect(peak()).toBe(2);
+    expect(total()).toBe(3);
+  });
+
+  it('gives each visual attempt the NIM deadline, and none otherwise', async () => {
+    const delays = () => (setTimeout as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[1]);
+    const run = async (nim: boolean) => {
+      localStorage.clear();
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(createFixtureWorkspace()));
+      if (nim) localStorage.setItem('studentllm.services.v1', JSON.stringify({ llmProvider: 'nvidia-nim' }));
+      vi.spyOn(globalThis, 'setTimeout');
+      const generate = vi.fn(async (_messages: ProviderMessage[], options?: { responseFormat?: unknown }) => ({ content: isVisualCall(options) ? JSON.stringify(plotVisual) : tutorReply, model: 'test-model' }));
+      const user = userEvent.setup();
+      const view = render(<App provider={{ generate, supportsStructuredOutputs: true }} />);
+      await openChat(user);
+      await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), 'Explique la parabole');
+      await user.click(screen.getByRole('button', { name: /^Send$/ }));
+      expect(await screen.findByRole('slider', { name: /Coefficient/ })).toBeInTheDocument();
+      const used = delays();
+      view.unmount();
+      vi.restoreAllMocks();
+      return used;
+    };
+    expect(await run(true)).toContain(60_000);
+    expect(await run(false)).not.toContain(60_000);
+  });
+
+  it('writes a finished visual to the course that asked for it after the student switches course', async () => {
+    const user = userEvent.setup();
+    let releaseProse: () => void = () => undefined;
+    const visuals = gatedVisuals('');
+    const generate = vi.fn((messages: ProviderMessage[], options?: { responseFormat?: unknown; signal?: AbortSignal }) => isVisualCall(options)
+      ? visuals.generate(messages, options)
+      : new Promise<{ content: string; model: string }>((resolve) => { releaseProse = () => resolve({ content: tutorReply, model: 'test-model' }); }));
+    render(<App provider={{ generate, supportsStructuredOutputs: true }} />);
+    await openChat(user);
+    await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), 'Explique la parabole');
+    await user.click(screen.getByRole('button', { name: /^Send$/ }));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole('button', { name: 'Self-attention and Context' }));
+    await act(async () => releaseProse());
+    await waitFor(() => expect(visuals.open).toHaveLength(1));
+    await act(async () => visuals.open[0].release());
+    const saved = () => JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY)!).lessonWorkspaces as Record<string, { chat: Array<{ role: string; content: string }> }>;
+    await waitFor(() => expect(saved()['fixture-attention'].chat.find((message) => message.role === 'assistant')?.content).toContain('"title":"Parabole"'));
+    expect(saved()['fixture-attention'].chat.find((message) => message.role === 'assistant')?.content).not.toContain('student-visual-request');
+    expect(saved()['fixture-context']?.chat ?? []).toEqual([]);
+  });
+
+  it('stops the visual calls of a course when it is deleted', async () => {
+    seedChat(manyRequests(3));
+    const user = userEvent.setup();
+    const { generate, open, total } = gatedVisuals('');
+    render(<App provider={{ generate, supportsStructuredOutputs: true }} />);
+    await openChat(user);
+    for (let click = 0; click < 3; click++) await user.click(screen.getAllByRole('button', { name: 'Retry this visual' })[0]);
+    await waitFor(() => expect(total()).toBe(2));
+    await user.click(screen.getByText('More'));
+    await user.click(screen.getByRole('button', { name: /Delete course$/ }));
+    await user.click(screen.getByRole('button', { name: 'Delete course permanently' }));
+    await waitFor(() => expect(open.every((call) => call.signal.aborted)).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(total()).toBe(2);
+  });
 });
