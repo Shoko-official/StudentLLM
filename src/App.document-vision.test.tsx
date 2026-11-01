@@ -77,6 +77,32 @@ it('pins the source destination while another course is open', async () => {
   expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Self-attention and Context');
 });
 
+it('replaces an earlier source in place without moving it behind a later import', async () => {
+  const fixture = JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY)!);
+  const workspace = fixture.lessonWorkspaces[FIXTURE_LESSON_ID];
+  workspace.resources.push({ id: 'fixture-later', name: 'later.md', kind: 'transcript', meta: 'Text notes' });
+  workspace.transcript.push(
+    { id: 'fixture-pdf:page-1', sourceId: 'fixture-pdf', timestamp: 'Page 1', speaker: 'diagram.pdf', text: 'Old scanned evidence.', status: 'review' },
+    { id: 'later:notes', sourceId: 'fixture-later', timestamp: 'Notes', speaker: 'later.md', text: 'Later imported evidence.', status: 'review' },
+  );
+  fixture.resources = workspace.resources; fixture.transcript = workspace.transcript;
+  localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(fixture));
+  const user = userEvent.setup(); const blobStore = store();
+  const view = render(<App provider={null} documentEngine={null} sourceBlobStore={blobStore} />);
+  await user.click(screen.getByRole('tab', { name: /^Sources/ }));
+  await user.click(screen.getByRole('button', { name: 'Analyze diagram.pdf with NVIDIA' }));
+  await waitFor(() => expect(vision.extract).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(saved().lessonWorkspaces[FIXTURE_LESSON_ID].transcript.some((s: { text: string }) => s.text.includes('Vision evidence'))).toBe(true));
+  expect(saved().lessonWorkspaces[FIXTURE_LESSON_ID].transcript.filter((s: { sourceId?: string }) => s.sourceId).map((s: { sourceId: string }) => s.sourceId)).toEqual(['fixture-pdf', 'fixture-later']);
+  await user.click(screen.getByRole('tab', { name: 'Notes' }));
+  const note = screen.getByRole('region', { name: 'Course notes document' });
+  expect(note.textContent!.indexOf('Vision evidence')).toBeLessThan(note.textContent!.indexOf('Later imported evidence.'));
+  view.unmount();
+  render(<App provider={null} documentEngine={null} sourceBlobStore={blobStore} />);
+  const restored = screen.getByRole('region', { name: 'Course notes document' });
+  expect(restored.textContent!.indexOf('Vision evidence')).toBeLessThan(restored.textContent!.indexOf('Later imported evidence.'));
+});
+
 it('discards late results after cancellation', async () => {
   let finish!: (value: DocumentExtraction) => void;
   vision.extract.mockImplementation(() => new Promise(resolve => { finish = resolve; }));

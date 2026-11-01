@@ -2422,7 +2422,10 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       semanticReviewAttemptedIds.current.add(`${resource.id}:model`);
       updateLessonWorkspace(lessonId, (current) => {
         if (controller.signal.aborted || !current.resources.some((item) => item.id === resource.id)) return current;
-        const transcript = [...current.transcript.filter((segment) => segment.sourceId !== resource.id), ...segments];
+        const previousIndex = current.transcript.findIndex((segment) => segment.sourceId === resource.id);
+        const remaining = current.transcript.filter((segment) => segment.sourceId !== resource.id);
+        const at = previousIndex < 0 ? remaining.length : previousIndex;
+        const transcript = [...remaining.slice(0, at), ...segments, ...remaining.slice(at)];
         const lesson = lessonsRef.current.find((item) => item.id === lessonId) ?? currentLesson;
         return { ...current, transcript, courseNote: composeDocumentSourcesNote(lesson, transcript, current.resources, current.courseNote, { resourceId: resource.id, note }) };
       });
