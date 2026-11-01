@@ -99,7 +99,7 @@ export function CourseChat({ messages, sourceCount, hasMaterial, providerName, d
         {messages.map((message) => <article className={`chat-message ${message.role}`} data-role={message.role} aria-label={message.role === 'user' ? 'Your message' : 'Course assistant response'} key={message.id}>
           <header className="message-header"><span className="message-role">{message.role === 'user' ? 'You' : 'Course assistant'}</span></header>
           <div className="message-content"><RichText content={message.content} className="chat-markdown" focusableScrollRegions allowTeachingVisuals={message.role === 'assistant'} /></div>
-          {message.citations && <div className="citation-list" aria-label="Response sources">{message.citations.map((citation, index) => message.citationTargets?.[index]
+          {message.citations && <div className="citation-list" aria-label="Response context">{message.citations.map((citation, index) => message.citationTargets?.[index]
             ? <button type="button" className="citation-chip" title="Open original source" key={citation} onClick={() => onOpenCitation(message.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button>
             : <span className={/^(?:LM Studio|NVIDIA NIM) ·/.test(citation) ? 'citation-model' : 'citation-context'} key={citation}>{citation}</span>)}</div>}
         </article>)}

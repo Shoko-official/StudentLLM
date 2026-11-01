@@ -1,5 +1,6 @@
 import type { Lesson } from '../types';
 import type { LLMProvider, ProviderResponseFormat } from './llm-provider';
+import { ORGANIZATION_PROMPT } from '../prompts';
 
 export interface QuickStartProposal {
   course: string;
@@ -67,18 +68,9 @@ export async function analyzeQuickStart(
   const result = await provider.generate([
     {
       role: 'system',
-      content: [
-        'You organize study material into a small course tree.',
-        'Return only valid JSON, with no markdown and no extra text.',
-        'Use exactly these fields: placement, targetCourseId, course, lesson, title, sublesson, subject, confidence, rationale.',
-        'placement must be "existing" only when one existing course clearly matches; otherwise use "new".',
-        'targetCourseId must be an existing catalog id when placement is "existing", otherwise null.',
-        'course is the top-level course group, lesson is the chapter or lesson, title is the name of the note/session to create, and sublesson is an optional nested topic.',
-        'Keep names concise and in the language of the input. If a sublesson is not supported by the input, return an empty string. If title is not explicit, use the most specific supported topic name.',
-        'confidence is a number from 0 to 1. Do not invent a teacher, date, facts, or hierarchy that is not supported by the input.',
-        `Known destinations:\n${catalog}`,
-      ].join('\n'),
+      content: ORGANIZATION_PROMPT,
     },
+    { role: 'user', content: JSON.stringify({ knownDestinations: catalog }) },
     { role: 'user', content: excerpt.slice(0, 24_000) },
   ], { responseFormat: quickStartResponseFormat });
 

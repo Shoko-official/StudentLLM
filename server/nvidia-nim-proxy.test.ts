@@ -101,14 +101,37 @@ describe('NVIDIA NIM dev proxy', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('only exposes the two routes the app needs', async () => {
+  it('only exposes the model, chat and text embedding routes', async () => {
     const fetchImpl = upstreamOk();
     const port = await startProxy({ readKey: () => TEST_KEY, fetchImpl });
-    expect((await send(port, '/embeddings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(404);
+    expect((await send(port, '/embeddings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(400);
     expect((await send(port, '/../../evil')).status).toBe(404);
     const wrongMethod = await send(port, '/chat/completions');
     expect(wrongMethod.status).toBe(405);
     expect(wrongMethod.headers.allow).toBe('POST');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('forwards constrained text embeddings with the server credential and distinct modes', async () => {
+    const fetchImpl = upstreamOk({ data: [] });
+    const port = await startProxy({ readKey: () => TEST_KEY, fetchImpl });
+    for (const input_type of ['passage', 'query']) {
+      const payload = JSON.stringify({ model: 'nvidia/nemotron-3.5-embed-1b', input: ['Synthetic text'], input_type, modality: 'text', dimensions: 512, encoding_format: 'float', embedding_type: 'float', truncate: 'NONE' });
+      expect((await send(port, '/embeddings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: payload })).status).toBe(200);
+      const [url, init] = fetchImpl.mock.calls.at(-1)!;
+      expect(url).toBe('https://integrate.api.nvidia.com/v1/embeddings');
+      expect(init?.body).toBe(payload);
+      expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${TEST_KEY}`);
+    }
+  });
+
+  it('rejects images, remote references, unsupported modes and oversized text before forwarding embeddings', async () => {
+    const fetchImpl = upstreamOk();
+    const port = await startProxy({ readKey: () => TEST_KEY, fetchImpl });
+    const valid = { model: 'nvidia/nemotron-3.5-embed-1b', input: ['text'], input_type: 'query', modality: 'text', dimensions: 512, encoding_format: 'float', embedding_type: 'float', truncate: 'NONE' };
+    for (const patch of [{ input: ['data:image/png;base64,AA'] }, { input: ['data&#58;image&#47;png;base64,AA'] }, { input: ['<svg><path d="private-vector" /></svg>'] }, { input: ['<img src="image.png">'] }, { input: Array(33).fill('text') }, { input: ['x'.repeat(32769)] }, { input: [{ image: 'image.png' }] }, { input_type: 'other' }, { modality: 'image' }, { model: 'different-model' }, { truncate: 'END' }, { dimensions: 2048 }, { extra: 'https://other.example' }]) {
+      expect((await send(port, '/embeddings', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...valid, ...patch }) })).status).toBe(400);
+    }
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -162,7 +185,7 @@ describe('NVIDIA NIM dev proxy', () => {
 
   it('serves the route through the real Vite dev server middleware stack', async () => {
     const fetchImpl = upstreamOk();
-    const vite = await createViteServer({ configFile: false, logLevel: 'silent', server: { middlewareMode: true, hmr: false, ws: false }, plugins: [nvidiaNimProxy({ readKey: () => TEST_KEY, fetchImpl })] });
+    const vite = await createViteServer({ configFile: false, logLevel: 'silent', cacheDir: 'tmp/nim-proxy-test-cache', optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false, ws: false }, plugins: [nvidiaNimProxy({ readKey: () => TEST_KEY, fetchImpl })] });
     try {
       server = createServer(vite.middlewares);
       await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
