@@ -236,6 +236,9 @@ The old pipeline stays reachable from the benchmark until the gate is decided. B
 3. No new numeric error compared to the old arm, judged against the references, with quiz keys counted.
 4. Visual requested on at least 80% of explanatory rate cases, and on at most 20% of definitions.
 5. Time to first readable text no greater than the old arm's total time, per model, by median. Total time is reported.
+6. `noMoreFailures`: no model has more failed new-arm rows than failed old-arm rows. A failed row (a rejected envelope, a reply with no answer, a visual that fails its repair) is a measurement: it is saved with its real elapsed time, counts as not complete and not requested, and is never retried.
+
+A call that hits the 120 s limit is also a measurement, not a missing one: the learner would get an error there as well, and the app's proxy fails at the same point. It is recorded as a failed row with its real elapsed time and counted per arm. Infrastructure failures (an HTTP error that outlives the provider's retry, a network error, the request cap, a reply that is not a completion) are not measurements: the pair is rerun, and the decision stays incomplete until every expected cell is measured. A run made on a dirty tree or with substitute cases never decides.
 
 These are small exploratory samples. The result supports a decision and is not a statistical claim. A failed criterion stops the slice for diagnosis, and the metrics do not change after results are seen.
 

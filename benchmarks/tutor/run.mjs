@@ -1,12 +1,15 @@
 // Compares the single-envelope pipeline with the two-step tutor pipeline on real hosted models.
 // Synthetic text only. NVIDIA_API_KEY comes from the process environment and never reaches a file or a stream.
 // Usage: node benchmarks/tutor/run.mjs --out <dir> [--holdouts <file>] [--dry-run]
-// Test aids: --cases <file> replaces cases.json, --allow-dirty skips the clean tree check (recorded in run.json).
+// Test aids: --cases <file> replaces cases.json, --allow-dirty skips the clean tree check. Either one makes the
+// result incomplete, never a decision.
 // Exit codes: 0 a decision was reached (pass or fail), 1 a refusal or an error, 2 the data is incomplete.
+// The request ledger (posts.log) and the run register (runs.jsonl) live in the parent of --out, so the budget and
+// the no-rerun rule hold across --out directories.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 
@@ -14,6 +17,7 @@ const argument = (name) => { const index = process.argv.indexOf(name); return in
 const out = argument('--out');
 const dryRun = process.argv.includes('--dry-run');
 const allowDirty = process.argv.includes('--allow-dirty');
+const customCases = argument('--cases') !== undefined;
 const key = process.env.NVIDIA_API_KEY;
 
 // Everything that leaves this process (files and both standard streams) goes through one scrub.
@@ -25,12 +29,30 @@ for (const stream of [process.stdout, process.stderr]) {
 const fail = (message, code = 1) => { console.error(message); process.exit(code); };
 if (!out) fail('Pass --out with a directory outside Git.');
 if (!key && !dryRun) fail('NVIDIA_API_KEY is not set in this process.');
-const append = (name, text) => appendFileSync(join(out, name), scrub(text));
+const target = resolve(out);
+const parent = dirname(target);
+const ledgerPath = join(parent, 'posts.log');
+const runsPath = join(parent, 'runs.jsonl');
+const appendAt = (path, text) => appendFileSync(path, scrub(text));
+const append = (name, text) => appendAt(join(out, name), text);
 const save = (name, text) => writeFileSync(join(out, name), scrub(text));
-const lineCount = (name) => (existsSync(join(out, name)) ? readFileSync(join(out, name), 'utf8').split('\n').filter(Boolean).length : 0);
-const readRows = (name) => (existsSync(join(out, name)) ? readFileSync(join(out, name), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
-const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+const lineCount = (path) => (existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean).length : 0);
+const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const text = (path) => readFileSync(path, 'utf8').replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
+
+function readRows(path) {
+  if (!existsSync(path)) return [];
+  const parts = readFileSync(path, 'utf8').split('\n');
+  const name = relative(parent, path);
+  return parts.flatMap((line, index) => {
+    if (!line) return [];
+    try { return [JSON.parse(line)]; }
+    catch {
+      if (index === parts.length - 1) fail(`${name} ends with a truncated line (a run was killed while writing). Delete that last line, and the other row of its pair if only one remains, then resume: the pair is rerun.`);
+      return fail(`${name} line ${index + 1} is not valid JSON, so the file is damaged. Use a new --out.`);
+    }
+  });
+}
 
 const MODELS = [
   { id: 'nvidia/nemotron-3.5-lightning-30b-a3b', chatTemplateKwargs: { enable_thinking: false } },
@@ -41,11 +63,12 @@ const SAMPLES = 2, POST_CAP = 360, SPACING_MS = 1700, DEADLINE_MS = 120_000, VIS
 
 mkdirSync(out, { recursive: true });
 const casesText = text(argument('--cases') ?? fileURLToPath(new URL('./cases.json', import.meta.url)));
-const cases = JSON.parse(casesText);
 const holdoutsPath = argument('--holdouts');
 const holdoutsText = holdoutsPath ? text(holdoutsPath) : '';
-const holdouts = holdoutsPath ? JSON.parse(holdoutsText) : [];
-const quality = [...cases.quality, ...holdouts.map((item) => ({ ...item, split: 'holdout' }))];
+let cases, holdouts;
+try { cases = JSON.parse(casesText); holdouts = holdoutsPath ? JSON.parse(holdoutsText) : []; }
+catch (error) { fail(`A cases or holdouts file is not valid JSON: ${error instanceof Error ? error.message : 'unreadable'}`); }
+const quality = [...cases.quality, ...(Array.isArray(holdouts) ? holdouts : []).map((item) => ({ ...item, split: 'holdout' }))];
 
 // A pair is the old and the new arm of one prompt. Cells run one at a time; a pair is stored or discarded as a whole.
 const pairs = [], expected = [];
@@ -64,7 +87,7 @@ for (const model of MODELS) {
     });
   }
 }
-const stored = readRows('results.jsonl');
+const stored = readRows(join(out, 'results.jsonl'));
 const done = new Set(stored.map((item) => item.cell));
 console.log(`${expected.length} cells, ${expected.filter((item) => !done.has(item.cell)).length} left, ${quality.length} quality cases`);
 
@@ -78,9 +101,13 @@ if (!dryRun) {
 
 const server = await createServer({ configFile: false, appType: 'custom', root: process.cwd(), cacheDir: join(out, 'vite-cache'), optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false, watch: null }, logLevel: 'error' });
 const load = (path) => server.ssrLoadModule(path);
-const [{ OpenAICompatibleProvider }, { buildChatContext, estimateContextTokens }, prompts, oldPipeline, newPipeline, briefs, { evaluateAnswer, requestedVisual, decideGate, missingHoldouts }] = await Promise.all([
+const [{ OpenAICompatibleProvider }, { buildChatContext, estimateContextTokens }, prompts, oldPipeline, newPipeline, briefs, { scoreSafely, requestedVisual, decideGate, missingHoldouts, validateCases }] = await Promise.all([
   load('/src/lib/llm-provider.ts'), load('/src/lib/chat-context.ts'), load('/src/prompts/index.ts'), load('/src/lib/teaching-answer.ts'), load('/src/lib/teaching-generation.ts'), load('/src/lib/visual-brief.ts'), load('/benchmarks/tutor/evaluate.mjs'),
 ]);
+
+// Nothing is sent before every case can be scored.
+const problems = [...validateCases(cases.quality, { allowSplit: true }), ...validateCases(holdouts, { taken: cases.quality.map((item) => item.id) })];
+if (problems.length) fail(['The cases cannot be scored, so nothing was sent:', ...problems.map((problem) => `  ${problem}`)].join('\n'));
 if (dryRun) { await server.close(); process.exit(0); }
 
 if (missingHoldouts(expected)) {
@@ -89,16 +116,23 @@ if (missingHoldouts(expected)) {
   process.exit(2);
 }
 
-const lockPath = join(out, 'run.lock');
-try { closeSync(openSync(lockPath, 'wx')); }
-catch { fail(`Another run holds ${lockPath}. Remove it only if no run is active.`); }
-process.on('exit', () => rmSync(lockPath, { force: true }));
+const held = [];
+process.on('exit', () => { for (const path of held) rmSync(path, { force: true }); });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(130));
+for (const path of [join(out, 'run.lock'), join(parent, 'run.lock')]) {
+  try { closeSync(openSync(path, 'wx')); held.push(path); }
+  catch { fail(`Another run holds ${path}. Remove it only if no run is active.`); }
+}
+
+const holdoutsHash = sha256(holdoutsText);
+const register = readRows(runsPath);
+const earlier = register.find((item) => item.holdoutsHash === holdoutsHash && item.out !== target);
+if (earlier) fail(`These holdouts were already used by ${earlier.out}. A second run on the same holdouts is not allowed: write new holdouts. If that run made no measurement at all, delete its line from ${runsPath}.`);
 
 const filesIn = (dir) => readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1)).flatMap((entry) => (entry.isDirectory() ? filesIn(join(dir, entry.name)) : [join(dir, entry.name)]));
 const promptsDir = join(process.cwd(), 'src', 'prompts');
 const meta = {
-  commit, dirty,
+  commit, dirty, allowDirty, customCases,
   promptsHash: sha256(filesIn(promptsDir).map((file) => `${relative(promptsDir, file).replaceAll('\\', '/')}\0${text(file)}`).join('\0\0')),
   casesHash: sha256(`${casesText}\0${holdoutsText}`),
   models: MODELS, samples: SAMPLES, postCap: POST_CAP,
@@ -108,41 +142,56 @@ if (existsSync(join(out, 'run.json'))) {
   const differing = Object.keys(meta).filter((name) => JSON.stringify(previous[name]) !== JSON.stringify(meta[name]));
   if (differing.length) fail(`This directory belongs to another run (mismatch in ${differing.join(', ')}). Use a new --out.`);
 } else save('run.json', JSON.stringify(meta, null, 2));
+if (!register.some((item) => item.out === target)) appendAt(runsPath, `${JSON.stringify({ at: new Date().toISOString(), out: target, commit, dirty, allowDirty, customCases, holdoutsHash, casesHash: meta.casesHash })}\n`);
 
 const expectedIds = new Set(expected.map((item) => item.cell));
 const stale = stored.filter((item) => !expectedIds.has(item.cell));
 if (stale.length) fail(`results.jsonl holds ${stale.length} stale rows that this run does not expect (first: ${stale[0].cell}). Use a new --out.`);
 if (done.size !== stored.length) fail('results.jsonl holds a cell twice. Use a new --out.');
 const partial = pairs.filter((pair) => done.has(pair.cells.old.cell) !== done.has(pair.cells.new.cell));
-if (partial.length) fail(`results.jsonl holds half a pair (first: ${partial[0].cells.old.cell}). Use a new --out.`);
+if (partial.length) fail(`results.jsonl holds half a pair (first: ${partial[0].cells.old.cell}). Delete that row, then resume: the pair is rerun.`);
 
-let postCount = lineCount('posts.log'), nextStart = 0;
+let postCount = lineCount(ledgerPath), nextStart = 0;
 let current = null;
-const refuse = () => { current?.events.push({ kind: 'cap' }); throw new Error('Benchmark request cap reached.'); };
-const countingFetch = async (url, init) => {
-  const slot = current;
-  if (postCount >= POST_CAP) refuse();
+const refuse = (events) => { events.push({ kind: 'cap' }); throw new Error('Benchmark request cap reached.'); };
+const aborted = (error) => ['AbortError', 'TimeoutError'].includes(error?.name);
+const countingFetch = async (url, init, events) => {
+  if (postCount >= POST_CAP) refuse(events);
   const delay = Math.max(0, nextStart - Date.now());
   nextStart = Math.max(nextStart, Date.now()) + SPACING_MS;
   if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-  // Checked again after the wait, with no await before the count: the cap holds across processes and resumes.
-  if (postCount >= POST_CAP) refuse();
+  // Checked again after the wait, with no await before the count: the cap holds across processes, resumes and directories.
+  if (postCount >= POST_CAP) refuse(events);
   postCount++;
-  append('posts.log', `${JSON.stringify({ n: postCount, at: new Date().toISOString(), cell: slot?.cell })}\n`);
-  if (slot) slot.posts++;
+  appendAt(ledgerPath, `${JSON.stringify({ n: postCount, at: new Date().toISOString(), out: target, cell: current?.cell })}\n`);
+  if (current) current.posts++;
   try {
     const response = await globalThis.fetch(url, { ...init, headers: { ...init.headers, authorization: `Bearer ${key}` } });
-    if (!response.ok) slot?.events.push({ kind: 'http', status: response.status });
+    if (!response.ok) { events.push({ kind: 'http', status: response.status }); return response; }
+    // A 200 that is not a completion (a gateway page, an error body, a body cut off mid-read) is the provider's failure.
+    try { events.push({ kind: Array.isArray(JSON.parse(await response.clone().text())?.choices) ? 'ok' : 'malformed' }); }
+    catch (error) { events.push({ kind: error?.name === 'SyntaxError' ? 'malformed' : aborted(error) ? 'abort' : 'truncated' }); }
     return response;
   } catch (error) {
-    slot?.events.push({ kind: ['AbortError', 'TimeoutError'].includes(error?.name) ? 'abort' : 'network', phase: slot.phase });
+    events.push({ kind: aborted(error) ? 'abort' : 'network' });
     throw error;
   }
 };
-const providerFor = (model) => {
-  const provider = new OpenAICompatibleProvider({ baseUrl: 'https://integrate.api.nvidia.com/v1', model: model.id, fetchImpl: countingFetch, timeoutMs: DEADLINE_MS, chatTemplateKwargs: model.chatTemplateKwargs });
-  return { supportsStructuredOutputs: true, generate: (messages, options) => provider.generate(messages, { ...options, signal: options?.signal ?? AbortSignal.timeout(DEADLINE_MS) }) };
-};
+// One provider per call, so the events of a call that finally succeeded (after a retried 429 or 5xx) are dropped,
+// and a call that failed keeps them: generateVisual swallows errors, the events are what the runner can still see.
+const providerFor = (model) => ({
+  supportsStructuredOutputs: true,
+  async generate(messages, options) {
+    const events = [];
+    const provider = new OpenAICompatibleProvider({ baseUrl: 'https://integrate.api.nvidia.com/v1', model: model.id, fetchImpl: (url, init) => countingFetch(url, init, events), timeoutMs: DEADLINE_MS, chatTemplateKwargs: model.chatTemplateKwargs });
+    try { return await provider.generate(messages, { ...options, signal: options?.signal ?? AbortSignal.timeout(DEADLINE_MS) }); }
+    catch (error) {
+      // A good completion as the last event means the failure is the model's (an empty answer), not the retried ones before it.
+      if (events.at(-1)?.kind !== 'ok') current?.events.push(...events);
+      throw error;
+    }
+  },
+});
 const context = (prompt, systemPrompt, schemaTokens) => buildChatContext({ documents: [], history: [], question: prompt, systemPrompt, contextWindowTokens: WINDOW, outputTokens: OUTPUT, schemaTokens });
 
 async function runOld(provider, prompt) {
@@ -162,7 +211,6 @@ async function runNew(provider, prompt, withVisuals) {
   let content = tutor.markdown;
   const visualResults = [];
   if (withVisuals) {
-    current.phase = 'visual';
     await newPipeline.runVisualJobs(provider, tutor.jobs.slice(0, briefs.MAX_AUTOMATIC_VISUALS), { deadlineMs: VISUAL_DEADLINE_MS, concurrency: 2, onResult: (brief, result) => {
       visualResults.push({ id: brief.id, type: brief.type, attempts: result.attempts, ok: Boolean(result.visual), errors: result.errors });
       if (result.visual) content = briefs.replaceVisualFence(content, brief.id, briefs.visualFence(result.visual));
@@ -171,13 +219,14 @@ async function runNew(provider, prompt, withVisuals) {
   return { content, firstTextSeconds, totalSeconds: (performance.now() - started) / 1000, visualResults };
 }
 
-// Infrastructure failures are not measurements: any HTTP error, network error, the cap, or a timeout of the
-// prose or old call. A visual that runs out of its own deadline is the model's failure and stays a measurement.
-const infrastructure = (events) => events.some((event) => event.kind !== 'abort' || event.phase === 'main');
+// Infrastructure failures are not measurements: an HTTP error that outlived the provider's retry, a network error, the
+// cap, a reply that is not a completion. A call that runs out of its own time limit is a measurement: the learner would
+// get an error there too.
+const INFRASTRUCTURE = ['http', 'network', 'cap', 'malformed', 'truncated'];
 
 async function runCell(pair, arm) {
   const info = pair.cells[arm];
-  const slot = { cell: info.cell, events: [], posts: 0, phase: 'main' };
+  const slot = { cell: info.cell, events: [], posts: 0 };
   current = slot;
   const started = performance.now();
   let answer, error;
@@ -187,19 +236,25 @@ async function runCell(pair, arm) {
   const elapsed = (performance.now() - started) / 1000;
   const message = error instanceof Error ? error.message : error === undefined ? undefined : 'failed';
   const visualResults = answer?.visualResults ?? [];
-  if (infrastructure(slot.events) || (error && !/^The model returned /.test(message))) {
-    return { infra: { cell: info.cell, kind: slot.events[0]?.kind ?? 'error', events: slot.events, error: message, visualResults } };
+  const kinds = slot.events.map((event) => event.kind);
+  const timedOut = Boolean(error) && kinds.includes('abort');
+  if (kinds.some((kind) => INFRASTRUCTURE.includes(kind)) || (error && !timedOut && !/^The model returned /.test(message))) {
+    return { infra: { cell: info.cell, kind: kinds.find((kind) => INFRASTRUCTURE.includes(kind)) ?? 'error', events: slot.events, error: message, visualResults } };
   }
   const base = { cell: info.cell, kind: info.kind, model: info.model, arm, posts: slot.posts };
+  const failure = error ? { failed: true, timedOut, error: message } : {};
   if (info.kind === 'rate') {
-    const row = error ? { ...base, index: info.index, group: info.group, requested: false, failed: true, error: message }
-      : { ...base, group: info.group, index: info.index, requested: requestedVisual(answer.content) };
-    return { row, content: answer?.content };
+    let requested = false, unscored;
+    if (!error) { try { requested = requestedVisual(answer.content); } catch (caught) { unscored = caught instanceof Error ? caught.message : 'scoring failed'; } }
+    return { row: { ...base, group: info.group, index: info.index, requested, ...failure, ...(unscored === undefined ? {} : { unscored: true, scoringError: unscored }) }, content: answer?.content };
   }
   const identity = { case: info.case, split: info.split, sample: info.sample, required: pair.testCase.artefacts.length };
-  if (error) return { row: { ...base, ...identity, complete: 0, numeric: 0, artefacts: [], proseMissing: [], firstTextSeconds: elapsed, totalSeconds: elapsed, visualResults, contentHash: null, failed: true, error: message } };
-  const evaluation = evaluateAnswer(pair.testCase, answer.content);
-  return { row: { ...base, ...identity, required: evaluation.artefacts.length, complete: evaluation.artefacts.filter((item) => item.status === 'complete').length, numeric: evaluation.artefacts.filter((item) => item.status === 'numeric').length, artefacts: evaluation.artefacts, proseMissing: evaluation.prose.missing, firstTextSeconds: answer.firstTextSeconds, totalSeconds: answer.totalSeconds, visualResults, contentHash: sha256(answer.content) }, content: answer.content };
+  if (error) return { row: { ...base, ...identity, complete: 0, numeric: 0, artefacts: [], proseMissing: [], firstTextSeconds: elapsed, totalSeconds: elapsed, visualResults, contentHash: null, ...failure } };
+  const scored = scoreSafely(pair.testCase, answer.content);
+  const timing = { firstTextSeconds: answer.firstTextSeconds, totalSeconds: answer.totalSeconds, visualResults, contentHash: sha256(answer.content) };
+  if (scored.error !== undefined) return { row: { ...base, ...identity, complete: 0, numeric: 0, artefacts: [], proseMissing: [], ...timing, unscored: true, scoringError: scored.error }, content: answer.content };
+  const { evaluation } = scored;
+  return { row: { ...base, ...identity, required: evaluation.artefacts.length, complete: evaluation.artefacts.filter((item) => item.status === 'complete').length, numeric: evaluation.artefacts.filter((item) => item.status === 'numeric').length, artefacts: evaluation.artefacts, proseMissing: evaluation.prose.missing, ...timing }, content: answer.content };
 }
 
 const results = [...stored];
@@ -227,9 +282,12 @@ for (const pair of pairs.filter((item) => !done.has(item.cells.old.cell))) {
   console.log(`${pair.cells.old.cell}: posts ${postCount}${outcomes.some((outcome) => outcome.row.failed) ? ' (model output failure recorded)' : ''}`);
 }
 
-const gate = decideGate(results, expected);
-const pending = readRows('failures.jsonl').filter((item) => item.cells.some((cell) => !results.some((row) => row.cell === cell))).length;
-save('gate.json', JSON.stringify({ ...gate, posts: postCount, cells: results.length, expected: expected.length, pendingFailures: pending, stopped }, null, 2));
+const invalidations = [];
+if (allowDirty) invalidations.push('run with --allow-dirty: not a valid decision');
+if (customCases) invalidations.push('run with --cases: not the committed cases');
+const gate = decideGate(results, expected, { invalidations });
+const pending = readRows(join(out, 'failures.jsonl')).filter((item) => item.cells.some((cell) => !results.some((row) => row.cell === cell))).length;
+save('gate.json', JSON.stringify({ ...gate, dirty, allowDirty, customCases, posts: postCount, cells: results.length, expected: expected.length, pendingFailures: pending, stopped }, null, 2));
 console.log(JSON.stringify(gate, null, 2));
 if (stopped) console.log(`Stopped early: ${stopped}.`);
 if (gate.incomplete) console.log(`INCOMPLETE, no decision: ${gate.details.reasons.join('; ')}. Missing cells: ${gate.details.missing.slice(0, 10).join(', ') || 'none'}${gate.details.missing.length > 10 ? ' ...' : ''}.`);

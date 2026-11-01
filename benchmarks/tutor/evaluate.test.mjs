@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileExpression } from '../../src/lib/teaching-visuals.ts';
 import cases from './cases.json';
-import { decideGate, evaluateAnswer, parseAmount, requestedVisual } from './evaluate.mjs';
+import { decideGate, evaluateAnswer, matchAmount, requestedVisual, scoreSafely, validateCases } from './evaluate.mjs';
 
 const fence = (value) => '```student-visual\n' + JSON.stringify(value) + '\n```';
 const testCase = {
@@ -55,28 +55,72 @@ describe('evaluateAnswer', () => {
 });
 
 describe('quiz values', () => {
-  const check = (correct, option) => {
+  const check = (correct, option, others = ['zzz'], answer = 0) => {
     const spec = { artefacts: [{ type: 'quiz', correct }] };
-    return evaluateAnswer(spec, fence({ ...quiz, options: [option, 'zzz'], answer: 0 })).artefacts[0].status;
+    return evaluateAnswer(spec, fence({ ...quiz, options: [option, ...others], answer })).artefacts[0].status;
   };
+  const volts = { value: 8, unit: 'V' }, milligrams = { value: 20, unit: 'mg' }, plain = { value: 2.5, unit: '' }, probability = { value: 0.16807, unit: '', tolerance: 0.0005 };
 
-  it('reads comma or dot decimals with or without a space before the unit', () => {
-    expect(parseAmount('8 V')).toEqual({ value: 8, unit: 'V' });
-    expect(parseAmount('2,5')).toEqual({ value: 2.5, unit: '' });
-    for (const option of ['8 V', '8V', '8,0 V', '8.00 V']) expect(check({ value: 8, unit: 'V' }, option)).toBe('complete');
+  it('finds the expected number among the numbers of an option', () => {
+    expect(matchAmount('P2(1) = 2,5', plain)).toBe('match');
+    expect(matchAmount('≈ 0,168', probability)).toBe('match');
+    expect(matchAmount('2,8 V', volts)).toBe('none');
+  });
+
+  it('accepts comma or dot decimals, a missing unit and a compatible unit', () => {
+    for (const option of ['8 V', '8V', '8,0 V', '8.00 V', '8', '8 Vcc', '8 volts']) expect(check(volts, option)).toBe('complete');
+    for (const option of ['20', '20 mg', '20 milligrammes', '20 mg restants']) expect(check(milligrams, option)).toBe('complete');
+    expect(check(plain, 'P2(1) = 2,5')).toBe('complete');
+    expect(check(probability, '≈ 0,168')).toBe('complete');
   });
 
   it('does not match a value by accident', () => {
-    expect(check({ value: 8, unit: 'V' }, '2,8 V')).toBe('numeric');
-    expect(check({ value: 8, unit: 'V' }, '1,8 V')).toBe('numeric');
-    expect(check({ value: 8, unit: 'V' }, '8 mV')).toBe('numeric');
-    expect(check({ value: 8, unit: 'V' }, '8')).toBe('numeric');
-    expect(check({ value: 20, unit: 'mg' }, '5,20 mg')).toBe('numeric');
-    expect(check({ value: 2.5, unit: '' }, '2.54')).toBe('numeric');
-    expect(check({ value: 2.5, unit: '' }, '12,5')).toBe('numeric');
-    expect(check({ value: 0.16807, unit: '', tolerance: 0.0005 }, '16,8 %')).toBe('numeric');
-    expect(check({ value: 0.16807, unit: '', tolerance: 0.0005 }, '0,17')).toBe('numeric');
-    expect(check({ value: 0.16807, unit: '', tolerance: 0.0005 }, '0,168')).toBe('complete');
+    for (const option of ['2,8 V', '1,8 V']) expect(check(volts, option)).toBe('numeric');
+    expect(check(milligrams, '5,20 mg')).toBe('numeric');
+    for (const option of ['2.54', '12,5']) expect(check(plain, option)).toBe('numeric');
+    for (const option of ['16,8 %', '0,17']) expect(check(probability, option)).toBe('numeric');
+  });
+
+  it('calls the right number with an incompatible unit incomplete, and a wrong key numeric', () => {
+    expect(check(volts, '8 mV')).toBe('incomplete');
+    expect(check(volts, '8 A', ['4 V'])).toBe('incomplete');
+    expect(check(volts, '4 V', ['no number'])).toBe('numeric');
+    expect(check(volts, 'none', ['nothing'])).toBe('incomplete');
+    expect(check(volts, '4 V', ['8 V'], 0)).toBe('numeric');
+  });
+});
+
+describe('scoreSafely', () => {
+  it('reports a scoring exception instead of throwing', () => {
+    const broken = { artefacts: [{ type: 'plot' }] };
+    const scored = scoreSafely(broken, fence(plot));
+    expect(scored.evaluation).toBeUndefined();
+    expect(scored.error).toBeTruthy();
+    expect(scoreSafely(testCase, 'text').evaluation.artefacts).toHaveLength(3);
+  });
+});
+
+describe('validateCases', () => {
+  const good = { id: 'h1', prompt: 'P', artefacts: [{ type: 'plot', x: { min: 0, max: 1 }, sliders: [{ key: 'a', min: 0, max: 2, step: 1, value: 1 }], curves: ['a*x'], readouts: ['a'] }, { type: 'quiz', correct: { value: 1, unit: '' } }, { type: 'diagram', minLeaves: 2 }], proseFacts: ['1'] };
+  const errors = (list, taken = []) => validateCases(list, { taken }).join(' | ');
+
+  it('accepts the documented format', () => {
+    expect(validateCases([good, { ...good, id: 'h2' }])).toEqual([]);
+  });
+
+  it('refuses what a run cannot score', () => {
+    expect(errors({})).toMatch(/array/);
+    expect(errors([{ ...good, extra: 1 }])).toMatch(/extra/);
+    expect(errors([good, good])).toMatch(/h1.*already/);
+    expect(errors([good], ['h1'])).toMatch(/h1.*already/);
+    expect(errors([{ ...good, artefacts: [] }])).toMatch(/artefacts/);
+    expect(errors([{ ...good, artefacts: [{ type: 'quiz', correct: '\\b8\\b' }] }])).toMatch(/regex|old/i);
+    expect(errors([{ ...good, artefacts: [{ type: 'quiz', correct: { value: 'x', unit: '' } }] }])).toMatch(/value/);
+    expect(errors([{ ...good, artefacts: [{ ...good.artefacts[0], curves: ['nosuchfn(x)'] }] }])).toMatch(/nosuchfn/);
+    expect(errors([{ ...good, artefacts: [{ ...good.artefacts[0], readouts: ['1+'] }] }])).toMatch(/readout/);
+    expect(errors([{ ...good, artefacts: [{ ...good.artefacts[0], sliders: [{ key: 'a', min: 0, max: 2, step: 1, value: 5 }] }] }])).toMatch(/slider/);
+    expect(errors([{ ...good, proseFacts: ['('] }])).toMatch(/proseFacts/);
+    expect(errors([{ ...good, artefacts: [{ type: 'video' }] }])).toMatch(/type/);
   });
 });
 
@@ -155,6 +199,7 @@ describe('decideGate', () => {
     ['too few visuals', (entry, row) => entry.arm === 'new' && entry.group === 'explanatory' ? { ...row, requested: entry.index < 7 } : row, 'visualRate'],
     ['too many on definitions', (entry, row) => entry.arm === 'new' && entry.group === 'definitions' ? { ...row, requested: entry.index < 3 } : row, 'definitionRate'],
     ['slow first text', (entry, row) => entry.arm === 'new' && entry.kind === 'quality' ? { ...row, firstTextSeconds: 11 } : row, 'firstText'],
+    ['more failed rows than the old arm', (entry, row) => entry.arm === 'new' && entry.cell.includes('/h1/') && entry.model === 'A' ? failed(row) : row, 'noMoreFailures'],
   ])('fails on %s', (_name, tweak, criterion) => {
     const gate = gateOf(world(tweak));
     expect(gate.pass).toBe(false);
@@ -192,6 +237,7 @@ describe('decideGate', () => {
     expect(newFails.incomplete).toBe(false);
     expect(newFails.details.complete.new).toBe(15);
     expect(newFails.criteria.noModelWorse).toBe(true);
+    expect(newFails.criteria.noMoreFailures).toBe(false);
     const bothDead = gateOf(world((entry, row) => entry.model === 'B' && entry.kind === 'quality' ? failed(row) : row));
     expect(bothDead.pass).toBe(false);
     expect(bothDead.incomplete).toBe(true);
@@ -201,15 +247,43 @@ describe('decideGate', () => {
     const fastFailures = gateOf(world((entry, row) => entry.arm === 'old' && entry.kind === 'quality' && entry.case === 'd1' ? failed(row, 1) : row));
     expect(fastFailures.details.perModel.A.oldTotal).toBe(10);
     expect(fastFailures.criteria.firstText).toBe(true);
-    const allOldFailed = gateOf(world((entry, row) => entry.arm === 'old' && entry.kind === 'quality' ? failed(row, 1) : row));
-    expect(allOldFailed.criteria.firstText).toBe(false);
+    const allOldFailed = gateOf(world((entry, row) => entry.arm === 'old' && entry.kind === 'quality' && entry.model === 'B' ? failed(row, 1) : row));
     expect(allOldFailed.pass).toBe(false);
+    expect(allOldFailed.incomplete).toBe(true);
+    expect(allOldFailed.details.reasons.join(' ')).toMatch(/no valid old-arm row for B/);
+    expect(allOldFailed.criteria.firstText).toBe(true);
   });
 
   it('does not pass the definition rate when its rows fail', () => {
     const gate = gateOf(world((entry, row) => entry.arm === 'new' && entry.group === 'definitions' ? failed(row) : row));
     expect(gate.pass).toBe(false);
-    expect(gate.incomplete).toBe(true);
+    expect(gate.incomplete).toBe(false);
+    expect(gate.criteria.definitionRate).toBe(false);
+  });
+
+  it('does not let one measured failure block the gate for ever', () => {
+    const sameFailure = (entry, row) => entry.cell.includes('/h1/') && entry.model === 'A' && entry.kind === 'quality' ? failed(row, 30) : row;
+    const gate = gateOf(world(sameFailure));
+    expect(gate.incomplete).toBe(false);
+    expect(gate.criteria.noMoreFailures).toBe(true);
+    expect(gate.pass).toBe(true);
+  });
+
+  it('counts the failures and the timeouts of each arm', () => {
+    const gate = gateOf(world((entry, row) => entry.kind === 'quality' && entry.model === 'A' && entry.case === 'h1' ? { ...failed(row, 120), timedOut: entry.arm === 'new' } : row));
+    expect(gate.details.timeouts).toEqual({ old: 0, new: 1 });
+    expect(gate.details.perModel.A.failed).toEqual({ old: 1, new: 1 });
+  });
+
+  it('is never a pass when the run itself is invalid or a cell could not be scored', () => {
+    const forced = decideGate(world().results, world().expected, { invalidations: ['run with --allow-dirty'] });
+    expect(forced.pass).toBe(false);
+    expect(forced.incomplete).toBe(true);
+    expect(forced.details.reasons).toContain('run with --allow-dirty');
+    const unscored = gateOf(world((entry, row) => entry.cell === 'quality/A/d1/new/0' ? { ...row, unscored: true, complete: 0 } : row));
+    expect(unscored.pass).toBe(false);
+    expect(unscored.incomplete).toBe(true);
+    expect(unscored.details.reasons.join(' ')).toMatch(/could not be scored/);
   });
 
   it('counts a failed explanatory row as not requested', () => {
@@ -234,5 +308,11 @@ describe('cases.json', () => {
         for (const expression of [...(artefact.curves ?? []), ...(artefact.readouts ?? [])]) expect(compileExpression(expression), expression).not.toBeNull();
       }
     }
+  });
+});
+
+describe('cases.json format', () => {
+  it('passes the validation every run applies', () => {
+    expect(validateCases(cases.quality, { allowSplit: true })).toEqual([]);
   });
 });
