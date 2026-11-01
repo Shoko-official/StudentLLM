@@ -117,6 +117,31 @@ def image_only_pdf(pixels: bytes, width: int, height: int, pages: int = 1) -> by
     return writer.render(_page_tree(writer, contents, resources))
 
 
+def mixed_image_pdf(pixels: bytes, width: int, height: int, *, image_box=(50, 150, 510, 550), native_runs=None,
+                    crop_box=None, rotation=0) -> bytes:
+    """Native text plus an independently positioned grayscale image, generated without external data."""
+    if len(pixels) != width * height:
+        raise ValueError("pixels must hold width * height gray bytes")
+    writer = _PdfWriter()
+    font_id = writer.add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    image_id = writer.stream(
+        f"/Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceGray "
+        "/BitsPerComponent 8 /Filter /FlateDecode".encode(), zlib.compress(pixels),
+    )
+    resources = f"<< /Font << /F1 {font_id} 0 R >> /XObject << /Im0 {image_id} 0 R >> >>".encode()
+    x, y, w, h = image_box
+    body = bytearray(f"q {w} 0 0 {h} {x} {y} cm /Im0 Do Q\n".encode())
+    for text, tx, ty in native_runs if native_runs is not None else [("Native caption", 72, 740)]:
+        body += f"BT /F1 12 Tf {tx} {ty} Td (".encode() + _escape(text) + b") Tj ET\n"
+    root = _page_tree(writer, [writer.stream(b"", bytes(body))], resources)
+    page_options = f" /Rotate {rotation}".encode()
+    if crop_box is not None:
+        page_options += (" /CropBox [" + " ".join(str(value) for value in crop_box) + "]").encode()
+    writer.objects = [obj.replace(b"/MediaBox [0 0 612 792]", b"/MediaBox [0 0 612 792]" + page_options)
+                      for obj in writer.objects]
+    return writer.render(root)
+
+
 def decompression_bomb_pdf(decoded_size: int) -> bytes:
     """A valid one-page PDF whose Flate content stream is blank space that decodes to `decoded_size` bytes.
 

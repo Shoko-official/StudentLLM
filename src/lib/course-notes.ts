@@ -381,6 +381,11 @@ export function buildDocumentCourseNote(
         return;
       }
       const sourceId = `${sourceName}:page-${page.pageNumber}`;
+      if (documentBlock.kind === 'markdown') {
+        blocks.push({ id: `document-markdown-${page.pageNumber}-${index++}`, type: 'markdown',
+          markdown: documentBlock.text, sourceName, sourceId });
+        return;
+      }
       if (documentBlock.kind === 'table' && documentBlock.rows && documentBlock.rows.length >= 2) {
         const [header, ...rows] = documentBlock.rows;
         if (header.length && rows.every((row) => row.length === header.length)) {
