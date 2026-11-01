@@ -230,6 +230,9 @@ describe('quiz values', () => {
     expect(check(probabilityValue, '16,8 %', ['zzz'])).toBe('complete');
     expect(check(probabilityValue, '\u2248 16,81 %', ['zzz'])).toBe('complete');
     expect(check(probabilityValue, '0,17', ['zzz'])).toBe('incomplete');
+    // A percent sign means the figure divided by 100, so the raw figure alone cannot pass as the value.
+    expect(check(probabilityValue, '0,168 %', ['zzz'])).not.toBe('complete');
+    expect(check({ value: 8, unit: '' }, '8 %', ['zzz'])).not.toBe('complete');
     expect(check(probabilityValue, '0,168', ['zzz'])).toBe('complete');
     expect(check(probabilityValue, '0,17', ['16,8 %'], 1)).toBe('complete');
     expect(check(probabilityValue, '17 %', ['zzz'])).toBe('incomplete');

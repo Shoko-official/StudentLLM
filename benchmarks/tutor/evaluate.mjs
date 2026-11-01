@@ -218,7 +218,7 @@ function readOption(option, { value, unit = '', tolerance }) {
   const { items, expression } = amountsIn(option);
   const chain = items.some((item) => /^\s*[-+−×x*·⋅/÷^]\s*$/.test(item.gap));
   const percent = (item) => !target && /^%(?![\p{L}\p{N}])/u.test(item.rest);
-  const reads = (item) => (percent(item) ? [...item.candidates, ...item.candidates.map((number) => number / 100)] : item.candidates);
+  const reads = (item) => (percent(item) ? item.candidates.map((number) => number / 100) : item.candidates);
   const equal = (item) => reads(item).some((number) => Math.abs(number - value) <= allowed);
   // A figure that is the value rounded to the decimals it is written with (0,17 for 0.16807) is a rounding, not an error.
   const rounded = (item) => {
