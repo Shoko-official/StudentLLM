@@ -493,6 +493,77 @@ export function buildCourseNote(lesson: Lesson, transcript: TranscriptSegment[],
   };
 }
 
+/** A document section belongs to one stored original, independently of its file name. */
+export function hasDocumentSourceNote(note: CourseNote | undefined, resourceId: string) {
+  return Boolean(note?.detection.basis.includes(DOCUMENT_NOTE_LAYOUT_VERSION)
+    && note.blocks.some((block) => block.id === `${resourceId}:document-source-title`));
+}
+
+/** Rebuild the common note without letting one document replace the other sources. */
+export function composeDocumentSourcesNote(
+  lesson: Lesson,
+  transcript: TranscriptSegment[],
+  resources: Array<{ id: string; name: string }>,
+  currentNote: CourseNote | undefined,
+  incoming?: { resourceId: string; note: CourseNote },
+  baseNote?: CourseNote,
+): CourseNote {
+  const sections = new Map<string, CourseNoteBlock[]>();
+  for (const resource of resources) {
+    const prefix = `${resource.id}:`;
+    const blocks = currentNote?.blocks.filter((block) => block.id.startsWith(prefix)) ?? [];
+    if (blocks.some((block) => block.id === `${prefix}document-source-title`)) sections.set(resource.id, blocks);
+  }
+  // Older workspaces held a single document without resource-scoped block IDs. Keep its layout when identifiable.
+  if (currentNote?.blocks.some((block) => block.id === 'document-source-title')) {
+    const context = currentNote.blocks.find((block) => block.id === 'note-context');
+    const matching = context?.type === 'paragraph'
+      ? resources.filter((resource) => context.text.endsWith(`Source: ${resource.name}`)) : [];
+    if (matching.length === 1) {
+      const resource = matching[0];
+      sections.set(resource.id, currentNote.blocks.filter((block) => block.id !== 'note-title')
+        .map((block) => ({ ...block, id: `${resource.id}:${block.id}` })));
+    }
+  }
+  if (incoming && resources.some((resource) => resource.id === incoming.resourceId)) {
+    sections.set(incoming.resourceId, incoming.note.blocks.filter((block) => block.id !== 'note-title')
+      .map((block) => ({ ...block, id: `${incoming.resourceId}:${block.id}` })));
+  }
+  const uncovered = transcript.filter((segment) => !segment.sourceId || !sections.has(segment.sourceId));
+  const fallback = buildCourseNote(lesson, uncovered);
+  const base = baseNote ? {
+    ...fallback, detection: baseNote.detection,
+    blocks: [...fallback.blocks.filter((block) => block.id.startsWith('note-')), ...baseNote.blocks.filter((block) => !block.id.startsWith('note-'))],
+  } : fallback;
+  if (!sections.size) return base;
+  const segmentOrder = new Map(transcript.map((segment, index) => [segment.id, { segment, index }]));
+  const sourceOrder = new Map<string, number>();
+  transcript.forEach((segment, index) => {
+    if (segment.sourceId && !sourceOrder.has(segment.sourceId)) sourceOrder.set(segment.sourceId, index);
+  });
+  const blockOrder = (block: CourseNoteBlock) => {
+    const sourceId = 'sourceId' in block ? block.sourceId : undefined;
+    if (sourceId && sourceOrder.has(sourceId)) return sourceOrder.get(sourceId)!;
+    const rawId = block.id.startsWith(`${block.type}-`) ? block.id.slice(block.type.length + 1) : '';
+    const entry = segmentOrder.get(sourceId ?? rawId);
+    return entry ? (entry.segment.sourceId ? sourceOrder.get(entry.segment.sourceId)! : entry.index) : Infinity;
+  };
+  const orderedBlocks = [
+    ...base.blocks.filter((block) => !block.id.startsWith('note-')).map((block) => ({ block, order: blockOrder(block) })),
+    ...[...sections].flatMap(([sourceId, blocks]) => blocks.map((block) => ({ block, order: sourceOrder.get(sourceId) ?? Infinity }))),
+  ].sort((a, b) => a.order - b.order).map(({ block }) => block);
+  const documentBlocks = [...sections.values()].flat();
+  const semantic = base.detection.method === 'LM Studio' || documentBlocks.some((block) => block.id.endsWith(':document-semantic-markdown'));
+  return {
+    ...base,
+    detection: {
+      method: semantic ? 'LM Studio' : 'active course', confidence: semantic ? 0.88 : 1,
+      basis: `Source-scoped document notes and remaining course passages (${DOCUMENT_NOTE_LAYOUT_VERSION}).`,
+    },
+    blocks: [...base.blocks.filter((block) => block.id.startsWith('note-')), ...orderedBlocks],
+  };
+}
+
 export async function formatCourseNoteWithProvider(
   lesson: Lesson,
   transcript: TranscriptSegment[],

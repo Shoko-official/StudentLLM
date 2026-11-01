@@ -1,4 +1,4 @@
-// Plans an import of many course files at once: one lesson per file, grouped and ordered the way
+// Plans the source order within a selected course, following the way
 // a student's folder usually is (introduction and chapters first, then exercise sheets).
 
 const IMPORTABLE_EXTENSIONS = new Set(['pdf', 'txt', 'md', 'html', 'htm', 'rtf', 'docx', 'pptx']);
@@ -28,7 +28,7 @@ export function isImportableSource(file: File) {
   return IMPORTABLE_EXTENSIONS.has(extension(file.name)) || file.type.startsWith('audio/') || file.type.startsWith('image/');
 }
 
-/** The top-level folder name of a folder selection, used as the course subject. */
+/** The top-level folder name, used to name a course only when the library is empty. */
 export function folderNameOf(files: File[]) {
   const first = files.map(relativePath).find((path) => path.includes('/'));
   return first ? first.split('/')[0].trim() : '';
