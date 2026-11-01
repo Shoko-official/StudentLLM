@@ -78,4 +78,33 @@ describe('checkVisualAgainstBrief', () => {
     expect(checkVisualAgainstBrief({ ...french, options: ['0,5', '0.5'] } as TeachingVisual, brief({ type: 'quiz' }))).toEqual(['quiz options must be distinct']);
     expect(checkVisualAgainstBrief({ ...french, options: ['a, b', 'a. b'] } as TeachingVisual, brief({ type: 'quiz' }))).toEqual([]);
   });
+  it('keeps diacritics when comparing quiz options', () => {
+    const options = (list: string[]) => ({ ...quiz, options: list, answer: 0 }) as TeachingVisual;
+    for (const pair of [['a', 'à'], ['ou', 'où'], ['мой', 'мои'], ['か', 'が']]) {
+      expect(checkVisualAgainstBrief(options(pair), brief({ type: 'quiz' }))).toEqual([]);
+    }
+    expect(checkVisualAgainstBrief(options(['Où', ' où ']), brief({ type: 'quiz' }))).toEqual(['quiz options must be distinct']);
+  });
+
+  it('accepts an accent-only key mismatch only when no other option folds to the same text', () => {
+    const options = (list: string[], answer: number) => ({ ...quiz, options: list, answer }) as TeachingVisual;
+    expect(checkVisualAgainstBrief(options(['Energie', 'Force'], 0), brief({ type: 'quiz', correctAnswer: 'Énergie' }))).toEqual([]);
+    expect(checkVisualAgainstBrief(options(['ou', 'où'], 0), brief({ type: 'quiz', correctAnswer: 'où' }))[0]).toContain('the keyed option is "ou", expected "où"');
+    expect(checkVisualAgainstBrief(options(['ou', 'où'], 1), brief({ type: 'quiz', correctAnswer: 'où' }))).toEqual([]);
+    expect(checkVisualAgainstBrief(options(['x', 'y'], 0), brief({ type: 'quiz', correctAnswer: 'x̄' }))).toEqual([]);
+    expect(checkVisualAgainstBrief(options(['x', 'x̄'], 0), brief({ type: 'quiz', correctAnswer: 'x̄' }))[0]).toContain('the keyed option is "x"');
+  });
+
+  it('prefers an exact readout label over a normalised one', () => {
+    const cased: TeachingVisual = { ...plot, outputs: [{ label: 'u', expression: '1' }, { label: 'U', expression: 'v0^2/19.6' }] } as TeachingVisual;
+    expect(checkVisualAgainstBrief(cased, brief({ outputs: ['u', 'U'], checks: [{ output: 'U', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }))).toEqual([]);
+    expect(checkVisualAgainstBrief(cased, brief({ checks: [{ output: 'u', at: {}, expected: 1 }] }))).toEqual([]);
+    const only: TeachingVisual = { ...plot, outputs: [{ label: 'u', expression: '1' }] } as TeachingVisual;
+    expect(checkVisualAgainstBrief(only, brief({ outputs: ['u', 'U'] }))).toEqual(['missing readout "U"']);
+  });
+
+  it('falls back to the normalised readout label when no exact label exists', () => {
+    const labelled: TeachingVisual = { ...plot, outputs: [{ label: 'Quantite a t', expression: 'v0^2/19.6' }] } as TeachingVisual;
+    expect(checkVisualAgainstBrief(labelled, brief({ checks: [{ output: 'Quantité à t', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }))).toEqual([]);
+  });
 });
