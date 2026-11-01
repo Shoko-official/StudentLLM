@@ -124,7 +124,9 @@ for (const path of [join(out, 'run.lock'), join(parent, 'run.lock')]) {
   catch { fail(`Another run holds ${path}. Remove it only if no run is active.`); }
 }
 
-const holdoutsHash = sha256(holdoutsText);
+// The hash of the parsed holdouts, keys sorted: a trailing space, a reformat or a key order cannot hide a reuse.
+const canonical = (value) => JSON.stringify(value, (_, item) => (item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => (a < b ? -1 : 1))) : item));
+const holdoutsHash = sha256(canonical(holdouts));
 const register = readRows(runsPath);
 const earlier = register.find((item) => item.holdoutsHash === holdoutsHash && item.out !== target);
 if (earlier) fail(`These holdouts were already used by ${earlier.out}. A second run on the same holdouts is not allowed: write new holdouts. If that run made no measurement at all, delete its line from ${runsPath}.`);
@@ -259,16 +261,35 @@ async function runCell(pair, arm) {
 
 const results = [...stored];
 let consecutive = 0, stopped = null;
-for (const pair of pairs.filter((item) => !done.has(item.cells.old.cell))) {
+// A pair whose 120 s stall was already discarded (kept in failures.jsonl, so it also holds across a resume) is rerun no more.
+const stalled = new Set(readRows(join(out, 'failures.jsonl')).filter((item) => item.kind === 'timeout').flatMap((item) => item.cells));
+
+// An attempt stops at the first cell that is not a measurement. A stall counts as one only when the pair was already rerun.
+async function attempt(pair, mayDiscard) {
   const outcomes = [];
   for (const arm of pair.order) {
     const outcome = await runCell(pair, arm);
     outcomes.push(outcome);
-    if (outcome.infra) break;
+    if (outcome.infra || (mayDiscard && outcome.row?.timedOut)) break;
+  }
+  return outcomes;
+}
+
+for (const pair of pairs.filter((item) => !done.has(item.cells.old.cell))) {
+  const cells = [pair.cells.old.cell, pair.cells.new.cell];
+  let outcomes = await attempt(pair, !stalled.has(cells[0]));
+  const stall = outcomes.find((item) => item.row?.timedOut && !stalled.has(cells[0]));
+  if (stall) {
+    // One stalled call (a 120 s timeout, either arm) must not decide the gate: discard the pair, once, and rerun it at once.
+    // The rerun is final: a second timeout is the model's, saved as a failed row with its real elapsed time.
+    append('failures.jsonl', `${JSON.stringify({ at: new Date().toISOString(), cells, kind: 'timeout', cell: stall.row.cell, error: stall.row.error })}\n`);
+    stalled.add(cells[0]);
+    console.log(`${stall.row.cell}: hit the 120 s limit, the pair is discarded and rerun once`);
+    outcomes = await attempt(pair, false);
   }
   const failure = outcomes.find((item) => item.infra)?.infra;
   if (failure) {
-    append('failures.jsonl', `${JSON.stringify({ at: new Date().toISOString(), cells: [pair.cells.old.cell, pair.cells.new.cell], ...failure })}\n`);
+    append('failures.jsonl', `${JSON.stringify({ at: new Date().toISOString(), cells, ...failure })}\n`);
     console.log(`${failure.cell}: not a measurement (${failure.kind}), the pair will be rerun on resume`);
     consecutive++;
     if (failure.kind === 'cap') { stopped = 'the request cap was reached'; break; }

@@ -1,6 +1,6 @@
 // Test double for run.test.mjs, loaded with node --import. It replaces the global fetch with a local fake and
 // compresses time, so a whole run takes seconds. Any host other than the benchmark's own endpoint throws.
-// Configuration comes from TUTOR_FAKE (JSON: speed, latency, first503, oldMode, echoKey, echoVisual, hang, badBody {kind, mode: html | error | truncate}); TUTOR_FAKE_STATS names a file that receives the call counts at exit.
+// Configuration comes from TUTOR_FAKE (JSON: speed, latency, first503, oldMode, echoKey, echoVisual, hang, hangCalls and errorCalls ({ old | prose | visual: [1-based call numbers of that kind] } that hang for ever or answer 503), badBody {kind, mode: html | error | truncate}); TUTOR_FAKE_STATS names a file that receives the call counts at exit.
 import { appendFileSync } from 'node:fs';
 
 const config = JSON.parse(process.env.TUTOR_FAKE ?? '{}');
@@ -44,11 +44,11 @@ globalThis.fetch = async (url, init) => {
   const kind = format === 'teaching_answer' ? 'old' : format ? 'visual' : 'prose';
   counts[kind]++;
   if (config.echoKey || (config.echoVisual && kind === 'visual')) return failure(401, `rejected ${authorization} and again ${authorization}`);
-  if (counts.calls <= (config.first503 ?? 0)) return failure(503, 'busy');
+  if (counts.calls <= (config.first503 ?? 0) || config.errorCalls?.[kind]?.includes(counts[kind])) return failure(503, 'busy');
   inFlight++;
   counts.maxInFlight = Math.max(counts.maxInFlight, inFlight);
   try {
-    await sleep(config.hang === kind ? 1e9 : (config.latency ?? 100), init.signal);
+    await sleep(config.hang === kind || config.hangCalls?.[kind]?.includes(counts[kind]) ? 1e9 : (config.latency ?? 100), init.signal);
     if (config.badBody?.kind === kind) return badResponse(config.badBody.mode);
     const user = body.messages.at(-1).content;
     if (kind === 'old') {
