@@ -128,6 +128,11 @@ describe('prompt standard: tutor prompts', () => {
     expect(estimateContextTokens(TUTOR_LENGTH_REMINDER)).toBeLessThanOrEqual(300);
   });
 
+  it('has the tutor write the request in the learner language and the builders follow the request language', () => {
+    expect(VISUAL_ROUTING_PROMPT).toContain("Write intent and content in the learner's language.");
+    for (const type of VISUAL_TYPES) expect(VISUAL_MODULES[type]).toContain("in the language of request.intent and request.content, which is the learner's language.");
+  });
+
   it('keeps the visual notes out of what the tutor writes', () => {
     expect(VISUAL_ROUTING_PROMPT).toContain('Never write a note such as [Visual shown to the learner: ...]');
   });
