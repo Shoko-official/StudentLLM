@@ -543,7 +543,7 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('The source explains gradient descent.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Source · optimization.md · part 1' })).toBeInTheDocument();
     expect(screen.getByText('LM Studio · mock-local-model')).toBeInTheDocument();
-    const chatCall = generate.mock.calls.at(-1)!;
+    const chatCall = generate.mock.calls.filter((call) => !call[0][0].content.includes('Deciding whether an answer needs a visual')).at(-1)!;
     expect(chatCall[0].at(-1)).toEqual({ role: 'user', content: 'What updates parameters using the learning rate?' });
     expect(chatCall[0][0].content).not.toContain('undefined');
     expect(chatCall[0][0].content).not.toContain('Gradient descent updates parameters');
@@ -573,7 +573,8 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('The boiling point depends on the local pressure; specify pressure before calculating it.')).toBeInTheDocument();
-    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate.mock.calls[1][0][0].content).toContain('Deciding whether an answer needs a visual');
   });
 
   it('answers a general visualization request without requiring course evidence', async () => {
@@ -589,7 +590,7 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText(/Here is the unit circle/)).toBeInTheDocument();
-    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole('button', { name: /Source ·/ })).not.toBeInTheDocument();
   });
 

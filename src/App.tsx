@@ -2099,7 +2099,10 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
           citationTargets: sourceDocuments.map(document => document.metadata.parentId ?? document.id),
         }],
       }));
-      if (lessonsRef.current.some((lesson) => lesson.id === chatLessonId)) visualJobs.start(chatLessonId, assistantMessageId, result.jobs.slice(0, MAX_AUTOMATIC_VISUALS));
+      if (lessonsRef.current.some((lesson) => lesson.id === chatLessonId)) {
+        visualJobs.start(chatLessonId, assistantMessageId, result.jobs.slice(0, MAX_AUTOMATIC_VISUALS));
+        if (result.needsDecision) visualJobs.decide(chatLessonId, assistantMessageId, message, result.markdown);
+      }
     } catch (error) {
       // A failed request is not an answer: keep it out of the saved history, show it as an alert, and hand
       // the question back to the composer so it can be sent again with one key press.

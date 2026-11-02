@@ -259,13 +259,24 @@ async function runNew(provider, prompt, withVisuals) {
   const firstTextSeconds = (performance.now() - started) / 1000;
   let content = tutor.markdown;
   const visualResults = [];
+  const jobs = tutor.jobs.slice(0, briefs.MAX_AUTOMATIC_VISUALS);
+  let decision = { asked: false };
+  if (tutor.needsDecision) {
+    const decided = await newPipeline.decideVisual(provider, { question: prompt, answer: tutor.markdown }, { deadlineMs: VISUAL_DEADLINE_MS });
+    decision = { asked: true, requested: decided.brief !== null, ...(decided.error === undefined ? {} : { error: decided.error }) };
+    if (decided.brief) {
+      const appended = briefs.appendVisualRequest(content, decided.brief);
+      content = appended.markdown;
+      if (appended.job) jobs.push(appended.job);
+    }
+  }
   if (withVisuals) {
-    await newPipeline.runVisualJobs(provider, tutor.jobs.slice(0, briefs.MAX_AUTOMATIC_VISUALS), { deadlineMs: VISUAL_DEADLINE_MS, concurrency: 2, onResult: (brief, result) => {
+    await newPipeline.runVisualJobs(provider, jobs, { deadlineMs: VISUAL_DEADLINE_MS, concurrency: 2, onResult: (brief, result) => {
       visualResults.push({ id: brief.id, type: brief.type, attempts: result.attempts, ok: Boolean(result.visual), errors: result.errors, unconfirmed: result.unconfirmed });
       if (result.visual) content = briefs.replaceVisualFence(content, brief.id, briefs.visualFence(result.visual));
     } });
   }
-  return { content, firstTextSeconds, totalSeconds: (performance.now() - started) / 1000, visualResults };
+  return { content, firstTextSeconds, totalSeconds: (performance.now() - started) / 1000, visualResults, decision };
 }
 
 // Infrastructure failures are not measurements: an HTTP error that outlived the provider's retry, a network error, the
@@ -295,12 +306,12 @@ async function runCell(pair, arm) {
   if (info.kind === 'rate') {
     let requested = false, unscored;
     if (!error) { try { requested = requestedVisual(answer.content); } catch (caught) { unscored = caught instanceof Error ? caught.message : 'scoring failed'; } }
-    return { row: { ...base, group: info.group, index: info.index, requested, ...failure, ...(unscored === undefined ? {} : { unscored: true, scoringError: unscored }) }, content: answer?.content };
+    return { row: { ...base, group: info.group, index: info.index, requested, ...(answer?.decision ? { decision: answer.decision } : {}), ...failure, ...(unscored === undefined ? {} : { unscored: true, scoringError: unscored }) }, content: answer?.content };
   }
   const identity = { case: info.case, split: info.split, sample: info.sample, required: pair.testCase.artefacts.length };
   if (error) return { row: { ...base, ...identity, complete: 0, numeric: 0, artefacts: [], proseMissing: [], firstTextSeconds: elapsed, totalSeconds: elapsed, visualResults, contentHash: null, ...failure } };
   const scored = scoreSafely(pair.testCase, answer.content);
-  const timing = { firstTextSeconds: answer.firstTextSeconds, totalSeconds: answer.totalSeconds, visualResults, contentHash: sha256(answer.content) };
+  const timing = { firstTextSeconds: answer.firstTextSeconds, totalSeconds: answer.totalSeconds, visualResults, ...(answer.decision ? { decision: answer.decision } : {}), contentHash: sha256(answer.content) };
   if (scored.error !== undefined) return { row: { ...base, ...identity, complete: 0, numeric: 0, artefacts: [], proseMissing: [], ...timing, unscored: true, scoringError: scored.error }, content: answer.content };
   const { evaluation } = scored;
   return { row: { ...base, ...identity, required: evaluation.artefacts.length, complete: evaluation.artefacts.filter((item) => item.status === 'complete').length, numeric: evaluation.artefacts.filter((item) => item.status === 'numeric').length, artefacts: evaluation.artefacts, proseMissing: evaluation.prose.missing, ...timing }, content: answer.content };

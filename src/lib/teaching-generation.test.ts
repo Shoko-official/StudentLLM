@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { generateTutorProse, generateVisual, runVisualJobs } from './teaching-generation';
+import { decideVisual, generateTutorProse, generateVisual, runVisualJobs } from './teaching-generation';
 import type { LLMProvider, ProviderMessage } from './llm-provider';
 import type { VisualJob } from './visual-brief';
-import { VISUAL_MODULES } from '../prompts';
+import { VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
 
 const quiz = { type: 'quiz', title: 'Check', question: 'Q?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' };
 const job = (extra: Partial<VisualJob['brief']> = {}, more: Partial<VisualJob> = {}): VisualJob => ({ brief: { id: 'v1', type: 'quiz', intent: 'Check', content: 'Ask', ...extra }, section: 'Around.', ...more });
@@ -24,6 +24,126 @@ describe('generateTutorProse', () => {
 
   it.each(['', '   ', '```student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n```'])('rejects a reply with no readable text: %j', async (content) => {
     await expect(generateTutorProse(replying(content), [], { maxTokens: 4096 })).rejects.toThrow('The model returned no answer');
+  });
+});
+
+describe('generateTutorProse needsDecision', () => {
+  const fence = '```';
+  const request = `${fence}student-visual-request
+{"id":"v1","type":"quiz","intent":"I","content":"C"}
+${fence}`;
+  const direct = `${fence}student-visual
+${JSON.stringify(quiz)}
+${fence}`;
+  const prose = async (content: string) => (await generateTutorProse(replying(content), [], { maxTokens: 4096 })).needsDecision;
+
+  it('is false when the answer holds a valid request or a valid direct fence', async () => {
+    expect(await prose(`Text.\n\n${request}`)).toBe(false);
+    expect(await prose(`Text.\n\n${direct}`)).toBe(false);
+  });
+
+  it('is true for plain prose and for a malformed request that was demoted', async () => {
+    expect(await prose('Plain text only.')).toBe(true);
+    expect(await prose(`Text.\n\n${fence}student-visual-request\n{"id":"v1"}\n${fence}`)).toBe(true);
+  });
+});
+
+describe('decideVisual', () => {
+  const input = { question: 'Why does it happen?', answer: 'Because of the formula y = 2*x.' };
+  const request = { visual: true, type: 'plot', intent: 'See the line', content: 'y=2*x for x from 0 to 5.' };
+  const decide = (provider: LLMProvider, extra = input, options: Parameters<typeof decideVisual>[2] = {}) => decideVisual(provider, extra, options);
+
+  it('returns no brief and no error when the model declines', async () => {
+    expect(await decide(replying('{"visual":false}'))).toEqual({ brief: null });
+  });
+
+  it('builds a request with the fixed id from a valid decision, keeping only non-empty optional fields', async () => {
+    const result = await decide(replying(JSON.stringify({ ...request, parameters: ['a'], outputs: [], nodes: [], correctAnswer: '' })));
+    expect(result).toEqual({ brief: { id: 'auto-1', type: 'plot', intent: request.intent, content: request.content, parameters: ['a'] } });
+  });
+
+  it('accepts a reply with prose or a fence around the object', async () => {
+    expect((await decide(replying('Here: ' + JSON.stringify(request) + ' done'))).brief?.id).toBe('auto-1');
+  });
+
+  it('drops any checks field the model adds', async () => {
+    const result = await decide(replying(JSON.stringify({ ...request, checks: [{ output: 'A', at: {}, expected: 1 }] })));
+    expect(result.brief).not.toBeNull();
+    expect(result.brief).not.toHaveProperty('checks');
+  });
+
+  it.each([
+    ['a bad type', JSON.stringify({ ...request, type: 'mermaid' })],
+    ['a missing intent', JSON.stringify({ visual: true, type: 'plot', content: 'C' })],
+    ['an unparsable reply', '{"visual":'],
+    ['a non-object reply', 'yes'],
+    ['a missing visual field', JSON.stringify({ type: 'plot' })],
+    ['an over-long content', JSON.stringify({ ...request, content: 'x'.repeat(1501) })],
+  ])('returns an error and no brief for %s', async (_name, content) => {
+    const result = await decide(replying(content));
+    expect(result.brief).toBeNull();
+    expect(result.error).toBeTruthy();
+  });
+
+  it('reports invalid decision when the visual field is not a boolean', async () => {
+    expect(await decide(replying('{"visual":"yes"}'))).toEqual({ brief: null, error: 'invalid decision' });
+  });
+
+  it('sends the decision prompt, a small budget and the learner message with the answer', async () => {
+    const provider = replying('{"visual":false}');
+    await decide(provider);
+    const [messages, options] = provider.generate.mock.calls[0];
+    expect(messages![0]).toEqual({ role: 'system', content: VISUAL_DECISION_PROMPT });
+    expect(JSON.parse(messages![1].content)).toEqual({ learnerMessage: input.question, tutorAnswer: input.answer });
+    expect(options?.maxTokens).toBe(1024);
+    expect(options?.responseFormat?.json_schema?.name).toBe('teaching_visual_decision');
+  });
+
+  it('omits the response format for a provider without structured outputs', async () => {
+    const generate = vi.fn<LLMProvider['generate']>(async () => ({ content: '{"visual":false}', model: 'fixture' }));
+    await decide({ generate });
+    expect(generate.mock.calls[0][1]?.responseFormat).toBeUndefined();
+  });
+
+  it('cuts long inputs and redacts embedded images', async () => {
+    const image = `![x](data:image/png;base64,${'AAAA'.repeat(1500)})`;
+    const provider = replying('{"visual":false}');
+    await decide(provider, { question: 'Q'.repeat(3000), answer: `${image} ${'Z'.repeat(7000)}` });
+    const sent = JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content);
+    expect(sent.learnerMessage).toHaveLength(2000);
+    expect(sent.tutorAnswer.length).toBeLessThanOrEqual(6000);
+    expect(JSON.stringify(sent)).not.toContain('AAAA');
+    const imageQuestion = replying('{"visual":false}');
+    await decide(imageQuestion, { question: image, answer: 'A' });
+    expect(JSON.stringify(imageQuestion.generate.mock.calls[0][0])).not.toContain('AAAA');
+  });
+
+  it('never throws: a provider failure, a deadline and a stop all give an error and no brief', async () => {
+    const failing: LLMProvider = { generate: async () => { throw new Error('Provider request failed (500)'); } };
+    expect(await decide(failing)).toEqual({ brief: null, error: 'Provider request failed (500)' });
+
+    const hanging: LLMProvider = { generate: (_messages, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    }) };
+    const late = await decide(hanging, input, { deadlineMs: 5 });
+    expect(late.brief).toBeNull();
+    expect(late.error).toMatch(/timed out/);
+
+    const controller = new AbortController();
+    const pending = decide(hanging, input, { signal: controller.signal });
+    controller.abort();
+    const stopped = await pending;
+    expect(stopped.brief).toBeNull();
+    expect(stopped.error).toBe('Visual generation was stopped.');
+  });
+
+  it('makes no call when already stopped', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const provider = replying('{"visual":false}');
+    const result = await decide(provider, input, { signal: controller.signal });
+    expect(result.brief).toBeNull();
+    expect(provider.generate).not.toHaveBeenCalled();
   });
 });
 
