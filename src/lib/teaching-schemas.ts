@@ -50,16 +50,19 @@ export const visualTypeSchemas: Record<VisualType, Schema> = {
 };
 
 const decisionLabels = array(label, 0, 8);
-const visualDecisionSchema = object({
+const decisionProperties = {
   visual: { type: 'boolean' },
   type: { type: 'string', enum: ['plot', 'diagram', 'figure', 'quiz'] },
   intent: text(300), content: text(1500),
   parameters: decisionLabels, outputs: decisionLabels, nodes: decisionLabels,
   correctAnswer: text(500),
-}, ['visual']);
+};
+const visualDecisionSchema = object(decisionProperties, ['visual']);
 
-export function visualDecisionResponseFormat(): ProviderResponseFormat {
-  return { type: 'json_schema', json_schema: { name: 'teaching_visual_decision', strict: true, schema: visualDecisionSchema } };
+/** With a target, the decision can only name that type. */
+export function visualDecisionResponseFormat(target?: VisualType): ProviderResponseFormat {
+  const schema = target ? object({ ...decisionProperties, type: { type: 'string', enum: [target] } }, ['visual']) : visualDecisionSchema;
+  return { type: 'json_schema', json_schema: { name: 'teaching_visual_decision', strict: true, schema } };
 }
 
 export function visualResponseFormat(type: VisualType): ProviderResponseFormat {

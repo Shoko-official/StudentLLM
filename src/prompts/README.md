@@ -26,6 +26,7 @@ Examples must never use a topic from `benchmarks/tutor/`, because that would con
 | `visuals.ts` | Actual plot/diagram/figure/quiz capabilities, examples, limits and consistency checks |
 | `tutor-length-reminder.ts` | Short note sent as the last message of every tutor answer call, never saved or shown, because the system prompt alone did not control the length of answers |
 | `visual-decision.ts` | One-shot decision, after a tutor answer without a visual, on whether to request one and what it contains |
+| `visual-target-note.ts` | Short note sent as the last message of a decision call for one artefact type the learner named and the answer lacks, because the prompt alone did not get it written |
 | `structured-teaching.ts` | JSON sections response protocol for capable providers |
 | `context-data.ts` | Full-course or retrieved evidence as untrusted data |
 | `conversation-memory.ts` | Role-aware, extractive conversation compaction |

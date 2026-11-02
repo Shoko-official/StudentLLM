@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { decideVisual, generateTutorProse, tutorNote, generateVisual, runVisualJobs } from './teaching-generation';
+import { decideVisual, decideVisuals, generateTutorProse, tutorNote, generateVisual, runVisualJobs } from './teaching-generation';
 import type { LLMProvider, ProviderMessage } from './llm-provider';
 import type { VisualJob } from './visual-brief';
-import { CONVERSATION_MEMORY_INSTRUCTIONS, TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
+import { CONVERSATION_MEMORY_INSTRUCTIONS, TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES, visualTargetNote } from '../prompts';
 
 const quiz = { type: 'quiz', title: 'Check', question: 'Q?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' };
 const job = (extra: Partial<VisualJob['brief']> = {}, more: Partial<VisualJob> = {}): VisualJob => ({ brief: { id: 'v1', type: 'quiz', intent: 'Check', content: 'Ask', ...extra }, section: 'Around.', ...more });
@@ -262,6 +262,169 @@ describe('decideVisual', () => {
     const result = await decide(provider, input, { signal: controller.signal });
     expect(result.brief).toBeNull();
     expect(provider.generate).not.toHaveBeenCalled();
+  });
+});
+
+describe('decideVisual with a target', () => {
+  const input = { question: 'Fais un quiz.', answer: 'Because of the formula y = 2*x.', target: 'quiz' as const };
+  const request = { visual: true, type: 'quiz', intent: 'Check', content: 'Ask about y.' };
+
+  it('sends the same data, then the note naming that type, and allows only that type', async () => {
+    const provider = replying('{"visual":false}');
+    await decideVisual(provider, input);
+    const [messages, options] = provider.generate.mock.calls[0];
+    expect(messages).toHaveLength(3);
+    expect(messages![0]).toEqual({ role: 'system', content: VISUAL_DECISION_PROMPT });
+    expect(Object.keys(JSON.parse(messages![1].content))).toEqual(['learnerMessage', 'tutorAnswer', 'earlierVisuals', 'earlierLearnerMessages']);
+    expect(messages![2]).toEqual({ role: 'user', content: visualTargetNote('quiz') });
+    const schema = options?.responseFormat?.json_schema?.schema as { properties: { type: { enum: string[] } } };
+    expect(schema.properties.type.enum).toEqual(['quiz']);
+  });
+
+  it('leaves a call with no target as it was', async () => {
+    const provider = replying('{"visual":false}');
+    await decideVisual(provider, { question: input.question, answer: input.answer });
+    const [messages, options] = provider.generate.mock.calls[0];
+    expect(messages).toHaveLength(2);
+    const schema = options?.responseFormat?.json_schema?.schema as { properties: { type: { enum: string[] } } };
+    expect(schema.properties.type.enum).toEqual(['plot', 'diagram', 'figure', 'quiz']);
+  });
+
+  it('takes the reply of that type, with the id it was given', async () => {
+    const { brief } = await decideVisual(replying(JSON.stringify(request)), input, { id: 'auto-3' });
+    expect(brief).toMatchObject({ id: 'auto-3', type: 'quiz' });
+  });
+
+  it('treats a reply of another type as an invalid decision, and a decline as a decline', async () => {
+    expect(await decideVisual(replying(JSON.stringify({ ...request, type: 'plot' })), input)).toEqual({ brief: null, error: 'invalid decision' });
+    expect(await decideVisual(replying('{"visual":false}'), input)).toEqual({ brief: null });
+  });
+
+  it('drops an earlier refusal, because this message names the artefact even when asksForVisual does not read it', async () => {
+    const provider = replying('{"visual":false}');
+    await decideVisual(provider, { ...input, question: 'Il me faut un graphique.', target: 'plot', earlierMessages: ['Sans schéma.'] });
+    expect(JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content).earlierLearnerMessages).toEqual([]);
+  });
+});
+
+describe('decideVisuals', () => {
+  const request = (type: string) => JSON.stringify({ visual: true, type, intent: 'See it', content: 'What the visual holds.' });
+  const fence = (id: string, type: string) => '```student-visual-request\n' + JSON.stringify({ id, type, intent: 'I', content: 'C' }) + '\n```';
+  const run = async (replies: string[], input: Parameters<typeof decideVisuals>[1], options: Partial<Parameters<typeof decideVisuals>[2]> = {}) => {
+    const provider = replying(...replies);
+    const jobs: VisualJob[] = [];
+    const seen: string[] = [];
+    const result = await decideVisuals(() => provider, input, { ...options, onRequest: (added, markdown) => { jobs.push(added); seen.push(markdown); } });
+    const notes = provider.generate.mock.calls.map(([messages]) => (messages as ProviderMessage[])[2]?.content ?? 'general');
+    const answers = provider.generate.mock.calls.map(([messages]) => JSON.parse((messages as ProviderMessage[])[1].content).tutorAnswer as string);
+    return { result, jobs, seen, notes, answers, provider };
+  };
+
+  it('asks once for each named type with no request, in sequence, each call seeing what the previous ones added', async () => {
+    const { result, jobs, notes, answers } = await run([request('plot'), request('diagram'), request('quiz')], { question: 'Fais un graphique, ajoute un arbre et termine par un quiz.', answer: 'Prose.' });
+    expect(notes).toEqual([visualTargetNote('plot'), visualTargetNote('diagram'), visualTargetNote('quiz')]);
+    expect(jobs.map((job) => [job.brief.id, job.brief.type])).toEqual([['auto-1', 'plot'], ['auto-2', 'diagram'], ['auto-3', 'quiz']]);
+    expect(answers[0]).toBe('Prose.');
+    expect(answers[1]).toContain('"id":"auto-1"');
+    expect(answers[2]).toContain('"id":"auto-2"');
+    expect(result).toMatchObject({ requested: 3, targets: ['plot', 'diagram', 'quiz'] });
+    expect(result.markdown.match(/```student-visual-request/g)).toHaveLength(3);
+  });
+
+  it('runs one call at a time', async () => {
+    let running = 0, most = 0;
+    const generate = vi.fn<LLMProvider['generate']>(async () => {
+      most = Math.max(most, ++running);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      running--;
+      return { content: '{"visual":false}', model: 'fixture' };
+    });
+    await decideVisuals(() => ({ generate, supportsStructuredOutputs: true }), { question: 'Ajoute un arbre et un quiz.', answer: 'Prose.' }, { onRequest: () => undefined });
+    expect(most).toBe(1);
+  });
+
+  it('asks only for what the tutor did not request, and not again in general', async () => {
+    const answer = `Prose.\n\n${fence('v1', 'plot')}`;
+    const { jobs, notes, result } = await run(['{"visual":false}'], { question: 'Fais un seul graphique et un quiz.', answer });
+    expect(notes).toEqual([visualTargetNote('quiz')]);
+    expect(jobs).toEqual([]);
+    expect(result).toMatchObject({ requested: 0, markdown: answer });
+  });
+
+  it('falls back to the general decision when every target declines and the answer still has no visual', async () => {
+    const { notes, jobs } = await run(['{"visual":false}', request('plot')], { question: 'Explique, avec un schéma peut-être.', answer: 'Prose.' });
+    expect(notes).toEqual([visualTargetNote('diagram'), 'general']);
+    expect(jobs.map((job) => job.brief.type)).toEqual(['plot']);
+  });
+
+  it('makes the one general call when nothing is named', async () => {
+    const { notes, result } = await run(['{"visual":false}'], { question: 'Why does it happen?', answer: 'Prose.' });
+    expect(notes).toEqual(['general']);
+    expect(result).toMatchObject({ requested: 0, targets: [] });
+    expect(result.error).toBeUndefined();
+  });
+
+  it('stays inside the limit of automatic visuals', async () => {
+    const answer = ['Prose.', ...[1, 2, 3].map((n) => fence(`v${n}`, 'plot'))].join('\n\n');
+    const { notes } = await run([request('diagram')], { question: 'Ajoute un arbre et un quiz.', answer });
+    expect(notes).toEqual([visualTargetNote('diagram')]);
+  });
+
+  it('gives an id the answer does not hold yet', async () => {
+    const { jobs } = await run([request('quiz')], { question: 'Ajoute un quiz.', answer: `Prose.\n\n${fence('auto-1', 'plot')}` });
+    expect(jobs[0].brief.id).toBe('auto-2');
+  });
+
+  it('removes the quiz written in the prose when a quiz block is added, and shows the model the answer with it', async () => {
+    const answer = 'The explanation.\n\nQuiz : What is it? Choices: 1, 2.';
+    const { result, answers, seen } = await run([request('quiz')], { question: 'Termine par un quiz.', answer });
+    expect(answers[0]).toBe(answer);
+    expect(result.markdown).not.toContain('Quiz :');
+    expect(result.markdown).toContain('The explanation.');
+    expect(seen).toEqual([result.markdown]);
+  });
+
+  it('goes on after an invalid decision, and stops at a failed call', async () => {
+    const invalid = await run(['nonsense', request('quiz')], { question: 'Ajoute un arbre et un quiz.', answer: 'Prose.' });
+    expect(invalid.notes).toEqual([visualTargetNote('diagram'), visualTargetNote('quiz')]);
+    expect(invalid.result.error).toBe('invalid decision');
+    const generate = vi.fn<LLMProvider['generate']>(async () => { throw new Error('The service is down.'); });
+    const result = await decideVisuals(() => ({ generate, supportsStructuredOutputs: true }), { question: 'Ajoute un arbre et un quiz.', answer: 'Prose.' }, { onRequest: () => undefined });
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(result.error).toBe('The service is down.');
+  });
+
+  it('stops when stopped, and reads the provider before each call', async () => {
+    const controller = new AbortController();
+    const generate = vi.fn<LLMProvider['generate']>(async () => { controller.abort(); return { content: '{"visual":false}', model: 'fixture' }; });
+    await decideVisuals(() => ({ generate, supportsStructuredOutputs: true }), { question: 'Ajoute un arbre et un quiz.', answer: 'Prose.' }, { signal: controller.signal, onRequest: () => undefined });
+    expect(generate).toHaveBeenCalledTimes(1);
+    const first = replying('{"visual":false}');
+    let provider: LLMProvider | null = first;
+    const onRequest = vi.fn();
+    first.generate.mockImplementationOnce(async () => { provider = null; return { content: '{"visual":false}', model: 'fixture' }; });
+    await decideVisuals(() => provider, { question: 'Ajoute un arbre et un quiz.', answer: 'Prose.' }, { onRequest });
+    expect(first.generate).toHaveBeenCalledTimes(1);
+    expect(onRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('generateTutorProse with a named artefact', () => {
+  const plot = '```student-visual-request\n{"id":"v1","type":"plot","intent":"I","content":"C"}\n```';
+  const asked = async (question: string, answer: string) => (await generateTutorProse(replying(answer), [{ role: 'user', content: question }], { maxTokens: 4096 })).needsDecision;
+
+  it('needs a decision when a named type has no request, even beside another request', async () => {
+    expect(await asked('Fais un graphique et un quiz.', `Prose.\n\n${plot}`)).toBe(true);
+    expect(await asked('Fais un seul graphique.', `Prose.\n\n${plot}`)).toBe(false);
+    expect(await asked('Why does it happen?', `Prose.\n\n${plot}`)).toBe(false);
+    expect(await asked('Why does it happen?', 'Prose.')).toBe(true);
+  });
+
+  it('reads the learner, not the course evidence or the note', async () => {
+    const provider = replying(`Prose.\n\n${plot}`);
+    const evidence = { role: 'user' as const, content: 'Evidence {"kind":"course_evidence","documents":[{"text":"Ajoute un quiz."}]}' };
+    const result = await generateTutorProse(provider, [evidence, { role: 'user', content: 'Why does it happen?' }], { maxTokens: 4096 });
+    expect(result.needsDecision).toBe(false);
   });
 });
 

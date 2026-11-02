@@ -4,7 +4,7 @@ import { parseTeachingVisual } from '../lib/teaching-visuals';
 import { checkVisualAgainstBrief } from '../lib/visual-checks';
 import { decideVisual } from '../lib/teaching-generation';
 import { parseVisualBrief, VISUAL_TYPES } from '../lib/visual-brief';
-import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, TUTOR_PROMPT, TUTOR_SYSTEM_PROMPT, VISUAL_DECISION_PROMPT, VISUAL_MODULES, VISUAL_ROUTING_PROMPT } from './index';
+import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, TUTOR_PROMPT, TUTOR_SYSTEM_PROMPT, VISUAL_DECISION_PROMPT, VISUAL_MODULES, VISUAL_ROUTING_PROMPT, visualTargetNote } from './index';
 
 const examples = (prompt: string): string[] => prompt.match(/<example>[\s\S]*?<\/example>/g) ?? [];
 const fences = (prompt: string, language: string) => Array.from(prompt.matchAll(new RegExp('```' + language + '\\n([\\s\\S]*?)\\n```', 'g')), (match) => match[1]);
@@ -190,6 +190,17 @@ describe('prompt standard: tutor prompts', () => {
     expect(TUTOR_VISUAL_REQUEST_NOTE).not.toMatch(/[\u2013\u2014]/);
     expect(TUTOR_VISUAL_REQUEST_NOTE).not.toMatch(BENCHMARK_TOPICS);
     expect(estimateContextTokens(TUTOR_VISUAL_REQUEST_NOTE)).toBeLessThanOrEqual(80);
+  });
+
+  it.each(VISUAL_TYPES)('keeps the note for a named %s short, plain and able to decline', (type) => {
+    const note = visualTargetNote(type);
+    expect(note).toContain(`names a ${type}`);
+    expect(note).toContain(`request of type ${type}`);
+    expect(note).toContain('{"visual":false}');
+    expect(note).not.toContain('{type}');
+    expect(note).not.toMatch(/[\u2013\u2014]/);
+    expect(note).not.toMatch(BENCHMARK_TOPICS);
+    expect(estimateContextTokens(note)).toBeLessThanOrEqual(150);
   });
 
   it('keeps the visual notes out of what the tutor writes', () => {
