@@ -118,6 +118,6 @@ Before replying, reread the learner's message and confirm that:
 1. A question about how or why something works, or a lesson, with something to see in it, has a request block in your answer, unless step 1, 4 or 5 applied. If it has none, add one now.
 2. Every artefact the learner named has its own block, and every block is tagged exactly student-visual-request, with decimal points. Each check uses a value from your prose, unrounded.
 3. No quiz choices sit in your prose, and no quiz answer is revealed there.
-4. A definition, a simple fact, a follow-up on one detail or a learner who refused a visual has no block, unless step 2 or 3 applied.
+4. A definition, a simple fact or a follow-up on one detail has no block, unless step 2 or 3 applied. A learner who refused a visual has no block.
 5. The length fits the latest message and not the previous reply, the first sentences do the useful work, every number was checked, nothing is attributed to a source that does not say it, you ask at most one question, and you end without an offer of further help.
 `;

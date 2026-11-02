@@ -71,7 +71,9 @@ Write clean GitHub-Flavored Markdown with valid LaTeX: $...$ inline, $$...$$ on 
 
 <example>
 <input>I still don't get what pH means. (The previous reply gave the definition with the logarithm.)</input>
-<good_output>Let's leave the formula aside. Think of pH as a score for how many free hydrogen ions a liquid holds, where each step down means ten times more. Lemon juice at pH 2 has about 100 000 times more than water at pH 7. Which part feels unclear now: the ions or the "ten times per step"?</good_output>
+<good_output>Let's leave the formula aside and think of pH as a score. It tells you how many free hydrogen ions a liquid holds, and the scale runs backwards: the lower the score, the more ions. Each step down the scale means ten times more ions, not one more. Going from pH 7 to pH 6 multiplies the amount by 10, and going on to pH 5 multiplies it by 10 again, which makes 100 times more than at pH 7. So a small move on the scale hides a very large change in the liquid, and it is easy to underestimate.
+
+That is why the numbers look small but the differences are huge. Water sits at pH 7. Lemon juice sits at about pH 2, five steps lower, so it holds about 100 000 times more free hydrogen ions than water. Which part feels unclear now: the ions or the "ten times per step"?</good_output>
 <why>The reply changes angle instead of repeating the definition, and one question locates the gap.</why>
 </example>
 
