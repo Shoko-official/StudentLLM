@@ -15,7 +15,8 @@ AbortSignal.timeout = (ms) => realSignalTimeout(ms / SPEED);
 
 const request = (id, type, content) => '```student-visual-request\n' + JSON.stringify({ id, type, intent: 'intent', content }) + '\n```';
 const quiz = { type: 'quiz', title: 'Q', question: 'Q?', options: ['8 V', '4 V'], answer: 0, explanation: 'E' };
-const counts = { calls: 0, old: 0, prose: 0, visual: 0, decision: 0, maxInFlight: 0, times: [] };
+const counts = { calls: 0, old: 0, prose: 0, visual: 0, decision: 0, reminders: { old: 0, prose: 0, visual: 0, decision: 0 }, maxInFlight: 0, times: [] };
+const isReminder = (message) => message.content.startsWith('Note from StudentLLM');
 let inFlight = 0;
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
@@ -44,6 +45,7 @@ globalThis.fetch = async (url, init) => {
   const format = body.response_format?.json_schema?.name;
   const kind = format === 'teaching_answer' ? 'old' : format === 'teaching_visual_decision' ? 'decision' : format ? 'visual' : 'prose';
   counts[kind]++;
+  if (body.messages.some(isReminder)) counts.reminders[kind]++;
   if (config.echoKey || (config.echoVisual && kind === 'visual')) return failure(401, `rejected ${authorization} and again ${authorization}`);
   if (counts.calls <= (config.first503 ?? 0) || config.errorCalls?.[kind]?.includes(counts[kind])) return failure(503, 'busy');
   inFlight++;
@@ -51,8 +53,8 @@ globalThis.fetch = async (url, init) => {
   try {
     await sleep(config.hang === kind || config.hangModels?.includes(body.model) || config.hangCalls?.[kind]?.includes(counts[kind]) ? 1e9 : (config.latency ?? 100), init.signal);
     if (config.badBody?.kind === kind) return badResponse(config.badBody.mode);
-    // The tutor call ends with a length reminder from StudentLLM; the question is the message before it.
-    const user = body.messages.findLast((message) => !message.content.startsWith('Note from StudentLLM')).content;
+    // Only the tutor call ends with a length reminder from StudentLLM; the question is the message before it.
+    const user = (kind === 'prose' ? body.messages.findLast((message) => !isReminder(message)) : body.messages.at(-1)).content;
     if (kind === 'old') {
       if (config.oldMode === 'invalid') return answer('not json', body.model);
       return answer(JSON.stringify({ sections: [{ markdown: 'Texte', visual: /QCASE|HOLD/.test(user) ? quiz : null }] }), body.model);
