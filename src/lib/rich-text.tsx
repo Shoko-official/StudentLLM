@@ -267,7 +267,7 @@ export const RichText = memo(function RichText({ content, highlightExtractedMath
       }
       return <pre {...props} tabIndex={focusableScrollRegions ? 0 : props.tabIndex} />;
     },
-    table: ({ node: _node, ...props }) => <div className="table-scroll" tabIndex={0}><table {...props} /></div>,
+    table: ({ node: _node, ...props }) => <div className="table-scroll" tabIndex={0} role="region" aria-label="Table"><table {...props} /></div>,
     img: ({ alt }) => <span className="rich-image-alt" role="img" aria-label={alt || 'Image omitted'}>{alt || 'Image omitted'}</span>,
     // Only real external addresses are links. An empty, relative or in-page href would reload or navigate this single-page
     // app away from the course (and an empty href reloads it outright), so it is shown as plain text instead.
