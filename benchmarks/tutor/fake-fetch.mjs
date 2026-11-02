@@ -15,6 +15,7 @@ AbortSignal.timeout = (ms) => realSignalTimeout(ms / SPEED);
 
 const request = (id, type, content) => '```student-visual-request\n' + JSON.stringify({ id, type, intent: 'intent', content }) + '\n```';
 const quiz = { type: 'quiz', title: 'Q', question: 'Q?', options: ['8 V', '4 V'], answer: 0, explanation: 'E' };
+const diagram = { type: 'diagram', title: 'D', nodes: [{ id: 'a', label: 'A' }], edges: [] };
 const counts = { calls: 0, old: 0, prose: 0, visual: 0, decision: 0, reminders: { old: 0, prose: 0, visual: 0, decision: 0 }, maxInFlight: 0, times: [] };
 const isReminder = (message) => message.content.startsWith('Note from StudentLLM');
 let inFlight = 0;
@@ -63,8 +64,9 @@ globalThis.fetch = async (url, init) => {
       if (/QCASE|HOLD/.test(user)) return answer(`Prose.\n\n${request('v1', 'quiz', 'quiz')}\n\nSuite.\n\n${request('v2', 'quiz', 'quiz')}`, body.model);
       return answer(/DEF/.test(user) ? 'Une definition.' : `Une explication.\n\n${request('v1', 'quiz', 'quiz')}`, body.model);
     }
-    if (kind === 'decision') return answer(JSON.stringify(config.decide ? { visual: true, type: 'quiz', intent: 'intent', content: 'quiz' } : { visual: false }), body.model);
-    return answer(JSON.stringify(quiz), body.model);
+    // A targeted decision may only name its type, so the fake answers with the one its schema allows.
+    if (kind === 'decision') return answer(JSON.stringify(config.decide ? { visual: true, type: body.response_format.json_schema.schema.properties.type.enum.at(-1), intent: 'intent', content: 'quiz' } : { visual: false }), body.model);
+    return answer(JSON.stringify(format === 'teaching_diagram' ? diagram : quiz), body.model);
   } finally { inFlight--; }
 };
 
