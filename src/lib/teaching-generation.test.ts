@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decideVisual, decideVisuals, generateTutorProse, tutorNote, generateVisual, runVisualJobs } from './teaching-generation';
 import type { LLMProvider, ProviderMessage } from './llm-provider';
-import type { VisualJob, VisualType } from './visual-brief';
+import { parseTeachingVisual } from './teaching-visuals';
+import { jobFromMarkdown, parseVisualBrief, type VisualJob, type VisualType } from './visual-brief';
 import { CONVERSATION_MEMORY_INSTRUCTIONS, TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES, visualTargetNote } from '../prompts';
 
 const quiz = { type: 'quiz', title: 'Check', question: 'Q?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' };
@@ -583,6 +584,57 @@ describe('generateVisual', () => {
     it('makes no extra call when the key matches', async () => {
       const provider = replying(solved(1, 'On trouve 36.'));
       expect((await generateVisual(provider, job(brief))).attempts).toBe(1);
+    });
+  });
+
+  describe('a reply with LaTeX in its strings', () => {
+    const latex = String.raw`$6{,}02 \times 10^{23}$`;
+    const reply = (question: string) => `{"type":"quiz","title":"T","question":"${question}","options":["A","B"],"answer":1,"explanation":"B."}`;
+
+    it('keeps the formula that a valid escape would corrupt, with no repair call', async () => {
+      const provider = replying(reply(latex));
+      const result = await generateVisual(provider, job());
+      expect(result).toMatchObject({ attempts: 1, errors: [], visual: { question: latex } });
+      expect(provider.generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads a real control character and an invalid escape with no repair call', async () => {
+      for (const written of ['$a \times b$', String.raw`$\alpha$`, '$\frac{a}{b}$']) {
+        const provider = replying(reply(written));
+        const result = await generateVisual(provider, job());
+        expect(result.attempts).toBe(1);
+        expect(result.visual?.type).toBe('quiz');
+        expect(provider.generate).toHaveBeenCalledTimes(1);
+      }
+    });
+
+    it('reads a decision the same way', async () => {
+      const content = String.raw`$\alpha \times \frac{a}{b}$`;
+      const result = await decideVisual(replying(`{"visual":true,"type":"quiz","intent":"I","content":"${content}"}`), { question: 'Fais un quiz.', answer: 'Prose.' });
+      expect(result.brief?.content).toBe(content);
+    });
+
+    it('reads a request the tutor wrote in its answer the same way', async () => {
+      const content = String.raw`$\alpha \times \frac{a}{b}$`;
+      const fence = `\`\`\`student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"${content}"}\n\`\`\``;
+      const { jobs } = await generateTutorProse(replying(`Prose.\n\n${fence}`), [], { maxTokens: 4096 });
+      expect(jobs[0].brief.content).toBe(content);
+    });
+
+    it('stores a request and a visual that read back without any repair', async () => {
+      const content = String.raw`$\alpha \times \frac{a}{b}$`;
+      const request = `\`\`\`student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"${content}"}\n\`\`\``;
+      const direct = `\`\`\`student-visual\n${reply(content)}\n\`\`\``;
+      const { markdown } = await generateTutorProse(replying(`Prose.\n\n${request}\n\nSuite.\n\n${direct}`), [], { maxTokens: 4096 });
+      expect(jobFromMarkdown(markdown, 'v1')?.brief.content).toBe(content);
+      expect(markdown).toContain(JSON.stringify(content));
+      expect(markdown.match(/```student-visual\n(.*)\n```/)?.[1]).toContain(JSON.stringify(content));
+    });
+
+    it('leaves the readers the old arm and the evaluator share as they were', () => {
+      expect((parseTeachingVisual(reply(latex)) as { question: string }).question).toBe('$6{,}02 \times 10^{23}$');
+      expect(parseTeachingVisual(reply(String.raw`$\alpha$`))).toBeNull();
+      expect(parseVisualBrief(`{"id":"v1","type":"quiz","intent":"I","content":"${String.raw`$\alpha$`}"}`)).toBeNull();
     });
   });
 

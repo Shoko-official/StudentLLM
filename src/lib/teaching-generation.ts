@@ -1,8 +1,9 @@
 import type { LLMProvider, ProviderMessage, ProviderResponseFormat } from './llm-provider';
 import { redactContextImages } from './context-text';
+import { repairLatexJson } from './latex-json';
 import { visualDecisionResponseFormat, visualResponseFormat } from './teaching-schemas';
 import { diagnoseTeachingVisual, type TeachingVisual } from './teaching-visuals';
-import { appendVisualRequest, hasVisualFence, jobFromMarkdown, missingArtefacts, parseVisualBrief, refusesVisual, prepareTutorMarkdown, replaceVisualFence, requestsVisual, type VisualBrief, type VisualJob, type VisualType } from './visual-brief';
+import { appendVisualRequest, hasVisualFence, jobFromMarkdown, missingArtefacts, parseVisualBrief, refusesVisual, prepareTutorMarkdown, repairVisualFences, replaceVisualFence, requestsVisual, type VisualBrief, type VisualJob, type VisualType } from './visual-brief';
 import { checkVisualAgainstBrief, disagreeingChecks, quizAgreesWithItself, stillPlotNotes } from './visual-checks';
 import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES, visualTargetNote } from '../prompts';
 
@@ -30,7 +31,7 @@ export async function generateTutorProse(provider: LLMProvider, messages: Provid
   const question = learner.at(-1) ?? '';
   const note = tutorNote(question, learner.slice(0, -1));
   const response = await provider.generate([...messages, { role: 'user', content: note }], options);
-  const { markdown, jobs } = prepareTutorMarkdown(response.content.trim());
+  const { markdown, jobs } = prepareTutorMarkdown(repairVisualFences(response.content.trim(), repairLatexJson));
   const readable = jobs.reduce((text, job) => replaceVisualFence(text, job.brief.id, ''), markdown);
   if (!readable.trim()) throw new Error(noAnswerMessage);
   return { markdown, model: response.model, jobs: jobs.map((job) => ({ ...job, learnerMessage: question })), needsDecision: !hasVisualFence(markdown) || missingArtefacts(question, markdown).length > 0 };
@@ -43,7 +44,7 @@ function jsonObjectIn(content: string) {
 }
 
 function assess(output: string, brief: VisualBrief): { visual: TeachingVisual | null; errors: string[]; disagreements: string[] } {
-  const { visual, errors } = diagnoseTeachingVisual(jsonObjectIn(output));
+  const { visual, errors } = diagnoseTeachingVisual(repairLatexJson(jsonObjectIn(output)));
   if (!visual) return { visual: null, errors, disagreements: [] };
   const problems = checkVisualAgainstBrief(visual, brief);
   const notes = stillPlotNotes(visual);
@@ -152,7 +153,7 @@ export async function decideVisual(provider: LLMProvider, input: DecisionInput &
     );
     if (options.signal?.aborted) return { brief: null, error: stoppedMessage };
     let value: unknown;
-    try { value = JSON.parse(jsonObjectIn(content)); } catch { return { brief: null, error: invalidDecision }; }
+    try { value = JSON.parse(repairLatexJson(jsonObjectIn(content))); } catch { return { brief: null, error: invalidDecision }; }
     if (!value || typeof value !== 'object' || Array.isArray(value)) return { brief: null, error: invalidDecision };
     const decision = value as Record<string, unknown>;
     if (decision.visual === false) return { brief: null };
