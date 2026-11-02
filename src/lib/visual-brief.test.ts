@@ -268,13 +268,16 @@ describe('appendVisualRequest', () => {
   const plotBrief = parseVisualBrief(JSON.stringify({ ...brief, type: 'plot' }))!;
 
   it.each([
-    ['a labelled question with choices', 'Quiz : Quelle est la valeur en $x=1$ ? Choix : 2, 2,5, 3. Correction : 2,5.'],
-    ['a labelled question', 'Quiz : pour r = 0,6, quelle est la valeur de G ?'],
-    ['a bold label over the question', '**Quiz**\nUn essai avec n=5. Quelle est P(X=0) ?\nChoix : 0,05 ; 0,168. Correction : 0,168.'],
-    ['a bold label with its colon inside', '**Quiz :** What is the run time?'],
-    ['a label with choices and no question mark', 'QCM : la valeur vaut. Choices: 2, 3, 4.'],
-    ['a heading over the question', '# Quiz\n\nA job takes 240 minutes. What is the run time?'],
-    ['a label alone over the question', '**Quiz**\n\nWhat is the run time?'],
+    ['a labelled question with choices and a correction', 'Quiz : Quelle est la valeur en $x=1$ ? Choix : 2, 2,5, 3. Correction : 2,5.'],
+    ['a labelled question with choices', 'Quiz : Quelle quantité reste après 16 minutes ? Choix : 20 mg, 10 mg, 5 mg.'],
+    ['a bold label over a question with choices', '**Quiz**\nUn essai avec n=5. Quelle est P(X=0) ?\nChoix : 0,05 ; 0,168. Correction : 0,168.'],
+    ['a bold label with its colon inside', '**Quiz :** What is the run time? Choices: 30, 48.'],
+    ['lettered choices in the paragraph', 'QCM : Que vaut X ?\nA) 1\nB) 2'],
+    ['a heading over a question with choices', '# Quiz\n\nA job takes 240 minutes. What is the run time? Options: 30, 48.'],
+    ['a label alone over a question with choices', '**Quiz**\n\nWhat is the run time? Choices: 30, 48.'],
+    ['a labelled question over paragraphs of choices and a correction', 'Quiz: What is the run time?\n\nA) 30\n\nB) 48\n\nCorrection: B.'],
+    ['a labelled quiz and its short answer', 'Quiz : Que vaut X ? Choix : 1, 2.\n\nRéponse : 2.'],
+    ['a labelled quiz and a choices paragraph', 'Quiz : Que vaut X ?\n\nChoix : 1, 2.'],
   ])('removes %s when a quiz request takes over, keeping the explanation', (_name, written) => {
     const result = appendVisualRequest(`The explanation.\n\n${written}\n\nThe summary.`, quizBrief);
     expect(result.markdown).toBe(`The explanation.\n\nThe summary.\n\n${request()}`);
@@ -288,24 +291,43 @@ describe('appendVisualRequest', () => {
     ['a heading over an explanation', '# Quiz\n\nThe period grows with the length.'],
     ['a question with no label', 'Which value would you pick?'],
     ['a label over a list of choices, which removing would orphan', 'Quiz : What is the run time?\n\n- 30\n- 48'],
-    ['a label in a quote', '> Quiz : What is the run time?'],
+    ['a label in a quote', '> Quiz : What is the run time? Choices: 30, 48.'],
+    // A question mark does not make a quiz: only choices do.
+    ['a question and no choices', 'Quiz : Quelle est la valeur de G ?'],
+    ['a heading over a question and no choices', '# Quiz\n\nA job takes 240 minutes. What is the run time?'],
+    ['a question whose answer is explained below', 'Quiz : Quelle est la valeur de G ?\n\nRéponse : 0,6 car G = r*N. Cela vient de la formule logistique, qui explique la croissance.'],
+    ['a French explanation under a heading', '## Quiz\n\nPourquoi la période augmente-t-elle avec la longueur ? Parce que la force de rappel varie moins vite ; cette idée est au coeur du cours.'],
+    ['a French explanation under a bold label', "**Quiz**\n\nAvant de te tester, retiens ceci : la dérivée mesure la pente. Pourquoi ? Parce que c'est la limite du taux d'accroissement."],
+    ['a French rhetorical question and its answer', "Quiz : tu te demandes sans doute pourquoi la pente change ? La pente change parce que la dérivée dépend de x, et c'est le point central de la leçon."],
+    ['an English rhetorical question and its answer', 'Quiz: why does the slope change? It changes because the derivative depends on x, which is the point of this lesson.'],
+    ['an English explanation under a heading', '## Quiz\n\nWhy does the period grow with the length? Because the restoring force varies more slowly, and that idea is the core of the course.'],
+    ['words that look like an answer label', 'Quiz: answer: mean = sum / n, which is the definition you must learn.'],
+    ['words that look like a choices label', 'Quiz: options: the two choices of method are integration by parts and substitution, the core of this chapter.'],
+    ['choices with no question', 'QCM : la valeur vaut. Choices: 2, 3, 4.'],
+    ['an explanation before the choices', 'Quiz : pourquoi ça monte ? Parce que la pente est positive, donc la courbe croît. Choix : 1, 2.'],
+    ['an explanation after the choices', 'Quiz : Que vaut X ? Choix : 1, 2. Correction : 2, parce que X est la somme de 1 et 1, ce qui se voit dans la formule du cours.'],
   ])('leaves %s', (_name, written) => {
     const text = `The explanation.\n\n${written}`;
     expect(appendVisualRequest(text, quizBrief).markdown).toBe(`${text}\n\n${request()}`);
   });
 
+  it('removes the quiz but leaves an answer paragraph that explains', () => {
+    const answer = 'Réponse : 2, car X est la somme de 1 et 1. Cela vient de la formule logistique, qui explique la croissance.';
+    expect(appendVisualRequest(`The explanation.\n\nQuiz : Que vaut X ? Choix : 1, 2.\n\n${answer}`, quizBrief).markdown).toBe(`The explanation.\n\n${answer}\n\n${request()}`);
+  });
+
   it('removes nothing for a request of another type', () => {
-    const text = 'The explanation.\n\nQuiz : What is the run time?';
+    const text = 'The explanation.\n\nQuiz : What is the run time? Choices: 30, 48.';
     expect(appendVisualRequest(text, plotBrief).markdown).toBe(`${text}\n\n${request(plotBrief)}`);
   });
 
   it('keeps a quiz that is all the prose there is, so the answer is never left empty', () => {
-    const text = 'Quiz : What is the run time?';
+    const text = 'Quiz : What is the run time? Choices: 30, 48.';
     expect(appendVisualRequest(text, quizBrief).markdown).toBe(`${text}\n\n${request()}`);
   });
 
   it('leaves a request fence and a built visual around the removed quiz', () => {
-    const text = `Before.\n\n${request({ ...brief, id: 'v9', type: 'plot' })}\n\nQuiz : What is it?\n\nAfter.\n\n${direct(quiz)}`;
+    const text = `Before.\n\n${request({ ...brief, id: 'v9', type: 'plot' })}\n\nQuiz : What is it? Choices: 1, 2.\n\nAfter.\n\n${direct(quiz)}`;
     expect(appendVisualRequest(text, quizBrief).markdown).toBe(`Before.\n\n${request({ ...brief, id: 'v9', type: 'plot' })}\n\nAfter.\n\n${direct(quiz)}\n\n${request()}`);
   });
 });

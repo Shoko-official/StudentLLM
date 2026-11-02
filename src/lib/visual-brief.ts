@@ -179,26 +179,57 @@ export function jobFromMarkdown(markdown: string, id: string): VisualJob | null 
 export function hasVisualFence(markdown: string) { return scanFences(markdown).fences.length > 0; }
 
 const QUIZ_LABEL = /^(?:(?:\*\*|__)\s*(?:quiz|qcm)\s*:?\s*(?:\*\*|__)\s*:?|(?:quiz|qcm)\s*:|(?:quiz|qcm)[ \t]*(?=\r?\n|$))\s*/i;
-const QUIZ_CONTENT = /\?|\b(?:choix|choices|options?|correction|answer|r[ée]ponse)\s*:/i;
+const QUIZ_CHOICES = /(?:^|\s)(?:(?:choix|choices|options?|propositions?)\s*:|[A-Da-d][).]\s)/i;
+const QUIZ_ANSWER = /(?:^|\s)(?:correction|corrig[ée]|r[ée]ponse|answer|solution)\s*:/i;
+const GIVES_A_REASON = /\b(?:parce que|because|car|donc|puisque|therefore|since|ce qui|which)\b/i;
+const QUESTION_CHARACTERS = 400, CHOICES_CHARACTERS = 300, ANSWER_CHARACTERS = 120;
+
+/** A question at the end of a short text that explains nothing. */
+const isQuizQuestion = (text: string) => text.trim().endsWith('?') && text.length <= QUESTION_CHARACTERS && !GIVES_A_REASON.test(text);
+const isShortAnswer = (text: string) => text.length <= ANSWER_CHARACTERS && !GIVES_A_REASON.test(text);
+
+/** A question followed by its choices and at most a short correction, with no sentence of explanation among them. */
+function holdsQuiz(text: string) {
+  const choices = QUIZ_CHOICES.exec(text);
+  if (!choices || !isQuizQuestion(text.slice(0, choices.index))) return false;
+  const rest = text.slice(choices.index);
+  const answer = QUIZ_ANSWER.exec(rest);
+  const listed = answer ? rest.slice(0, answer.index) : rest;
+  return listed.length <= CHOICES_CHARACTERS && !GIVES_A_REASON.test(listed) && (!answer || isShortAnswer(rest.slice(answer.index)));
+}
 
 /**
- * Removes a quiz the tutor wrote in its prose: only a top-level paragraph or heading labelled Quiz or QCM that holds a
- * question or choices, so an explanation is never taken. Used when a quiz block takes over, and never empties the prose.
+ * Removes a quiz the tutor wrote in its prose when a quiz block takes over: only a top-level paragraph or heading labelled
+ * Quiz or QCM that really holds answer choices, with what directly follows if that is only choices or a short labelled
+ * answer. Anything else stays, so an explanation is never taken, and the prose is never emptied.
  */
 function withoutProseQuiz(markdown: string) {
   const nodes = (fromMarkdown(markdown) as unknown as MarkdownNode).children ?? [];
   const source = (node: MarkdownNode | undefined) => (node ? markdown.slice(node.position?.start.offset ?? 0, node.position?.end.offset ?? 0) : '');
+  const paragraph = (index: number) => (nodes[index]?.type === 'paragraph' ? source(nodes[index]) : '');
+  const onlyChoices = (index: number) => {
+    const text = paragraph(index), found = QUIZ_CHOICES.exec(text);
+    return found !== null && !text.slice(0, found.index).trim() && text.length <= CHOICES_CHARACTERS && !GIVES_A_REASON.test(text);
+  };
   const removed = new Set<number>();
   nodes.forEach((node, index) => {
     if (node.type !== 'paragraph' && node.type !== 'heading') return;
     const text = source(node).replace(/^#+\s*/, '');
     const label = QUIZ_LABEL.exec(text);
     if (!label) return;
-    const next = nodes[index + 1];
-    if (next?.type === 'list') return;
-    if (node.type === 'paragraph' && QUIZ_CONTENT.test(text.slice(label[0].length))) { removed.add(index); return; }
-    // A label alone: the quiz is the paragraph under it.
-    if (!text.slice(label[0].length).trim() && next?.type === 'paragraph' && QUIZ_CONTENT.test(source(next)) && nodes[index + 2]?.type !== 'list') { removed.add(index); removed.add(index + 1); }
+    const own = text.slice(label[0].length).trim();
+    if (own && node.type !== 'paragraph') return;
+    // The quiz is this paragraph, or under a label alone, the paragraph after it.
+    const quiz = own ? index : index + 1;
+    const body = own || paragraph(quiz);
+    if (!holdsQuiz(body) && !(isQuizQuestion(body) && onlyChoices(quiz + 1))) return;
+    let end = quiz + 1;
+    while (onlyChoices(end)) end++;
+    const after = paragraph(end);
+    if (QUIZ_ANSWER.exec(after)?.index === 0 && isShortAnswer(after)) end++;
+    // Choices left in a list under the question would make no sense on their own.
+    if (nodes[end]?.type === 'list') return;
+    for (let at = index; at < end; at++) removed.add(at);
   });
   const kept = nodes.filter((node, index) => !removed.has(index) && !(node.type === 'code' && (node.lang === REQUEST || node.lang === DIRECT)));
   if (!removed.size || !kept.length) return markdown;
