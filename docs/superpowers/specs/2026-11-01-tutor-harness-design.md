@@ -133,7 +133,7 @@ An answer with no visual fence of either kind gets one more call, after its text
 - System message: `src/prompts/visual-decision.ts`, with the same decision steps as the routing prompt.
 - User message: JSON data with the learner's message (at most 2000 characters) and the answer (at most 6000 characters), images redacted. No course text.
 - `response_format`: a flat strict schema when supported, `visual` required and the request fields optional.
-- Output budget: at most 1024 tokens. It shares the limit of 2 visual calls at a time.
+- Output budget: at most 4096 tokens, as for a visual: a model that reasons before answering spends this budget on the reasoning first. It shares the limit of 2 visual calls at a time.
 - Result: `visual: false`, or a request with no `checks`, id `auto-1`, which goes through `parseVisualBrief`. It is appended after the answer and built like any other request.
 - There is no repair. A failed, late or invalid decision leaves the prose alone, with no placeholder and no error: the answer the learner already has is complete.
 - Nothing shows while the call runs, since it may decide on no visual.
@@ -277,6 +277,7 @@ The rewritten non-tutor prompts are compared with their current versions on real
 - **More calls and more total time.** An answer with 3 visuals costs at least 4 requests. Text comes first, and limits bound the cost. The benchmark reports the real numbers.
 - **The tutor's anchors can be wrong, and so can the builder.** In round 2, 9 of 13 failed plots on two models were rejected by a tutor `checks` value, and the 3 recomputed by hand were correct plots. A disagreement no longer rejects a plot, so a plot that is really wrong can now reach the learner next to prose that says otherwise, with no warning. `noNewNumericErrors` measures this, and the benchmark records every shown plot with `unconfirmed` checks. A visible warning is out of scope for this slice.
 - **Repair can bend a correct formula.** A repair told about a wrong value may change a correct formula to match it. The repair instruction forbids it, and this is not measured separately.
+- **Models that always reason gain little from the decision call.** Mistral Large 4 spent 1023 of 1024 tokens on hidden reasoning in 3 of 3 probes, at about 7 to 12 tokens per second, and neither `reasoning_effort` (none is refused, low has no effect) nor `enable_thinking: false` stopped it. On explanatory questions the decision will often reach the 120 s limit, and that answer keeps its prose with no visual.
 - **The decision call costs one request per answer without a visual**, after the text. It may add visuals that were not needed: `definitionRate` measures it.
 - **Local models.** Sequential local generation can be slow. The text-first flow reduces the impact, but this slice measures hosted models only, so local behaviour stays unmeasured.
 - **Weak default model.** A better harness may not rescue a model that gets the mathematics wrong. The benchmark informs the separate model decision.
