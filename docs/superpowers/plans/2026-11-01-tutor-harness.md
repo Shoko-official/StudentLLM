@@ -3321,3 +3321,11 @@ Open the PR with `gh pr create --body-file`, get an independent adversarial revi
 - [ ] **Step 6: Report**
 
 Report to the user in French: what changed, the benchmark numbers, what is unverified (local models, `document-transcription`, real students), and the numbers relevant to the open choice between Lightning and Mistral Large 4. Never change the saved model without the user's explicit answer. Then propose the next slice: interactive study materials.
+
+### Round 3 (after the second failed gate): pipeline fixes
+
+The user chose to change the pipeline after round 2 failed (visualRate 8 of 12). Criteria and thresholds are unchanged, and the spec holds the design: "Visual decision call", "Validation", "Repair", "Limits".
+
+- R3.1: `disagreeingChecks` apart from `checkVisualAgainstBrief`, `unconfirmed` on `VisualJobResult`, a disagreement never loses a plot, 120 s hosted deadline in the app and in the benchmark.
+- R3.2: `decideVisual`, `src/prompts/visual-decision.ts`, the flat schema, `useVisualJobs.decide`, the App call site, and the benchmark running the decision in both kinds of new-arm cell and recording it.
+- R3.3: independent review of both, new hidden quality and rate cases from an independent agent in `tutor-bench/round-3`, freeze, run, gate. Failure stops the slice and goes to the user, as before.
