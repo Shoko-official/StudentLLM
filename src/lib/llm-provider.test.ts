@@ -307,14 +307,17 @@ describe('OpenAI-compatible LLM provider streaming', () => {
     await expect(providerFor(fetchImpl).generate(ask, { onText: vi.fn() })).resolves.toMatchObject({ content: 'Hello' });
   });
 
-  it('throws when the connection breaks mid-stream, with no retry', async () => {
+  it.each(['network error', 'Error in input stream', 'NetworkError when attempting to fetch resource.'])('says the stream was interrupted when a read fails with %j, with no retry', async (browserText) => {
+    let upstream!: ReadableStreamDefaultController<Uint8Array>;
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({
-      pull(controller) {
+      start(controller) {
+        upstream = controller;
         controller.enqueue(encoder.encode(delta('Hello')));
-        controller.error(new TypeError('network error'));
       },
     }), { headers: { 'content-type': 'text/event-stream' } }));
-    await expect(providerFor(fetchImpl).generate(ask, { onText: vi.fn() })).rejects.toThrow('network error');
+    const onText = vi.fn(() => upstream.error(new TypeError(browserText)));
+    await expect(providerFor(fetchImpl).generate(ask, { onText })).rejects.toThrow(/^Provider stream interrupted\.$/);
+    expect(onText).toHaveBeenCalledTimes(1);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
