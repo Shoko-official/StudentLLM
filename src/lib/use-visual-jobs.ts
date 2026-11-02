@@ -14,7 +14,7 @@ interface VisualJobsOptions {
   updateMessage: (lessonId: string, messageId: string, update: (content: string) => string) => void;
 }
 
-/** One `start` call: its lesson, and the controller that stops every job it queued. */
+/** One `start` or `decide` call: its lesson, and the controller that stops everything it queued. */
 interface Run { lessonId: string; controller: AbortController; remaining: number }
 type QueuedJob =
   | { kind: 'visual'; run: Run; messageId: string; job: VisualJob }

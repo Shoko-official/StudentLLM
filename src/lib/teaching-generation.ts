@@ -86,7 +86,7 @@ export async function generateVisual(provider: LLMProvider, job: VisualJob, opti
   if (first.visual) {
     const kept: VisualJobResult = { visual: first.visual, attempts, errors: [], unconfirmed: first.disagreements };
     let rechecked: string;
-    try { rechecked = await ask({ task: recheckTask, invalidOutput: output.slice(0, 16384), errors: first.disagreements }); }
+    try { rechecked = await ask({ task: recheckTask, previousOutput: output.slice(0, 16384), disagreements: first.disagreements }); }
     catch { return options.signal?.aborted ? stopped(attempts) : kept; }
     if (options.signal?.aborted) return stopped(attempts);
     const second = assess(rechecked, brief);
@@ -95,6 +95,7 @@ export async function generateVisual(provider: LLMProvider, job: VisualJob, opti
   let repaired: string;
   try { repaired = await ask({ task: 'Correct this visual. Fix every listed error and return the complete object.', invalidOutput: output.slice(0, 16384), errors: first.errors }); }
   catch (error) { return failed(attempts, error); }
+  if (options.signal?.aborted) return stopped(attempts);
   const second = assess(repaired, brief);
   return { visual: second.visual, attempts, errors: second.errors, unconfirmed: second.disagreements };
 }
@@ -112,6 +113,7 @@ export async function decideVisual(provider: LLMProvider, input: { question: str
       { maxTokens: DECISION_MAX_TOKENS, ...(provider.supportsStructuredOutputs ? { responseFormat: visualDecisionResponseFormat() } : {}) },
       options,
     );
+    if (options.signal?.aborted) return { brief: null, error: stoppedMessage };
     let value: unknown;
     try { value = JSON.parse(jsonObjectIn(content)); } catch { return { brief: null, error: invalidDecision }; }
     if (!value || typeof value !== 'object' || Array.isArray(value)) return { brief: null, error: invalidDecision };
