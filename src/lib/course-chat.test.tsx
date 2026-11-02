@@ -56,6 +56,15 @@ describe('CourseChat streaming', () => {
     expect(screen.getByText('answer').tagName).toBe('STRONG');
   });
 
+  it('shows the progress status, not a blank message, while the reply is only a request block', () => {
+    for (const streamingText of ['```student-visual-request\n{"id":"v1","type":"quiz"', '```student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n```']) {
+      const { unmount } = render(chat({ streamingText }));
+      expect(screen.queryByRole('article', { name: 'Course assistant response' })).not.toBeInTheDocument();
+      expect(screen.getByRole('status', { name: 'Answer in progress' })).toHaveTextContent('Preparing an answer');
+      unmount();
+    }
+  });
+
   it('keeps one status for the answer in progress and silences the growing text inside the log', () => {
     const { rerender } = render(chat({}));
     const status = screen.getByRole('status', { name: 'Answer in progress' });

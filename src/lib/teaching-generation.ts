@@ -3,7 +3,7 @@ import { redactContextImages } from './context-text';
 import { repairLatexJson } from './latex-json';
 import { visualDecisionResponseFormat, visualResponseFormat } from './teaching-schemas';
 import { diagnoseTeachingVisual, type TeachingVisual } from './teaching-visuals';
-import { appendVisualRequest, hasVisualFence, jobFromMarkdown, missingArtefacts, namedArtefacts, parseVisualBrief, refusesVisual, prepareTutorMarkdown, repairVisualFences, replaceVisualFence, type VisualBrief, type VisualJob, type VisualType } from './visual-brief';
+import { appendVisualRequest, hasVisualFence, jobFromMarkdown, missingArtefacts, namedArtefacts, parseVisualBrief, refusesVisual, prepareTutorMarkdown, repairVisualFences, stripVisualNotes, withoutVisualFences, type VisualBrief, type VisualJob, type VisualType } from './visual-brief';
 import { checkVisualAgainstBrief, disagreeingChecks, quizAgreesWithItself, quizKeyFromAgreement, quizWorkingNotes, stillPlotNotes } from './visual-checks';
 import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES, visualTargetNote } from '../prompts';
 
@@ -32,9 +32,10 @@ export async function generateTutorProse(provider: LLMProvider, messages: Provid
   const question = learner.at(-1) ?? '';
   const note = tutorNote(question, learner.slice(0, -1));
   const response = await provider.generate([...messages, { role: 'user', content: note }], options);
-  const { markdown, jobs } = prepareTutorMarkdown(repairVisualFences(response.content.trim(), repairLatexJson));
-  const readable = jobs.reduce((text, job) => replaceVisualFence(text, job.brief.id, ''), markdown);
-  if (!readable.trim()) throw new Error(noAnswerMessage);
+  const reply = repairVisualFences(response.content.trim(), repairLatexJson);
+  const { markdown, jobs } = prepareTutorMarkdown(reply);
+  // "Quiz me on X" can get only a request, which the learner then sees as a pending visual. A block that cannot be read is no answer.
+  if (!withoutVisualFences(stripVisualNotes(reply)).trim() && !hasVisualFence(markdown)) throw new Error(noAnswerMessage);
   return { markdown, model: response.model, jobs: jobs.map((job) => ({ ...job, learnerMessage: question })), needsDecision: !hasVisualFence(markdown) || missingArtefacts(question, markdown).length > 0 };
 }
 

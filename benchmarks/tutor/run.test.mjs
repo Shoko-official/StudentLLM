@@ -369,6 +369,16 @@ describe('real run', () => {
     expect(existsSync(join(out, 'failures.jsonl'))).toBe(false);
   }, SLOW);
 
+  it('measures a tutor reply that is only a request as an answer, not as a failure', () => {
+    const out = outDir();
+    run(real(out, casesFile(), holdoutsFile()), { fake: { onlyRequest: true } });
+    const cell = rows(out).find((row) => row.cell === newCell);
+    expect(cell.failed).toBeUndefined();
+    expect(cell.visualResults).toMatchObject([{ id: 'v1', type: 'quiz', ok: true }]);
+    expect(rows(out).filter((row) => row.arm === 'new' && row.failed)).toEqual([]);
+    expect(rows(out).filter((row) => row.kind === 'rate' && row.arm === 'new').every((row) => row.requested)).toBe(true);
+  }, SLOW);
+
   it('asks the decision call after plain prose only, records it on the new arm, and adds the requested visual', () => {
     const out = outDir();
     const result = run(real(out, casesFile(), holdoutsFile()), { fake: { decide: true } });
