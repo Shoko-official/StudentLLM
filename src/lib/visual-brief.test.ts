@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendVisualRequest, compactVisualFences, hasVisualFence, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, visualFence } from './visual-brief';
+import { appendVisualRequest, compactVisualFences, hasVisualFence, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, visualFence } from './visual-brief';
 import { parseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 
 const brief = { id: 'v1', type: 'quiz', intent: 'Check the idea', content: 'Ask about pressure' };
@@ -155,5 +155,94 @@ describe('appendVisualRequest', () => {
     expect(result.job).toMatchObject({ brief });
     expect(result.job?.section).toContain('Answer.');
     expect(hasVisualFence(result.markdown)).toBe(true);
+  });
+});
+
+describe('streamingPreview', () => {
+  const json = JSON.stringify(brief);
+
+  it('leaves plain text and an empty answer alone', () => {
+    expect(streamingPreview('')).toBe('');
+    expect(streamingPreview('Some **text**\n')).toBe('Some **text**\n');
+  });
+
+  it.each(['student-visual-request', 'student-visual'])('removes a closed %s fence and keeps the text after it', (language) => {
+    const preview = streamingPreview('Before.\n\n```' + language + '\n' + json + '\n```\n\nAfter.');
+    expect(preview).toContain('Before.');
+    expect(preview).toContain('After.');
+    expect(preview).not.toContain(language);
+    expect(preview).not.toContain('Check the idea');
+    expect(preview).not.toContain('```');
+  });
+
+  it('removes several fences', () => {
+    const preview = streamingPreview(`One.\n\n${request()}\n\nTwo.\n\n${direct(quiz)}\n\nThree.`);
+    expect(preview.replace(/\s+/g, ' ').trim()).toBe('One. Two. Three.');
+  });
+
+  it.each(['student-visual-request', 'student-visual'])('hides an unclosed %s fence from its opening line to the end', (language) => {
+    expect(streamingPreview('Before.\n\n```' + language + '\n{"id":"v1"\nmore text\n\nand more').trim()).toBe('Before.');
+    expect(streamingPreview('Before.\n\n```' + language + '\n').trim()).toBe('Before.');
+    expect(streamingPreview('Before.\n\n```' + language).trim()).toBe('Before.');
+  });
+
+  it('accepts a longer or tilde fence, which closes only with a run at least as long', () => {
+    expect(streamingPreview('A.\n\n````student-visual-request\n{"a":1}\n```\nstill hidden\n````\nB.').replace(/\s+/g, ' ').trim()).toBe('A. B.');
+    expect(streamingPreview('A.\n\n````student-visual-request\n{"a":1}\n```\nstill hidden').trim()).toBe('A.');
+    expect(streamingPreview('A.\n\n~~~student-visual\n{"a":1}\n```\nstill hidden\n~~~\nB.').replace(/\s+/g, ' ').trim()).toBe('A. B.');
+    expect(streamingPreview('A.\n\n~~~~~student-visual\n{"a":1}\n~~~~\nstill hidden').trim()).toBe('A.');
+  });
+
+  it('accepts CRLF and an info string after the language', () => {
+    expect(streamingPreview('A.\r\n\r\n```student-visual-request\r\n{"a":1}\r\n```\r\n\r\nB.').replace(/\s+/g, ' ').trim()).toBe('A. B.');
+    expect(streamingPreview('A.\n\n```student-visual extra words\n{"a":1}').trim()).toBe('A.');
+  });
+
+  it.each(['```', '````', '~~~', '```s', '```student', '```student-', '```student-visual-req', '~~~student-v', '  ```stud', '```stud '])('hides a last line %j that could still become a visual fence', (line) => {
+    expect(streamingPreview('Before.\n\n' + line).trim()).toBe('Before.');
+    expect(streamingPreview(line).trim()).toBe('');
+  });
+
+  it.each(['```p', '```python', '~~~text', '``', '`', 'a ```', '```student_visual', '```Student', '```student-visual-requests'])('keeps a last line %j that cannot become a visual fence', (line) => {
+    expect(streamingPreview('Before.\n\n' + line)).toContain(line.trim());
+  });
+
+  it('keeps a normal code block visible, closed or unclosed', () => {
+    expect(streamingPreview('```python\nprint(1)\n```\n\nAfter.')).toBe('```python\nprint(1)\n```\n\nAfter.');
+    expect(streamingPreview('```python\nprint(1)')).toBe('```python\nprint(1)');
+    expect(streamingPreview('```\nplain\n')).toBe('```\nplain\n');
+    expect(streamingPreview('```\nplain')).toBe('```\nplain');
+  });
+
+  it('keeps a visual fence quoted inside a normal code block', () => {
+    const quoted = '````markdown\n```student-visual-request\n{"id":"v1"}\n```\n````';
+    expect(streamingPreview(quoted)).toBe(quoted);
+    expect(streamingPreview(quoted.slice(0, -5))).toBe(quoted.slice(0, -5));
+    expect(streamingPreview('````markdown\n```student')).toBe('````markdown\n```student');
+  });
+
+  it('keeps the line that closes a normal code block visible while it arrives', () => {
+    expect(streamingPreview('```python\nprint(1)\n```')).toBe('```python\nprint(1)\n```');
+  });
+
+  it('does not read an indented code line as a fence', () => {
+    expect(streamingPreview('    ```student')).toBe('    ```student');
+  });
+
+  it('also hides a visual fence nested in a list or a quote', () => {
+    expect(streamingPreview('1. Step\n\n   ```student-visual-request\n   {"id":"v1"}\n   ```\n\nAfter.')).not.toContain('v1');
+    expect(streamingPreview('> ```student-visual\n> {"id":"v1"}')).not.toContain('v1');
+  });
+
+  it('never shows a request at any prefix of an answer', () => {
+    const fence = '```student-visual-request\n' + JSON.stringify(brief, null, 2) + '\n```';
+    const answer = `# Pressure\n\nPressure is force over area.\n\n\`\`\`python\nprint("kept")\n\`\`\`\n\n${fence}\n\nAfter the first visual.\n\n~~~~student-visual\n${JSON.stringify(quiz)}\n~~~~\n\nThe end.`;
+    const raw = [/"id"/, /"intent"/, /Check the idea/, /Ask about pressure/, /"question"/, /B follows/, /student-/, /\{/];
+    for (let end = 0; end <= answer.length; end++) {
+      const preview = streamingPreview(answer.slice(0, end));
+      for (const pattern of raw) expect(preview, `prefix of ${end} characters`).not.toMatch(pattern);
+    }
+    const complete = streamingPreview(answer);
+    for (const kept of ['# Pressure', 'print("kept")', 'After the first visual.', 'The end.']) expect(complete).toContain(kept);
   });
 });
