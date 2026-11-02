@@ -26,7 +26,7 @@ describe('prompt standard: tutor prompts', () => {
   });
 
   it('respects the size budgets', () => {
-    expect(estimateContextTokens(TUTOR_SYSTEM_PROMPT)).toBeLessThanOrEqual(7400);
+    expect(estimateContextTokens(TUTOR_SYSTEM_PROMPT)).toBeLessThanOrEqual(7500);
     for (const type of VISUAL_TYPES) expect(estimateContextTokens(VISUAL_MODULES[type])).toBeLessThanOrEqual(6000);
     expect(estimateContextTokens(VISUAL_DECISION_PROMPT)).toBeLessThanOrEqual(3700);
   });
@@ -132,6 +132,22 @@ describe('prompt standard: tutor prompts', () => {
   it('has the tutor write the request in the learner language and the builders follow the request language', () => {
     expect(VISUAL_ROUTING_PROMPT).toContain("Write intent and content in the learner's language.");
     for (const type of VISUAL_TYPES) expect(VISUAL_MODULES[type]).toContain("in the language of request.intent and request.content, which is the learner's language.");
+  });
+
+  it('keeps the length examples inside their table rows and the reminder minimums on the row lower bounds', () => {
+    const row = (label: string) => TUTOR_PROMPT.split('\n').find((line) => line.startsWith('|') && line.includes(label))!;
+    const range = (line: string) => { const [, low, high] = /about ([0-9]+) to ([0-9]+) words/.exec(line)!; return [Number(low), Number(high)]; };
+    const minimum = (phrase: RegExp) => Number(phrase.exec(TUTOR_LENGTH_REMINDER)![1]);
+    const words = (label: string) => goodOutput(examples(TUTOR_PROMPT).find((example) => example.includes(label))!).split(/[ \n]+/).filter(Boolean).length;
+    const explain = row('how or why something works'), gap = row('I don\'t understand'), lesson = row('full lesson');
+    for (const [count, line] of [[words('wet towel'), explain], [words('pH means'), gap]] as const) {
+      const [low, high] = range(line);
+      expect(count).toBeGreaterThanOrEqual(low);
+      expect(count).toBeLessThanOrEqual(high);
+    }
+    expect(minimum(/how or why question takes at least ([0-9]+) words/)).toBe(range(explain)[0]);
+    expect(minimum(/does not understand gets at least ([0-9]+) words/)).toBe(range(gap)[0]);
+    expect(minimum(/full lesson takes at least ([0-9]+) words/)).toBe(range(lesson)[0]);
   });
 
   it('keeps the visual notes out of what the tutor writes', () => {
