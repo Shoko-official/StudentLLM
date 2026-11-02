@@ -166,7 +166,7 @@ describe('useVisualJobs', () => {
 
     it('asks for each named artefact in turn, beside a request the tutor made, and builds what is added', async () => {
       const plotFence = '```student-visual-request\n' + JSON.stringify({ id: 'v1', type: 'plot', intent: 'I', content: 'C' }) + '\n```';
-      const answer = `Answer.\n\nQuiz : What is it?\n\n${plotFence}`;
+      const answer = `Answer.\n\nQuiz : What is it? Choices: 1, 2.\n\n${plotFence}`;
       const decisions: string[] = [];
       const diagram = { type: 'diagram', title: 'Tree', nodes: [{ id: 'a', label: 'A' }], edges: [] };
       const generate = vi.fn(async (sent: Array<{ content: string }>) => {

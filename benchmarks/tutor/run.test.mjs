@@ -443,7 +443,7 @@ describe('real run', () => {
   it('reaches a named artefact through the decision sequence of the app, beside the requests the tutor made', () => {
     const out = outDir();
     const cases = join(tmp, `cases-${counter++}.json`);
-    writeFileSync(cases, JSON.stringify({ quality: [{ ...holdoutCase('q1', 'QCASE Ajoute un arbre des essais.'), split: 'dev' }], rate: { explanatory: ['EXPL un'], definitions: ['DEF un'] } }));
+    writeFileSync(cases, JSON.stringify({ quality: [{ ...holdoutCase('q1', 'QCASE. Ajoute un arbre des essais.'), split: 'dev' }], rate: { explanatory: ['EXPL un'], definitions: ['DEF un'] } }));
     const result = run(real(out, cases, holdoutsFile()), { fake: { decide: true } });
     expect(result.code === 0 || result.code === 2).toBe(true);
     const row = rows(out).find((item) => item.cell === newCell);
