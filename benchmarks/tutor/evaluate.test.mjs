@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compileExpression } from '../../src/lib/teaching-visuals.ts';
 import cases from './cases.json';
-import { decideGate, evaluateAnswer, matchAmount, requestedVisual, scoreSafely, validateCases } from './evaluate.mjs';
+import { decideGate, evaluateAnswer, matchAmount, reportOnlyLast, requestedVisual, scoreSafely, validateCases } from './evaluate.mjs';
 
 const fence = (value) => '```student-visual\n' + JSON.stringify(value) + '\n```';
 const testCase = {
@@ -612,10 +612,33 @@ describe('decideGate with a report-only model', () => {
     expect(gate.details.timeouts.new).toBe(3);
   });
 
+  it('takes the model of a cell from the expected list, not from a stored row', () => {
+    const tampered = (entry, row) => entry.model === 'B' && entry.arm === 'new' && entry.cell.includes('/h1/') ? { ...failed(row), model: 'C' } : row;
+    const gate = gated(tampered);
+    expect(gate.details.perModel.B.failed.new).toBe(1);
+    expect(gate.criteria.noMoreFailures).toBe(false);
+    expect(gate.details.reportOnly.C.failed).toEqual({ old: 0, new: 0 });
+  });
+
   it('behaves exactly as before without a reportOnly list', () => {
     const { expected, results } = world(undefined, THREE);
     expect(decideGate(results, expected)).toEqual(decideGate(results, expected, { reportOnly: [] }));
     expect(decideGate(results, expected).details).not.toHaveProperty('reportOnly');
     expect(decideGate(results, expected).details.perModel).toHaveProperty('C');
+  });
+});
+
+describe('reportOnlyLast', () => {
+  const pair = (id, reportOnly) => ({ id, model: { reportOnly } });
+
+  it('moves report-only pairs after the gated ones and keeps every other order, whatever the model list order', () => {
+    const list = [pair('r1', true), pair('g1'), pair('r2', true), pair('g2'), pair('g3')];
+    expect(reportOnlyLast(list).map((item) => item.id)).toEqual(['g1', 'g2', 'g3', 'r1', 'r2']);
+    expect(list.map((item) => item.id)).toEqual(['r1', 'g1', 'r2', 'g2', 'g3']);
+  });
+
+  it('leaves a list without report-only pairs as it is', () => {
+    const list = [pair('g1'), pair('g2')];
+    expect(reportOnlyLast(list)).toEqual(list);
   });
 });

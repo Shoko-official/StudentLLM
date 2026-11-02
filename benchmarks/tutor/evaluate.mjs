@@ -441,7 +441,8 @@ function duplicateSamples(quality) {
 
 function gateOver(results, expectedCells, invalidations) {
   const expected = new Map(expectedCells.map((item) => [item.cell, item]));
-  const rows = results.filter((item) => expected.has(item.cell)).map((item) => ({ ...expected.get(item.cell), ...item }));
+  // The expected cell says which model, arm and kind a row belongs to; a stored row cannot move itself to another model.
+  const rows = results.filter((item) => expected.has(item.cell)).map((item) => { const { model, arm, kind } = expected.get(item.cell); return { ...expected.get(item.cell), ...item, model, arm, kind }; });
   const present = new Set(rows.map((item) => item.cell));
   const missing = expectedCells.filter((item) => !present.has(item.cell)).map((item) => item.cell);
   const quality = rows.filter((item) => item.kind === 'quality');
@@ -514,3 +515,6 @@ export function decideGate(results, expectedCells, { invalidations = [], reportO
   }
   return { ...gate, details: { ...gate.details, reportOnly: reported } };
 }
+
+/** Report-only pairs run after every gated pair, whatever the order of the model list (the sort is stable). */
+export const reportOnlyLast = (pairs) => [...pairs].sort((a, b) => Number(Boolean(a.model.reportOnly)) - Number(Boolean(b.model.reportOnly)));
