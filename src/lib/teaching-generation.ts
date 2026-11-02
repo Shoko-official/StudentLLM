@@ -7,7 +7,6 @@ import { checkVisualAgainstBrief, disagreeingChecks } from './visual-checks';
 import { VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
 
 const VISUAL_MAX_TOKENS = 4096;
-const DECISION_MAX_TOKENS = 1024;
 const stoppedMessage = 'Visual generation was stopped.';
 const recheckTask = 'Recheck this visual against the request. The listed values disagree with values the tutor gave, and either side may be wrong. Correct the formula only if it is wrong, never bend a correct formula to match a value. Return the complete object.';
 const noAnswerMessage = 'The model returned no answer. Try again or choose another model in Settings.';
@@ -110,7 +109,7 @@ export async function decideVisual(provider: LLMProvider, input: { question: str
     const content = await generateWithin(
       provider,
       [{ role: 'system', content: VISUAL_DECISION_PROMPT }, { role: 'user', content: JSON.stringify({ learnerMessage: redactContextImages(input.question).slice(0, 2000), tutorAnswer: redactContextImages(input.answer).slice(0, 6000) }) }],
-      { maxTokens: DECISION_MAX_TOKENS, ...(provider.supportsStructuredOutputs ? { responseFormat: visualDecisionResponseFormat() } : {}) },
+      { maxTokens: VISUAL_MAX_TOKENS, ...(provider.supportsStructuredOutputs ? { responseFormat: visualDecisionResponseFormat() } : {}) },
       options,
     );
     if (options.signal?.aborted) return { brief: null, error: stoppedMessage };

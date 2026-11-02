@@ -95,7 +95,7 @@ describe('decideVisual', () => {
     const [messages, options] = provider.generate.mock.calls[0];
     expect(messages![0]).toEqual({ role: 'system', content: VISUAL_DECISION_PROMPT });
     expect(JSON.parse(messages![1].content)).toEqual({ learnerMessage: input.question, tutorAnswer: input.answer });
-    expect(options?.maxTokens).toBe(1024);
+    expect(options?.maxTokens).toBe(4096);
     expect(options?.responseFormat?.json_schema?.name).toBe('teaching_visual_decision');
   });
 
