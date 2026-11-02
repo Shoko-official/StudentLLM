@@ -171,6 +171,14 @@ export function prepareTutorMarkdown(answer: string): { markdown: string; jobs: 
   return { markdown, jobs: jobsOf(markdown, outputs) };
 }
 
+/** Rewrites the JSON of each visual fence of an answer. The rest of the answer is left as it is. */
+export function repairVisualFences(markdown: string, repair: (raw: string) => string) {
+  return applyEdits(markdown, scanFences(markdown).fences.flatMap((fence) => {
+    const raw = repair(fence.raw);
+    return raw === fence.raw ? [] : [{ start: fence.start, end: fence.end, text: fenceText(fence.language, raw) }];
+  }));
+}
+
 export function jobFromMarkdown(markdown: string, id: string): VisualJob | null {
   return jobsOf(markdown, new Map()).find((job) => job.brief.id === id) ?? null;
 }
