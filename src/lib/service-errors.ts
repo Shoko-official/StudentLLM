@@ -10,6 +10,7 @@ const STREAM_INTERRUPTED = /^Provider stream interrupted/;
 
 export const AI_UNREACHABLE_MESSAGE = 'The AI model is not reachable. Start LM Studio, load a model and switch on its local server (the desktop app also needs its "Enable CORS" option), then try again. Settings shows the connection status.';
 export const CLOUD_AI_UNREACHABLE_MESSAGE = 'The NVIDIA NIM service is not reachable. Check your internet connection and that NVIDIA_API_KEY is set for the dev server, then try again. Settings shows the connection status.';
+export const AI_CONNECTION_LOST_MESSAGE = 'The connection to the AI model was lost while it was answering. Check that LM Studio is still running with a model loaded, then try again. Settings shows the connection status.';
 export const AI_TIMEOUT_MESSAGE = 'The AI model took too long to answer. Try again, ask a shorter question, or pick a smaller model in Settings.';
 
 export function isNetworkFailure(error: unknown) {
@@ -24,7 +25,8 @@ export function describeAiFailure(error: unknown, fallback = 'The AI model could
   if (options.cloud && (/timed out/i.test(message) || /^Provider request failed \(504\)/.test(message) || STREAM_INTERRUPTED.test(message))) return 'The NVIDIA model is not answering right now. Try another model in Settings.';
   if (options.cloud && /^Provider request failed \((?:404|410)\)/.test(message)) return 'This NVIDIA model is no longer available. Choose another model in Settings.';
   const unreachable = options.cloud ? CLOUD_AI_UNREACHABLE_MESSAGE : AI_UNREACHABLE_MESSAGE;
-  if (isNetworkFailure(error) || STREAM_INTERRUPTED.test(message)) return unreachable;
+  if (STREAM_INTERRUPTED.test(message)) return AI_CONNECTION_LOST_MESSAGE;
+  if (isNetworkFailure(error)) return unreachable;
   const gateway = GATEWAY_FAILURE.exec(message);
   if (gateway) {
     // A proxy's error page (HTML) or a long dump says nothing a student can use; a short sentence from the model server may.

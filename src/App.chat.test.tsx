@@ -5,7 +5,7 @@ import App from './App';
 import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace } from './test/workspace-fixture';
 import { OpenAICompatibleProvider, type ProviderGenerateOptions, type ProviderMessage } from './lib/llm-provider';
-import { AI_UNREACHABLE_MESSAGE } from './lib/service-errors';
+import { AI_CONNECTION_LOST_MESSAGE } from './lib/service-errors';
 import { VISUAL_DECISION_PROMPT } from './prompts';
 
 beforeEach(() => {
@@ -282,7 +282,7 @@ describe('a streamed answer', () => {
   });
 
   it.each([
-    ['local', false, AI_UNREACHABLE_MESSAGE],
+    ['local', false, AI_CONNECTION_LOST_MESSAGE],
     ['cloud', true, 'The NVIDIA model is not answering right now. Try another model in Settings.'],
   ])('turns a %s stream cut after its headers into the helpful message, with no partial and the question back', async (_label, cloud, expected) => {
     if (cloud) localStorage.setItem('studentllm.services.v1', JSON.stringify({ llmProvider: 'nvidia-nim' }));
@@ -303,6 +303,30 @@ describe('a streamed answer', () => {
     expect(screen.queryByText('Partial explanation')).not.toBeInTheDocument();
     expect(assistantMessages()).toHaveLength(0);
     expect(screen.getByRole('textbox', { name: 'Ask the course chat' })).toHaveValue('Explain pressure.');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a stream that ends with no end signal as cut: nothing saved and the question back', async () => {
+    const encoder = new TextEncoder();
+    let upstream!: ReadableStreamDefaultController<Uint8Array>;
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { upstream = controller; } }), { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    const user = userEvent.setup();
+    render(<App provider={new OpenAICompatibleProvider({ baseUrl: 'http://127.0.0.1:1234/v1', model: 'fixture-model', fetchImpl: fetchMock })} />);
+    await user.click(screen.getByRole('tab', { name: 'Chat' }));
+    await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), 'Explain pressure.');
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(upstream).toBeDefined());
+    upstream.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Partial explanation' } }] })}\n\n`));
+    expect(await screen.findByText('Partial explanation')).toBeInTheDocument();
+    upstream.close();
+    expect(await screen.findByRole('alert')).toHaveTextContent(AI_CONNECTION_LOST_MESSAGE);
+    expect(screen.queryByText('Partial explanation')).not.toBeInTheDocument();
+    expect(assistantMessages()).toHaveLength(0);
+    expect(screen.queryByLabelText('Your message')).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Ask the course chat' })).toHaveValue('Explain pressure.');
+    expect(screen.getByRole('textbox', { name: 'Ask the course chat' })).toBeEnabled();
+    await waitFor(() => expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).not.toContain('Explain pressure.'));
+    expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).not.toContain('Partial explanation');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
