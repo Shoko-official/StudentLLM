@@ -427,6 +427,19 @@ describe('real run', () => {
     expect(row.failed).toBeUndefined();
   }, SLOW);
 
+  it('sends the old arm byte for byte what the frozen baseline sends', () => {
+    // The stored body was recorded by running this runner at commit 4f04c79 through this fake fetch. The old arm is the
+    // baseline of every measure: if this fails, something reached it, and earlier rounds no longer compare.
+    const stored = readFileSync(fileURLToPath(new URL('./old-arm-request.snapshot.json', import.meta.url)), 'utf8').trim();
+    const recorded = join(tmp, `old-bodies-${counter++}.txt`);
+    const result = run(real(outDir(), casesFile(), holdoutsFile()), { fake: { recordOld: recorded } });
+    expect(result.code === 0 || result.code === 2).toBe(true);
+    const bodies = lines(recorded).map((text) => ({ text, body: JSON.parse(text) }));
+    const same = bodies.filter(({ body }) => body.model === JSON.parse(stored).model && body.messages.at(-1).content === JSON.parse(stored).messages.at(-1).content);
+    expect(same.length).toBeGreaterThan(0);
+    for (const { text } of same) expect(text === stored).toBe(true);
+  }, SLOW);
+
   it('reaches a named artefact through the decision sequence of the app, beside the requests the tutor made', () => {
     const out = outDir();
     const cases = join(tmp, `cases-${counter++}.json`);
