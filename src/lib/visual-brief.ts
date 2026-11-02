@@ -157,6 +157,22 @@ export function replaceVisualFence(markdown: string, id: string, replacement: st
   return target ? markdown.slice(0, target.start) + replacement + markdown.slice(target.end) : markdown;
 }
 
+/** What may be shown of an answer still arriving. The AST ends an unclosed fence at the end of the text, so it is removed the same way. */
+export function streamingPreview(text: string) {
+  const lastLine = Math.max(text.lastIndexOf('\n'), text.lastIndexOf('\r')) + 1;
+  const mayBecomeFence = /^ {0,3}(?:`{3,}|~{3,})/.test(text.slice(lastLine));
+  const edits: Edit[] = [];
+  const visit = (node: MarkdownNode) => {
+    for (const child of node.children ?? []) visit(child);
+    const start = node.position?.start.offset, end = node.position?.end.offset;
+    if (node.type !== 'code' || start === undefined || end === undefined) return;
+    const language = node.lang ?? '';
+    if (language === REQUEST || language === DIRECT || (mayBecomeFence && start >= lastLine && REQUEST.startsWith(language))) edits.push({ start, end, text: '' });
+  };
+  visit(fromMarkdown(text) as unknown as MarkdownNode);
+  return applyEdits(text, edits);
+}
+
 function describeVisual(visual: TeachingVisual) {
   if (visual.type === 'plot') {
     const parameters = (visual.parameters ?? []).map((item) => `${item.name} from ${item.min} to ${item.max} step ${item.step}, initial ${item.value}`);
