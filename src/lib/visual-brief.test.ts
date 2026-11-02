@@ -451,6 +451,13 @@ describe('asksForVisual', () => {
     'Génère un diagramme de flux pour cet algorithme.',
     'Could you display a figure of the forces?',
     'Montre-moi un petit schéma du cycle.',
+    // Diagrams of programs and code topics are real requests.
+    'Show me a chart of the code flow.',
+    'Montre-moi un schéma de ce script.',
+    'Draw a diagram of the SQL join.',
+    'Montre-moi un schéma du code.',
+    'Show me a diagram of a React component.',
+    'Fais-moi un schéma du protocole HTML.',
     'Show me a quick sketch of the forces.',
   ])('is true for %s', (text) => { expect(asksForVisual(text)).toBe(true); });
 
@@ -486,6 +493,7 @@ describe('asksForVisual', () => {
     // A request for code, naming a language or a library.
     'Fais un graphique avec matplotlib.',
     'Build a bar chart in Python code.',
+    'Make a chart with Excel.',
     // A contrast: the same message refuses a visual.
     'Fais un tableau, pas un graphique.',
     'Montre-moi la formule, pas le graphique.',
@@ -517,6 +525,9 @@ describe('refusesVisual', () => {
     'Explain it without a chart.',
     "Don't draw anything, just explain.",
     'text only',
+    "Don't use diagrams.",
+    'never show a chart',
+    'Ne me montre pas de schéma.',
     'Fais un tableau, pas un graphique.',
     'Montre-moi la formule, pas le graphique.',
     "Montre-moi plutôt un tableau qu'un schéma.",
@@ -540,6 +551,14 @@ describe('refusesVisual', () => {
     "I don't understand the graph.",
     'Je ne comprends pas le graphique.',
     'This is not the time to draw.',
+    // Style requests that name no visual are not a refusal of visuals.
+    "Don't use jargon.",
+    'Please do not make it long.',
+    'never show your work',
+    'Do not use the formula yet.',
+    'ne me montre pas la solution',
+    "don't make a fuss",
+    "Don't make it too long.",
     "Je n'ai pas le temps de faire un point.",
     'Explique la différence entre un diagramme et un tableau.',
     '',

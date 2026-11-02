@@ -250,8 +250,8 @@ const ASKS_FOR_VISUAL = [
   new RegExp(`\\b(?:${VISUAL_VERBS})\\b[^.!?;\\n]{0,50}?\\b(?:${VISUAL_NOUNS})\\b`),
   new RegExp(`\\b(?:${GENERIC_VERBS})\\b(?:[ -](?:moi|toi|nous|lui|me|us|him|her|them|te))?\\s+${ARTICLE}\\s*${SIZE}(?:${VISUAL_NOUNS})\\b(?!\\s+(?:theory|theorie))`),
 ];
-// A request to write code names a language or a library: it asks for a program, not to be shown a picture.
-const CODE_REQUEST = /\b(?:python|matplotlib|plotly|seaborn|pandas|numpy|ggplot|tikz|latex|excel|javascript|typescript|html|css|react|d3|code|script|sql|matlab)\b/;
+// "Make a chart in Python" asks for a program, not to be shown a picture; a diagram of some code is a real request.
+const CODE_REQUEST = /\b(?:en|in|avec|with|using|via)\s+(?:python|matplotlib|plotly|seaborn|pandas|numpy|ggplot|tikz|latex|excel|javascript|typescript|matlab|r|sql)\b/;
 const REFUSES_VISUAL = [
   new RegExp(`\\bsans\\b[^.!?;\\n]{0,30}\\b(?:${VISUAL_NOUNS})\\b`),
   new RegExp(`\\bpas\\s+(?:de|d')\\s*(?:\\w+\\s+){0,2}(?:${VISUAL_NOUNS})\\b`),
@@ -262,8 +262,11 @@ const REFUSES_VISUAL = [
   new RegExp(`\\b(?:instead of|rather than|plutot qu|au lieu d)\\b[^.!?;\\n]{0,25}\\b(?:${VISUAL_NOUNS})\\b`),
   new RegExp(`\\b(?:do not|don't|dont)\\s+(?:want|need)\\b[^.!?;\\n]{0,25}\\b(?:${VISUAL_NOUNS})\\b`),
   new RegExp(`\\b(?:ne veux pas|pas besoin)\\b[^.!?;\\n]{0,25}\\b(?:${VISUAL_NOUNS})\\b`),
-  /\b(?:do not|don't|dont|never|stop)\s+(?:draw|plot|sketch|show|make|display|use)/,
-  /\bne\s+(?:me\s+)?(?:montr|dessin|trac|fais|affich)\w*\s+pas\b/,
+  /\b(?:do not|don't|dont|never|stop)\s+(?:draw|plot|sketch|display)\b/,
+  /\bne\s+(?:me\s+)?(?:dessin|trac|affich)\w*\s+pas\b/,
+  // "Don't use jargon" and "ne me montre pas la solution" refuse nothing visual: these verbs count only with a visual noun.
+  new RegExp(`\\b(?:do not|don't|dont|never|stop)\\s+(?:show|make|use)\\b[^.!?;\\n]{0,25}\\b(?:${VISUAL_NOUNS})\\b`),
+  new RegExp(`\\bne\\s+(?:me\\s+)?(?:montr|fais)\\w*\\s+pas\\b[^.!?;\\n]{0,25}\\b(?:${VISUAL_NOUNS})\\b`),
   /\bjuste le texte\b|\btext only\b|\bonly text\b|\btexte (?:seulement|uniquement)\b/,
 ];
 
@@ -287,7 +290,9 @@ export function refusesVisual(text: string): boolean {
  */
 export function asksForVisual(text: string): boolean {
   const plain = plainMessage(text).replace(/\bfigures? (?:de style|of speech)\b/g, ' ');
-  return ASKS_FOR_VISUAL.some((pattern) => pattern.test(plain)) && !CODE_REQUEST.test(plain) && !REFUSES_VISUAL.some((pattern) => pattern.test(plain));
+  const [visualVerb, genericVerb] = ASKS_FOR_VISUAL;
+  const asks = visualVerb.test(plain) || (genericVerb.test(plain) && !CODE_REQUEST.test(plain));
+  return asks && !REFUSES_VISUAL.some((pattern) => pattern.test(plain));
 }
 
 /** History keeps what a follow-up needs, without replaying JSON the model could learn to copy. */
