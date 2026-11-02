@@ -66,6 +66,7 @@ it('includes later chapters in study material and keeps source text out of syste
   const data = messages.filter(message => message.role === 'user').map(message => message.content).join('\n');
   expect(data).toContain('CHAPTER_0'); expect(data).toContain('CHAPTER_23');
   expect(messages.at(-1)?.content).toBe('Generate the study guide.');
+  expect(JSON.stringify(messages)).not.toContain('Note from StudentLLM');
   expect(embed).not.toHaveBeenCalled();
 });
 

@@ -126,6 +126,12 @@ describe('decideVisual', () => {
     expect(await decide(replying('{"visual":"yes"}'))).toEqual({ brief: null, error: 'invalid decision' });
   });
 
+  it('never carries the length reminder, which belongs to the tutor answer call only', async () => {
+    const provider = replying('{"visual":false}');
+    await decide(provider);
+    expect(JSON.stringify(provider.generate.mock.calls[0][0])).not.toContain('Note from StudentLLM');
+  });
+
   it('sends the decision prompt, a small budget and the learner message with the answer', async () => {
     const provider = replying('{"visual":false}');
     await decide(provider);
@@ -201,6 +207,12 @@ describe('decideVisual', () => {
 });
 
 describe('generateVisual', () => {
+  it('never carries the length reminder', async () => {
+    const provider = replying(JSON.stringify(quiz));
+    await generateVisual(provider, job());
+    expect(JSON.stringify(provider.generate.mock.calls[0][0])).not.toContain('Note from StudentLLM');
+  });
+
   it('sends the type module, strict schema and only the brief with its section', async () => {
     const provider = replying(JSON.stringify(quiz));
     const result = await generateVisual(provider, job());
