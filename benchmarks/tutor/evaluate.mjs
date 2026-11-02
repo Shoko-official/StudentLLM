@@ -439,11 +439,7 @@ function duplicateSamples(quality) {
   return { identical, pairs };
 }
 
-/**
- * Criteria fixed before any result was seen; see the design document. Data validity is decided here, not in the
- * criteria: every expected cell must be measured, and `invalidations` lists reasons the whole run cannot decide.
- */
-export function decideGate(results, expectedCells, { invalidations = [] } = {}) {
+function gateOver(results, expectedCells, invalidations) {
   const expected = new Map(expectedCells.map((item) => [item.cell, item]));
   const rows = results.filter((item) => expected.has(item.cell)).map((item) => ({ ...expected.get(item.cell), ...item }));
   const present = new Set(rows.map((item) => item.cell));
@@ -493,4 +489,28 @@ export function decideGate(results, expectedCells, { invalidations = [] } = {}) 
     noMoreFailures: models.every((model) => details.perModel[model].failed.new <= details.perModel[model].failed.old),
   };
   return { pass: !incomplete && Object.values(criteria).every(Boolean), incomplete, criteria, details };
+}
+
+/**
+ * Criteria fixed before any result was seen; see the design document. Data validity is decided here, not in the
+ * criteria: every expected cell must be measured, and `invalidations` lists reasons the whole run cannot decide.
+ * `reportOnly` lists model ids that are measured but decide nothing: their cells take no part in any criterion, in
+ * `missing`, in `reasons` or in `incomplete`, and their numbers are reported apart under `details.reportOnly`.
+ */
+export function decideGate(results, expectedCells, { invalidations = [], reportOnly = [] } = {}) {
+  const apart = new Set(reportOnly);
+  const cellsOf = (keep) => expectedCells.filter((item) => keep(item.model));
+  const resultsOf = (cells) => { const ids = new Set(cells.map((item) => item.cell)); return results.filter((item) => ids.has(item.cell)); };
+  const gatedCells = cellsOf((model) => !apart.has(model));
+  const gate = gateOver(resultsOf(gatedCells), gatedCells, invalidations);
+  if (!apart.size) return gate;
+  const reported = {};
+  for (const model of apart) {
+    const cells = cellsOf((id) => id === model);
+    if (!cells.length) continue;
+    const { details } = gateOver(resultsOf(cells), cells, []);
+    const { failed, firstText, oldTotal, newTotal } = details.perModel[model];
+    reported[model] = { complete: details.complete, numeric: details.numeric, failed, firstText, oldTotal, newTotal, explanatoryRate: details.explanatoryRate, definitionRate: details.definitionRate, missing: details.missing.length };
+  }
+  return { ...gate, details: { ...gate.details, reportOnly: reported } };
 }

@@ -563,3 +563,59 @@ describe('cases.json format', () => {
     expect(validateCases(cases.quality, { allowSplit: true })).toEqual([]);
   });
 });
+
+describe('decideGate with a report-only model', () => {
+  const THREE = ['A', 'B', 'C'];
+  const gated = (tweak, reportOnly = ['C']) => { const { expected, results } = world(tweak, THREE); return decideGate(results, expected, { reportOnly }); };
+  const deadC = (entry, row) => entry.model === 'C' ? (entry.kind === 'quality' ? failed({ ...row, timedOut: true }, 120) : failed(row, 120)) : row;
+  const reference = () => { const { expected, results } = world(undefined, MODELS); return decideGate(results, expected); };
+
+  it('leaves the decision to the other models when the report-only model always times out', () => {
+    const gate = gated(deadC);
+    expect(gate.pass).toBe(true);
+    expect(gate.incomplete).toBe(false);
+    expect(gate.details.reasons).toEqual([]);
+    expect(gate.criteria).toEqual(reference().criteria);
+  });
+
+  it('takes no part in missing, reasons or incomplete when its cells are absent', () => {
+    const gate = gated((entry, row) => entry.model === 'C' ? null : row);
+    expect(gate.pass).toBe(true);
+    expect(gate.incomplete).toBe(false);
+    expect(gate.details.missing).toEqual([]);
+    expect(gate.details.reportOnly.C.missing).toBe(world(undefined, ['C']).expected.length);
+  });
+
+  it('does not move any criterion or total when it would fail every one of them', () => {
+    const bad = (entry, row) => entry.model !== 'C' ? row : entry.kind === 'quality' ? { ...row, complete: entry.arm === 'new' ? 0 : 3, numeric: entry.arm === 'new' ? 2 : 0, firstTextSeconds: 99 } : { ...row, requested: entry.arm === 'new' && entry.group === 'definitions' };
+    const gate = gated(bad);
+    const base = reference();
+    expect(gate.pass).toBe(true);
+    expect(gate.criteria).toEqual(base.criteria);
+    for (const key of ['complete', 'numeric', 'timeouts', 'explanatoryRate', 'definitionRate', 'duplicates', 'missing']) expect(gate.details[key]).toEqual(base.details[key]);
+    expect(Object.keys(gate.details.perModel)).toEqual(['A', 'B']);
+  });
+
+  it('reports its own numbers under details.reportOnly', () => {
+    const gate = gated((entry, row) => entry.model === 'C' && entry.arm === 'new' && entry.kind === 'quality' ? { ...row, complete: 2, numeric: 1, firstTextSeconds: 7, totalSeconds: 30 } : row);
+    expect(gate.details.reportOnly.C).toEqual({
+      complete: { old: 3, new: 6 }, numeric: { old: 0, new: 3 }, failed: { old: 0, new: 0 },
+      firstText: 7, oldTotal: 10, newTotal: 30, explanatoryRate: .9, definitionRate: .1, missing: 0,
+    });
+  });
+
+  it('still counts a gated model that times out, exactly as before', () => {
+    const gate = gated((entry, row) => entry.model === 'B' && entry.arm === 'new' && entry.kind === 'quality' ? failed({ ...row, timedOut: true }, 120) : row);
+    expect(gate.pass).toBe(false);
+    expect(gate.criteria.noModelWorse).toBe(false);
+    expect(gate.criteria.noMoreFailures).toBe(false);
+    expect(gate.details.timeouts.new).toBe(3);
+  });
+
+  it('behaves exactly as before without a reportOnly list', () => {
+    const { expected, results } = world(undefined, THREE);
+    expect(decideGate(results, expected)).toEqual(decideGate(results, expected, { reportOnly: [] }));
+    expect(decideGate(results, expected).details).not.toHaveProperty('reportOnly');
+    expect(decideGate(results, expected).details.perModel).toHaveProperty('C');
+  });
+});
