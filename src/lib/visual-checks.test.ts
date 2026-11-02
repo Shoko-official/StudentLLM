@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkVisualAgainstBrief } from './visual-checks';
+import { checkVisualAgainstBrief, disagreeingChecks } from './visual-checks';
 import type { TeachingVisual } from './teaching-visuals';
 import type { VisualBrief } from './visual-brief';
 
@@ -15,6 +15,7 @@ const quiz: TeachingVisual = { type: 'quiz', title: 'T', question: 'Q?', options
 describe('checkVisualAgainstBrief', () => {
   it('accepts a visual that satisfies its brief', () => {
     expect(checkVisualAgainstBrief(plot, brief({ parameters: ['v0'], outputs: ['Peak'], checks: [{ output: 'Peak', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }))).toEqual([]);
+    expect(disagreeingChecks(plot, brief({ checks: [{ output: 'Peak', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }))).toEqual([]);
   });
 
   it('rejects a different type', () => {
@@ -25,15 +26,23 @@ describe('checkVisualAgainstBrief', () => {
     expect(checkVisualAgainstBrief(plot, brief({ parameters: ['t'], outputs: ['Range'] }))).toEqual(['missing parameter "t"', 'missing readout "Range"']);
   });
 
-  it('reports a check outside its tolerance with both values', () => {
-    const [error] = checkVisualAgainstBrief(plot, brief({ checks: [{ output: 'Peak', at: { v0: 20 }, expected: 30, tolerance: 0.01 }] }));
+  it('reports a check outside its tolerance as a disagreement, never as an error', () => {
+    const wrong = brief({ checks: [{ output: 'Peak', at: { v0: 20 }, expected: 30, tolerance: 0.01 }] });
+    expect(checkVisualAgainstBrief(plot, wrong)).toEqual([]);
+    const [error] = disagreeingChecks(plot, wrong);
     expect(error).toContain('readout "Peak" at v0=20 gives 20.40');
     expect(error).toContain('expected 30');
   });
 
   it('uses a relative default tolerance and names an undeclared check parameter', () => {
-    expect(checkVisualAgainstBrief(plot, brief({ checks: [{ output: 'Peak', at: {}, expected: 20.5 }] }))).toEqual([]);
-    expect(checkVisualAgainstBrief(plot, brief({ checks: [{ output: 'Peak', at: { z: 1 }, expected: 1 }] }))[0]).toContain('undeclared parameter "z"');
+    expect(disagreeingChecks(plot, brief({ checks: [{ output: 'Peak', at: {}, expected: 20.5 }] }))).toEqual([]);
+    const undeclared = brief({ checks: [{ output: 'Peak', at: { z: 1 }, expected: 1 }] });
+    expect(checkVisualAgainstBrief(plot, undeclared)).toEqual([]);
+    expect(disagreeingChecks(plot, undeclared)[0]).toContain('undeclared parameter "z"');
+  });
+
+  it('reports disagreements for plots only', () => {
+    expect(disagreeingChecks(quiz, brief({ type: 'quiz', checks: [{ output: 'Peak', at: {}, expected: 1 }] }))).toEqual([]);
   });
 
   it('rejects a series with no finite value at the default parameters', () => {
@@ -51,14 +60,17 @@ describe('checkVisualAgainstBrief', () => {
 
   it('compares readout labels without case, accents or spacing', () => {
     const labelled: TeachingVisual = { ...plot, outputs: [{ label: 'Quantite  a t', expression: 'v0^2/19.6' }] } as TeachingVisual;
-    expect(checkVisualAgainstBrief(labelled, brief({ outputs: ['Quantité à t'], checks: [{ output: ' QUANTITÉ à  t ', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }))).toEqual([]);
+    expect(checkVisualAgainstBrief(labelled, brief({ outputs: ['Quantité à t'] }))).toEqual([]);
+    expect(disagreeingChecks(labelled, brief({ outputs: ['Quantité à t'], checks: [{ output: ' QUANTITÉ à  t ', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }))).toEqual([]);
   });
 
-  it('still rejects a readout that is really different, or a value that disagrees', () => {
+  it('still rejects a missing brief.outputs readout, and reports a check on a really different readout or a disagreeing value', () => {
     const labelled: TeachingVisual = { ...plot, outputs: [{ label: 'Quantite a t', expression: 'v0^2/19.6' }] } as TeachingVisual;
     expect(checkVisualAgainstBrief(labelled, brief({ outputs: ['Quantité à x'] }))).toEqual(['missing readout "Quantité à x"']);
-    expect(checkVisualAgainstBrief(labelled, brief({ checks: [{ output: 'Quantité à x', at: {}, expected: 1 }] }))).toEqual(['missing readout "Quantité à x"']);
-    expect(checkVisualAgainstBrief(labelled, brief({ checks: [{ output: 'Quantité à t', at: { v0: 20 }, expected: 30, tolerance: 0.01 }] }))[0]).toContain('gives 20.40');
+    expect(checkVisualAgainstBrief(labelled, brief({ checks: [{ output: 'Quantité à x', at: {}, expected: 1 }] }))).toEqual([]);
+    expect(disagreeingChecks(labelled, brief({ checks: [{ output: 'Quantité à x', at: {}, expected: 1 }] }))).toEqual(['missing readout "Quantité à x"']);
+    expect(disagreeingChecks(labelled, brief({ outputs: ['Quantité à x'], checks: [{ output: 'Quantité à x', at: {}, expected: 1 }] }))).toEqual([]);
+    expect(disagreeingChecks(labelled, brief({ checks: [{ output: 'Quantité à t', at: { v0: 20 }, expected: 30, tolerance: 0.01 }] }))[0]).toContain('gives 20.40');
   });
 
   it('keeps parameter names exact', () => {
@@ -97,14 +109,15 @@ describe('checkVisualAgainstBrief', () => {
 
   it('prefers an exact readout label over a normalised one', () => {
     const cased: TeachingVisual = { ...plot, outputs: [{ label: 'u', expression: '1' }, { label: 'U', expression: 'v0^2/19.6' }] } as TeachingVisual;
-    expect(checkVisualAgainstBrief(cased, brief({ outputs: ['u', 'U'], checks: [{ output: 'U', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }))).toEqual([]);
-    expect(checkVisualAgainstBrief(cased, brief({ checks: [{ output: 'u', at: {}, expected: 1 }] }))).toEqual([]);
+    expect(disagreeingChecks(cased, brief({ outputs: ['u', 'U'], checks: [{ output: 'U', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }))).toEqual([]);
+    expect(disagreeingChecks(cased, brief({ checks: [{ output: 'u', at: {}, expected: 1 }] }))).toEqual([]);
+    expect(disagreeingChecks(cased, brief({ checks: [{ output: 'U', at: { v0: 20 }, expected: 1 }] }))[0]).toContain('gives 20.40');
     const only: TeachingVisual = { ...plot, outputs: [{ label: 'u', expression: '1' }] } as TeachingVisual;
     expect(checkVisualAgainstBrief(only, brief({ outputs: ['u', 'U'] }))).toEqual(['missing readout "U"']);
   });
 
   it('falls back to the normalised readout label when no exact label exists', () => {
     const labelled: TeachingVisual = { ...plot, outputs: [{ label: 'Quantite a t', expression: 'v0^2/19.6' }] } as TeachingVisual;
-    expect(checkVisualAgainstBrief(labelled, brief({ checks: [{ output: 'Quantité à t', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }))).toEqual([]);
+    expect(disagreeingChecks(labelled, brief({ checks: [{ output: 'Quantité à t', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }))).toEqual([]);
   });
 });

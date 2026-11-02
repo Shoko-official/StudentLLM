@@ -171,8 +171,8 @@ describe('visual jobs in the app', () => {
       vi.restoreAllMocks();
       return used;
     };
-    expect(await run(true)).toContain(60_000);
-    expect(await run(false)).not.toContain(60_000);
+    expect(await run(true)).toContain(120_000);
+    expect(await run(false)).not.toContain(120_000);
   });
 
   it('writes a finished visual to the course that asked for it after the student switches course', async () => {

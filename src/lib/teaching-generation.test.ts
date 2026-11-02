@@ -31,7 +31,7 @@ describe('generateVisual', () => {
   it('sends the type module, strict schema and only the brief with its section', async () => {
     const provider = replying(JSON.stringify(quiz));
     const result = await generateVisual(provider, job());
-    expect(result).toEqual({ visual: quiz, attempts: 1, errors: [] });
+    expect(result).toEqual({ visual: quiz, attempts: 1, errors: [], unconfirmed: [] });
     const [messages, options] = provider.generate.mock.calls[0];
     expect(messages![0]).toEqual({ role: 'system', content: VISUAL_MODULES.quiz });
     expect(payload(provider, 0)).toEqual({ task: expect.any(String), request: job().brief, surroundingExplanation: 'Around.' });
@@ -68,7 +68,7 @@ describe('generateVisual', () => {
   it('stops after one failed repair and keeps the errors', async () => {
     const provider = replying('{"bad":', '{"bad":');
     const result = await generateVisual(provider, job());
-    expect(result).toEqual({ visual: null, attempts: 2, errors: ['the output is not valid JSON'] });
+    expect(result).toEqual({ visual: null, attempts: 2, errors: ['the output is not valid JSON'], unconfirmed: [] });
     expect(provider.generate).toHaveBeenCalledTimes(2);
   });
 
@@ -136,7 +136,96 @@ describe('generateVisual', () => {
       throw new Error('Provider request failed (500)');
     });
     const result = await generateVisual({ generate }, job());
-    expect(result).toEqual({ visual: null, attempts: 2, errors: ['Provider request failed (500)'] });
+    expect(result).toEqual({ visual: null, attempts: 2, errors: ['Provider request failed (500)'], unconfirmed: [] });
+  });
+
+  describe('disagreeing checks', () => {
+    const plot = (peak = 'v0^2/19.6') => ({
+      type: 'plot', title: 'Height', x: { min: 0, max: 7 },
+      parameters: [{ name: 'v0', label: 'Speed', min: 5, max: 30, step: 5, value: 20 }],
+      series: [{ label: 'h', expression: 'v0*x-4.9*x^2' }],
+      outputs: [{ label: 'Peak', expression: peak, unit: 'm' }],
+    });
+    const wrong = plot('v0^2/9.8');
+    const plotJob = (more: Partial<VisualJob> = {}) => job({ type: 'plot', outputs: ['Peak'], checks: [{ output: 'Peak', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }, more);
+    const disagreement = 'readout "Peak" at v0=20 gives 40.816326530612244, expected 20.408';
+
+    it('returns a plot that agrees with its checks after one call', async () => {
+      const provider = replying(JSON.stringify(plot()));
+      expect(await generateVisual(provider, plotJob())).toEqual({ visual: plot(), attempts: 1, errors: [], unconfirmed: [] });
+    });
+
+    it('rechecks a disagreeing plot once and returns the corrected one', async () => {
+      const provider = replying(JSON.stringify(wrong), JSON.stringify(plot()));
+      const result = await generateVisual(provider, plotJob());
+      expect(result).toEqual({ visual: plot(), attempts: 2, errors: [], unconfirmed: [] });
+      const recheck = payload(provider, 1);
+      expect(recheck.task).toBe('Recheck this visual against the request. The listed values disagree with values the tutor gave, and either side may be wrong. Correct the formula only if it is wrong, never bend a correct formula to match a value. Return the complete object.');
+      expect(recheck.errors).toEqual([disagreement]);
+      expect(recheck.invalidOutput).toBe(JSON.stringify(wrong));
+    });
+
+    it('keeps the second plot with its own disagreements and makes no third call', async () => {
+      const provider = replying(JSON.stringify(wrong), JSON.stringify(plot('v0^2/9.8')));
+      const result = await generateVisual(provider, plotJob());
+      expect(result.visual).toEqual(wrong);
+      expect(result.unconfirmed).toEqual([disagreement]);
+      expect(result.attempts).toBe(2);
+      expect(provider.generate).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns the first plot as unconfirmed when the recheck times out', async () => {
+      vi.useFakeTimers();
+      try {
+        let calls = 0;
+        const generate = vi.fn<LLMProvider['generate']>((_messages, options) => {
+          if (++calls === 1) return Promise.resolve({ content: JSON.stringify(wrong), model: 'fixture' });
+          return new Promise<never>((_resolve, reject) => options?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))));
+        });
+        const pending = generateVisual({ generate }, plotJob(), { deadlineMs: 2000 });
+        await vi.advanceTimersByTimeAsync(2000);
+        expect(await pending).toEqual({ visual: wrong, attempts: 2, errors: [], unconfirmed: [disagreement] });
+      } finally { vi.useRealTimers(); }
+    });
+
+    it('returns the first plot as unconfirmed when the recheck is not valid or the call fails', async () => {
+      expect(await generateVisual(replying(JSON.stringify(wrong), '{"bad":'), plotJob())).toEqual({ visual: wrong, attempts: 2, errors: [], unconfirmed: [disagreement] });
+      let calls = 0;
+      const generate = vi.fn<LLMProvider['generate']>(async () => { if (++calls === 1) return { content: JSON.stringify(wrong), model: 'fixture' }; throw new Error('Provider request failed (500)'); });
+      expect(await generateVisual({ generate }, plotJob())).toMatchObject({ visual: wrong, unconfirmed: [disagreement] });
+    });
+
+    it('returns no visual when a stop arrives during the recheck', async () => {
+      const controller = new AbortController();
+      let calls = 0;
+      const generate = vi.fn<LLMProvider['generate']>((_messages, options) => {
+        if (++calls === 1) return Promise.resolve({ content: JSON.stringify(wrong), model: 'fixture' });
+        const pending = new Promise<never>((_resolve, reject) => options?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))));
+        controller.abort();
+        return pending;
+      });
+      expect(await generateVisual({ generate }, plotJob(), { signal: controller.signal })).toEqual({ visual: null, attempts: 2, errors: ['Visual generation was stopped.'], unconfirmed: [] });
+    });
+
+    it('returns no visual when a stop arrives before the recheck', async () => {
+      const controller = new AbortController();
+      const generate = vi.fn<LLMProvider['generate']>(async () => { controller.abort(); return { content: JSON.stringify(wrong), model: 'fixture' }; });
+      expect(await generateVisual({ generate }, plotJob(), { signal: controller.signal })).toEqual({ visual: null, attempts: 1, errors: ['Visual generation was stopped.'], unconfirmed: [] });
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows a repaired plot with unconfirmed disagreements after an invalid first output', async () => {
+      const provider = replying('{"bad":', JSON.stringify(wrong));
+      const result = await generateVisual(provider, plotJob());
+      expect(result).toEqual({ visual: wrong, attempts: 2, errors: [], unconfirmed: [disagreement] });
+      expect(provider.generate).toHaveBeenCalledTimes(2);
+    });
+
+    it('still rejects a plot that lacks a readout named in the outputs', async () => {
+      const bare = { ...plot(), outputs: [{ label: 'Other', expression: '1' }] };
+      const result = await generateVisual(replying(JSON.stringify(bare), JSON.stringify(bare)), plotJob());
+      expect(result).toEqual({ visual: null, attempts: 2, errors: ['missing readout "Peak"'], unconfirmed: [] });
+    });
   });
 
   describe('stop and deadline', () => {
@@ -151,14 +240,14 @@ describe('generateVisual', () => {
     it('makes no call when already stopped', async () => {
       const provider = replying(JSON.stringify(quiz));
       const result = await generateVisual(provider, job(), { signal: abortedController().signal });
-      expect(result).toEqual({ visual: null, attempts: 0, errors: [stopped] });
+      expect(result).toEqual({ visual: null, attempts: 0, errors: [stopped], unconfirmed: [] });
       expect(provider.generate).not.toHaveBeenCalled();
     });
 
     it('makes no call when already stopped, even with an initial output', async () => {
       const provider = replying(JSON.stringify(quiz));
       const result = await generateVisual(provider, job({}, { initialOutput: '{"type":"quiz"}' }), { signal: abortedController().signal });
-      expect(result).toEqual({ visual: null, attempts: 0, errors: [stopped] });
+      expect(result).toEqual({ visual: null, attempts: 0, errors: [stopped], unconfirmed: [] });
       expect(provider.generate).not.toHaveBeenCalled();
     });
 
@@ -167,7 +256,7 @@ describe('generateVisual', () => {
       const generate = vi.fn<LLMProvider['generate']>(async () => { controller.abort(); return { content: '{"bad":', model: 'fixture' }; });
       const result = await generateVisual({ generate }, job(), { signal: controller.signal });
       expect(generate).toHaveBeenCalledTimes(1);
-      expect(result).toEqual({ visual: null, attempts: 1, errors: [stopped] });
+      expect(result).toEqual({ visual: null, attempts: 1, errors: [stopped], unconfirmed: [] });
     });
 
     it('reports a stop, not the abort error, when the provider rejects on abort', async () => {
@@ -178,7 +267,7 @@ describe('generateVisual', () => {
         return pending;
       });
       const result = await generateVisual({ generate }, job(), { signal: controller.signal });
-      expect(result).toEqual({ visual: null, attempts: 1, errors: [stopped] });
+      expect(result).toEqual({ visual: null, attempts: 1, errors: [stopped], unconfirmed: [] });
     });
 
     it('reports the deadline, not the abort error, when an attempt times out', async () => {
@@ -186,7 +275,7 @@ describe('generateVisual', () => {
       const generate = vi.fn<LLMProvider['generate']>((_messages, options) => rejectOnAbort(options));
       const pending = generateVisual({ generate }, job(), { deadlineMs: 2000 });
       await vi.advanceTimersByTimeAsync(2000);
-      expect(await pending).toEqual({ visual: null, attempts: 1, errors: ['The visual request timed out after 2 s.'] });
+      expect(await pending).toEqual({ visual: null, attempts: 1, errors: ['The visual request timed out after 2 s.'], unconfirmed: [] });
       expect(generate).toHaveBeenCalledTimes(1);
     });
 
