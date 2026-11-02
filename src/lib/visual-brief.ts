@@ -389,7 +389,7 @@ const ANY_ARTICLE = `${INDEFINITE}|le|la|les|l'|the|ce|cette|this|these`;
 // Adjectives may sit between the article and the noun. A preposition or an article there means the noun belongs to something else.
 const FILLER = "(?:(?!(?:de|du|des|d|of|que|qu|that|sur|on|about|pour|for|dans|in|a|an|to|au|aux|en|par|by|with|avec|sans|without|et|and|ou|or|entre|between|from|un|une|le|la|les|l|the|binary|decision)\\b)[\\p{L}\\d'-]+\\s+){0,3}?";
 // What the noun belongs to when these follow: "the graph is connected", "the tree height", "la figure 3", "the plot bigger".
-const AFTER_NOUN = "(?![\\p{L}\\d'-])(?!\\s+(?:est|sont|is|are|was|were|has|have|ont|theory|theorie|equation|formula|height|apps?|applications?|classifiers?|bigger|smaller|larger|wider|ci-dessus|above|precedente?|previous|of\\s+what)\\b)(?!\\s+\\d)";
+const AFTER_NOUN = "(?![\\p{L}\\d'-])(?!\\s+(?:est|sont|is|are|was|were|has|have|ont|theory|theorie|equation|formula|height|apps?|applications?|classifiers?|bigger|smaller|larger|wider|ci-dessus|above|precedente?|previous|answers?|results?|solutions?|corrections?|of\\s+what)\\b)(?!\\s+\\d)";
 const NOUN = `(?<noun>${ANY_ARTEFACT})${AFTER_NOUN}`;
 const OBJECT = `${FILLER}${NOUN}`;
 const PRONOUN = "(?:[ -](?:moi|nous|me|us)\\b|\\s+(?:pour moi|for me)\\b)?";
@@ -422,15 +422,17 @@ const COUNTS: Record<string, number> = { deux: 2, two: 2, 2: 2, trois: 3, three:
 const OTHER_MEANINGS = /\bfigures? (?:de style|of speech|de rhetorique|of merit|for)\b|\bcourbes? de niveau\b/g;
 // Whoever is reported as asking: the course, the statement, the teacher. The learner is asking about it, not for it.
 const REPORTED = /\b(?:dit|disent|disait|demande|indique|stipule|says|said|states?|asks|reads|consigne|enonce)\b/;
+// The artefact itself as the object: "ne donne pas la réponse du quiz" refuses the answer, and the quiz still stands.
+const REFUSED_OBJECT = `(?:\\s+(?:me|us|nous))?(?:\\s+(?:faire|donner|ajouter|mettre|tracer|dessiner|montrer|make|add|give|draw|create|show))?\\s*(?:(?:de|d'|a|an|the|any|un|une|le|la|les|des|ce|cette|this)\\s*)?(?:\\w+\\s+)?(?:${ANY_ARTEFACT})${AFTER_NOUN}`;
 const REFUSES_NAMED = [
   /\b(?:sans|pas\s+de|pas\s+d'|no|without|ni)\s+(?:\w+\s+){0,2}(?:quiz|qcm|arbres?|trees?)\b/,
   /(?:^|[,;]\s*)not\s+(?:a|an)\s+(?:\w+\s+)?(?:quiz|tree)\b/,
   /\b(?:do not|don't|dont|never|stop)\s+(?:quiz|test)\b|\bne\s+me\s+(?:teste|interroge)\s+pas\b/,
-  new RegExp(`\\b(?:do not|don't|dont|never|stop)\\s+(?:give|add|make|create|include|generate|build|write|show|draw|use|want|need)\\b[^.!?;,\\n]{0,25}\\b(?:${ANY_ARTEFACT})\\b`),
-  new RegExp(`\\b(?:inutile de|pas la peine de|pas besoin de|pas besoin d'|no need (?:to|for))[^.!?;,\\n]{0,25}\\b(?:${ANY_ARTEFACT})\\b`),
+  new RegExp(`\\b(?:do not|don't|dont|never|stop)\\s+(?:give|add|make|create|include|generate|build|write|show|draw|use|want|need)\\b${REFUSED_OBJECT}`),
+  new RegExp(`\\b(?:inutile de|pas la peine de|pas besoin de|pas besoin d'|no need (?:to|for))\\b${REFUSED_OBJECT}`),
   new RegExp(`\\b(?:evite[sz]?|avoid|skip|hold off on|aucune?)\\s+(?:\\w+\\s+){0,2}(?:${ANY_ARTEFACT})\\b`),
-  new RegExp(`\\bne\\s+(?:me\\s+|nous\\s+)?(?:fais|faites|donne|donnez|ajoute|ajoutez|mets|mettez|montre|montrez|trace|tracez|dessine|dessinez|propose|proposez|veux|voudrais)\\s+(?:surtout\\s+|plus\\s+)?pas\\b[^.!?;,\\n]{0,25}\\b(?:${ANY_ARTEFACT})\\b`),
-  new RegExp(`\\b(?:n'(?:ai|as|avons|avez)\\s+pas\\s+besoin|il ne faut pas)\\b[^.!?;,\\n]{0,25}\\b(?:${ANY_ARTEFACT})\\b`),
+  new RegExp(`\\bne\\s+(?:me\\s+|nous\\s+)?(?:fais|faites|donne|donnez|ajoute|ajoutez|mets|mettez|montre|montrez|trace|tracez|dessine|dessinez|propose|proposez|veux|voudrais)\\s+(?:surtout\\s+|plus\\s+)?pas\\b${REFUSED_OBJECT}`),
+  new RegExp(`\\b(?:n'(?:ai|as|avons|avez)\\s+pas\\s+besoin(?:\\s+de\\b|\\s+d')?|il ne faut pas\\b)${REFUSED_OBJECT}`),
 ];
 
 /** What the detector reads: quoted text gone, and a past participle no longer spelled like the imperative once accents go ("tracé", "trace"). */
