@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decideVisual, decideVisuals, generateTutorProse, tutorNote, generateVisual, runVisualJobs } from './teaching-generation';
 import type { LLMProvider, ProviderMessage } from './llm-provider';
 import { parseTeachingVisual } from './teaching-visuals';
-import { jobFromMarkdown, parseVisualBrief, type VisualJob, type VisualType } from './visual-brief';
+import { jobFromMarkdown, parseVisualBrief, type VisualJob } from './visual-brief';
 import { CONVERSATION_MEMORY_INSTRUCTIONS, TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES, visualTargetNote } from '../prompts';
 
 const quiz = { type: 'quiz', title: 'Check', question: 'Q?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' };
@@ -23,7 +23,7 @@ describe('generateTutorProse', () => {
     expect(result.model).toBe('fixture');
   });
 
-  it('adds the visual request sentence to the note only when the latest message asks for a visual after a refusal, and never keeps it', async () => {
+  it('adds the conditional sentence to the note only when the latest message has an artefact word after a refusal, and never keeps it', async () => {
     const asked = async (history: ProviderMessage[]) => {
       const provider = replying('An answer.');
       const result = await generateTutorProse(provider, history, { maxTokens: 4096 });
@@ -40,10 +40,10 @@ describe('generateTutorProse', () => {
     // Without a refusal in the conversation the call is what it always was.
     expect(await asked([system, user('Finalement, montre-moi un schéma du cycle.')])).toBe(TUTOR_LENGTH_REMINDER);
     expect(await asked([system, user('Why does it happen?'), reply, user('Show me a diagram of it.')])).toBe(TUTOR_LENGTH_REMINDER);
-    // A refusal alone, an earlier request alone, or a message that holds both do not lift anything.
+    // A refusal alone or an earlier request alone do not add it. Whether a word is a request is the model's to read.
     expect(await asked([system, user('Sans schéma, explique.')])).toBe(TUTOR_LENGTH_REMINDER);
     expect(await asked([system, user('No diagrams please.'), reply, user('Why does it happen?')])).toBe(TUTOR_LENGTH_REMINDER);
-    expect(await asked([system, user('No diagrams please.'), reply, user('Show a table, not a diagram.')])).toBe(TUTOR_LENGTH_REMINDER);
+    expect(await asked([system, user('No diagrams please.'), reply, user('Show a table, not a diagram.')])).toBe(lifted);
     expect(await asked([system, user('Show me a diagram.'), reply, user('No diagrams please.'), reply, user('And why?')])).toBe(TUTOR_LENGTH_REMINDER);
     // Neither is the conversation memory, which carries compacted assistant excerpts.
     const memory = user(CONVERSATION_MEMORY_INSTRUCTIONS + String.fromCharCode(10) + JSON.stringify({ kind: 'extractive_conversation_memory', records: [{ id: 'a1', role: 'assistant', excerpts: ['no diagram needed here'], shortened: false }] }));
@@ -171,18 +171,15 @@ describe('decideVisual', () => {
     expect(JSON.stringify(sent)).not.toContain('AAAA');
   });
 
-  it('drops the earlier learner messages only when this message asks for a visual and an earlier one refused, so a past refusal cannot match', async () => {
+  it('always sends the earlier learner messages, so that only the model can end a refusal', async () => {
     const sentFor = async (question: string, earlier: string[]) => {
       const provider = replying('{"visual":false}');
       await decide(provider, { ...input, question, earlierMessages: earlier });
       return JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content).earlierLearnerMessages;
     };
     const refused = ['No diagrams, please.', 'And then?'];
-    expect(await sentFor('Actually, show me a diagram of the cycle.', refused)).toEqual([]);
-    expect(await sentFor('Finalement, montre-moi un schéma.', ['Sans schéma.', 'Et ensuite ?'])).toEqual([]);
-    expect(await sentFor('Why does it happen?', refused)).toEqual(refused);
-    expect(await sentFor('No diagram, but show me the numbers.', refused)).toEqual(refused);
-    // No refusal before: what was sent before is sent still.
+    for (const question of ['Actually, show me a diagram of the cycle.', 'Why does it happen?', 'No diagram, but show me the numbers.']) expect(await sentFor(question, refused)).toEqual(refused);
+    expect(await sentFor('Finalement, montre-moi un schéma.', ['Sans schéma.', 'Et ensuite ?'])).toEqual(['Sans schéma.', 'Et ensuite ?']);
     expect(await sentFor('Show me a diagram of the cycle.', ['Why?', 'And then?'])).toEqual(['Why?', 'And then?']);
   });
 
@@ -301,17 +298,10 @@ describe('decideVisual with a target', () => {
     expect(await decideVisual(replying('{"visual":false}'), input)).toEqual({ brief: null });
   });
 
-  it('lets only a real request end an earlier refusal, by the rule of asksForVisual and the detector together', async () => {
-    const earlier = async (question: string, target: VisualType[]) => {
-      const provider = replying('{"visual":false}');
-      await decideVisual(provider, { ...input, question, target, earlierMessages: ['Sans schéma ni quiz, jamais.'] });
-      return JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content).earlierLearnerMessages;
-    };
-    expect(await earlier('Fais un graphique.', ['plot'])).toEqual([]);
-    // A target the general rule does not read, a past mention and a statement all keep the refusal in view.
-    expect(await earlier('Il me faut un graphique.', ['plot'])).toEqual(['Sans schéma ni quiz, jamais.']);
-    expect(await earlier("Tu m'as donné un quiz tout à l'heure, je n'ai pas compris la question 2.", ['quiz'])).toEqual(['Sans schéma ni quiz, jamais.']);
-    expect(await earlier('Le graphique montre une courbe, pourquoi ?', ['plot'])).toEqual(['Sans schéma ni quiz, jamais.']);
+  it('keeps a standing refusal in the data of a targeted call', async () => {
+    const provider = replying('{"visual":false}');
+    await decideVisual(provider, { ...input, question: 'Exercice 2 : trace la courbe de f.', target: ['plot'], earlierMessages: ['Sans schéma ni quiz, jamais.'] });
+    expect(JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content).earlierLearnerMessages).toEqual(['Sans schéma ni quiz, jamais.']);
   });
 
   it('allows every type the word can mean, and no other', async () => {
@@ -347,6 +337,22 @@ describe('decideVisuals', () => {
     expect(answers[2]).toContain('"id":"auto-2"');
     expect(result).toMatchObject({ requested: 3, targets: ['plot', 'diagram', 'quiz'] });
     expect(result.markdown.match(/```student-visual-request/g)).toHaveLength(3);
+  });
+
+  it('adds nothing for a word the model declines, and asks nothing when the message has no such word', async () => {
+    const declined = await run(['{"visual":false}', '{"visual":false}'], { question: 'Courbe de Phillips', answer: 'Prose.' });
+    expect(declined.notes).toEqual([visualTargetNote('plot'), 'general']);
+    expect(declined.result).toMatchObject({ requested: 0, markdown: 'Prose.' });
+    expect(declined.jobs).toEqual([]);
+    const none = await run(['{"visual":false}'], { question: 'Pourquoi le ciel est-il bleu ?', answer: 'Prose.' });
+    expect(none.notes).toEqual(['general']);
+    expect(none.result.targets).toEqual([]);
+  });
+
+  it('does not ask again for a family with a block', async () => {
+    const { provider, result } = await run([], { question: 'Fais un seul schéma du pendule.', answer: `Prose.\n\n${fence('v1', 'figure')}` });
+    expect(provider.generate).not.toHaveBeenCalled();
+    expect(result.requested).toBe(0);
   });
 
   it('runs one call at a time', async () => {
@@ -539,6 +545,62 @@ describe('generateVisual', () => {
     const repair = payload(provider, 1);
     expect(repair.invalidOutput).toBe(invalid);
     expect(repair.errors.join(' ')).toContain('answer must be a zero-based index');
+  });
+
+  describe('a quiz whose working reaches another value than its key', () => {
+    const worked = (answer: number, explanation: string, options = ['30', '36', '48']) => JSON.stringify({ ...quiz, options, answer, explanation });
+
+    it('asks once when the working reaches another option, and takes a corrected key', async () => {
+      const provider = replying(worked(1, 'Total : 24 + 24 = 48 minutes. 36 vient d\'une erreur.'), worked(2, 'Total : 24 + 24 = 48 minutes.'));
+      const result = await generateVisual(provider, job());
+      expect(result).toMatchObject({ attempts: 2, errors: [], unconfirmed: [], visual: { answer: 2 } });
+      expect(payload(provider, 1).disagreements[0]).toContain('the option "48"');
+    });
+
+    it('asks once when the working reaches a value no option holds', async () => {
+      const provider = replying(worked(0, 'R = 240 x 0.2 = 48 minutes.', ['30', '36', '40']), worked(2, 'R = 240 x 0.2 = 48 minutes.', ['30', '36', '48']));
+      const result = await generateVisual(provider, job());
+      expect(result).toMatchObject({ attempts: 2, visual: { answer: 2, options: ['30', '36', '48'] } });
+      expect(payload(provider, 1).task).toMatch(/correct the options/);
+    });
+
+    it('never rejects for it: a builder that stands by its key keeps the quiz, marked', async () => {
+      const key = worked(1, 'On garde 36 ici, puis k = 48.');
+      const provider = replying(key, key);
+      const result = await generateVisual(provider, job());
+      expect(result).toMatchObject({ attempts: 2, errors: [], visual: { answer: 1 } });
+      expect(result.unconfirmed[0]).toContain('the working reaches 48');
+      const failing = vi.fn<LLMProvider['generate']>(async () => { throw new Error('busy'); }).mockResolvedValueOnce({ content: key, model: 'm' });
+      expect((await generateVisual({ generate: failing, supportsStructuredOutputs: true }, job())).visual).toMatchObject({ answer: 1 });
+    });
+
+    it('makes no call when the key is the working\'s result', async () => {
+      const provider = replying(worked(2, 'Total : 24 + 24 = 48 minutes. 36 vient d\'une erreur.'));
+      expect(await generateVisual(provider, job())).toMatchObject({ attempts: 1, unconfirmed: [], visual: { answer: 2 } });
+      expect(provider.generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('sets the key with no call when the tutor and the working agree on an option, and records it', async () => {
+      const provider = replying(worked(1, 'Total : 24 + 24 = 48 minutes.'));
+      const result = await generateVisual(provider, job({ correctAnswer: '48' }));
+      expect(result).toMatchObject({ attempts: 1, errors: [], unconfirmed: [], visual: { answer: 2 } });
+      expect(result.rekeyed).toBe('key moved from "36" to "48": the tutor and the working both give 48');
+      expect(provider.generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the key to the recheck when the tutor and the working differ', async () => {
+      const provider = replying(worked(1, 'Total = 48 minutes.'), worked(2, 'Total = 48 minutes.'));
+      const result = await generateVisual(provider, job({ correctAnswer: '36' }));
+      expect(result.rekeyed).toBeUndefined();
+      expect(result).toMatchObject({ attempts: 2, visual: { answer: 2 } });
+    });
+
+    it('does not lose a right quiz on a format difference', async () => {
+      for (const [options, brief, explanation] of [[['1/2', '1/4'], '0.5', 'On obtient 0,5.'], [['50 %', '25 %'], '0.5', 'On obtient 0,5.'], [['0,5', '0,25'], '1/2', 'P = 1/2.']] as const) {
+        const provider = replying(JSON.stringify({ ...quiz, options, answer: 0, explanation }));
+        expect(await generateVisual(provider, job({ correctAnswer: brief }))).toMatchObject({ attempts: 1, errors: [], unconfirmed: [], visual: { answer: 0 } });
+      }
+    });
   });
 
   describe('a quiz whose key differs from the answer in the request', () => {

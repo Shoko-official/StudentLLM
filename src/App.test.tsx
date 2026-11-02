@@ -592,7 +592,8 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText(/Here is the unit circle/)).toBeInTheDocument();
-    expect(generate).toHaveBeenCalledTimes(2);
+    // The answer, the call for the named visualisation, and the general call after that reply could not be read.
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(3));
     expect(screen.queryByRole('button', { name: /Source ·/ })).not.toBeInTheDocument();
   });
 

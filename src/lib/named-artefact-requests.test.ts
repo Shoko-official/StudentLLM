@@ -1,271 +1,70 @@
 import { describe, expect, it } from 'vitest';
+import benchmark from '../../benchmarks/tutor/cases.json';
 import { namedArtefacts } from './visual-brief';
 
 const read = (text: string) => namedArtefacts(text).map(({ type, also, count }) => `${[type, ...(also ?? [])].join('|')}${count > 1 ? `*${count}` : ''}`).join(' ');
 
 const PLOT = 'plot', GRAPH = 'plot|diagram', SCHEMA = 'diagram|figure', TREE = 'diagram', FIGURE = 'figure|diagram', QUIZ = 'quiz';
 
-// Written apart from the benchmark prompts: everyday phrasings, so that the detector is not fitted to spent questions.
-const REQUESTS: [string, string][] = [
-  // Wanting to see or have it.
-  ['Je voudrais voir un graphique de la fonction.', PLOT],
-  ["J'aimerais voir un schéma du circuit.", SCHEMA],
-  ['Je veux voir la courbe.', PLOT],
-  ['I want to see a graph of the function.', GRAPH],
-  ["I'd like to see a diagram.", SCHEMA],
-  ['Can I have a diagram of the circuit?', SCHEMA],
-  ['Can I get a chart of this?', PLOT],
-  ['Peut-on avoir un schéma ?', SCHEMA],
-  ['Je veux un graphique et un schéma.', `${PLOT} ${SCHEMA}`],
-  ['Il me faut deux graphiques.', `${PLOT}*2`],
-  ['Il nous faudrait une courbe de la vitesse.', PLOT],
-  ['We need a flowchart of the process.', TREE],
-  ["J'ai besoin d'une illustration de la cellule.", FIGURE],
-  ['Could I see a chart of the results?', PLOT],
-  ['Puis-je avoir un QCM ?', QUIZ],
-  ['Je souhaite un diagramme du cycle.', SCHEMA],
-  ['I would like a picture of the setup.', FIGURE],
-  ["J'aimerais un quiz sur ce chapitre.", QUIZ],
-  // Asking someone to make it.
-  ['Could you provide a diagram of the circuit?', SCHEMA],
-  ['Please provide a graph.', GRAPH],
-  ['Fournis un schéma du circuit.', SCHEMA],
-  ['Réalise un schéma du circuit.', SCHEMA],
-  ['Établis un schéma.', SCHEMA],
-  ['Rédige un QCM sur le chapitre.', QUIZ],
-  ['Écris un quiz sur le chapitre.', QUIZ],
-  ['Write a quiz on chapter 2.', QUIZ],
-  ['Prepare a quiz.', QUIZ],
-  ['Peux-tu me faire un schéma ?', SCHEMA],
-  ['Tu peux me dessiner un arbre ?', TREE],
-  ['Tu peux me faire un QCM ?', QUIZ],
-  ['Peux-tu ajouter un quiz ?', QUIZ],
-  ['Peux-tu tracer la courbe ?', PLOT],
-  ['Pouvez-vous inclure un histogramme ?', PLOT],
-  ['Montrez-moi la courbe de y = x^2.', PLOT],
-  ['Fais-moi un schéma.', SCHEMA],
-  ['Fais moi un quiz.', QUIZ],
-  ['Fais nous un graphique.', PLOT],
-  ['Fais-moi deux schémas.', `${SCHEMA}*2`],
-  ['Fais trois quiz.', `${QUIZ}*3`],
-  ['Génère un QCM de 3 questions.', QUIZ],
-  ['Make a 3-question quiz.', QUIZ],
-  ['Fais 3 questions de quiz.', `${QUIZ}*3`],
-  ['Give me another graph.', GRAPH],
-  ['Refais le graphique avec r = 2.', PLOT],
-  ['Redraw the diagram with one more node.', SCHEMA],
-  ['Pose-moi une question à choix multiples.', QUIZ],
-  ['Ask me a multiple-choice question.', QUIZ],
-  ['Would you sketch the forces in a diagram?', SCHEMA],
-  ['Est-ce que tu peux faire un schéma ?', SCHEMA],
-  ['Pourrais-tu tracer un graphique de la pression ?', PLOT],
-  ['Crée une figure du montage.', FIGURE],
-  ['Create a chart of the data.', PLOT],
-  ['Propose un quiz rapide.', QUIZ],
-  // Asking for an explanation in that form.
-  ['Explique-le sous forme de schéma.', SCHEMA],
-  ['Explain it as a diagram.', SCHEMA],
-  ['Explain this using a diagram.', SCHEMA],
-  ['Explain this with a chart and a quiz.', `${PLOT} ${QUIZ}`],
-  ["Explique à l'aide d'un schéma.", SCHEMA],
-  ['Explique avec un dessin.', FIGURE],
-  ['Peux-tu représenter ça sous forme de schéma ?', SCHEMA],
-  ['Show me what it looks like with a graph.', GRAPH],
-  ['Décris la mitose avec un schéma.', SCHEMA],
-  // Short forms.
-  ['On fait un quiz ?', QUIZ],
-  ["Let's do a quiz.", QUIZ],
-  ['Un quiz pour finir ?', QUIZ],
-  ['Un petit quiz à la fin.', QUIZ],
-  ['A quiz at the end please.', QUIZ],
-  ["Graphique de sin(x) s'il te plaît.", PLOT],
-  ['Un graphique de la fonction stp.', PLOT],
-  ['Encore un quiz !', QUIZ],
-  ['Un autre quiz.', QUIZ],
-  ['Another quiz please.', QUIZ],
-  ['One more quiz.', QUIZ],
-  ['Un seul graphique, avec deux courbes.', PLOT],
-  ['Un seul graphique de y = x.', PLOT],
-  ['One chart only.', PLOT],
-  ['A single chart of y = x.', PLOT],
-  ['Just one plot of y=x please.', PLOT],
-  ['Schéma du circuit.', SCHEMA],
-  ['Un schéma ?', SCHEMA],
-  // After something else.
-  ['Donne-moi un exercice puis un quiz.', QUIZ],
-  ['Give me an example, then a quiz.', QUIZ],
-  ['Explique le théorème et ajoute une figure.', FIGURE],
-  ['Explain, and include a plot of y=x.', PLOT],
-  ['Pourquoi ça monte ? Trace la courbe.', PLOT],
-  ['Merci, et maintenant un quiz.', QUIZ],
-  ['Résume le cours. Ensuite, un schéma des étapes.', SCHEMA],
-  ["Je n'ai pas compris, montre-moi un schéma.", SCHEMA],
-  ['Je ne comprends pas le graphique, trace une autre courbe.', PLOT],
-  ['Tu as oublié une flèche, refais le schéma.', SCHEMA],
-  ['What is entropy? Draw a diagram of it.', SCHEMA],
-  // A word a figure or a schema can stand for.
-  ['Draw a picture of the steps.', FIGURE],
-  ['Show me a graph of the network.', GRAPH],
-  ['Ajoute une figure de la fonction.', FIGURE],
-  ['Fais un seul schéma du pendule.', SCHEMA],
-  ['Fais un croquis du montage.', FIGURE],
-  ['Sketch the setup in a drawing.', FIGURE],
-  ['Trace un graphe orienté des étapes.', GRAPH],
-  ['Ajoute un arbre des possibilités.', TREE],
-  ['Donne-moi un organigramme des étapes.', TREE],
-  ['Une figure du montage, merci.', FIGURE],
-  ['Teste-moi sur ce chapitre.', QUIZ],
-  ['Test me on this chapter.', QUIZ],
-  ['Questionne-moi sur les fractions.', QUIZ],
-  ['Termine avec un QCM.', QUIZ],
-  ['End with a quiz.', QUIZ],
-  ['Commence par un schéma.', SCHEMA],
-  ['Include a histogram of the marks.', PLOT],
-  ['Display a bar chart of the marks.', PLOT],
-  ['Produce a tree of the outcomes.', TREE],
-  ['Mets un graphique dans ta réponse.', PLOT],
-  // A refusal of something about the artefact is not a refusal of the artefact.
-  ['Ajoute un quiz, et ne donne pas la réponse du quiz dans le texte.', QUIZ],
-  ['Termine par un quiz. Ne donne pas sa correction dans le texte.', QUIZ],
-  ["Add a quiz, but don't give the answer to the quiz in the text.", QUIZ],
-  ['Fais un graphique. Inutile de donner la formule du graphique.', PLOT],
-  ["Finish with a quiz. Please don't give away the quiz answer before the quiz.", QUIZ],
-  ["Don't give the quiz answer yet, but add a quiz.", QUIZ],
-  ['Make a chart. No need to explain the axes of the chart.', PLOT],
+const WORDS: [string[], string][] = [
+  [['graphique', 'graphiques', 'grafique', 'courbe', 'courbes', 'histogramme', 'plot', 'plots', 'plotting', 'chart', 'charts', 'curve', 'curves', 'histogram', 'diagramme en barres', 'diagramme en bâtons', 'diagramme circulaire'], PLOT],
+  [['graphe', 'graphes', 'graph', 'graphs', 'graphing', 'trace', 'tracer', 'tracez'], GRAPH],
+  [['schéma', 'schema', 'schémas', 'shema', 'schématique', 'schematic', 'diagramme', 'diagrammes', 'diagrame', 'diagram', 'diagrams'], SCHEMA],
+  [['arbre', 'arbres', 'tree', 'trees', 'flowchart', 'flow chart', 'flow-chart', 'organigramme', 'logigramme', 'mind map', 'mindmap', 'concept map', 'carte mentale', 'carte conceptuelle'], TREE],
+  [['figure', 'figures', 'dessin', 'dessine', 'dessiner', 'croquis', 'illustration', 'illustre', 'illustrate', 'drawing', 'draw', 'sketch', 'picture', 'visuel', 'visual', 'visualisation', 'visualization', 'visualise', 'visualiser'], FIGURE],
+  [['quiz', 'quizz', 'quizzes', 'quizes', 'QCM', 'QCU', 'MCQ', 'MCQs', 'question à choix multiples', 'questions à choix multiples', 'multiple choice', 'multiple-choice', 'teste-moi', 'interroge-moi', 'questionne-nous', 'test me', 'test my'], QUIZ],
 ];
 
-const NOT_REQUESTS: string[] = [
-  // Past mentions.
-  "Tu m'as donné un quiz tout à l'heure, je n'ai pas compris la question 2.",
-  'Tu as montré un graphique, pourquoi il monte ?',
-  "Tu m'as montré une courbe, pourquoi elle baisse ?",
-  "Tu as tracé une courbe tout à l'heure, elle est fausse.",
-  'Tu as ajouté un schéma mais je ne le comprends pas.',
-  'Tu as fait un schéma, il manque une flèche.',
-  'Tu as proposé un quiz hier.',
-  'Le prof a donné un quiz hier, explique les fractions.',
-  'Mon prof a tracé une courbe au tableau, pourquoi elle monte ?',
-  'Hier on a fait un quiz sur les fractions.',
-  'On a dessiné un schéma en cours.',
-  'On a tracé la courbe en TD, mais je ne comprends pas.',
-  "J'ai fait un schéma mais je ne suis pas sûr.",
-  "J'ai tracé la courbe et elle ne ressemble à rien.",
-  "J'ai dessiné un arbre, est-ce correct ?",
-  'Dans le graphique que tu as montré, que vaut y ?',
-  "Le graphique que tu m'as donné est faux.",
-  'the graph you showed earlier is confusing, why does it go down?',
-  'In the graph you showed, what is the slope?',
-  'You showed a graph earlier, why is it flat?',
-  'You gave me a quiz yesterday, what was the answer to question 2?',
-  'You made a chart earlier, can you explain it?',
-  'You drew a diagram earlier, what does the arrow mean?',
-  'I drew a diagram but I am not sure it is right.',
-  'I plotted the curve and it looks wrong.',
-  'Earlier you plotted a curve, why was it flat?',
-  'My teacher drew a diagram on the board, what does it mean?',
-  'We made a chart in class.',
-  'Show me where I went wrong in the graph you showed.',
-  'Can you explain the quiz you gave me?',
-  'Tu as trace une courbe, elle est fausse.',
-  "Tu m'as donne un quiz hier.",
-  "J'ai lu le cours et tracé une courbe, pourquoi elle monte ?",
-  "J'ai ouvert le fichier et ajouté un graphique.",
-  'I read the chapter and drew a diagram.',
-  // Quoted course text.
-  "Le cours dit : « Trace la courbe de f et montre qu'elle est croissante. » Je ne comprends pas pourquoi elle croît.",
-  "Mon énoncé dit : fais un schéma du circuit. Mais c'est quoi un circuit série ?",
-  'The textbook says "draw a diagram of the forces". Why do forces add up?',
-  '> Trace la courbe de f.\n\nPourquoi f est-elle croissante ?',
-  '> Draw a free body diagram.\n\nWhat is a normal force?',
-  'Le prof a dit « ajoutez un schéma » mais pourquoi ?',
-  'The lecture notes state: "add a graph to your report". What should the report contain?',
-  'La consigne : trace la courbe de f. Je ne vois pas comment commencer.',
-  // Questions about a thing, and other meanings of the word.
-  "C'est quoi un diagramme de Gantt ?",
-  'Que veut dire tracer une courbe ?',
-  'À quoi sert un quiz ?',
-  "Qu'affiche le graphique ?",
-  "Peux-tu m'expliquer ce que montre le graphique ?",
-  'What does a tree look like in graph theory?',
-  'What is the difference between a chart and a graph?',
-  'How do I read a bar chart?',
-  'How to draw a free body diagram?',
-  'Comment faire un schéma de circuit ?',
-  'Comment on fait un QCM efficace ?',
-  'Is a tree a graph?',
-  'Why would you plot a curve on a log scale?',
-  'Should I make a chart for my thesis?',
-  'Dois-je faire un schéma dans ma copie ?',
-  'The plot of this novel has a central figure, who is it?',
-  'The plot of the novel is confusing, and one figure stands out.',
-  'La trace de la matrice est sur la figure.',
-  'Make the plot bigger.',
-  'Give me the graph equation.',
-  'Give me the tree height formula.',
-  'Show the figure 3 again.',
-  'Montre la figure ci-dessus.',
-  'Show the graph is connected.',
-  'Show the tree is balanced.',
-  'Make a tree in Java.',
-  'Build a binary tree in C.',
-  'Create a decision tree classifier.',
-  'Make a quiz app in React.',
-  'Add a figure of merit to the formula.',
-  'Give me a figure for the GDP of France.',
-  'Give me a picture of what you mean by entropy.',
-  'Ajoute une courbe de niveau à la définition.',
-  'Donne une figure de rhétorique.',
-  'Give me the definition of quiz.',
-  'Give me the quiz answer.',
-  'Donne-moi la correction du quiz.',
-  'Un graphique montre la fonction.',
-  'A chart of sales shows growth.',
-  'One figure stands out.',
-  // Refusals.
-  'Inutile de faire un graphique, explique.',
-  'Pas la peine de faire un schéma.',
-  'Ne fais surtout pas de quiz.',
-  'Ne fais pas un quiz.',
-  'Ne me donne pas de quiz.',
-  'Ne me donne pas un quiz.',
-  'Évite les schémas.',
-  'Avoid diagrams.',
-  'Skip the quiz.',
-  'Skip the graph, just explain.',
-  "Don't give me a quiz.",
-  "Don't add a quiz.",
-  "Please don't make a quiz.",
-  "Don't make a diagram.",
-  "Don't draw a tree.",
-  'No need to make a graph.',
-  'No need for a quiz.',
-  "I don't want a quiz.",
-  'I do not need a quiz.',
-  'Je ne veux pas de quiz.',
-  'Je ne veux pas un graphique.',
-  "Je n'ai pas besoin de quiz.",
-  "Je n'ai pas besoin d'un schéma.",
-  'Pas besoin de quiz.',
-  "Aucun graphique, s'il te plaît.",
-  'Aucun quiz.',
-  'Sans arbre, fais une liste.',
-  'Hold off on the diagram.',
-  "Rather than a quiz, give me an exercise.",
-  "Plutôt qu'un quiz, donne un exercice.",
-  "Au lieu d'un quiz, donne un exercice.",
-  'Instead of a quiz, give me an example.',
-  "Tu n'as pas besoin de faire un arbre.",
-  'Il ne faut pas de graphique.',
-  'Il ne faut pas un graphique ici.',
-  'No visuals please, add a tree of the ideas only as text.',
+// Whatever the sentence does with the word: telling these apart is the decision call's work, not the gate's.
+const ANY_USE: [string, string][] = [
+  ['Courbe de Phillips', PLOT],
+  ['A chart? No thanks.', PLOT],
+  ['Sans schéma, explique.', SCHEMA],
+  ["Tu m'as donné un quiz tout à l'heure.", QUIZ],
+  ['Exercice 2 : Trace la courbe de f. Je bloque à la question b.', `${PLOT.replace('plot', GRAPH)}`],
+  ['Plot y = x^2 from 0 to 5.', PLOT],
+  ['Mets ça sur un graphique et termine par un QCM.', `${PLOT} ${QUIZ}`],
+  ['First a QUIZ, then a Graph.', `${QUIZ} ${GRAPH}`],
 ];
 
-describe('what counts as a request for a named artefact', () => {
-  it('holds both sides of the table in about equal numbers', () => {
-    expect(REQUESTS.length + NOT_REQUESTS.length).toBeGreaterThanOrEqual(60);
-    expect(Math.abs(REQUESTS.length - NOT_REQUESTS.length)).toBeLessThanOrEqual(10);
+const NO_WORD = [
+  '',
+  'Pourquoi le ciel est-il bleu ?',
+  'What is a derivative?',
+  'Explique la loi de Boyle.',
+  'Donne-moi la définition de la pression.',
+  'Merci, je comprends mieux.',
+  // A word inside another word, code or an image reference is not the word.
+  'Le transfigurateur et les subgraphiques sans espace, le paragraphe, the charter, a street.',
+  'Voici mon code :\n```\n# show me a diagram\nshow_me_a_diagram()\n```',
+  'Utilise `montre-moi un schéma` comme texte.',
+  '![show me a diagram](https://example.com/a.png) Explain this.',
+];
+
+describe('the gate on artefact words', () => {
+  it.each(WORDS.flatMap(([words, family]) => words.map((word) => [word, family])))('finds %j as %s', (word, family) => {
+    expect(read(`Un mot : ${word}.`)).toBe(family);
   });
 
-  it.each(REQUESTS)('reads %j as a request', (text, expected) => { expect(read(text)).toBe(expected); });
-  it.each(NOT_REQUESTS)('does not read %j as a request', (text) => { expect(read(text)).toBe(''); });
+  it.each(ANY_USE)('finds the word in %j, whatever the sentence does with it', (text, expected) => { expect(read(text)).toBe(expected); });
+  it.each(NO_WORD)('costs no call on %j', (text) => { expect(namedArtefacts(text)).toEqual([]); });
+
+  it('finds every artefact the benchmark asks for, and costs no call on its rate prompts', () => {
+    const types = (text: string) => namedArtefacts(text).map((item) => item.type);
+    for (const item of benchmark.quality) expect(types(item.prompt).sort()).toEqual(item.artefacts.map((artefact) => artefact.type).sort());
+    expect(Object.values(benchmark.rate).flat().flatMap(types)).toEqual([]);
+  });
+
+  it('merges the words of one family, in the order of the message', () => {
+    expect(read('Un quiz, puis un arbre et un schéma, puis un graphique.')).toBe(`${QUIZ} ${SCHEMA} ${PLOT}`);
+  });
+
+  it('reads a count next to the word, and never counts curves as plots', () => {
+    expect(namedArtefacts('Fais un seul graphique de la force.')).toEqual([{ type: 'plot', count: 1 }]);
+    expect(namedArtefacts('Fais deux graphiques de la force et un quiz.')).toEqual([{ type: 'plot', count: 2 }, { type: 'quiz', count: 1 }]);
+    expect(namedArtefacts('Fais deux petits graphiques.')).toEqual([{ type: 'plot', count: 2 }]);
+    expect(namedArtefacts('Give me three quizzes on it.')).toEqual([{ type: 'quiz', count: 3 }]);
+    expect(namedArtefacts('Fais un graphique avec deux courbes.')).toEqual([{ type: 'plot', count: 1 }]);
+    expect(namedArtefacts('Fais un graphique, puis un autre graphique.')).toEqual([{ type: 'plot', count: 1 }]);
+  });
 });

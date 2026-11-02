@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkVisualAgainstBrief, disagreeingChecks, quizAgreesWithItself, stillPlotNotes } from './visual-checks';
+import { checkVisualAgainstBrief, disagreeingChecks, quizAgreesWithItself, stillPlotNotes, quizKeyFromAgreement, quizWorkingNotes } from './visual-checks';
 import type { TeachingVisual } from './teaching-visuals';
 import type { VisualBrief } from './visual-brief';
 
@@ -188,5 +188,50 @@ describe('checkVisualAgainstBrief', () => {
   it('falls back to the normalised readout label when no exact label exists', () => {
     const labelled: TeachingVisual = { ...plot, outputs: [{ label: 'Quantite a t', expression: 'v0^2/19.6' }] } as TeachingVisual;
     expect(disagreeingChecks(labelled, brief({ checks: [{ output: 'Quantité à t', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }))).toEqual([]);
+  });
+});
+
+describe('quizWorkingNotes', () => {
+  const quiz = (options: string[], answer: number, explanation: string) => ({ type: 'quiz' as const, title: 'T', question: 'Q?', options, answer, explanation });
+  const flagged = (options: string[], answer: number, explanation: string) => quizWorkingNotes(quiz(options, answer, explanation)).length > 0;
+
+  it.each([
+    ['a product that goes on', ['12', '36'], 0, 'On a = 3 x 4 = 36.'],
+    ['a percentage for a decimal', ['20 %', '40 %'], 1, 'p = 0,2, donc on garde 0,4.'],
+    ['a decimal comma', ['2.5', '3'], 1, 'S = 2,5.'],
+    ['a fraction', ['1/2', '1/4'], 1, 'P = 0,5.'],
+    ['a LaTeX fraction', ['$\\frac{1}{2}$', '$\\frac{1}{4}$'], 1, 'P = 0.5.'],
+    ['scientific notation', ['6 x 10^3', '6 x 10^4'], 0, 'N = 60000.'],
+    ['a thousands space', ['1 000', '2 000'], 1, 'N = 1000.'],
+  ])('flags the key against the result through %s', (_name, options, answer, explanation) => { expect(flagged(options, answer, explanation)).toBe(true); });
+
+  it.each([
+    ['the key is the result', ['12', '36'], 1, 'On a = 3 x 12 = 36.'],
+    ['the result carries a unit', ['20 mg', '40 mg'], 0, '80 x 1/4 = 20 mg.'],
+    ['a bracket holds the only number', ['1', '2'], 0, 'On cherche P(X = 2).'],
+    ['the working has no result', ['12', '36'], 0, 'On trouve 36.'],
+    ['the options hold no number and none is reached', ['oui', 'non'], 0, 'x = 3.'],
+  ])('does not flag when %s', (_name, options, answer, explanation) => { expect(flagged(options, answer, explanation)).toBe(false); });
+
+  it('flags a key with no number when another option holds the result', () => {
+    expect(flagged(['aucune', '48'], 0, 'T = 48.')).toBe(true);
+  });
+});
+
+describe('quizKeyFromAgreement', () => {
+  const quiz = { type: 'quiz' as const, title: 'T', question: 'Q?', options: ['36 min', '48 min', '48,0 min'], answer: 0, explanation: 'T = 48 min.' };
+  const brief = { id: 'v1', type: 'quiz' as const, intent: 'I', content: 'C' };
+
+  it('does nothing without the tutor, against the tutor, or when two options hold the value', () => {
+    expect(quizKeyFromAgreement(quiz, brief)).toEqual({ visual: quiz });
+    expect(quizKeyFromAgreement(quiz, { ...brief, correctAnswer: '36' })).toEqual({ visual: quiz });
+    expect(quizKeyFromAgreement(quiz, { ...brief, correctAnswer: '48' })).toEqual({ visual: quiz });
+  });
+
+  it('moves the key to the one option that holds the value both give', () => {
+    const options = ['36 min', '48 min'];
+    const { visual, rekeyed } = quizKeyFromAgreement({ ...quiz, options }, { ...brief, correctAnswer: '48 min' });
+    expect(visual).toMatchObject({ answer: 1 });
+    expect(rekeyed).toContain('from "36 min" to "48 min"');
   });
 });

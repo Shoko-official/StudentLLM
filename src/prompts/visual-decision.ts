@@ -10,7 +10,7 @@ The user message is JSON with learnerMessage, tutorAnswer, earlierVisuals and ea
 
 Go through these steps in order and stop at the first match.
 
-1. **This message asks to see something, names a visual artefact or asks to be tested, and does not itself refuse a visual.** "Show me", "draw", "graph", "diagram", "graphique", "schéma": request it, even if the learner refused a visual earlier. "Quiz me", "test me", "QCM", "interroge-moi": request a quiz. Asking to see the answer to an exercise is not this.
+1. **This message asks to see something or to be tested, and does not itself refuse a visual.** "Show me", "draw", "un graphique", "a diagram", "schéma de ...": request it, even if the learner refused a visual earlier. "Quiz me", "test me", "un QCM", "interroge-moi": request a quiz. Asking to see the answer to an exercise is not this, nor is a word that only names a topic or a past visual.
 2. **The learner refused a visual, in learnerMessage or in earlierLearnerMessages.** "Sans schéma", "sans graphique", "juste le texte", "text only", "no diagram". Reply {"visual":false}.
 3. **Text alone is complete.** The meaning of a word, a definition, a yes-or-no fact, a date, a unit, a hint or a correction on the learner's exercise, a translation, a greeting or a thanks, a follow-up on one detail. Reply {"visual":false}.
 4. **earlierVisuals already shows this idea.** Reply {"visual":false}, unless the learner asks about something that visual does not show.
