@@ -4,7 +4,7 @@ import { parseTeachingVisual } from '../lib/teaching-visuals';
 import { checkVisualAgainstBrief } from '../lib/visual-checks';
 import { decideVisual } from '../lib/teaching-generation';
 import { parseVisualBrief, VISUAL_TYPES } from '../lib/visual-brief';
-import { TUTOR_PROMPT, TUTOR_SYSTEM_PROMPT, VISUAL_DECISION_PROMPT, VISUAL_MODULES, VISUAL_ROUTING_PROMPT } from './index';
+import { TUTOR_LENGTH_REMINDER, TUTOR_PROMPT, TUTOR_SYSTEM_PROMPT, VISUAL_DECISION_PROMPT, VISUAL_MODULES, VISUAL_ROUTING_PROMPT } from './index';
 
 const examples = (prompt: string): string[] => prompt.match(/<example>[\s\S]*?<\/example>/g) ?? [];
 const fences = (prompt: string, language: string) => Array.from(prompt.matchAll(new RegExp('```' + language + '\\n([\\s\\S]*?)\\n```', 'g')), (match) => match[1]);
@@ -118,6 +118,14 @@ describe('prompt standard: tutor prompts', () => {
     expect(TUTOR_PROMPT.indexOf('## How much to write')).toBeLessThan(TUTOR_PROMPT.indexOf('## Evidence and provenance'));
     expect(TUTOR_PROMPT).toContain('Canberra.');
     expect(TUTOR_PROMPT).toContain('wet towel');
+  });
+
+  it('keeps the length reminder plain: told apart from the learner, no dash, no benchmark topic', () => {
+    expect(TUTOR_LENGTH_REMINDER.startsWith('Note from StudentLLM, not from the learner, and not to be mentioned.')).toBe(true);
+    expect(TUTOR_LENGTH_REMINDER).toContain('A how or why question takes at least 120 words');
+    expect(TUTOR_LENGTH_REMINDER).not.toMatch(/[\u2013\u2014]/);
+    expect(TUTOR_LENGTH_REMINDER).not.toMatch(BENCHMARK_TOPICS);
+    expect(estimateContextTokens(TUTOR_LENGTH_REMINDER)).toBeLessThanOrEqual(300);
   });
 
   it('keeps the visual notes out of what the tutor writes', () => {

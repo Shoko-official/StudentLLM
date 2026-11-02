@@ -5,6 +5,7 @@ import App from './App';
 import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from './test/workspace-fixture';
 import type { ProviderMessage } from './lib/llm-provider';
+import { TUTOR_LENGTH_REMINDER } from './prompts';
 
 beforeEach(() => { vi.stubEnv('VITE_LM_STUDIO_AUTO_CONNECT', 'false'); localStorage.clear(); sessionStorage.clear(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
@@ -26,7 +27,8 @@ it('answers an unmatched course question using actual prior dialogue instead of 
   const messages = generate.mock.calls[0][0];
   expect(messages).toContainEqual({ role: 'user', content: 'Je fixe la température à 275 K pour cette discussion.' });
   expect(messages).toContainEqual({ role: 'assistant', content: 'Nous utiliserons 275 K.' });
-  expect(messages.at(-1)).toEqual({ role: 'user', content: 'Dans ce cours, comment appliquer cela au gaz parfait ?' });
+  expect(messages.at(-2)).toEqual({ role: 'user', content: 'Dans ce cours, comment appliquer cela au gaz parfait ?' });
+  expect(messages.at(-1)).toEqual({ role: 'user', content: TUTOR_LENGTH_REMINDER });
   expect(messages[0].content).not.toContain('Not enough evidence');
 });
 

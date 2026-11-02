@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decideVisual, generateTutorProse, generateVisual, runVisualJobs } from './teaching-generation';
 import type { LLMProvider, ProviderMessage } from './llm-provider';
 import type { VisualJob } from './visual-brief';
-import { VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
+import { TUTOR_LENGTH_REMINDER, VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
 
 const quiz = { type: 'quiz', title: 'Check', question: 'Q?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' };
 const job = (extra: Partial<VisualJob['brief']> = {}, more: Partial<VisualJob> = {}): VisualJob => ({ brief: { id: 'v1', type: 'quiz', intent: 'Check', content: 'Ask', ...extra }, section: 'Around.', ...more });
@@ -17,9 +17,23 @@ describe('generateTutorProse', () => {
     const provider = replying('Text.\n\n```student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n```');
     const messages: ProviderMessage[] = [{ role: 'user', content: 'Q' }];
     const result = await generateTutorProse(provider, messages, { maxTokens: 4096 });
-    expect(provider.generate).toHaveBeenCalledWith(messages, { maxTokens: 4096 });
+    expect(provider.generate).toHaveBeenCalledWith([...messages, { role: 'user', content: TUTOR_LENGTH_REMINDER }], { maxTokens: 4096 });
     expect(result.jobs.map((item) => item.brief.id)).toEqual(['v1']);
     expect(result.model).toBe('fixture');
+  });
+
+  it('sends the length reminder last, leaves the other messages as they were, and keeps it out of the result', async () => {
+    const provider = replying('A short answer.');
+    const messages: ProviderMessage[] = [{ role: 'system', content: 'S' }, { role: 'assistant', content: 'Earlier.' }, { role: 'user', content: 'Q' }];
+    const copy = structuredClone(messages);
+    const result = await generateTutorProse(provider, messages, { maxTokens: 4096 });
+    const sent = provider.generate.mock.calls[0][0] as ProviderMessage[];
+    expect(sent).toHaveLength(4);
+    expect(sent.slice(0, 3)).toEqual(copy);
+    expect(sent[3]).toEqual({ role: 'user', content: TUTOR_LENGTH_REMINDER });
+    expect(messages).toEqual(copy);
+    expect(JSON.stringify(result)).not.toContain('Note from StudentLLM');
+    expect(result.markdown).toBe('A short answer.');
   });
 
   it.each(['', '   ', '```student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n```', '[Visual not generated: I]', '[Visual shown to the learner: quiz "T"]\n\n[Visual not generated: I]\n'])('rejects a reply with no readable text: %j', async (content) => {

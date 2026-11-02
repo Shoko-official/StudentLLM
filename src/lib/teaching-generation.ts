@@ -4,7 +4,7 @@ import { visualDecisionResponseFormat, visualResponseFormat } from './teaching-s
 import { diagnoseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 import { hasVisualFence, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, type VisualBrief, type VisualJob } from './visual-brief';
 import { checkVisualAgainstBrief, disagreeingChecks } from './visual-checks';
-import { VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
+import { TUTOR_LENGTH_REMINDER, VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
 
 const VISUAL_MAX_TOKENS = 4096;
 const stoppedMessage = 'Visual generation was stopped.';
@@ -14,7 +14,8 @@ const noAnswerMessage = 'The model returned no answer. Try again or choose anoth
 export interface VisualJobResult { visual: TeachingVisual | null; attempts: number; errors: string[]; unconfirmed: string[] }
 
 export async function generateTutorProse(provider: LLMProvider, messages: ProviderMessage[], options: { maxTokens: number; signal?: AbortSignal; onText?: (text: string) => void }) {
-  const response = await provider.generate(messages, options);
+  // The system prompt alone did not hold the length on small models: a note after the question does. It is never saved or shown.
+  const response = await provider.generate([...messages, { role: 'user', content: TUTOR_LENGTH_REMINDER }], options);
   const { markdown, jobs } = prepareTutorMarkdown(response.content.trim());
   const readable = jobs.reduce((text, job) => replaceVisualFence(text, job.brief.id, ''), markdown);
   if (!readable.trim()) throw new Error(noAnswerMessage);

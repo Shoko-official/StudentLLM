@@ -10,6 +10,7 @@ import { SOURCE_REMOVAL_MAX_MS, SOURCE_REMOVAL_UNDO_MS } from './lib/source-remo
 import type { SourceBlobStore } from './lib/source-storage';
 import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from './test/workspace-fixture';
+import { TUTOR_LENGTH_REMINDER } from './prompts';
 
 const transcriptPreview = () => within(screen.getByRole('region', { name: 'Transcript preview' }));
 type User = ReturnType<typeof userEvent.setup>;
@@ -544,7 +545,8 @@ describe('StudentLLM workspace', () => {
     expect(screen.getByRole('button', { name: 'Source · optimization.md · part 1' })).toBeInTheDocument();
     expect(screen.getByText('LM Studio · mock-local-model')).toBeInTheDocument();
     const chatCall = generate.mock.calls.filter((call) => !call[0][0].content.includes('Deciding whether an answer needs a visual')).at(-1)!;
-    expect(chatCall[0].at(-1)).toEqual({ role: 'user', content: 'What updates parameters using the learning rate?' });
+    expect(chatCall[0].at(-2)).toEqual({ role: 'user', content: 'What updates parameters using the learning rate?' });
+    expect(chatCall[0].at(-1)).toEqual({ role: 'user', content: TUTOR_LENGTH_REMINDER });
     expect(chatCall[0][0].content).not.toContain('undefined');
     expect(chatCall[0][0].content).not.toContain('Gradient descent updates parameters');
     expect(chatCall[0].find((message: { role: string; content: string }) => message.role === 'user' && message.content.includes('course_evidence'))?.content).toContain('Gradient descent updates parameters');
