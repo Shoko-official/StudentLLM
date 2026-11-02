@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendVisualRequest, compactVisualFences, describeEarlierVisuals, hasVisualFence, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, stripVisualNotes, visualFence } from './visual-brief';
+import { appendVisualRequest, asksForVisual, compactVisualFences, describeEarlierVisuals, hasVisualFence, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, stripVisualNotes, visualFence } from './visual-brief';
 import { parseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 
 const brief = { id: 'v1', type: 'quiz', intent: 'Check the idea', content: 'Ask about pressure' };
@@ -429,5 +429,53 @@ describe('describeEarlierVisuals', () => {
   it('returns nothing without a visual fence', () => {
     expect(describeEarlierVisuals([])).toEqual([]);
     expect(describeEarlierVisuals(['Plain text.', ''])).toEqual([]);
+  });
+});
+
+describe('asksForVisual', () => {
+  it.each([
+    'Finalement, montre-moi un schéma du cycle de réfrigération.',
+    'Actually, show me a diagram of the refrigeration cycle.',
+    'Dessine un diagramme de ce circuit.',
+    'Peux-tu me montrer le graphique de la fonction ?',
+    'Trace la courbe de y = x^2 entre 0 et 5.',
+    'Fais un schéma de la cellule.',
+    'Affiche une figure avec les forces.',
+    'Can you draw a chart of the results?',
+    'Please plot a graph of speed against time.',
+    'Make a diagram for the water cycle.',
+    'Give me a picture of the setup.',
+    'Sketch a diagram of the circuit.',
+    'MONTRE-MOI UN GRAPHIQUE',
+    'Show me the curve for a larger k.',
+    'Génère un diagramme de flux pour cet algorithme.',
+    'Could you display a figure of the forces?',
+  ])('is true for %s', (text) => { expect(asksForVisual(text)).toBe(true); });
+
+  it.each([
+    'Sans schéma, explique le cycle.',
+    'Pas de graphique, juste le texte.',
+    'No diagram please, explain it.',
+    'Explain it without a chart.',
+    "Don't draw anything, just explain.",
+    'Show me, but no diagram.',
+    'Ne dessine pas de courbe.',
+    "Qu'est-ce qu'un diagramme de Venn ?",
+    'What does this graph mean?',
+    'Explique ce schéma.',
+    'Pourquoi la courbe monte-t-elle ?',
+    'How does a binary search narrow down the answer?',
+    'Montre-moi comment ça marche.',
+    'Quelle est la différence entre un graphe et un arbre ?',
+    'text only',
+    '',
+    'Why is the diagram in my textbook wrong?',
+  ])('is false for %j', (text) => { expect(asksForVisual(text)).toBe(false); });
+
+  it('ignores a request written inside code or inside an image reference', () => {
+    expect(asksForVisual('Voici mon code :\n```\n# show me a diagram\nshow_me_a_diagram()\n```')).toBe(false);
+    expect(asksForVisual('Utilise `montre-moi un schéma` comme texte.')).toBe(false);
+    expect(asksForVisual('![show me a diagram](https://example.com/a.png) Explain this.')).toBe(false);
+    expect(asksForVisual('![x](a.png) Draw a diagram of it.')).toBe(true);
   });
 });
