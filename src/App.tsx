@@ -2122,7 +2122,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       }));
       if (lessonsRef.current.some((lesson) => lesson.id === chatLessonId)) {
         visualJobs.start(chatLessonId, assistantMessageId, result.jobs.slice(0, MAX_AUTOMATIC_VISUALS));
-        if (result.needsDecision) visualJobs.decide(chatLessonId, assistantMessageId, message, result.markdown, describeEarlierVisuals(chat.filter((item) => item.role === 'assistant').slice(-2).map((item) => item.content)));
+        if (result.needsDecision) visualJobs.decide(chatLessonId, assistantMessageId, message, result.markdown, describeEarlierVisuals(chat.filter((item) => item.role === 'assistant').slice(-2).map((item) => item.content)), chat.filter((item) => item.role === 'user').slice(-3).map((item) => item.content));
       }
     } catch (error) {
       // A failed request is not an answer: keep it out of the saved history, show it as an alert, and hand

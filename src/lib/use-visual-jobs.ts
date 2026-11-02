@@ -18,7 +18,7 @@ interface VisualJobsOptions {
 interface Run { lessonId: string; controller: AbortController; remaining: number }
 type QueuedJob =
   | { kind: 'visual'; run: Run; messageId: string; job: VisualJob }
-  | { kind: 'decision'; run: Run; messageId: string; question: string; answer: string; earlierVisuals: string[] };
+  | { kind: 'decision'; run: Run; messageId: string; question: string; answer: string; earlierVisuals: string[]; earlierMessages: string[] };
 
 /** Running-job state stays in memory: a request fence with no running job is what offers a retry after a reload. */
 export function useVisualJobs(options: VisualJobsOptions) {
@@ -51,7 +51,7 @@ export function useVisualJobs(options: VisualJobsOptions) {
         if (!provider) { settle(run); continue; }
         active.current++;
         // A decision shows nothing while it runs and nothing when it fails: only a brief reaches the learner.
-        decideVisual(provider, { question: item.question, answer: item.answer, earlierVisuals: item.earlierVisuals }, { deadlineMs, signal: run.controller.signal }).then(({ brief }) => {
+        decideVisual(provider, { question: item.question, answer: item.answer, earlierVisuals: item.earlierVisuals, earlierMessages: item.earlierMessages }, { deadlineMs, signal: run.controller.signal }).then(({ brief }) => {
           if (!brief) return;
           const { job } = appendVisualRequest(item.answer, brief);
           if (!job) return;
@@ -108,11 +108,11 @@ export function useVisualJobs(options: VisualJobsOptions) {
     queue.current.push(...jobs.map((job): QueuedJob => ({ kind: 'visual', run, messageId, job })));
     pump();
   }, [pump]);
-  const decide = useCallback((lessonId: string, messageId: string, question: string, answer: string, earlierVisuals: string[] = []) => {
+  const decide = useCallback((lessonId: string, messageId: string, question: string, answer: string, earlierVisuals: string[] = [], earlierMessages: string[] = []) => {
     if (!latest.current.provider) return;
     const run: Run = { lessonId, controller: new AbortController(), remaining: 1 };
     runs.current.add(run);
-    queue.current.push({ kind: 'decision', run, messageId, question, answer, earlierVisuals });
+    queue.current.push({ kind: 'decision', run, messageId, question, answer, earlierVisuals, earlierMessages });
     pump();
   }, [pump]);
   const cancel = useCallback((lessonIds: string[]) => {

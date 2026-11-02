@@ -158,6 +158,56 @@ describe('visual jobs in the app', () => {
     expect(JSON.stringify(decision.earlierVisuals)).not.toContain('Oldest');
   });
 
+  describe('a standing refusal', () => {
+    const seedMessages = (learnerMessages: string[]) => {
+      const workspace = createFixtureWorkspace();
+      workspace.lessonWorkspaces![workspace.activeLessonId].chat = learnerMessages.flatMap((content, index) => [
+        { id: `u${index}`, role: 'user' as const, content },
+        { id: `a${index}`, role: 'assistant' as const, content: `Answer ${index}.` },
+      ]);
+      localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(workspace));
+    };
+    // Stands in for the model: it applies the first step of the decision prompt to what the call actually receives.
+    const decisionFor = (payload: { learnerMessage: string; earlierLearnerMessages: string[] }) => {
+      const messages = [...payload.earlierLearnerMessages, payload.learnerMessage];
+      const lastMatch = (pattern: RegExp) => messages.reduce((found, message, index) => pattern.test(message) ? index : found, -1);
+      const refusal = lastMatch(/no diagrams/i);
+      const request = lastMatch(/show me a diagram/i);
+      return refusal > request ? { visual: false } : { visual: true, type: 'quiz', intent: 'Check', content: 'Ask about it' };
+    };
+    const ask = async (user: ReturnType<typeof userEvent.setup>, generate: (messages: ProviderMessage[], options?: { responseFormat?: unknown }) => Promise<{ content: string; model: string }>, question: string) => {
+      render(<App provider={{ generate, supportsStructuredOutputs: true }} />);
+      await openChat(user);
+      await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), question);
+      await user.click(screen.getByRole('button', { name: /^Send$/ }));
+    };
+    const provider = () => vi.fn(async (messages: ProviderMessage[], options?: { responseFormat?: unknown }) => {
+      if (!isVisualCall(options)) return { content: 'Prose only.', model: 'test-model' };
+      return { content: messages[0].content.includes('Deciding whether') ? JSON.stringify(decisionFor(JSON.parse(messages[1].content))) : JSON.stringify({ type: 'quiz', title: 'Check', question: 'Q?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' }), model: 'test-model' };
+    });
+
+    it('reaches the decision call two turns later, and no visual is added', async () => {
+      seedMessages(['No diagrams, please.', 'And then?', 'Go on.']);
+      const generate = provider();
+      await ask(userEvent.setup(), generate, 'Why does it happen?');
+      await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+      const sent = JSON.parse(generate.mock.calls[1][0][1].content);
+      expect(sent.earlierLearnerMessages).toEqual(['No diagrams, please.', 'And then?', 'Go on.']);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(generate).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+    });
+
+    it('is overridden by a later request to see a diagram', async () => {
+      seedMessages(['No diagrams, please.', 'Show me a diagram of it.']);
+      const generate = provider();
+      await ask(userEvent.setup(), generate, 'Why does it happen?');
+      await waitFor(() => expect(generate).toHaveBeenCalledTimes(3));
+      expect(JSON.parse(generate.mock.calls[1][0][1].content).earlierLearnerMessages).toEqual(['No diagrams, please.', 'Show me a diagram of it.']);
+      expect(await screen.findByRole('radio', { name: 'B' })).toBeInTheDocument();
+    });
+  });
+
   it('keeps at most two visual calls in flight across three retry clicks, and finishes all of them', async () => {
     seedChat(manyRequests(3));
     const user = userEvent.setup();

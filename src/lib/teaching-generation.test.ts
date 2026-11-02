@@ -126,6 +126,18 @@ describe('decideVisual', () => {
     expect(await decide(replying('{"visual":"yes"}'))).toEqual({ brief: null, error: 'invalid decision' });
   });
 
+  it('sends the last three earlier learner messages, each cut and redacted, and nothing when there are none', async () => {
+    const image = `![x](data:image/png;base64,${'AAAA'.repeat(500)})`;
+    const provider = replying('{"visual":false}');
+    await decide(provider, { ...input, earlierMessages: ['Oldest', 'No diagrams please.', `${image} Second`, 'W'.repeat(400)] });
+    const sent = JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content);
+    expect(sent.earlierLearnerMessages).toHaveLength(3);
+    expect(sent.earlierLearnerMessages[0]).toBe('No diagrams please.');
+    expect(sent.earlierLearnerMessages[1]).toContain('Second');
+    expect(sent.earlierLearnerMessages[2]).toBe('W'.repeat(300));
+    expect(JSON.stringify(sent)).not.toContain('AAAA');
+  });
+
   it('never carries the length reminder, which belongs to the tutor answer call only', async () => {
     const provider = replying('{"visual":false}');
     await decide(provider);
@@ -137,7 +149,7 @@ describe('decideVisual', () => {
     await decide(provider);
     const [messages, options] = provider.generate.mock.calls[0];
     expect(messages![0]).toEqual({ role: 'system', content: VISUAL_DECISION_PROMPT });
-    expect(JSON.parse(messages![1].content)).toEqual({ learnerMessage: input.question, tutorAnswer: input.answer, earlierVisuals: [] });
+    expect(JSON.parse(messages![1].content)).toEqual({ learnerMessage: input.question, tutorAnswer: input.answer, earlierVisuals: [], earlierLearnerMessages: [] });
     expect(options?.maxTokens).toBe(4096);
     expect(options?.responseFormat?.json_schema?.name).toBe('teaching_visual_decision');
   });

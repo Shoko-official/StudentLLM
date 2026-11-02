@@ -116,12 +116,13 @@ describe('useVisualJobs', () => {
       const generate = vi.fn(async () => ({ content: '{"visual":false}', model: 'fixture' }));
       const { result } = renderHook(() => useVisualJobs({ provider: { supportsStructuredOutputs: true, generate }, updateMessage: vi.fn() }));
       act(() => {
-        result.current.decide('lesson-a', 'm1', 'Why?', 'A.', ['diagram "Lock" with nodes: A, B']);
+        result.current.decide('lesson-a', 'm1', 'Why?', 'A.', ['diagram "Lock" with nodes: A, B'], ['No diagrams.']);
         result.current.decide('lesson-a', 'm2', 'Why?', 'A.');
       });
       await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
-      const sent = (generate.mock.calls as unknown as Array<[Array<{ content: string }>]>).map(([messages]) => JSON.parse(messages[1].content).earlierVisuals);
-      expect(sent).toEqual([['diagram "Lock" with nodes: A, B'], []]);
+      const sent = (generate.mock.calls as unknown as Array<[Array<{ content: string }>]>).map(([messages]) => JSON.parse(messages[1].content));
+      expect(sent.map((item) => item.earlierVisuals)).toEqual([['diagram "Lock" with nodes: A, B'], []]);
+      expect(sent.map((item) => item.earlierLearnerMessages)).toEqual([['No diagrams.'], []]);
     });
 
     it('marks the follow-up job pending as soon as the request is appended', async () => {

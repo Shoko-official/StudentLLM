@@ -101,15 +101,20 @@ export async function generateVisual(provider: LLMProvider, job: VisualJob, opti
 }
 
 const invalidDecision = 'invalid decision';
+const LEARNER_MESSAGES_KEPT = 3;
+const LEARNER_MESSAGE_CHARACTERS = 300;
+
+/** The decision call reads these for a standing refusal: only the latest few, redacted, and cut by code points. */
+const recentLearnerMessages = (messages: string[]) => messages.slice(-LEARNER_MESSAGES_KEPT).map((message) => [...redactContextImages(message)].slice(0, LEARNER_MESSAGE_CHARACTERS).join(''));
 const present = (value: unknown) => value !== undefined && value !== null && value !== '' && !(Array.isArray(value) && !value.length);
 
 /** Asks once whether an answer without a visual should get one. Every failure leaves the answer as it is. */
-export async function decideVisual(provider: LLMProvider, input: { question: string; answer: string; earlierVisuals?: string[] }, options: { deadlineMs?: number; signal?: AbortSignal } = {}): Promise<{ brief: VisualBrief | null; error?: string }> {
+export async function decideVisual(provider: LLMProvider, input: { question: string; answer: string; earlierVisuals?: string[]; earlierMessages?: string[] }, options: { deadlineMs?: number; signal?: AbortSignal } = {}): Promise<{ brief: VisualBrief | null; error?: string }> {
   if (options.signal?.aborted) return { brief: null, error: stoppedMessage };
   try {
     const content = await generateWithin(
       provider,
-      [{ role: 'system', content: VISUAL_DECISION_PROMPT }, { role: 'user', content: JSON.stringify({ learnerMessage: redactContextImages(input.question).slice(0, 2000), tutorAnswer: redactContextImages(input.answer).slice(0, 6000), earlierVisuals: (input.earlierVisuals ?? []).map((item) => redactContextImages(item)) }) }],
+      [{ role: 'system', content: VISUAL_DECISION_PROMPT }, { role: 'user', content: JSON.stringify({ learnerMessage: redactContextImages(input.question).slice(0, 2000), tutorAnswer: redactContextImages(input.answer).slice(0, 6000), earlierVisuals: (input.earlierVisuals ?? []).map((item) => redactContextImages(item)), earlierLearnerMessages: recentLearnerMessages(input.earlierMessages ?? []) }) }],
       { maxTokens: VISUAL_MAX_TOKENS, ...(provider.supportsStructuredOutputs ? { responseFormat: visualDecisionResponseFormat() } : {}) },
       options,
     );
