@@ -428,6 +428,41 @@ describe('generateTutorProse with a named artefact', () => {
   });
 });
 
+describe('the learner message on the way to the plot builder', () => {
+  const plotBrief = { id: 'v1', type: 'plot' as const, intent: 'See', content: 'y=a*x' };
+  const plotOutput = JSON.stringify({ type: 'plot', title: 'T', x: { min: 0, max: 1 }, series: [{ label: 'y', expression: 'x' }] });
+  const sent = (provider: { generate: ReturnType<typeof vi.fn> }) => JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content);
+
+  it('goes to a plot builder word for word, redacted and cut', async () => {
+    const provider = replying(plotOutput);
+    await generateVisual(provider, { brief: plotBrief, section: 'Around.', learnerMessage: 'Un curseur a de 1 à 3, pas 1, au départ 2.' });
+    expect(sent(provider).learnerMessage).toBe('Un curseur a de 1 à 3, pas 1, au départ 2.');
+    const long = replying(plotOutput);
+    await generateVisual(long, { brief: plotBrief, section: 'Around.', learnerMessage: `![x](data:image/png;base64,${'AAAA'.repeat(500)}) ${'é'.repeat(3000)}` });
+    expect(JSON.stringify(sent(long))).not.toContain('AAAA');
+    expect([...sent(long).learnerMessage].length).toBe(2000);
+  });
+
+  it('stays out of the other builders, and of a job that has none', async () => {
+    const other = replying(JSON.stringify(quiz));
+    await generateVisual(other, job({}, { learnerMessage: 'Ask me.' }));
+    expect(sent(other)).not.toHaveProperty('learnerMessage');
+    const none = replying(plotOutput);
+    await generateVisual(none, { brief: plotBrief, section: 'Around.' });
+    expect(sent(none)).not.toHaveProperty('learnerMessage');
+  });
+
+  it('is on every job of the tutor and of the decisions', async () => {
+    const answer = 'Prose.\n\n```student-visual-request\n{"id":"v1","type":"plot","intent":"I","content":"C"}\n```';
+    const prose = await generateTutorProse(replying(answer), [{ role: 'user', content: 'Slider a from 1 to 3.' }], { maxTokens: 4096 });
+    expect(prose.jobs[0].learnerMessage).toBe('Slider a from 1 to 3.');
+    const added: VisualJob[] = [];
+    const provider = replying(JSON.stringify({ visual: true, type: 'plot', intent: 'I', content: 'C' }));
+    await decideVisuals(() => provider, { question: 'Fais un graphique.', answer: 'Prose.' }, { onRequest: (item) => { added.push(item); } });
+    expect(added[0].learnerMessage).toBe('Fais un graphique.');
+  });
+});
+
 describe('generateVisual', () => {
   it('never carries the length reminder', async () => {
     const provider = replying(JSON.stringify(quiz));
