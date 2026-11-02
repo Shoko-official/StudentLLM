@@ -136,7 +136,7 @@ html { scroll-padding-top: 72px; }
 .course-note-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 28px; color: var(--muted); font-size: 13px; font-weight: 500; }
 .course-note-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 14px; min-width: 0; }
 .course-note-status { color: var(--text); font-size: 12px; white-space: nowrap; }
-.course-note-content { display: grid; gap: 18px; min-width: 0; }
+.course-note-content { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; min-width: 0; }
 .course-note-paragraph { margin: 0; color: var(--text); font-size: 16px; line-height: 1.8; white-space: pre-wrap; }
 .course-note-meta { display: block; color: var(--muted); font-size: 11px; }
 .note-empty { display: grid; justify-items: center; gap: 2px; max-width: 460px; margin: 0 auto; padding: 36px 0; text-align: center; }
@@ -219,7 +219,6 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .chat-message.user .message-content { margin-top: 5px; }
 .chat-message.user .message-content p { white-space: pre-wrap; }
 .chat-message.user .message-role { color: var(--text); }
-.chat-message .rich-text table { display: block; max-width: 100%; overflow-x: auto; }
 .chat-compose-area { flex: 0 0 auto; padding-top: 8px; background: var(--page); }
 .chat-composer { display: grid; gap: 8px; padding: 14px 16px 10px; border: 1px solid var(--field-border); border-radius: 14px; background: var(--surface); }
 .chat-composer:focus-within { border-color: var(--focus); }
@@ -339,7 +338,7 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .import-progress-track span { display: block; height: 100%; border-radius: inherit; background: var(--text); transition: width var(--dur-slow) var(--ease-out); }
 .import-progress .text-action { padding: 0; font-size: 13px; }
 .latex-inline { font-family: 'Cambria Math', serif; overflow-wrap: anywhere; }
-.latex-block { display: block; max-width: 100%; overflow-x: auto; padding: 6px 0; text-align: center; font-family: 'Cambria Math', serif; font-size: 20px; }
+.latex-block { display: block; max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 6px 0; text-align: center; font-family: 'Cambria Math', serif; font-size: 20px; }
 .rich-text { min-width: 0; overflow-wrap: anywhere; }
 .rich-text > :first-child { margin-top: 0; }
 .rich-text > :last-child { margin-bottom: 0; }
@@ -355,13 +354,18 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .rich-text code { padding: .12em .4em; border-radius: 6px; background: var(--code-surface); font: .88em var(--mono); }
 .rich-text pre { max-width: 100%; overflow: auto; margin: 1em 0; padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--code-surface); }
 .rich-text pre code { padding: 0; background: transparent; white-space: pre; }
-.rich-text table { width: 100%; margin: 1em 0; border-collapse: collapse; font-size: .94em; }
-.rich-text th, .rich-text td { padding: 8px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.rich-text table { display: block; width: 100%; max-width: 100%; overflow-x: auto; overflow-y: hidden; margin: 1em 0; border-collapse: collapse; font-size: .94em; }
+.rich-text th, .rich-text td { padding: 8px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: normal; }
 .rich-text th { background: var(--surface-2); font-weight: 600; }
 .rich-text .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 6px 0; }
+/* The block has the img role, so it takes the focus and the scrolling. */
+.rich-text .latex-block .katex-display { overflow: visible; }
+/* Set by fitWideFormulas. The padding leaves room for ink outside KaTeX's boxes, and the margin keeps the formula on the text column. */
+.rich-text .katex-scrolls { display: block; margin: 0 -.3em; padding: .6em .3em; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
 .course-note-markdown { margin: 20px 0; }
 .course-note-markdown + .course-note-markdown { margin-top: 8px; }
 .course-note-formula { display: grid; justify-items: center; gap: 8px; max-width: 100%; overflow-x: auto; margin: 4px 0; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); text-align: center; font-family: 'Cambria Math', serif; font-size: 20px; }
+.course-note-formula > .rich-text { max-width: 100%; }
 .course-note-formula small { color: var(--muted); font-family: var(--sans); font-size: 12px; }
 .course-note-formula-image { display: flex; justify-content: center; max-width: 100%; margin: 4px 0; padding: 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
 .course-note-formula-image img { display: block; width: auto; max-width: 100%; height: auto; min-width: 0; }
