@@ -90,16 +90,18 @@ describe('prompt standard: tutor prompts', () => {
     expect(VISUAL_MODULES.plot).toContain('binomial(n,x,p)');
   });
 
-  it('routes a refusal first, then explicit requests to see or practise, before the text-only rule', () => {
+  it('routes a request to see or practise first, then a refusal, before the text-only rule', () => {
     const inOrder = (prompt: string, phrases: string[]) => {
       const positions = phrases.map((phrase) => prompt.indexOf(phrase));
       expect(positions.every((position) => position >= 0)).toBe(true);
       expect(positions).toEqual([...positions].sort((a, b) => a - b));
     };
-    inOrder(VISUAL_ROUTING_PROMPT, ['refused a visual', 'asked to see', 'wants to be tested', 'Text alone is complete', 'already shows this idea', 'has behaviour']);
-    inOrder(VISUAL_DECISION_PROMPT, ['refused a visual', 'asked to see', 'wants to be tested', 'Text alone is complete', 'already shows this idea', 'how or why something works']);
-    expect(VISUAL_ROUTING_PROMPT).toMatch(/1\. \*\*The learner refused a visual/);
-    expect(VISUAL_DECISION_PROMPT).toMatch(/1\. \*\*The learner refused a visual/);
+    inOrder(VISUAL_ROUTING_PROMPT, ['asks to see something', 'refused a visual', 'Text alone is complete', 'already shows this idea', 'has behaviour']);
+    inOrder(VISUAL_DECISION_PROMPT, ['asks to see something', 'refused a visual', 'Text alone is complete', 'already shows this idea', 'how or why something works']);
+    expect(VISUAL_ROUTING_PROMPT).toMatch(/1[.] [*][*]This message asks to see something/);
+    expect(VISUAL_DECISION_PROMPT).toMatch(/1[.] [*][*]This message asks to see something/);
+    expect(VISUAL_ROUTING_PROMPT).toMatch(/2[.] [*][*]The learner refused a visual/);
+    expect(VISUAL_DECISION_PROMPT).toMatch(/2[.] [*][*]The learner refused a visual/);
   });
 
   it('describes earlierVisuals to the decision call and teaches both the refusal and the redraw cases', () => {
@@ -151,7 +153,7 @@ describe('prompt standard: tutor prompts', () => {
     expect(minimum(/full lesson takes at least ([0-9]+) words/)).toBe(range(lesson)[0]);
   });
 
-  it('lets a standing refusal in earlierLearnerMessages hold until the learner asks to see something', () => {
+  it('reads a standing refusal in earlierLearnerMessages, with an example where it holds', () => {
     expect(VISUAL_DECISION_PROMPT).toContain('earlierLearnerMessages');
     expect(VISUAL_DECISION_PROMPT).toMatch(/refused a visual, in learnerMessage or in earlierLearnerMessages/);
     const inputs = examples(VISUAL_DECISION_PROMPT).map((example) => JSON.parse(/<input>([\s\S]*?)<\/input>/.exec(example)![1]));
@@ -165,12 +167,19 @@ describe('prompt standard: tutor prompts', () => {
     expect(TUTOR_PROMPT).toMatch(/A direct factual question\.\*\* Answer first, then add only what the length table allows/);
   });
 
-  it('lets a later request override a refusal in both the tutor routing and the decision steps', () => {
-    const stepOne = (prompt: string) => prompt.split('\n').find((line) => line.startsWith('1. **The learner refused a visual'))!;
-    expect(stepOne(VISUAL_ROUTING_PROMPT)).toMatch(/until a later message asks to see something or to be tested/);
-    expect(stepOne(VISUAL_DECISION_PROMPT)).toMatch(/no later message asks to see something or to be tested/);
-    expect(VISUAL_ROUTING_PROMPT).toContain('A learner who refused a visual and has not asked since has no block.');
-    expect(VISUAL_ROUTING_PROMPT).not.toContain('A learner who refused a visual has no block.');
+  it('lists the request before the refusal in both prompts, so a later request needs no condition on the refusal', () => {
+    const NL = String.fromCharCode(10);
+    const line = (prompt: string, start: string) => prompt.split(NL).find((item) => item.startsWith(start))!;
+    for (const prompt of [VISUAL_ROUTING_PROMPT, VISUAL_DECISION_PROMPT]) {
+      const request = line(prompt, '1. **This message asks to see something'), refusal = line(prompt, '2. **The learner refused a visual');
+      expect(request).toContain('does not itself refuse a visual');
+      expect(request).toMatch(/(even if|or) the learner refused a visual earlier/);
+      expect(refusal).toMatch(/in this message or earlier|in learnerMessage or in earlierLearnerMessages/);
+      expect(refusal).not.toMatch(/later message|asked since/);
+      expect(prompt.indexOf(request)).toBeLessThan(prompt.indexOf(refusal));
+    }
+    expect(VISUAL_ROUTING_PROMPT).toContain('or a learner who refused a visual has no block, unless step 1 applied.');
+    expect(VISUAL_ROUTING_PROMPT).not.toContain('has not asked since');
   });
 
   it('keeps the visual notes out of what the tutor writes', () => {
