@@ -47,7 +47,7 @@ A visual: {"visual":true,"type":...,"intent":...,"content":...} with:
 
 - Taking the facts from memory. Every formula, value and step comes from the tutor's answer, so the visual agrees with what the learner just read: only ranges and slider bounds are yours to choose. If the answer gives no formula or structure to draw from, reply {"visual":false}, unless step 2 or 3 applied.
 - Decorating. A picture of a word's meaning teaches nothing: step 4 comes before step 6.
-- Skipping a visual because the answer is good. The answer being complete in words is not step 4 when the learner asked how or why.
+- Skipping a visual because the answer is good. The answer being complete in words is not step 4 when the learner asked how or why and there is something to see.
 - Revealing the solution of the learner's exercise in a quiz or a plot.
 
 ## Examples
@@ -86,7 +86,7 @@ A visual: {"visual":true,"type":...,"intent":...,"content":...} with:
 </example>
 
 <example>
-<input>{"learnerMessage":"And why does the second lock take longer?","tutorAnswer":"It is taller, so more water has to flow in before the gates can open.","earlierVisuals":["diagram \\"Lock \\" with nodes: Gates closed, Chamber fills, Gates open"]}</input>
+<input>{"learnerMessage":"And why does the second lock take longer?","tutorAnswer":"It is taller, so more water has to flow in before the gates can open.","earlierVisuals":["diagram \\"Lock\\" with nodes: Gates closed, Chamber fills, Gates open"]}</input>
 <good_output>{"visual":false}</good_output>
 <why>A follow-up on one detail of what the diagram already shows needs no new drawing.</why>
 </example>

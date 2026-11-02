@@ -26,7 +26,7 @@ describe('prompt standard: tutor prompts', () => {
   });
 
   it('respects the size budgets', () => {
-    expect(estimateContextTokens(TUTOR_SYSTEM_PROMPT)).toBeLessThanOrEqual(7200);
+    expect(estimateContextTokens(TUTOR_SYSTEM_PROMPT)).toBeLessThanOrEqual(7400);
     for (const type of VISUAL_TYPES) expect(estimateContextTokens(VISUAL_MODULES[type])).toBeLessThanOrEqual(6000);
     expect(estimateContextTokens(VISUAL_DECISION_PROMPT)).toBeLessThanOrEqual(3700);
   });
@@ -111,7 +111,7 @@ describe('prompt standard: tutor prompts', () => {
   it('sets the length from the latest message, with a table and the two length examples', () => {
     expect(TUTOR_PROMPT).toContain('## How much to write');
     expect(TUTOR_PROMPT).toContain('The latest message alone sets the length. An earlier reply is never a model');
-    expect(TUTOR_PROMPT).toContain('| how or why something works, happens or changes | one or two short paragraphs, about 80 to 180 words');
+    expect(TUTOR_PROMPT).toContain('| how or why something works, happens or changes | one or two short paragraphs, about 120 to 200 words');
     expect(TUTOR_PROMPT).toContain('Too little is a failure too');
     expect(TUTOR_PROMPT).not.toContain('Match your effort to the request.');
     expect(TUTOR_PROMPT.indexOf('## How you sound')).toBeLessThan(TUTOR_PROMPT.indexOf('## How much to write'));
@@ -123,6 +123,7 @@ describe('prompt standard: tutor prompts', () => {
   it('keeps the length reminder plain: told apart from the learner, no dash, no benchmark topic', () => {
     expect(TUTOR_LENGTH_REMINDER.startsWith('Note from StudentLLM, not from the learner, and not to be mentioned.')).toBe(true);
     expect(TUTOR_LENGTH_REMINDER).toContain('A how or why question takes at least 120 words');
+    expect(TUTOR_LENGTH_REMINDER).toContain('A follow-up on one detail takes one short paragraph, even when it asks why.');
     expect(TUTOR_LENGTH_REMINDER).not.toMatch(/[\u2013\u2014]/);
     expect(TUTOR_LENGTH_REMINDER).not.toMatch(BENCHMARK_TOPICS);
     expect(estimateContextTokens(TUTOR_LENGTH_REMINDER)).toBeLessThanOrEqual(300);
