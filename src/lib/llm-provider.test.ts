@@ -216,6 +216,8 @@ describe('OpenAI-compatible LLM provider streaming', () => {
     },
   }), { status: 200, headers: { 'content-type': 'text/event-stream; charset=utf-8' }, ...init });
   const providerFor = (fetchImpl: typeof fetch, model = 'fixture-model') => new OpenAICompatibleProvider({ baseUrl: '/lm-studio/v1', model, fetchImpl });
+  const done = 'data: [DONE]\n\n';
+  const finish = (reason: string | null) => `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: reason }] })}\n\n`;
   const ask = [{ role: 'user' as const, content: 'Explain' }];
   const sentBody = (fetchImpl: ReturnType<typeof vi.fn>, call = 0) => JSON.parse(String((fetchImpl.mock.calls[call][1] as RequestInit).body));
 
@@ -245,9 +247,33 @@ describe('OpenAI-compatible LLM provider streaming', () => {
     expect(onText.mock.calls.map(([text]) => text)).toEqual(['Hello', 'Hello world']);
   });
 
-  it('falls back to the configured model and accepts a stream that ends with no DONE', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async () => sse([delta('Hello')]));
+  it('falls back to the configured model when the chunks name none', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => sse([delta('Hello'), done]));
     await expect(providerFor(fetchImpl).generate(ask, { onText: vi.fn() })).resolves.toEqual({ content: 'Hello', model: 'fixture-model' });
+  });
+
+  it.each(['stop', 'length', 'content_filter'])('accepts a finish_reason of %s as a clean end with no DONE, and returns the text', async (reason) => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => sse([delta('Hello'), finish(reason)]));
+    await expect(providerFor(fetchImpl).generate(ask, { onText: vi.fn() })).resolves.toMatchObject({ content: 'Hello' });
+  });
+
+  it('accepts a finish_reason carried by the chunk with the last text', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => sse([`data: ${JSON.stringify({ choices: [{ delta: { content: 'Hello' }, finish_reason: 'stop' }] })}\n\n`]));
+    await expect(providerFor(fetchImpl).generate(ask, { onText: vi.fn() })).resolves.toMatchObject({ content: 'Hello' });
+  });
+
+  it.each([
+    ['no end signal', ['DELTA']],
+    ['a null finish_reason', ['DELTA', 'NULL']],
+    ['an empty finish_reason', ['DELTA', 'EMPTY']],
+    ['a last event truncated by the end of the body', ['DELTA', 'data: {"choices":[{"delta":{},"finish_reason":"st']],
+    ['an empty body', []],
+  ])('treats a clean end with %s as a cut', async (_label, parts) => {
+    const chunks = parts.map((part) => part === 'DELTA' ? delta('Partial') : part === 'NULL' ? finish(null) : part === 'EMPTY' ? finish('') : part);
+    const fetchImpl = vi.fn<typeof fetch>(async () => sse(chunks));
+    const onText = vi.fn();
+    await expect(providerFor(fetchImpl).generate(ask, { onText })).rejects.toThrow(/^Provider stream interrupted\.$/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('stops reading at DONE and releases a connection the server keeps open', async () => {
@@ -261,7 +287,7 @@ describe('OpenAI-compatible LLM provider streaming', () => {
   });
 
   it('survives a character split across chunks, CRLF, comments and chunks without a delta', async () => {
-    const bytes = encoder.encode(`: ping\r\n\r\n${delta('é€').replace(/\n/g, '\r\n')}data: {"choices":[]}\r\n\r\ndata: {"choices":[{"delta":{"role":"assistant"}}]}\r\n\r\n`);
+    const bytes = encoder.encode(`: ping\r\n\r\n${delta('é€').replace(/\n/g, '\r\n')}data: {"choices":[]}\r\n\r\ndata: {"choices":[{"delta":{"role":"assistant"}}]}\r\n\r\ndata: [DONE]\r\n\r\n`);
     const fetchImpl = vi.fn<typeof fetch>(async () => sse([bytes.slice(0, 40), bytes.slice(40)]));
     await expect(providerFor(fetchImpl).generate(ask, { onText: vi.fn() })).resolves.toMatchObject({ content: 'é€' });
   });
@@ -272,6 +298,7 @@ describe('OpenAI-compatible LLM provider streaming', () => {
       delta('A'),
       'data: {"choices":[{"delta":{"reasoning_content":"more"}}]}\n\n',
       delta('B'),
+      done,
     ]));
     const onText = vi.fn();
     await expect(providerFor(fetchImpl).generate(ask, { onText })).resolves.toMatchObject({ content: 'AB' });
@@ -279,7 +306,7 @@ describe('OpenAI-compatible LLM provider streaming', () => {
   });
 
   it('hides reasoning tags while streaming, wherever the chunks split them', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async () => sse([delta('<th'), delta('ink>private'), delta(' thoughts</th'), delta('ink>\nHello'), delta(' <think>more'), delta('</think>there')]));
+    const fetchImpl = vi.fn<typeof fetch>(async () => sse([delta('<th'), delta('ink>private'), delta(' thoughts</th'), delta('ink>\nHello'), delta(' <think>more'), delta('</think>there'), done]));
     const onText = vi.fn();
     await expect(providerFor(fetchImpl).generate(ask, { onText })).resolves.toMatchObject({ content: 'Hello there' });
     const seen = onText.mock.calls.map(([text]) => text);
@@ -288,7 +315,7 @@ describe('OpenAI-compatible LLM provider streaming', () => {
   });
 
   it('applies the no final answer rule to the whole streamed text', async () => {
-    for (const chunks of [['data: [DONE]\n\n'], [delta('<think>only reasoning')], [delta('<think>a</think>  ')]]) {
+    for (const chunks of [[done], [delta('<think>only reasoning'), done], [delta('<think>a</think>  '), finish('stop')]]) {
       const onText = vi.fn();
       await expect(providerFor(vi.fn<typeof fetch>(async () => sse(chunks))).generate(ask, { onText })).rejects.toThrow('The model returned no final answer');
       expect(onText).not.toHaveBeenCalled();
@@ -303,7 +330,7 @@ describe('OpenAI-compatible LLM provider streaming', () => {
   });
 
   it('does not take an empty error field for a failure', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async () => sse(['data: {"error":null,"choices":[{"delta":{"content":"Hello"}}]}\n\n']));
+    const fetchImpl = vi.fn<typeof fetch>(async () => sse(['data: {"error":null,"choices":[{"delta":{"content":"Hello"}}]}\n\n', done]));
     await expect(providerFor(fetchImpl).generate(ask, { onText: vi.fn() })).resolves.toMatchObject({ content: 'Hello' });
   });
 
@@ -346,7 +373,7 @@ describe('OpenAI-compatible LLM provider streaming', () => {
   it('retries a transient failure once before any text, then streams', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(response({ error: { message: 'busy' } }, false, 503))
-      .mockResolvedValueOnce(sse([delta('Hello')]));
+      .mockResolvedValueOnce(sse([delta('Hello'), done]));
     const onText = vi.fn();
     await expect(providerFor(fetchImpl).generate(ask, { onText })).resolves.toMatchObject({ content: 'Hello' });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -357,7 +384,7 @@ describe('OpenAI-compatible LLM provider streaming', () => {
   it('keeps streaming after dropping a rejected reasoning switch', async () => {
     const fetchImpl = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(response({ error: { message: 'Unsupported value for reasoning_effort' } }, false, 400))
-      .mockResolvedValueOnce(sse([delta('Hello')]));
+      .mockResolvedValueOnce(sse([delta('Hello'), done]));
     await expect(providerFor(fetchImpl, 'qwen/qwen3-4b').generate(ask, { onText: vi.fn() })).resolves.toMatchObject({ content: 'Hello' });
     expect(sentBody(fetchImpl, 0)).toMatchObject({ stream: true, reasoning_effort: 'none' });
     expect(sentBody(fetchImpl, 1).stream).toBe(true);

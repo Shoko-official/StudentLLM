@@ -83,6 +83,8 @@ function isEventStream(response: Response) {
   return /^text\/event-stream\b/i.test(response.headers?.get?.('content-type') ?? '');
 }
 
+const STREAM_INTERRUPTED = 'Provider stream interrupted.';
+
 async function readEventStream(response: Response, onText: ProviderGenerateOptions['onText']) {
   const tooLarge = () => new Error('The provider response is too large.');
   if (Number(response.headers.get('content-length')) > MAX_JSON_RESPONSE_BYTES) throw tooLarge();
@@ -92,6 +94,8 @@ async function readEventStream(response: Response, onText: ProviderGenerateOptio
   let model: string | undefined;
   let size = 0;
   let finished = false;
+  // Servers differ on which end signal they send, but a body that stops with neither was cut, even if it closed normally.
+  let clean = false;
   const reader = response.body?.getReader();
   try {
     while (reader && !finished) {
@@ -101,7 +105,7 @@ async function readEventStream(response: Response, onText: ProviderGenerateOptio
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') throw error;
         // Each browser words a failed body read its own way, and none of them tells a student anything.
-        throw new Error('Provider stream interrupted.');
+        throw new Error(STREAM_INTERRUPTED);
       }
       if (!next.done) {
         size += next.value.byteLength;
@@ -109,16 +113,17 @@ async function readEventStream(response: Response, onText: ProviderGenerateOptio
       }
       finished = next.done;
       for (const payload of next.done ? parser.end() : parser.push(next.value)) {
-        if (payload.trim() === '[DONE]') { finished = true; break; }
-        let chunk: { model?: unknown; error?: unknown; choices?: { delta?: { content?: unknown } }[] } | null;
+        if (payload.trim() === '[DONE]') { finished = clean = true; break; }
+        let chunk: { model?: unknown; error?: unknown; choices?: { delta?: { content?: unknown }; finish_reason?: unknown }[] } | null;
         try { chunk = JSON.parse(payload); } catch { continue; }
         if (chunk?.error) {
           const detail = errorDetail(chunk.error);
           throw new Error(`Provider request failed${detail ? `: ${detail}` : ''}`);
         }
         if (typeof chunk?.model === 'string') model = chunk.model;
-        const content = Array.isArray(chunk?.choices) ? chunk.choices[0]?.delta?.content : undefined;
-        if (typeof content === 'string') text += content;
+        const choice = Array.isArray(chunk?.choices) ? chunk.choices[0] : undefined;
+        if (typeof choice?.delta?.content === 'string') text += choice.delta.content;
+        if (choice?.finish_reason && typeof choice.finish_reason === 'string') clean = true;
       }
       const nextVisible = visibleText(text);
       if (nextVisible !== visible) {
@@ -129,6 +134,7 @@ async function readEventStream(response: Response, onText: ProviderGenerateOptio
   } finally {
     void reader?.cancel().catch(() => undefined);
   }
+  if (!clean) throw new Error(STREAM_INTERRUPTED);
   return { text, model };
 }
 
