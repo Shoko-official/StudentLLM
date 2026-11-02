@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { appendVisualRequest, asksForVisual, refusesVisual, compactVisualFences, describeEarlierVisuals, hasVisualFence, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, stripVisualNotes, visualFence } from './visual-brief';
+import { appendVisualRequest, asksForVisual, refusesVisual, compactVisualFences, describeEarlierVisuals, hasVisualFence, jobFromMarkdown, MAX_AUTOMATIC_VISUALS, missingArtefacts, namedArtefacts, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, stripVisualNotes, visualFence } from './visual-brief';
 import { parseTeachingVisual, type TeachingVisual } from './teaching-visuals';
+import benchmark from '../../benchmarks/tutor/cases.json';
 
 const brief = { id: 'v1', type: 'quiz', intent: 'Check the idea', content: 'Ask about pressure' };
 const request = (value: unknown = brief) => '```student-visual-request\n' + JSON.stringify(value) + '\n```';
@@ -566,5 +567,151 @@ describe('refusesVisual', () => {
 
   it('ignores a refusal written inside code', () => {
     expect(refusesVisual(['Voici :', '```', 'sans schéma', '```'].join(String.fromCharCode(10)))).toBe(false);
+  });
+});
+
+describe('namedArtefacts', () => {
+  const types = (text: string) => namedArtefacts(text).map((item) => item.type);
+
+  it.each<[string, string[]]>([
+    ['Fais un seul graphique calculé de la quantité restante.', ['plot']],
+    ['Il me faut un seul graphique interactif de G en fonction de N.', ['plot']],
+    ['Il faut un graphique en barres interactif de P(X=k).', ['plot']],
+    ['Fais un diagramme en barres des notes.', ['plot']],
+    ['Fais un graphique de G avec r de 0,2 à 1.', ['plot']],
+    ['Make a bar chart of the grades.', ['plot']],
+    ["I'd like one interactive plot of R for x from 1 to 32.", ['plot']],
+    ['Please plot a graph of speed against time.', ['plot']],
+    ['Trace la courbe de y = x^2 entre 0 et 5.', ['plot']],
+    ['Peux-tu me montrer le graphique de la fonction ?', ['plot']],
+    ['Pour finir, un quiz interactif à une seule bonne réponse.', ['quiz']],
+    ['Termine par un quiz interactif : combien reste-t-il ?', ['quiz']],
+    ['Then finish with an interactive multiple-choice quiz with one right answer.', ['quiz']],
+    ['Then a multiple-choice question on the first step.', ['quiz']],
+    ['Quiz me on the French Revolution.', ['quiz']],
+    ['Interroge-moi sur les fractions.', ['quiz']],
+    ['Test me on what I just read.', ['quiz']],
+    ['Ajoute un arbre des deux premiers essais.', ['diagram']],
+    ["J'ai besoin d'un schéma du circuit.", ['diagram']],
+    ['I need a flowchart of the process.', ['diagram']],
+    ['Sketch a diagram of the circuit.', ['diagram']],
+    ['Explain how a lever works, with a diagram.', ['diagram']],
+    ['Comment fonctionne une écluse ? Fais un schéma.', ['diagram']],
+    ['Explique comment ça marche et montre-moi un diagramme.', ['diagram']],
+    ['How does a pump work, and can you draw a diagram of it?', ['diagram']],
+    ['Could you display a figure of the forces?', ['figure']],
+    ['Give me a picture of the setup.', ['figure']],
+    ['Il faut un graphique interactif sur [-2,2], un curseur n, puis un quiz a choix multiples.', ['plot', 'quiz']],
+    ['Fais une fiche sur le ressort avec un graphique de la force, un curseur et un quiz.', ['plot', 'quiz']],
+    ['Donne-moi un résumé, un schéma et un QCM.', ['diagram', 'quiz']],
+    ['Ajoute un dessin de la cellule, avec un QCM à la fin.', ['figure', 'quiz']],
+  ])('reads %j as wanted', (text, expected) => { expect(types(text)).toEqual(expected); });
+
+  it.each([
+    'Montre que la figure est un carré.',
+    "Don't use jargon.",
+    "Qu'est-ce qu'un diagramme de Bode ?",
+    'What is a quiz?',
+    'How do I make a good quiz for my class?',
+    'Comment tracer une courbe de niveau ?',
+    "J'ai raté mon quiz.",
+    'My quiz is tomorrow, explain fractions.',
+    'Le graphique montre une courbe croissante, pourquoi ?',
+    'The graphs show a curve, why?',
+    'Regarde la figure 3.',
+    'Montre la figure 3.',
+    "Give me the graph's equation.",
+    'Ne donne pas la réponse du quiz.',
+    'Show me the answer to the quiz.',
+    'Explain the meaning of a tree in this poem.',
+    'Pourquoi le quiz est-il si dur ?',
+    // A refusal in the same message silences everything, including a refused quiz.
+    'Sans schéma, explique le cycle.',
+    'Explique le cycle, sans quiz.',
+    'Pas de quiz, juste un résumé.',
+    'No quiz please, explain it.',
+    'Fais un quiz, pas de graphique.',
+    "Don't quiz me yet.",
+  ])('does not read %j as wanted', (text) => { expect(namedArtefacts(text)).toEqual([]); });
+
+  it.each([
+    'Pas de graphique, juste le texte.',
+    'No diagram please, explain it.',
+    'Explain it without a chart.',
+    "Don't draw anything, just explain.",
+    'Show me, but no diagram.',
+    'Ne dessine pas de courbe.',
+    "Qu'est-ce qu'un diagramme de Venn ?",
+    'What does this graph mean?',
+    'Explique ce schéma.',
+    'Pourquoi la courbe monte-t-elle ?',
+    'Montre-moi comment ça marche.',
+    'Quelle est la différence entre un graphe et un arbre ?',
+    'text only',
+    '',
+    'Why is the diagram in my textbook wrong?',
+    'Show that the curve is convex.',
+    'Fais un résumé de la figure 3.',
+    'Make sense of this chart.',
+    'Include a figure of speech in my essay.',
+    'Crée une liste des figures de style.',
+    'Give me the definition of a graph.',
+    'Donne-moi la différence entre un graphe et un arbre.',
+    'Donne un exemple de graphe orienté.',
+    'Generate a graph theory proof.',
+    'Fais un graphique avec matplotlib.',
+    'Build a bar chart in Python code.',
+    'Make a chart with Excel.',
+    'Fais un tableau, pas un graphique.',
+    'Show me a table instead of a diagram.',
+    'Give me the answer rather than a diagram.',
+  ])('holds the narrowing of asksForVisual for %j', (text) => { expect(namedArtefacts(text)).toEqual([]); });
+
+  it('ignores what is written in code or an image reference', () => {
+    expect(namedArtefacts('Voici mon code :\n```\n# show me a diagram\nshow_me_a_diagram()\n```')).toEqual([]);
+    expect(namedArtefacts('Utilise `montre-moi un schéma` comme texte.')).toEqual([]);
+    expect(namedArtefacts('![show me a diagram](https://example.com/a.png) Explain this.')).toEqual([]);
+    expect(types('![x](a.png) Draw a diagram of it.')).toEqual(['diagram']);
+  });
+
+  it('reads an explicit count, and one for a curve inside a plot', () => {
+    expect(namedArtefacts('Fais un seul graphique de la force.')).toEqual([{ type: 'plot', count: 1 }]);
+    expect(namedArtefacts('Fais deux graphiques de la force et un quiz.')).toEqual([{ type: 'plot', count: 2 }, { type: 'quiz', count: 1 }]);
+    expect(namedArtefacts('Give me three quizzes on it.')).toEqual([{ type: 'quiz', count: 3 }]);
+    expect(namedArtefacts('Fais un graphique avec deux courbes.')).toEqual([{ type: 'plot', count: 1 }]);
+    expect(namedArtefacts('Fais un graphique, puis un autre graphique.')).toEqual([{ type: 'plot', count: 1 }]);
+  });
+
+  it('names every artefact of the committed benchmark prompts and nothing in its rate prompts', () => {
+    for (const item of benchmark.quality) expect(types(item.prompt).sort()).toEqual(item.artefacts.map((artefact) => artefact.type).sort());
+    expect(Object.values(benchmark.rate).flat().flatMap(types)).toEqual([]);
+  });
+});
+
+describe('missingArtefacts', () => {
+  const fence = (type: string, id = 'v1') => '```student-visual-request\n' + JSON.stringify({ id, type, intent: 'I', content: 'C' }) + '\n```';
+
+  it('returns each named type with no request or visual, in the order of the message', () => {
+    expect(missingArtefacts('Fais un graphique, ajoute un arbre et termine par un quiz.', 'Prose.')).toEqual(['plot', 'diagram', 'quiz']);
+    expect(missingArtefacts('Fais un graphique et un quiz.', `Prose.\n\n${fence('plot')}`)).toEqual(['quiz']);
+    expect(missingArtefacts('Fais un graphique et un quiz.', `Prose.\n\n${fence('plot')}\n\n${direct(quiz)}`)).toEqual([]);
+  });
+
+  it('counts what is there against an explicit count', () => {
+    expect(missingArtefacts('Fais un seul graphique.', `Prose.\n\n${fence('plot')}`)).toEqual([]);
+    expect(missingArtefacts('Fais deux graphiques.', `Prose.\n\n${fence('plot')}`)).toEqual(['plot']);
+    expect(missingArtefacts('Fais deux graphiques.', 'Prose.')).toEqual(['plot', 'plot']);
+  });
+
+  it('stays within the limit of automatic visuals', () => {
+    const three = [1, 2, 3].map((n) => fence('plot', `v${n}`)).join('\n\n');
+    expect(missingArtefacts('Ajoute un arbre et un quiz.', `Prose.\n\n${three}`)).toEqual(['diagram']);
+    const full = Array.from({ length: MAX_AUTOMATIC_VISUALS }, (_, n) => fence('plot', `v${n}`)).join('\n\n');
+    expect(missingArtefacts('Ajoute un quiz.', `Prose.\n\n${full}`)).toEqual([]);
+  });
+
+  it('asks for nothing when no artefact is named, and does not count a quoted fence', () => {
+    expect(missingArtefacts('Pourquoi la courbe monte-t-elle ?', 'Prose.')).toEqual([]);
+    expect(missingArtefacts('Ajoute un quiz.', '> ' + fence('quiz').replace(/\n/g, '\n> '))).toEqual(['quiz']);
   });
 });
