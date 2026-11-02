@@ -124,6 +124,14 @@ const REQUESTS: [string, string][] = [
   ['Display a bar chart of the marks.', PLOT],
   ['Produce a tree of the outcomes.', TREE],
   ['Mets un graphique dans ta réponse.', PLOT],
+  // A refusal of something about the artefact is not a refusal of the artefact.
+  ['Ajoute un quiz, et ne donne pas la réponse du quiz dans le texte.', QUIZ],
+  ['Termine par un quiz. Ne donne pas sa correction dans le texte.', QUIZ],
+  ["Add a quiz, but don't give the answer to the quiz in the text.", QUIZ],
+  ['Fais un graphique. Inutile de donner la formule du graphique.', PLOT],
+  ["Finish with a quiz. Please don't give away the quiz answer before the quiz.", QUIZ],
+  ["Don't give the quiz answer yet, but add a quiz.", QUIZ],
+  ['Make a chart. No need to explain the axes of the chart.', PLOT],
 ];
 
 const NOT_REQUESTS: string[] = [
@@ -208,6 +216,8 @@ const NOT_REQUESTS: string[] = [
   'Ajoute une courbe de niveau à la définition.',
   'Donne une figure de rhétorique.',
   'Give me the definition of quiz.',
+  'Give me the quiz answer.',
+  'Donne-moi la correction du quiz.',
   'Un graphique montre la fonction.',
   'A chart of sales shows growth.',
   'One figure stands out.',
