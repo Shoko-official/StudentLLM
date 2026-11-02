@@ -74,7 +74,7 @@ ${fence}`;
 describe('decideVisual', () => {
   const input = { question: 'Why does it happen?', answer: 'Because of the formula y = 2*x.' };
   const request = { visual: true, type: 'plot', intent: 'See the line', content: 'y=2*x for x from 0 to 5.' };
-  const decide = (provider: LLMProvider, extra = input, options: Parameters<typeof decideVisual>[2] = {}) => decideVisual(provider, extra, options);
+  const decide = (provider: LLMProvider, extra: Parameters<typeof decideVisual>[1] = input, options: Parameters<typeof decideVisual>[2] = {}) => decideVisual(provider, extra, options);
 
   it('returns no brief and no error when the model declines', async () => {
     expect(await decide(replying('{"visual":false}'))).toEqual({ brief: null });
@@ -117,9 +117,19 @@ describe('decideVisual', () => {
     await decide(provider);
     const [messages, options] = provider.generate.mock.calls[0];
     expect(messages![0]).toEqual({ role: 'system', content: VISUAL_DECISION_PROMPT });
-    expect(JSON.parse(messages![1].content)).toEqual({ learnerMessage: input.question, tutorAnswer: input.answer });
+    expect(JSON.parse(messages![1].content)).toEqual({ learnerMessage: input.question, tutorAnswer: input.answer, earlierVisuals: [] });
     expect(options?.maxTokens).toBe(4096);
     expect(options?.responseFormat?.json_schema?.name).toBe('teaching_visual_decision');
+  });
+
+  it('sends the descriptions of the visuals already shown, and redacts images in them', async () => {
+    const earlierVisuals = ['diagram "Lock" with nodes: Gates closed, Chamber fills', `figure "Map": ![x](data:image/png;base64,${'AAAA'.repeat(500)})`];
+    const provider = replying('{"visual":false}');
+    await decide(provider, { ...input, earlierVisuals });
+    const sent = JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content);
+    expect(sent.earlierVisuals).toHaveLength(2);
+    expect(sent.earlierVisuals[0]).toBe(earlierVisuals[0]);
+    expect(JSON.stringify(sent)).not.toContain('AAAA');
   });
 
   it('omits the response format for a provider without structured outputs', async () => {

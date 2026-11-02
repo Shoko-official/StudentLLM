@@ -103,12 +103,12 @@ const invalidDecision = 'invalid decision';
 const present = (value: unknown) => value !== undefined && value !== null && value !== '' && !(Array.isArray(value) && !value.length);
 
 /** Asks once whether an answer without a visual should get one. Every failure leaves the answer as it is. */
-export async function decideVisual(provider: LLMProvider, input: { question: string; answer: string }, options: { deadlineMs?: number; signal?: AbortSignal } = {}): Promise<{ brief: VisualBrief | null; error?: string }> {
+export async function decideVisual(provider: LLMProvider, input: { question: string; answer: string; earlierVisuals?: string[] }, options: { deadlineMs?: number; signal?: AbortSignal } = {}): Promise<{ brief: VisualBrief | null; error?: string }> {
   if (options.signal?.aborted) return { brief: null, error: stoppedMessage };
   try {
     const content = await generateWithin(
       provider,
-      [{ role: 'system', content: VISUAL_DECISION_PROMPT }, { role: 'user', content: JSON.stringify({ learnerMessage: redactContextImages(input.question).slice(0, 2000), tutorAnswer: redactContextImages(input.answer).slice(0, 6000) }) }],
+      [{ role: 'system', content: VISUAL_DECISION_PROMPT }, { role: 'user', content: JSON.stringify({ learnerMessage: redactContextImages(input.question).slice(0, 2000), tutorAnswer: redactContextImages(input.answer).slice(0, 6000), earlierVisuals: (input.earlierVisuals ?? []).map((item) => redactContextImages(item)) }) }],
       { maxTokens: VISUAL_MAX_TOKENS, ...(provider.supportsStructuredOutputs ? { responseFormat: visualDecisionResponseFormat() } : {}) },
       options,
     );

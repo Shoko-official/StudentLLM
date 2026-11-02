@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendVisualRequest, compactVisualFences, hasVisualFence, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, stripVisualNotes, visualFence } from './visual-brief';
+import { appendVisualRequest, compactVisualFences, describeEarlierVisuals, hasVisualFence, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, stripVisualNotes, visualFence } from './visual-brief';
 import { parseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 
 const brief = { id: 'v1', type: 'quiz', intent: 'Check the idea', content: 'Ask about pressure' };
@@ -385,5 +385,40 @@ describe('streamingPreview', () => {
   it('keeps a line that merely starts like a note inside a code block', () => {
     expect(streamingPreview('```text\n[Vis')).toBe('```text\n[Vis');
     expect(streamingPreview('```text\n' + notGenerated + '\n')).toBe('```text\n' + notGenerated + '\n');
+  });
+});
+
+describe('describeEarlierVisuals', () => {
+  const shownQuiz = (index: number) => direct({ ...quiz, title: `Check ${index}`, question: `Q${index}?` });
+
+  it('describes the real visuals of each message in order, as compactVisualFences does', () => {
+    const plot = { type: 'plot', title: 'Height', x: { min: 0, max: 7 }, parameters: [{ name: 'v0', label: 'Speed', min: 5, max: 30, step: 5, value: 20 }], series: [{ label: 'h', expression: 'v0*x' }] };
+    const described = describeEarlierVisuals([`First.\n\n${direct(plot)}`, `Second.\n\n${shownQuiz(1)}`]);
+    expect(described).toEqual(['plot "Height", x from 0 to 7. parameters: v0 from 5 to 30 step 5, initial 20. series: h = v0*x', 'quiz "Check 1": Q1? correct option: B']);
+    expect(compactVisualFences(`${direct(plot)}`)).toContain(described[0]);
+  });
+
+  it('ignores requests that were never built, invalid fences, notes and fences quoted in code', () => {
+    expect(describeEarlierVisuals([`Text.\n\n${request()}`, `${notGenerated}\n\n${shown}`, direct({ type: 'quiz' }), '````md\n' + shownQuiz(1) + '\n````'])).toEqual([]);
+  });
+
+  it('keeps the most recent entries when there are more than six', () => {
+    const contents = [1, 2, 3, 4].map((index) => `${shownQuiz(index * 2 - 1)}\n\n${shownQuiz(index * 2)}`);
+    const described = describeEarlierVisuals(contents);
+    expect(described).toHaveLength(6);
+    expect(described[0]).toContain('Check 3');
+    expect(described[5]).toContain('Check 8');
+  });
+
+  it('cuts each description at 300 characters and writes it on one line', () => {
+    const figure = { type: 'figure', title: 'T', description: 'First line.\n' + 'x'.repeat(400), width: 400, height: 240, shapes: [{ type: 'text', x: 20, y: 40, text: 'a' }] };
+    const [described] = describeEarlierVisuals([direct(figure)]);
+    expect(described).toHaveLength(300);
+    expect(described).toContain('First line. xxx');
+  });
+
+  it('returns nothing without a visual fence', () => {
+    expect(describeEarlierVisuals([])).toEqual([]);
+    expect(describeEarlierVisuals(['Plain text.', ''])).toEqual([]);
   });
 });

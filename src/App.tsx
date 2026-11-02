@@ -74,7 +74,7 @@ import { RichText } from './lib/rich-text';
 import { CourseChat } from './lib/course-chat';
 import { VisualBlockView } from './lib/visual-blocks-view';
 import { generateTutorProse } from './lib/teaching-generation';
-import { jobFromMarkdown, MAX_AUTOMATIC_VISUALS } from './lib/visual-brief';
+import { describeEarlierVisuals, jobFromMarkdown, MAX_AUTOMATIC_VISUALS } from './lib/visual-brief';
 import { VisualJobsContext, type VisualJobControls } from './lib/visual-request-view';
 import { pendingVisualKey, useVisualJobs } from './lib/use-visual-jobs';
 import { STUDY_ASSISTANT_PROMPT, TUTOR_SYSTEM_PROMPT, studyMaterialRequest } from './prompts';
@@ -2120,7 +2120,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       }));
       if (lessonsRef.current.some((lesson) => lesson.id === chatLessonId)) {
         visualJobs.start(chatLessonId, assistantMessageId, result.jobs.slice(0, MAX_AUTOMATIC_VISUALS));
-        if (result.needsDecision) visualJobs.decide(chatLessonId, assistantMessageId, message, result.markdown);
+        if (result.needsDecision) visualJobs.decide(chatLessonId, assistantMessageId, message, result.markdown, describeEarlierVisuals(chat.filter((item) => item.role === 'assistant').slice(-2).map((item) => item.content)));
       }
     } catch (error) {
       // A failed request is not an answer: keep it out of the saved history, show it as an alert, and hand
