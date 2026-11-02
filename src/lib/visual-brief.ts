@@ -349,13 +349,21 @@ export function refusesVisual(text: string): boolean {
 const ARTEFACT_FAMILIES: { words: string; types: VisualType[] }[] = [
   { words: "flow[- ]?charts?|organigrammes?|logigrammes?|arbres?|trees?|mind[- ]?maps?|concept[- ]maps?|cartes?\\s+(?:mentales?|conceptuelles?)", types: ['diagram'] },
   { words: "diagrammes?\\s+(?:en\\s+(?:barres?|batons?|secteurs?)|circulaires?)|graphiques?|grafiques?|courbes?|histogrammes?|plots?|plotted|plotting|charts?|curves?|histograms?", types: ['plot'] },
-  { words: "graphes?|graphs?|graphing|trace[rz]?|traces", types: ['plot', 'diagram'] },
+  { words: "graphes?|graphs?|graphing", types: ['plot', 'diagram'] },
   { words: "schemas?|shemas?|schematiques?|schematics?|diagrammes?|diagrames?|diagrams?", types: ['diagram', 'figure'] },
-  { words: "figures?|dessins?|dessine[rz]?|croquis|illustrations?|illustre[rz]?|illustrate|drawings?|draw|sketch(?:es)?|pictures?|visuels?|visuals?|visuali[sz]ations?|visuali[sz]e[rz]?|visualiser", types: ['figure', 'diagram'] },
-  { words: "quizz?(?:es|zes|s)?|quizzing|qcm|qcu|mcqs?|questions?\\s+a\\s+choix\\s+multiples?|multiple[- ]choice|(?:teste|testez|interroge|interrogez|questionne|questionnez)[ -](?:moi|nous)|test\\s+(?:me|us|my)", types: ['quiz'] },
+  { words: "figures?|dessins?|croquis|illustrations?|drawings?|sketches|pictures?|visuels?|visuals?|visuali[sz]ations?", types: ['figure', 'diagram'] },
+  { words: "quizz?(?:es|zes|s)?|quizzing|qcm|qcu|mcqs?|questions?\\s+a\\s+choix\\s+multiples?|multiple[- ]choice|(?:teste|testez|interroge|interrogez|questionne|questionnez)[ -](?:moi|nous)|test\\s+(?:me|us|my)|teste\\s+mes\\s+connaissances|test[ -]moi|pose[ -]moi\\s+(?:une|des)\\s+questions?|ask\\s+me\\s+(?:a|some)\\s+questions?", types: ['quiz'] },
+];
+// A drawing verb only says how: "Draw a plot" is one plot. So these count only when the message has no word above.
+const ARTEFACT_VERBS: { words: string; types: VisualType[] }[] = [
+  { words: "trace[rz]?|traces", types: ['plot', 'diagram'] },
+  { words: "dessine[rz]?|dessines|dessinons|draw|sketch|illustre[rz]?|illustrate|visuali[sz]e[rz]?|visualisons", types: ['figure', 'diagram'] },
+  { words: "schematise", types: ['diagram', 'figure'] },
+  { words: "represente", types: ['plot', 'diagram', 'figure'] },
 ];
 const COUNTS: Record<string, number> = { deux: 2, two: 2, 2: 2, trois: 3, three: 3, 3: 3, quatre: 4, four: 4, 4: 4 };
-const ARTEFACT_WORD = new RegExp(`(?<![\\p{L}\\d])(?:(?<count>${Object.keys(COUNTS).join('|')})\\s+(?:[\\p{L}'-]+\\s+)?)?(?:${ARTEFACT_FAMILIES.map(({ words }, index) => `(?<family${index}>${words})`).join('|')})(?![\\p{L}\\d])`, 'gu');
+const artefactWord = (families: typeof ARTEFACT_FAMILIES) => new RegExp(`(?<![\\p{L}\\d])(?:(?<count>${Object.keys(COUNTS).join('|')})\\s+(?:[\\p{L}'-]+\\s+)?)?(?:${families.map(({ words }, index) => `(?<family${index}>${words})`).join('|')})(?![\\p{L}\\d])`, 'gu');
+const ARTEFACT_WORD = artefactWord(ARTEFACT_FAMILIES), ARTEFACT_VERB = artefactWord(ARTEFACT_VERBS);
 
 export interface NamedArtefact { type: VisualType; count: number; also?: VisualType[] }
 
@@ -367,9 +375,12 @@ export interface NamedArtefact { type: VisualType; count: number; also?: VisualT
  */
 export function namedArtefacts(text: string): NamedArtefact[] {
   const found = new Map<VisualType, { count: number; also: VisualType[] }>();
-  for (const { groups } of plainMessage(text).matchAll(ARTEFACT_WORD)) {
-    const index = ARTEFACT_FAMILIES.findIndex((_, at) => groups![`family${at}`] !== undefined);
-    const [type, ...also] = ARTEFACT_FAMILIES[index].types;
+  const plain = plainMessage(text);
+  const nouns = [...plain.matchAll(ARTEFACT_WORD)];
+  const families = nouns.length ? ARTEFACT_FAMILIES : ARTEFACT_VERBS;
+  for (const { groups } of nouns.length ? nouns : plain.matchAll(ARTEFACT_VERB)) {
+    const index = families.findIndex((_, at) => groups![`family${at}`] !== undefined);
+    const [type, ...also] = families[index].types;
     const count = /^(?:courbes?|curves?)$/.test(groups![`family${index}`]) ? 1 : COUNTS[groups!.count ?? ''] ?? 1;
     const known = found.get(type);
     found.set(type, { count: Math.max(known?.count ?? 1, count), also: [...new Set([...(known?.also ?? []), ...also])] });

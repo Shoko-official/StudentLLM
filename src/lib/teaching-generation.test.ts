@@ -43,7 +43,7 @@ describe('generateTutorProse', () => {
     // A refusal alone or an earlier request alone do not add it. Whether a word is a request is the model's to read.
     expect(await asked([system, user('Sans schéma, explique.')])).toBe(TUTOR_LENGTH_REMINDER);
     expect(await asked([system, user('No diagrams please.'), reply, user('Why does it happen?')])).toBe(TUTOR_LENGTH_REMINDER);
-    expect(await asked([system, user('No diagrams please.'), reply, user('Show a table, not a diagram.')])).toBe(lifted);
+    expect(await asked([system, user('No diagrams please.'), reply, user('Show a table, not a diagram.')])).toBe(TUTOR_LENGTH_REMINDER);
     expect(await asked([system, user('Show me a diagram.'), reply, user('No diagrams please.'), reply, user('And why?')])).toBe(TUTOR_LENGTH_REMINDER);
     // Neither is the conversation memory, which carries compacted assistant excerpts.
     const memory = user(CONVERSATION_MEMORY_INSTRUCTIONS + String.fromCharCode(10) + JSON.stringify({ kind: 'extractive_conversation_memory', records: [{ id: 'a1', role: 'assistant', excerpts: ['no diagram needed here'], shortened: false }] }));
@@ -393,6 +393,24 @@ describe('decideVisuals', () => {
     expect(notes).toEqual([visualTargetNote('quiz')]);
     expect(jobs).toEqual([]);
     expect(result).toMatchObject({ requested: 0, markdown: answer });
+  });
+
+  it('makes no general call when the message refuses a visual', async () => {
+    const { notes, result } = await run(['{"visual":false}'], { question: 'Sans schéma, explique.', answer: 'Prose.' });
+    expect(notes).toEqual([visualTargetNote('diagram or figure')]);
+    expect(result).toMatchObject({ requested: 0, markdown: 'Prose.' });
+  });
+
+  it('stops asking for a family once it has declined', async () => {
+    const { notes, jobs } = await run(['{"visual":false}', request('quiz')], { question: 'Fais deux graphiques et un quiz.', answer: 'Prose.' });
+    expect(notes).toEqual([visualTargetNote('plot'), visualTargetNote('quiz')]);
+    expect(jobs.map((job) => job.brief.type)).toEqual(['quiz']);
+  });
+
+  it('asks again for a family whose reply could not be read', async () => {
+    const { notes, jobs } = await run(['not json', request('plot'), request('plot')], { question: 'Fais deux graphiques.', answer: 'Prose.' });
+    expect(notes.slice(0, 2)).toEqual([visualTargetNote('plot'), visualTargetNote('plot')]);
+    expect(jobs.map((job) => job.brief.type)).toContain('plot');
   });
 
   it('falls back to the general decision when every target declines and the answer still has no visual', async () => {
@@ -1115,5 +1133,6 @@ describe('tutorNote', () => {
     expect(tutorNote('Show me a diagram of it.', ['Why?'])).toBe(TUTOR_LENGTH_REMINDER);
     expect(tutorNote('Why?', ['No diagrams.'])).toBe(TUTOR_LENGTH_REMINDER);
     expect(tutorNote('Show me a diagram of it.', [])).toBe(TUTOR_LENGTH_REMINDER);
+    expect(tutorNote('No diagram, I said.', ['No diagrams.'])).toBe(TUTOR_LENGTH_REMINDER);
   });
 });
