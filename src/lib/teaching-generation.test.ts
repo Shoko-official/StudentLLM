@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decideVisual, decideVisuals, generateTutorProse, tutorNote, generateVisual, runVisualJobs } from './teaching-generation';
 import type { LLMProvider, ProviderMessage } from './llm-provider';
-import type { VisualJob } from './visual-brief';
+import type { VisualJob, VisualType } from './visual-brief';
 import { CONVERSATION_MEMORY_INSTRUCTIONS, TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES, visualTargetNote } from '../prompts';
 
 const quiz = { type: 'quiz', title: 'Check', question: 'Q?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' };
@@ -266,7 +266,7 @@ describe('decideVisual', () => {
 });
 
 describe('decideVisual with a target', () => {
-  const input = { question: 'Fais un quiz.', answer: 'Because of the formula y = 2*x.', target: 'quiz' as const };
+  const input = { question: 'Fais un quiz.', answer: 'Because of the formula y = 2*x.', target: ['quiz' as const] };
   const request = { visual: true, type: 'quiz', intent: 'Check', content: 'Ask about y.' };
 
   it('sends the same data, then the note naming that type, and allows only that type', async () => {
@@ -300,10 +300,27 @@ describe('decideVisual with a target', () => {
     expect(await decideVisual(replying('{"visual":false}'), input)).toEqual({ brief: null });
   });
 
-  it('drops an earlier refusal, because this message names the artefact even when asksForVisual does not read it', async () => {
-    const provider = replying('{"visual":false}');
-    await decideVisual(provider, { ...input, question: 'Il me faut un graphique.', target: 'plot', earlierMessages: ['Sans schéma.'] });
-    expect(JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content).earlierLearnerMessages).toEqual([]);
+  it('lets only a real request end an earlier refusal, by the rule of asksForVisual and the detector together', async () => {
+    const earlier = async (question: string, target: VisualType[]) => {
+      const provider = replying('{"visual":false}');
+      await decideVisual(provider, { ...input, question, target, earlierMessages: ['Sans schéma ni quiz, jamais.'] });
+      return JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content).earlierLearnerMessages;
+    };
+    expect(await earlier('Fais un graphique.', ['plot'])).toEqual([]);
+    // A target the general rule does not read, a past mention and a statement all keep the refusal in view.
+    expect(await earlier('Il me faut un graphique.', ['plot'])).toEqual(['Sans schéma ni quiz, jamais.']);
+    expect(await earlier("Tu m'as donné un quiz tout à l'heure, je n'ai pas compris la question 2.", ['quiz'])).toEqual(['Sans schéma ni quiz, jamais.']);
+    expect(await earlier('Le graphique montre une courbe, pourquoi ?', ['plot'])).toEqual(['Sans schéma ni quiz, jamais.']);
+  });
+
+  it('allows every type the word can mean, and no other', async () => {
+    const family = { ...input, question: 'Fais un schéma.', target: ['diagram' as const, 'figure' as const] };
+    const provider = replying(JSON.stringify({ ...request, type: 'figure' }));
+    expect((await decideVisual(provider, family)).brief?.type).toBe('figure');
+    const [messages, options] = provider.generate.mock.calls[0];
+    expect((messages as ProviderMessage[])[2].content).toBe(visualTargetNote('diagram or figure'));
+    expect((options?.responseFormat?.json_schema?.schema as { properties: { type: { enum: string[] } } }).properties.type.enum).toEqual(['diagram', 'figure']);
+    expect(await decideVisual(replying(JSON.stringify({ ...request, type: 'plot' })), family)).toEqual({ brief: null, error: 'invalid decision' });
   });
 });
 
@@ -353,8 +370,32 @@ describe('decideVisuals', () => {
 
   it('falls back to the general decision when every target declines and the answer still has no visual', async () => {
     const { notes, jobs } = await run(['{"visual":false}', request('plot')], { question: 'Explique, avec un schéma peut-être.', answer: 'Prose.' });
-    expect(notes).toEqual([visualTargetNote('diagram'), 'general']);
+    expect(notes).toEqual([visualTargetNote('diagram or figure'), 'general']);
     expect(jobs.map((job) => job.brief.type)).toEqual(['plot']);
+  });
+
+  it('adds nothing when the tutor made a block the word can stand for, so one schema stays one block', async () => {
+    const answer = `Prose.\n\n${fence('v1', 'figure')}`;
+    const { notes, result } = await run([request('diagram')], { question: 'Fais un seul schéma du pendule.', answer });
+    expect(notes).toEqual([]);
+    expect(result).toMatchObject({ requested: 0, targets: [] });
+  });
+
+  it('stops at the first timeout', async () => {
+    const generate = vi.fn((_messages: ProviderMessage[], options: { signal?: AbortSignal }) => new Promise<never>((_resolve, reject) => options.signal?.addEventListener('abort', () => reject(new Error('aborted')))));
+    const result = await decideVisuals(() => ({ generate, supportsStructuredOutputs: true }) as unknown as LLMProvider, { question: 'Fais un graphique, ajoute un arbre et termine par un quiz.', answer: 'Prose.' }, { deadlineMs: 5, onRequest: () => {} });
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(result.error).toMatch(/timed out/);
+  });
+
+  it('spends at most two deadlines on a sequence whose calls each just make it', async () => {
+    let clock = 1000;
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    try {
+      const generate = vi.fn(async () => { clock += 90; return { content: '{"visual":false}', model: 'm' }; });
+      await decideVisuals(() => ({ generate, supportsStructuredOutputs: true }) as unknown as LLMProvider, { question: 'Fais deux graphiques, ajoute un arbre et termine par un quiz.', answer: 'Prose.' }, { deadlineMs: 100, onRequest: () => {} });
+      expect(generate).toHaveBeenCalledTimes(3);
+    } finally { now.mockRestore(); }
   });
 
   it('makes the one general call when nothing is named', async () => {

@@ -2,7 +2,7 @@ import type { LLMProvider, ProviderMessage, ProviderResponseFormat } from './llm
 import { redactContextImages } from './context-text';
 import { visualDecisionResponseFormat, visualResponseFormat } from './teaching-schemas';
 import { diagnoseTeachingVisual, type TeachingVisual } from './teaching-visuals';
-import { appendVisualRequest, asksForVisual, hasVisualFence, jobFromMarkdown, missingArtefacts, parseVisualBrief, refusesVisual, prepareTutorMarkdown, replaceVisualFence, type VisualBrief, type VisualJob, type VisualType } from './visual-brief';
+import { appendVisualRequest, hasVisualFence, jobFromMarkdown, missingArtefacts, parseVisualBrief, refusesVisual, prepareTutorMarkdown, replaceVisualFence, requestsVisual, type VisualBrief, type VisualJob, type VisualType } from './visual-brief';
 import { checkVisualAgainstBrief, disagreeingChecks } from './visual-checks';
 import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES, visualTargetNote } from '../prompts';
 
@@ -19,7 +19,7 @@ export interface VisualJobResult { visual: TeachingVisual | null; attempts: numb
  * refused visuals and now asks for one, the note says the refusal has ended. Without a refusal it is the plain reminder.
  */
 export function tutorNote(question: string, earlierLearnerTexts: string[]) {
-  return asksForVisual(question) && earlierLearnerTexts.some(refusesVisual) ? `${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}` : TUTOR_LENGTH_REMINDER;
+  return requestsVisual(question) && earlierLearnerTexts.some(refusesVisual) ? `${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}` : TUTOR_LENGTH_REMINDER;
 }
 
 export async function generateTutorProse(provider: LLMProvider, messages: ProviderMessage[], options: { maxTokens: number; signal?: AbortSignal; onText?: (text: string) => void }) {
@@ -117,6 +117,7 @@ export async function generateVisual(provider: LLMProvider, job: VisualJob, opti
 const invalidDecision = 'invalid decision';
 const LEARNER_MESSAGES_KEPT = 3;
 const LEARNER_MESSAGE_CHARACTERS = 300;
+const SEQUENCE_DEADLINES = 2;
 
 /** The decision call reads these for a standing refusal: only the latest few, redacted, and cut by code points. */
 const recentLearnerMessages = (messages: string[]) => messages.slice(-LEARNER_MESSAGES_KEPT).map((message) => [...redactContextImages(message)].slice(0, LEARNER_MESSAGE_CHARACTERS).join(''));
@@ -125,16 +126,16 @@ const present = (value: unknown) => value !== undefined && value !== null && val
 interface DecisionInput { question: string; answer: string; earlierVisuals?: string[]; earlierMessages?: string[] }
 
 /**
- * Asks once whether an answer should get a visual, or with a target whether it should get that type, which the learner
- * named. Every failure leaves the answer as it is.
+ * Asks once whether an answer should get a visual, or with a target whether it should get one of those types, which is
+ * what the word the learner used can mean. Every failure leaves the answer as it is.
  */
-export async function decideVisual(provider: LLMProvider, input: DecisionInput & { target?: VisualType }, options: { deadlineMs?: number; signal?: AbortSignal; id?: string } = {}): Promise<{ brief: VisualBrief | null; error?: string }> {
+export async function decideVisual(provider: LLMProvider, input: DecisionInput & { target?: VisualType[] }, options: { deadlineMs?: number; signal?: AbortSignal; id?: string } = {}): Promise<{ brief: VisualBrief | null; error?: string }> {
   const { target } = input;
   if (options.signal?.aborted) return { brief: null, error: stoppedMessage };
   try {
     const content = await generateWithin(
       provider,
-      [{ role: 'system', content: VISUAL_DECISION_PROMPT }, { role: 'user', content: JSON.stringify({ learnerMessage: redactContextImages(input.question).slice(0, 2000), tutorAnswer: redactContextImages(input.answer).slice(0, 6000), earlierVisuals: (input.earlierVisuals ?? []).map((item) => redactContextImages(item)), earlierLearnerMessages: recentLearnerMessages((target || asksForVisual(input.question)) && (input.earlierMessages ?? []).some(refusesVisual) ? [] : input.earlierMessages ?? []) }) }, ...(target ? [{ role: 'user' as const, content: visualTargetNote(target) }] : [])],
+      [{ role: 'system', content: VISUAL_DECISION_PROMPT }, { role: 'user', content: JSON.stringify({ learnerMessage: redactContextImages(input.question).slice(0, 2000), tutorAnswer: redactContextImages(input.answer).slice(0, 6000), earlierVisuals: (input.earlierVisuals ?? []).map((item) => redactContextImages(item)), earlierLearnerMessages: recentLearnerMessages(requestsVisual(input.question) && (input.earlierMessages ?? []).some(refusesVisual) ? [] : input.earlierMessages ?? []) }) }, ...(target ? [{ role: 'user' as const, content: visualTargetNote(target.join(' or ')) }] : [])],
       { maxTokens: VISUAL_MAX_TOKENS, ...(provider.supportsStructuredOutputs ? { responseFormat: visualDecisionResponseFormat(target) } : {}) },
       options,
     );
@@ -144,7 +145,7 @@ export async function decideVisual(provider: LLMProvider, input: DecisionInput &
     if (!value || typeof value !== 'object' || Array.isArray(value)) return { brief: null, error: invalidDecision };
     const decision = value as Record<string, unknown>;
     if (decision.visual === false) return { brief: null };
-    if (decision.visual !== true || (target && decision.type !== target)) return { brief: null, error: invalidDecision };
+    if (decision.visual !== true || (target && !target.includes(decision.type as VisualType))) return { brief: null, error: invalidDecision };
     const request: Record<string, unknown> = { id: options.id ?? 'auto-1', type: decision.type, intent: decision.intent, content: decision.content };
     for (const key of ['parameters', 'outputs', 'nodes', 'correctAnswer'] as const) if (present(decision[key])) request[key] = decision[key];
     const brief = parseVisualBrief(JSON.stringify(request));
@@ -158,17 +159,20 @@ export async function decideVisual(provider: LLMProvider, input: DecisionInput &
  * Every decision call an answer gets, one at a time: one for each artefact the learner named and the answer lacks, then
  * the general call if the answer still has no visual. The app and the benchmark both go through here. The provider is read
  * before each call, so course text never reaches one the learner has left. A failed call stops the rest: only an invalid
- * reply lets the next one go ahead.
+ * reply lets the next one go ahead. The whole sequence gets twice the deadline of one call, so it cannot hold a slot for
+ * minutes on calls that each just make it.
  */
-export async function decideVisuals(getProvider: () => LLMProvider | null, input: DecisionInput, options: { deadlineMs?: number; signal?: AbortSignal; onRequest: (job: VisualJob, markdown: string, target?: VisualType) => void }) {
+export async function decideVisuals(getProvider: () => LLMProvider | null, input: DecisionInput, options: { deadlineMs?: number; signal?: AbortSignal; onRequest: (job: VisualJob, markdown: string, target?: VisualType[]) => void }) {
   let markdown = input.answer, requested = 0, error: string | undefined;
   const targets = missingArtefacts(input.question, markdown);
-  const ask = async (target?: VisualType) => {
+  const endsAt = options.deadlineMs === undefined ? undefined : Date.now() + options.deadlineMs * SEQUENCE_DEADLINES;
+  const ask = async (target?: VisualType[]) => {
     const provider = getProvider();
-    if (!provider) return false;
+    const left = endsAt === undefined ? undefined : endsAt - Date.now();
+    if (!provider || (left !== undefined && left <= 0)) return false;
     let free = 1;
     while (jobFromMarkdown(markdown, `auto-${free}`)) free++;
-    const result = await decideVisual(provider, { ...input, answer: markdown, ...(target ? { target } : {}) }, { deadlineMs: options.deadlineMs, signal: options.signal, id: `auto-${free}` });
+    const result = await decideVisual(provider, { ...input, answer: markdown, ...(target ? { target } : {}) }, { deadlineMs: left === undefined ? undefined : Math.min(left, options.deadlineMs!), signal: options.signal, id: `auto-${free}` });
     error = result.error ?? error;
     if (result.brief) {
       const appended = appendVisualRequest(markdown, result.brief);
@@ -183,7 +187,7 @@ export async function decideVisuals(getProvider: () => LLMProvider | null, input
   let going = true;
   for (const target of targets) if (going) going = await ask(target);
   if (going && !hasVisualFence(markdown)) await ask();
-  return { markdown, requested, targets, ...(error === undefined ? {} : { error }) };
+  return { markdown, requested, targets: targets.map((types) => types.join('|')), ...(error === undefined ? {} : { error }) };
 }
 
 export async function runVisualJobs(provider: LLMProvider, jobs: VisualJob[], options: { deadlineMs?: number; signal?: AbortSignal; concurrency?: number; onResult: (brief: VisualBrief, result: VisualJobResult) => void }) {

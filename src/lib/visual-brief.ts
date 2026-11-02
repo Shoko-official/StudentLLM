@@ -280,8 +280,8 @@ const ASKS_FOR_VISUAL = [
 // "Make a chart in Python" asks for a program, not to be shown a picture; a diagram of some code is a real request.
 const CODE_TOOLS = 'python|matplotlib|plotly|seaborn|pandas|numpy|ggplot|tikz|latex|excel|javascript|typescript|matlab|sql';
 const CODE_REQUEST = new RegExp(`\\b(?:en|in|avec|with|using|via)\\s+(?:${CODE_TOOLS}|r)\\b`);
-// Without the language R: once lower-cased, "avec r de 0,2 a 1" is a variable far more often than a language.
-const NAMED_CODE_REQUEST = new RegExp(`\\b(?:en|in|avec|with|using|via)\\s+(?:${CODE_TOOLS})\\b`);
+// Without the languages R and C: once lower-cased, "avec r de 0,2 a 1" is a variable far more often than a language. "In C" is the one reading kept.
+const NAMED_CODE_REQUEST = new RegExp(`\\b(?:en|in|avec|with|using|via)\\s+(?:${CODE_TOOLS}|java|rust|php|react|html|css|c\\+\\+)(?![\\w+])|\\bin\\s+c\\b`);
 const REFUSES_VISUAL = [
   new RegExp(`\\bsans\\b[^.!?;\\n]{0,30}\\b(?:${VISUAL_NOUNS})\\b`),
   new RegExp(`\\bpas\\s+(?:de|d')\\s*(?:\\w+\\s+){0,2}(?:${VISUAL_NOUNS})\\b`),
@@ -325,93 +325,135 @@ export function asksForVisual(text: string): boolean {
   return asks && !REFUSES_VISUAL.some((pattern) => pattern.test(plain));
 }
 
-const NAMED_NOUNS = {
-  // A bar or pie diagram is a chart, so plot comes before diagram in the alternation.
-  plot: 'graphiques?|graphes?|courbes?|histogrammes?|diagrammes?\\s+(?:en\\s+(?:barres?|batons?|secteurs?)|circulaires?)|plots?|graphs?|charts?|curves?|histograms?',
-  diagram: 'schemas?|diagrammes?|arbres?|organigrammes?|logigrammes?|diagrams?|trees?|flowcharts?',
-  figure: 'figures?|dessins?|croquis|illustrations?|drawings?|sketch(?:es)?|pictures?',
-  quiz: 'quiz(?:zes)?|qcm|questions?\\s+a\\s+choix\\s+multiples?|multiple[- ]choice(?:\\s+(?:questions?|quiz(?:zes)?))?',
-};
-const NAMED_TYPES = ['plot', 'diagram', 'figure', 'quiz'] as const;
-// Adjectives may sit between the article and the noun. A preposition or an article there means the noun belongs to something else.
-const FILLER = "(?:(?!(?:de|du|des|d|of|que|qu|that|sur|on|about|pour|for|dans|in|a|an|to|au|aux|en|par|by|with|avec|sans|without|et|and|ou|or|entre|between|from|un|une|le|la|les|l|the)\\b)[\\p{L}\\d'-]+\\s+){0,3}?";
-const NAMED_NOUN = `(?:(${NAMED_NOUNS.plot})|(${NAMED_NOUNS.diagram})|(${NAMED_NOUNS.figure})|(${NAMED_NOUNS.quiz}))`;
-// "La figure est un carré" and "the graph's equation" name a thing to talk about, "la figure 3" one that already exists.
-const AFTER_NOUN = "(?![\\p{L}\\d'-])(?!\\s+(?:est|sont|is|are|has|have|ont|theory|theorie)\\b)(?!\\s+\\d)";
-const INDEFINITE = 'un|une|des|a|an|one|some|deux|trois|quatre|two|three|four|2|3|4';
-const ANY_ARTICLE = `${INDEFINITE}|le|la|les|l'|the|ce|cette|this|these`;
-// Asking for something: imperatives, "I want" and "finish with". Definite articles are fine after these.
-const WANTS = [
-  'fais|faire|faites|donn(?:e|es|er|ez)|ajout(?:e|es|er|ez)|rajout(?:e|es|er|ez)|inclu(?:s|e|re|ez)|cre(?:e|es|er|ez)|gener(?:e|es|er|ez)|propos(?:e|es|er|ez)|construi(?:s|re|sez)|prepar(?:e|es|er|ez)|met(?:s|tre|tez)|montr(?:e|es|er|ez)',
-  'show|make|give|create|generate|add|include|produce|build|prepare',
-  "je (?:veux|voudrais|souhaite|souhaiterais)|j'aimerais|on (?:veut|voudrait)|il (?:me |nous )?(?:faut|faudrait)|j'ai besoin d'|besoin d'|i want|i'd like|i would like|i'd love|i need|we need|we want",
-  'termin(?:e|es|er|ez)\\s+(?:par|avec|sur)|fini(?:s|r|ssez)\\s+(?:par|avec|sur)|conclu(?:s|e|re|ez)\\s+(?:par|avec|sur)|commenc(?:e|es|er|ez)\\s+par|(?:finish|end|close|conclude|wrap\\s+up|start)(?:ing)?\\s+(?:with|on)',
-  VISUAL_VERBS,
-].join('|');
-// Words that only join: a thing after them is wanted when it is indefinite ("with a diagram", not "with the graph").
-const JOINS = "avec|with|plus|puis|then|ensuite|enfin|finally|pour (?:finir|terminer|conclure)|a la fin|at the end|to (?:finish|end)|followed by|suivie? d'|ainsi qu'|as well as|along with";
-const PRONOUN = '(?:[ -](?:moi|nous|me|us))?';
-const REST = `${FILLER}${NAMED_NOUN}${AFTER_NOUN}`;
-const NAMED_PATTERNS = [
-  // "Donne-moi un résumé, un schéma": the verb may reach past one plain object.
-  new RegExp(`\\b(?:${WANTS})\\b${PRONOUN}[\\s,:]*(?:(?:${ANY_ARTICLE})\\s*${FILLER}[\\p{L}'-]+\\s*(?:,|\\bet\\b|\\band\\b)\\s*)??(${ANY_ARTICLE})\\s*${REST}`, 'gu'),
-  new RegExp(`\\b(?:${JOINS})[\\s,:]*(${INDEFINITE})\\s*${REST}`, 'gu'),
-  new RegExp(`\\b(?:${VISUAL_VERBS})\\b()[^.!?;\\n]{0,50}?\\b${NAMED_NOUN}${AFTER_NOUN}`, 'gu'),
-  // "Puis quiz": only this noun reads as a request without an article.
-  new RegExp(`\\b(?:${WANTS}|${JOINS})\\b${PRONOUN}[\\s,:]*()${FILLER}()()()(${NAMED_NOUNS.quiz})${AFTER_NOUN}`, 'gu'),
+// Each word and the block types that can stand for it, the one to ask for first. Schemas, figures and diagrams stand for
+// one another, and a graph can be a chart or a network. A bar diagram is a chart, so the chart words come first.
+const ARTEFACT_WORDS: { words: string; types: VisualType[] }[] = [
+  { words: 'graphiques?|courbes?|histogrammes?|diagrammes?\\s+(?:en\\s+(?:barres?|batons?|secteurs?)|circulaires?)|plots?|charts?|curves?|histograms?', types: ['plot'] },
+  { words: 'graphes?|graphs?', types: ['plot', 'diagram'] },
+  { words: 'schemas?|diagrammes?|diagrams?', types: ['diagram', 'figure'] },
+  { words: 'arbres?|trees?|organigrammes?|logigrammes?|flowcharts?', types: ['diagram'] },
+  { words: 'figures?|dessins?|croquis|illustrations?|drawings?|sketch(?:es)?|pictures?|visuels?|visuals?', types: ['figure', 'diagram'] },
+  { words: 'quiz(?:zes)?|qcm|questions?\\s+a\\s+choix\\s+multiples?|questions?\\s+de\\s+(?:quiz|qcm)|multiple[- ]choice(?:\\s+(?:questions?|quiz(?:zes)?))?', types: ['quiz'] },
 ];
-const LISTED_AFTER = new RegExp(`(?:,|\\bet\\b|\\band\\b|\\bplus\\b)\\s*(${INDEFINITE})\\s*${REST}`, 'gu');
+const ANY_ARTEFACT = ARTEFACT_WORDS.map(({ words }) => words).join('|');
+const typesOfWord = (word: string) => ARTEFACT_WORDS.find(({ words }) => new RegExp(`^(?:${words})$`).test(word))?.types ?? [];
+
+// The words a request can be made with. Each stands at the start of a clause: "le graphique montre", "tu as tracé", "why would you plot" and "how do I make" do not.
+const MAKE = "fais|faites|faisons|refais|refaites|donne|donnez|redonne|ajoute|ajoutez|rajoute|rajoutez|inclus|inclue|incluez|cree|creez|recree|genere|generez|propose|proposez|construis|construisez|prepare|preparez|mets|mettez|montre|montrez|fournis|fournissez|realise|realisez|etablis|etablissez|redige|redigez|ecris|ecrivez|produis|produisez|pose|posez|show|make|give|create|generate|add|include|produce|build|prepare|provide|write|redo|remake|ask|let's do|let's have";
+const DRAW = 'dessine|dessinez|redessine|trace|tracez|retrace|affiche|affichez|represente|representez|illustre|illustrez|draw|redraw|plot|sketch|display|illustrate|visuali[sz]e';
+const INFINITIVE = 'faire|refaire|donner|ajouter|rajouter|inclure|creer|generer|proposer|construire|preparer|mettre|montrer|fournir|realiser|etablir|rediger|ecrire|produire|poser|dessiner|redessiner|tracer|retracer|afficher|representer|illustrer|show|make|give|create|generate|add|include|produce|build|prepare|provide|write|redo|draw|redraw|plot|sketch|display|illustrate|visuali[sz]e';
+const MODAL = "peux[ -]tu|pourrais[ -]tu|tu peux|tu pourrais|pouvez[ -]vous|vous pouvez|pourriez[ -]vous|peut[ -]on|on peut|on pourrait|pourrait[ -]on|can you|could you|would you|will you|i want you to|i'd like you to|merci de";
+const SEE = '(?:\\s+to\\s+(?:see|have|get)|\\s+(?:voir|avoir|obtenir))?';
+const HAVE = `(?:je (?:veux|voudrais|souhaite|souhaiterais|aimerais)|j'aimerais|on (?:veut|voudrait)|i want|i'd like|i would like|i'd love|we want)${SEE}|on fait|il (?:me |nous )?(?:faut|faudrait)|j'ai besoin d'|besoin d'|i need|we need|(?:can|could|may) (?:i|we) (?:have|get|see)|(?:puis|pourrais)[ -]je (?:avoir|voir)|(?:peut|pourrait)[ -]on (?:avoir|voir)`;
+const FINISH = '(?:termine|terminez|finis|finissez|conclus|concluez|commence|commencez)\\s+(?:par|avec|sur)|(?:finish|end|close|conclude|start|wrap\\s+up)\\s+(?:with|on)';
+const JOIN = "puis|ensuite|then|plus|enfin|finally|maintenant|now|next|pour (?:finir|terminer|conclure)|a la fin|at the end|to (?:finish|end)|followed by|suivie? d'|ainsi qu'|as well as|along with";
+const MANNER = "sous forme d(?:e |')|a l'aide d(?:e |')|en utilisant|avec|with|using|as|via";
+const CONNECTOR = "et|puis|ensuite|mais|aussi|alors|donc|enfin|maintenant|and|then|but|also|so|now|finally|next|please|svp|stp|s'il te plait|s'il vous plait|ok|okay|bon|just|juste|d'abord|first|apres|ou|or|est-ce que|est ce que";
+const AT_CLAUSE_START = new RegExp(`(?:^|[,:(]|\\b(?:${CONNECTOR}))[\\s*_-]*$`);
+// A clause that already asks for something or for an explanation, which "with a diagram" can then complete.
+const OPENED = new RegExp(`(?:^|[,:(]\\s*|\\b(?:${CONNECTOR})\\s+)(?:explique[zr]?|explain|decris|decrivez|describe|presente[zr]?|present|resume[zr]?|summari[sz]e|detaille[zr]?|${MAKE}|${DRAW}|${MODAL}|${HAVE})\\b`);
+
+const INDEFINITE = 'un|une|des|a|an|one|some|deux|trois|quatre|two|three|four|another|2|3|4';
+const ANY_ARTICLE = `${INDEFINITE}|le|la|les|l'|the|ce|cette|this|these`;
+// Adjectives may sit between the article and the noun. A preposition or an article there means the noun belongs to something else.
+const FILLER = "(?:(?!(?:de|du|des|d|of|que|qu|that|sur|on|about|pour|for|dans|in|a|an|to|au|aux|en|par|by|with|avec|sans|without|et|and|ou|or|entre|between|from|un|une|le|la|les|l|the|binary|decision)\\b)[\\p{L}\\d'-]+\\s+){0,3}?";
+// What the noun belongs to when these follow: "the graph is connected", "the tree height", "la figure 3", "the plot bigger".
+const AFTER_NOUN = "(?![\\p{L}\\d'-])(?!\\s+(?:est|sont|is|are|was|were|has|have|ont|theory|theorie|equation|formula|height|apps?|applications?|classifiers?|bigger|smaller|larger|wider|ci-dessus|above|precedente?|previous|of\\s+what)\\b)(?!\\s+\\d)";
+const NOUN = `(?<noun>${ANY_ARTEFACT})${AFTER_NOUN}`;
+const OBJECT = `${FILLER}${NOUN}`;
+const PRONOUN = "(?:[ -](?:moi|nous|me|us)\\b|\\s+(?:pour moi|for me)\\b)?";
+// "Donne-moi un résumé, un schéma": the verb may reach past one plain object.
+const REACHING = `(?:(?:${ANY_ARTICLE})\\s*${FILLER}[\\p{L}'-]+\\s*(?:,|\\bet\\b|\\band\\b)\\s*)??`;
+const REQUEST_FORMS = [
+  { at: 'start', pattern: `\\b(?:${MAKE}|${DRAW}|${FINISH})\\b${PRONOUN}[\\s,:]*${REACHING}(?<count>${ANY_ARTICLE})\\s*${OBJECT}` },
+  { at: 'start', pattern: `\\b(?:${MODAL})(?:\\s+(?:me|nous|us)\\b|\\s+m')?\\s*(?:${INFINITIVE})\\b${PRONOUN}[\\s,:]*${REACHING}(?<count>${ANY_ARTICLE})\\s*${OBJECT}` },
+  { at: 'start', pattern: `\\b(?:${HAVE})(?:\\s|\\b)\\s*(?<count>${ANY_ARTICLE})\\s*${OBJECT}` },
+  { at: 'start', pattern: `\\b(?:${MAKE}|${FINISH}|${JOIN})\\b${PRONOUN}[\\s,:]*(?<noun>${ARTEFACT_WORDS[5].words})${AFTER_NOUN}` },
+  // "Sketch the forces in a diagram": only a drawing verb reaches a noun this way.
+  { at: 'start', pattern: `\\b(?:(?:${MODAL})(?:\\s+(?:me|nous|us)\\b|\\s+m')?\\s*)?(?:${DRAW}|${INFINITIVE})\\b[^.!?;\\n]{0,40}?\\b(?:in|on|sur|dans)\\s+(?<count>${INDEFINITE})\\s*${OBJECT}` },
+  { at: 'opened', pattern: `\\b(?:${JOIN})[\\s,:]*(?<count>${INDEFINITE})\\s*${OBJECT}` },
+  { at: 'opened', pattern: `\\b(?:${MANNER})\\s*(?<count>${INDEFINITE})\\s*${OBJECT}` },
+  { at: 'opened', pattern: `\\bsous forme d(?:e |')${OBJECT}` },
+].map(({ at, pattern }) => ({ at, pattern: new RegExp(pattern, 'gu') }));
+const LISTED_AFTER = new RegExp(`(?:,|\\bet\\b|\\band\\b|\\bplus\\b)\\s*(?<count>${INDEFINITE})\\s*${OBJECT}`, 'gu');
 const QUIZ_ME = /\b(?:quiz|test)\s+(?:me|us)\b|\b(?:interroge|teste|questionne)[ -](?:moi|nous)\b/g;
-const REFUSES_NAMED = /\b(?:sans|pas\s+de|pas\s+d'|no|without|ni)\s+(?:\w+\s+){0,2}(?:quiz|qcm|arbres?|trees?)\b|(?:^|[,;]\s*)not\s+(?:a|an)\s+(?:\w+\s+)?(?:quiz|tree)\b|\b(?:do not|don't|dont|never|stop)\s+(?:quiz|test)\b|\bne\s+me\s+(?:teste|interroge)\s+pas\b/;
-const QUESTION_START = /^\s*(?:how|why|what|what's|whats|when|where|which|who|comment|pourquoi|qu'est|quels?|quelles?|quand|combien|c'est quoi|que)\b/;
-// "Le graphique montre une courbe": the verb has a subject, so nobody is being asked for anything.
-const SUBJECT_BEFORE = /(?:^|\s)(?:le|la|les|l'|ce|cette|ces|mon|ma|mes|ton|ta|tes|son|sa|ses|notre|votre|leur|the|this|that|these|those|my|your|his|her|its|our|their)\s*[\p{L}'-]+(?:\s+[\p{L}'-]+)?\s+$/u;
+// A sentence that is only the thing: "Un schéma ?", "One chart only.", "Graphique de sin(x), merci." Anything that reads as a statement is out.
+const BARE_FORMS = [
+  new RegExp(`^[\\s*_-]*(?:(?:encore|just|juste|only|seulement)\\s+)?(?<count>${INDEFINITE})\\s*${OBJECT}(?<rest>.*)$`, 'su'),
+  new RegExp(`^[\\s*_-]*(?<noun>${ARTEFACT_WORDS.slice(0, 5).map(({ words }) => words).join('|')})(?=\\s+(?:de|du|des|d'|of)\\b)(?<rest>.*)$`, 'su'),
+];
+const BARE_REST = /^\s*(?:$|,|(?:de|du|des|d'|of|for|pour|sur|on|about|only|seule?|please|svp|stp|s'il|merci|thanks|a la|at the|interactifs?|interactives?)(?![\p{L}]))/u;
+const BARE_STATEMENT = /\b(?:est|sont|is|are|shows?|montre|donne|gives?|has|have|stands?|pourquoi|why|comment|how|what|quoi)\b/;
+const BARE_WORDS = 8;
+
 const COUNTS: Record<string, number> = { deux: 2, two: 2, 2: 2, trois: 3, three: 3, 3: 3, quatre: 4, four: 4, 4: 4 };
+// Other things these words mean.
+const OTHER_MEANINGS = /\bfigures? (?:de style|of speech|de rhetorique|of merit|for)\b|\bcourbes? de niveau\b/g;
+// Whoever is reported as asking: the course, the statement, the teacher. The learner is asking about it, not for it.
+const REPORTED = /\b(?:dit|disent|disait|demande|indique|stipule|says|said|states?|asks|reads|consigne|enonce)\b/;
+const REFUSES_NAMED = [
+  /\b(?:sans|pas\s+de|pas\s+d'|no|without|ni)\s+(?:\w+\s+){0,2}(?:quiz|qcm|arbres?|trees?)\b/,
+  /(?:^|[,;]\s*)not\s+(?:a|an)\s+(?:\w+\s+)?(?:quiz|tree)\b/,
+  /\b(?:do not|don't|dont|never|stop)\s+(?:quiz|test)\b|\bne\s+me\s+(?:teste|interroge)\s+pas\b/,
+  new RegExp(`\\b(?:do not|don't|dont|never|stop)\\s+(?:give|add|make|create|include|generate|build|write|show|draw|use|want|need)\\b[^.!?;,\\n]{0,25}\\b(?:${ANY_ARTEFACT})\\b`),
+  new RegExp(`\\b(?:inutile de|pas la peine de|pas besoin de|pas besoin d'|no need (?:to|for))[^.!?;,\\n]{0,25}\\b(?:${ANY_ARTEFACT})\\b`),
+  new RegExp(`\\b(?:evite[sz]?|avoid|skip|hold off on|aucune?)\\s+(?:\\w+\\s+){0,2}(?:${ANY_ARTEFACT})\\b`),
+  new RegExp(`\\bne\\s+(?:me\\s+|nous\\s+)?(?:fais|faites|donne|donnez|ajoute|ajoutez|mets|mettez|montre|montrez|trace|tracez|dessine|dessinez|propose|proposez|veux|voudrais)\\s+(?:surtout\\s+|plus\\s+)?pas\\b[^.!?;,\\n]{0,25}\\b(?:${ANY_ARTEFACT})\\b`),
+  new RegExp(`\\b(?:n'(?:ai|as|avons|avez)\\s+pas\\s+besoin|il ne faut pas)\\b[^.!?;,\\n]{0,25}\\b(?:${ANY_ARTEFACT})\\b`),
+];
 
-const STARTS_WITH_JOIN = new RegExp(`^(?:${JOINS})`);
-
-function wantedAt(prefix: string, match: string) {
-  if (/(?:\bet|\band|\bpuis|\bthen|\bmais|\bbut)\s+$/.test(prefix)) return true;
-  if (QUESTION_START.test(prefix) && !prefix.includes(',')) return false;
-  return STARTS_WITH_JOIN.test(match) || !SUBJECT_BEFORE.test(prefix);
+/** What the detector reads: quoted text gone, and a past participle no longer spelled like the imperative once accents go ("tracé", "trace"). */
+function requestText(text: string) {
+  const unquoted = text.replace(/^[ \t]*>.*$/gm, ' ').replace(/«[^»]*»|“[^”]*”|"[^"\n]*"/g, (quote) => (/\S\s+\S/.test(quote.slice(1, -1).trim()) ? ' ' : quote));
+  const marked = unquoted.toLowerCase().replace(/\p{L}+é(?:e?s?)(?!\p{L})/gu, (word) => (/^(?:re)?cr[ée]es?$/.test(word) ? word : 'participle'));
+  return plainMessage(marked);
 }
 
-export interface NamedArtefact { type: VisualType; count: number }
+export interface NamedArtefact { type: VisualType; count: number; also?: VisualType[] }
 
 /**
- * The artefact types a learner message asks for by name (French or English), in the order of the message. An explicit
- * count is kept for plots, diagrams, figures and quizzes; curves live inside a plot, so they never count as plots. This
- * only finds the name: a false positive costs one decision call, which the model can decline.
+ * The artefact types a learner message asks for by name (French or English), in the order of the message. A name is a
+ * request only as a request form plus the artefact: exclusions go first (a refusal, code, quoted or reported text), and
+ * a form stands at the start of a clause, so past mentions and questions about a thing never match. Doubtful wording
+ * does not fire, because the general decision call is still there. Curves live inside a plot, so they never count as plots.
  */
 export function namedArtefacts(text: string): NamedArtefact[] {
-  const plain = plainMessage(text).replace(/\bfigures? (?:de style|of speech)\b/g, ' ');
-  if (!plain.trim() || NAMED_CODE_REQUEST.test(plain) || REFUSES_NAMED.test(plain) || REFUSES_VISUAL.some((pattern) => pattern.test(plain))) return [];
-  const found = new Map<VisualType, { at: number; count: number }>();
-  const add = (type: VisualType, at: number, count: number) => {
+  const plain = requestText(text).replace(OTHER_MEANINGS, ' ');
+  if (!plain.trim() || NAMED_CODE_REQUEST.test(plain) || REFUSES_VISUAL.some((pattern) => pattern.test(plain)) || REFUSES_NAMED.some((pattern) => pattern.test(plain))) return [];
+  const found = new Map<VisualType, { at: number; count: number; also?: VisualType[] }>();
+  const add = (word: string, countWord: string | undefined, at: number) => {
+    const [type, ...also] = typesOfWord(word);
+    if (!type) return;
+    const count = /^(?:courbes?|curves?)$/.test(word) ? 1 : COUNTS[countWord ?? ''] ?? 1;
     const known = found.get(type);
-    found.set(type, { at: Math.min(known?.at ?? at, at), count: Math.max(known?.count ?? 1, count) });
+    found.set(type, { at: Math.min(known?.at ?? at, at), count: Math.max(known?.count ?? 1, count), ...(also.length ? { also } : {}) });
   };
   for (const sentence of plain.matchAll(/[^.!?;\n]+/g)) {
     const base = sentence.index, body = sentence[0];
+    if (REPORTED.test(body)) continue;
     let first = -1;
-    const read = (match: RegExpMatchArray, start: number) => {
-      const groups = match.slice(2, 6);
-      const index = groups.findIndex(Boolean);
-      if (index < 0) return false;
-      const type = NAMED_TYPES[index];
-      add(type, base + start + match.index!, /^(?:courbes?|curves?)$/.test(groups[index]) ? 1 : COUNTS[match[1]] ?? 1);
-      return true;
-    };
-    for (const pattern of NAMED_PATTERNS) {
+    for (const { at, pattern } of REQUEST_FORMS) {
       for (const match of body.matchAll(pattern)) {
-        if (wantedAt(body.slice(0, match.index), match[0]) && read(match, 0) && (first < 0 || match.index < first)) first = match.index;
+        const prefix = body.slice(0, match.index);
+        if (!AT_CLAUSE_START.test(prefix) && !(at === 'opened' && OPENED.test(prefix))) continue;
+        add(match.groups!.noun, match.groups!.count, base + match.index);
+        if (first < 0 || match.index < first) first = match.index;
       }
     }
-    if (first >= 0) for (const match of body.slice(first).matchAll(LISTED_AFTER)) read(match, first);
-    for (const match of body.matchAll(QUIZ_ME)) if (wantedAt(body.slice(0, match.index), match[0])) add('quiz', base + match.index, 1);
+    for (const form of BARE_FORMS) {
+      const match = form.exec(body);
+      if (!match || !BARE_REST.test(match.groups!.rest) || BARE_STATEMENT.test(match.groups!.rest) || body.trim().split(/\s+/).length > BARE_WORDS) continue;
+      add(match.groups!.noun, match.groups!.count, base);
+      if (first < 0) first = 0;
+    }
+    if (first >= 0) for (const match of body.slice(first).matchAll(LISTED_AFTER)) add(match.groups!.noun, match.groups!.count, base + first + match.index);
+    for (const match of body.matchAll(QUIZ_ME)) if (AT_CLAUSE_START.test(body.slice(0, match.index))) add('quiz', undefined, base + match.index);
   }
-  return [...found].sort(([, a], [, b]) => a.at - b.at).map(([type, { count }]) => ({ type, count }));
+  return [...found].sort(([, a], [, b]) => a.at - b.at).map(([type, { count, also }]) => ({ type, count, ...(also ? { also } : {}) }));
 }
+
+/** A real request for a visual: the general rule and the detector agree. Only this may end a refusal the learner made earlier. */
+export function requestsVisual(text: string) { return asksForVisual(text) && namedArtefacts(text).length > 0; }
 
 function visualTypesIn(markdown: string): VisualType[] {
   return scanFences(markdown).fences.flatMap((fence) => {
@@ -420,10 +462,21 @@ function visualTypesIn(markdown: string): VisualType[] {
   });
 }
 
-/** What the latest learner message names and the prepared answer does not hold, as far as the limit of automatic visuals allows. */
-export function missingArtefacts(question: string, markdown: string): VisualType[] {
+/**
+ * What the latest learner message names and the prepared answer does not hold, as far as the limit of automatic visuals
+ * allows: for each, the types that would do. A block of another type a word can mean satisfies it, so "un seul schéma" with a figure stays at one block.
+ */
+export function missingArtefacts(question: string, markdown: string): VisualType[][] {
   const held = visualTypesIn(markdown);
-  const missing = namedArtefacts(question).flatMap(({ type, count }) => Array.from({ length: Math.max(0, count - held.filter((item) => item === type).length) }, () => type));
+  const free = [...held];
+  const take = (types: VisualType[]) => {
+    const index = free.findIndex((type) => types.includes(type));
+    if (index >= 0) free.splice(index, 1);
+    return index >= 0;
+  };
+  const wanted = namedArtefacts(question).flatMap(({ type, also, count }) => Array.from({ length: count }, () => [type, ...(also ?? [])]));
+  // The exact type is taken first, so "a graph and a diagram" does not spend the diagram on the graph.
+  const missing = wanted.filter((types) => !take(types.slice(0, 1))).filter((types) => !take(types.slice(1)));
   return missing.slice(0, Math.max(0, MAX_AUTOMATIC_VISUALS - held.length));
 }
 

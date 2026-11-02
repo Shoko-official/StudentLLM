@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendVisualRequest, asksForVisual, refusesVisual, compactVisualFences, describeEarlierVisuals, hasVisualFence, jobFromMarkdown, MAX_AUTOMATIC_VISUALS, missingArtefacts, namedArtefacts, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, stripVisualNotes, visualFence } from './visual-brief';
+import { appendVisualRequest, asksForVisual, refusesVisual, compactVisualFences, describeEarlierVisuals, hasVisualFence, jobFromMarkdown, MAX_AUTOMATIC_VISUALS, missingArtefacts as findMissingArtefacts, namedArtefacts, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, stripVisualNotes, visualFence } from './visual-brief';
 import { parseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 import benchmark from '../../benchmarks/tutor/cases.json';
 
@@ -734,6 +734,7 @@ describe('namedArtefacts', () => {
 });
 
 describe('missingArtefacts', () => {
+  const missingArtefacts = (question: string, markdown: string) => findMissingArtefacts(question, markdown).map((types) => types.join('|'));
   const fence = (type: string, id = 'v1') => '```student-visual-request\n' + JSON.stringify({ id, type, intent: 'I', content: 'C' }) + '\n```';
 
   it('returns each named type with no request or visual, in the order of the message', () => {
