@@ -24,6 +24,7 @@ Examples must never use a topic from `benchmarks/tutor/`, because that would con
 | `chat.ts` | Educational chat, useful answers with missing evidence, provenance and technical checks |
 | `study.ts` | Study aids and their source-linked legacy visual format |
 | `visuals.ts` | Actual plot/diagram/figure/quiz capabilities, examples, limits and consistency checks |
+| `visual-decision.ts` | One-shot decision, after a tutor answer without a visual, on whether to request one and what it contains |
 | `structured-teaching.ts` | JSON sections response protocol for capable providers |
 | `context-data.ts` | Full-course or retrieved evidence as untrusted data |
 | `conversation-memory.ts` | Role-aware, extractive conversation compaction |

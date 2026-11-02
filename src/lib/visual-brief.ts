@@ -144,6 +144,14 @@ export function jobFromMarkdown(markdown: string, id: string): VisualJob | null 
   return jobsOf(markdown, new Map()).find((job) => job.brief.id === id) ?? null;
 }
 
+/** True when the prepared markdown holds a request or a direct fence; quoted and demoted fences do not count. */
+export function hasVisualFence(markdown: string) { return scanFences(markdown).fences.length > 0; }
+
+export function appendVisualRequest(markdown: string, brief: VisualBrief): { markdown: string; job: VisualJob | null } {
+  const next = markdown.trimEnd() + '\n\n' + fenceText(REQUEST, JSON.stringify(brief));
+  return { markdown: next, job: jobFromMarkdown(next, brief.id) };
+}
+
 export function replaceVisualFence(markdown: string, id: string, replacement: string) {
   const target = scanFences(markdown).fences.find((fence) => fence.language === REQUEST && parseVisualBrief(fence.raw)?.id === id);
   return target ? markdown.slice(0, target.start) + replacement + markdown.slice(target.end) : markdown;

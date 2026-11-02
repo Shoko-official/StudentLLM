@@ -41,7 +41,7 @@ it('sends all available course text when it fits, including later passages witho
   await user.click(screen.getByRole('tab', { name: /^Chat$/ }));
   await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), 'Explique le chapitre 0');
   await user.click(screen.getByRole('button', { name: /^Send$/ }));
-  await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
   const sourceData = generate.mock.calls[0][0].filter(message => message.role !== 'system').map(message => message.content).join('\n');
   expect(sourceData).toContain('REPERE_0'); expect(sourceData).toContain('REPERE_23');
   expect(generate.mock.calls[0][0][0].content).not.toContain('REPERE_23');

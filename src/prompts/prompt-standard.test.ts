@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { estimateContextTokens } from '../lib/chat-context';
 import { parseTeachingVisual } from '../lib/teaching-visuals';
 import { checkVisualAgainstBrief } from '../lib/visual-checks';
+import { decideVisual } from '../lib/teaching-generation';
 import { parseVisualBrief, VISUAL_TYPES } from '../lib/visual-brief';
-import { TUTOR_PROMPT, TUTOR_SYSTEM_PROMPT, VISUAL_MODULES, VISUAL_ROUTING_PROMPT } from './index';
+import { TUTOR_PROMPT, TUTOR_SYSTEM_PROMPT, VISUAL_DECISION_PROMPT, VISUAL_MODULES, VISUAL_ROUTING_PROMPT } from './index';
 
 const examples = (prompt: string): string[] => prompt.match(/<example>[\s\S]*?<\/example>/g) ?? [];
 const fences = (prompt: string, language: string) => Array.from(prompt.matchAll(new RegExp('```' + language + '\\n([\\s\\S]*?)\\n```', 'g')), (match) => match[1]);
@@ -11,7 +12,7 @@ const goodOutput = (example: string) => /<good_output>([\s\S]*?)<\/good_output>/
 const BENCHMARK_TOPICS = /taylor|loi binomiale|binomial distribution|half-life|demi-vie|sinusoid|rms voltage|peak-to-peak/i;
 
 describe('prompt standard: tutor prompts', () => {
-  const all = { tutor: TUTOR_PROMPT, routing: VISUAL_ROUTING_PROMPT, ...VISUAL_MODULES };
+  const all = { tutor: TUTOR_PROMPT, routing: VISUAL_ROUTING_PROMPT, decision: VISUAL_DECISION_PROMPT, ...VISUAL_MODULES };
 
   it.each(Object.entries(all))('%s has tagged examples with a reason and no forbidden content', (_name, prompt) => {
     expect(examples(prompt).length).toBeGreaterThanOrEqual(2);
@@ -27,6 +28,7 @@ describe('prompt standard: tutor prompts', () => {
   it('respects the size budgets', () => {
     expect(estimateContextTokens(TUTOR_SYSTEM_PROMPT)).toBeLessThanOrEqual(6000);
     for (const type of VISUAL_TYPES) expect(estimateContextTokens(VISUAL_MODULES[type])).toBeLessThanOrEqual(6000);
+    expect(estimateContextTokens(VISUAL_DECISION_PROMPT)).toBeLessThanOrEqual(3000);
   });
 
   it('keeps every visual example valid for the real parser, and each module on its type', () => {
@@ -53,6 +55,20 @@ describe('prompt standard: tutor prompts', () => {
     expect(briefs.length).toBeGreaterThanOrEqual(2);
     expect(briefs.every(Boolean)).toBe(true);
     for (const type of VISUAL_TYPES) expect(VISUAL_ROUTING_PROMPT).toContain(`\`${type}\``);
+  });
+
+  it('keeps every decision example valid through the real decision path', async () => {
+    const decisions = examples(VISUAL_DECISION_PROMPT);
+    expect(decisions.length).toBeGreaterThanOrEqual(2);
+    for (const example of decisions) {
+      const input = JSON.parse(/<input>([\s\S]*?)<\/input>/.exec(example)![1]);
+      expect(Object.keys(input)).toEqual(['learnerMessage', 'tutorAnswer']);
+      const good = goodOutput(example);
+      const generate = vi.fn(async () => ({ content: good, model: 'fixture' }));
+      const result = await decideVisual({ generate }, { question: input.learnerMessage, answer: input.tutorAnswer });
+      expect(result.error).toBeUndefined();
+      expect(result.brief === null).toBe(JSON.parse(good).visual === false);
+    }
   });
 
   it('keeps the established evidence and honesty rules', () => {

@@ -46,7 +46,7 @@ it('does not submit Enter while an IME composition is active', async () => {
   expect(screen.queryByLabelText('Your message')).not.toBeInTheDocument();
   expect(generate).not.toHaveBeenCalled();
   fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
-  await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
 });
 
 it('announces a pending answer and prevents duplicate submissions', async () => {

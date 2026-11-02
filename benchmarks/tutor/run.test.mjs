@@ -47,7 +47,7 @@ function run(args, { fake = {}, cwd = root, key = KEY, env: extra = {} } = {}) {
   delete env.NVIDIA_API_KEY;
   if (key) env.NVIDIA_API_KEY = key;
   const result = spawnSync(process.execPath, ['--import', fakeFetch, runner, ...args], { cwd, env, encoding: 'utf8', timeout: SLOW });
-  const counts = lines(stats).map((line) => JSON.parse(line)).at(-1) ?? { calls: 0, old: 0, prose: 0, visual: 0, times: [] };
+  const counts = lines(stats).map((line) => JSON.parse(line)).at(-1) ?? { calls: 0, old: 0, prose: 0, visual: 0, decision: 0, times: [] };
   return { code: result.status, stdout: result.stdout, stderr: result.stderr, counts };
 }
 const real = (out, cases, holdouts) => ['--cases', cases, ...(holdouts ? ['--holdouts', holdouts] : []), '--allow-dirty', '--out', out];
@@ -365,6 +365,28 @@ describe('real run', () => {
     expect(gateOf(out).details.perModel['nvidia/nemotron-3.5-lightning-30b-a3b'].failed.old).toBe(8);
     expect(result.counts.old).toBe(24);
     expect(existsSync(join(out, 'failures.jsonl'))).toBe(false);
+  }, SLOW);
+
+  it('asks the decision call after plain prose only, records it on the new arm, and adds the requested visual', () => {
+    const out = outDir();
+    const result = run(real(out, casesFile(), holdoutsFile()), { fake: { decide: true } });
+    const all = rows(out);
+    const definition = all.find((row) => row.kind === 'rate' && row.arm === 'new' && row.group === 'definitions');
+    expect(definition).toMatchObject({ requested: true, decision: { asked: true, requested: true } });
+    expect(all.filter((row) => row.arm === 'old').every((row) => row.decision === undefined)).toBe(true);
+    const asked = all.filter((row) => row.arm === 'new' && row.decision?.asked);
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((row) => row.kind === 'rate' && row.group === 'definitions')).toBe(true);
+    expect(all.filter((row) => row.arm === 'new' && row.kind === 'quality').every((row) => row.decision?.asked === false)).toBe(true);
+    expect(result.counts.decision).toBe(asked.length);
+  }, SLOW);
+
+  it('keeps the answer and records no request when the decision call declines', () => {
+    const out = outDir();
+    run(real(out, casesFile(), holdoutsFile()), {});
+    const definition = rows(out).find((row) => row.kind === 'rate' && row.arm === 'new' && row.group === 'definitions');
+    expect(definition).toMatchObject({ requested: false, decision: { asked: true, requested: false } });
+    expect(definition.failed).toBeUndefined();
   }, SLOW);
 
   it('keeps a call that hits the 120 s limit as a failed row with its real time, and counts it per arm', () => {

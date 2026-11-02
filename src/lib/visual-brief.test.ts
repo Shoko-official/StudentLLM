@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compactVisualFences, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, visualFence } from './visual-brief';
+import { appendVisualRequest, compactVisualFences, hasVisualFence, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, visualFence } from './visual-brief';
 import { parseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 
 const brief = { id: 'v1', type: 'quiz', intent: 'Check the idea', content: 'Ask about pressure' };
@@ -125,5 +125,35 @@ describe('compactVisualFences', () => {
   it('keeps an unreadable visual fence as it is', () => {
     const invalid = '```student-visual\n{"type":"plot","title":"Courbe"}\n```';
     expect(compactVisualFences(invalid)).toBe(invalid);
+  });
+});
+
+describe('hasVisualFence', () => {
+  it('is true for a request or a direct fence', () => {
+    expect(hasVisualFence('Text.\n\n' + request())).toBe(true);
+    expect(hasVisualFence('Text.\n\n' + direct(quiz))).toBe(true);
+  });
+
+  it('is false for plain prose, other code fences and demoted fences', () => {
+    expect(hasVisualFence('Plain prose.')).toBe(false);
+    expect(hasVisualFence('```python\nprint(1)\n```')).toBe(false);
+    expect(hasVisualFence('> ' + request().replace(/\n/g, '\n> '))).toBe(false);
+    expect(hasVisualFence('- item\n\n  ' + request().replace(/\n/g, '\n  '))).toBe(false);
+    expect(hasVisualFence('````text\n' + request() + '\n````')).toBe(false);
+  });
+
+  it('is false for a malformed request once the markdown is prepared', () => {
+    const prepared = prepareTutorMarkdown('Text.\n\n```student-visual-request\n{"id":"v1"}\n```').markdown;
+    expect(hasVisualFence(prepared)).toBe(false);
+  });
+});
+
+describe('appendVisualRequest', () => {
+  it('appends the request after the trimmed text and returns its job', () => {
+    const result = appendVisualRequest('Answer.\n\n  ', parseVisualBrief(JSON.stringify(brief))!);
+    expect(result.markdown).toBe('Answer.\n\n' + request());
+    expect(result.job).toMatchObject({ brief });
+    expect(result.job?.section).toContain('Answer.');
+    expect(hasVisualFence(result.markdown)).toBe(true);
   });
 });
