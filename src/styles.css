@@ -219,7 +219,7 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .chat-message.user .message-content { margin-top: 5px; }
 .chat-message.user .message-content p { white-space: pre-wrap; }
 .chat-message.user .message-role { color: var(--text); }
-.chat-message .rich-text table { display: block; max-width: 100%; overflow-x: auto; }
+.rich-text table { display: block; max-width: 100%; overflow-x: auto; }
 .chat-compose-area { flex: 0 0 auto; padding-top: 8px; background: var(--page); }
 .chat-composer { display: grid; gap: 8px; padding: 14px 16px 10px; border: 1px solid var(--field-border); border-radius: 14px; background: var(--surface); }
 .chat-composer:focus-within { border-color: var(--focus); }
@@ -344,7 +344,7 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .rich-text > :first-child { margin-top: 0; }
 .rich-text > :last-child { margin-bottom: 0; }
 .rich-text h1, .rich-text h2, .rich-text h3, .rich-text h4 { line-height: 1.25; letter-spacing: -.015em; }
-.rich-text h1 { font-size: 1.45em; }
+.rich-text h1 { font-size: 1.45em; margin: 0 0 .6em; }
 .rich-text h2 { font-size: 1.25em; }
 .rich-text h3 { font-size: 1.08em; }
 .rich-text p { margin: 0 0 1em; }
@@ -356,7 +356,7 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .rich-text pre { max-width: 100%; overflow: auto; margin: 1em 0; padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--code-surface); }
 .rich-text pre code { padding: 0; background: transparent; white-space: pre; }
 .rich-text table { width: 100%; margin: 1em 0; border-collapse: collapse; font-size: .94em; }
-.rich-text th, .rich-text td { padding: 8px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.rich-text th, .rich-text td { padding: 8px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: break-word; }
 .rich-text th { background: var(--surface-2); font-weight: 600; }
 .rich-text .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 6px 0; }
 .course-note-markdown { margin: 20px 0; }
