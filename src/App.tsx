@@ -161,6 +161,7 @@ const emptyLessonWorkspace: LessonWorkspace = {
 };
 
 const LARGE_BATCH_IMPORT = 60;
+const STREAMING_RENDER_MS = 50;
 const sourceAccept = 'audio/*,image/*,.pdf,.txt,.md,.html,.htm,.rtf,.docx,.pptx';
 const PREFERENCES_STORAGE_KEY = 'studentllm.preferences.v1';
 type PendingSourceRemoval = {
@@ -548,6 +549,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   const [generatingArtifact, setGeneratingArtifact] = useState<ArtifactKind | null>(null);
   const [actionError, setActionError] = useState('');
   const [chatError, setChatError] = useState<{ lessonId: string; message: string } | null>(null);
+  const [streamingAnswer, setStreamingAnswer] = useState<{ lessonId: string; text: string } | null>(null);
   const activeLessonIdRef = useRef(activeLessonId);
   activeLessonIdRef.current = activeLessonId;
   // Long-running work (transcription, extraction) must read the workspace as it is when it finishes, not as it was when it started.
@@ -2056,6 +2058,11 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
     setComposerValue('');
 
     setIsSending(true);
+    let streamingTimer: ReturnType<typeof setTimeout> | undefined;
+    const endStreaming = () => {
+      clearTimeout(streamingTimer);
+      setStreamingAnswer(null);
+    };
     try {
       const retrievalDocuments = await loadRetrievalDocuments();
       if (!localProvider) {
@@ -2082,8 +2089,20 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         embedder: retrievalEmbedder,
         redactImages: localProvider.redactEmbeddedImages,
       });
-      const result = await generateTutorProse(localProvider, prepared.messages, { maxTokens });
+      let streamedText = '';
+      const result = await generateTutorProse(localProvider, prepared.messages, {
+        maxTokens,
+        onText: (text) => {
+          streamedText = text;
+          streamingTimer ??= setTimeout(() => {
+            streamingTimer = undefined;
+            setStreamingAnswer({ lessonId: chatLessonId, text: streamedText });
+          }, STREAMING_RENDER_MS);
+        },
+      });
       const sourceDocuments = relatedContextLinks(prepared.evidence, message);
+      // Synchronous with the save below: both land in one React update, so the answer neither flashes nor doubles.
+      endStreaming();
       updateActiveWorkspace((current) => ({
         ...current,
         chat: [...current.chat, {
@@ -2108,6 +2127,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
       // the question back to the composer so it can be sent again with one key press.
       // The alert belongs to the course the question was asked in. If the student is still there, the question goes back to
       // the composer; if not, it stays in that course's history and the alert is waiting there.
+      endStreaming();
       setChatError({ lessonId: chatLessonId, message: aiFailure(error, 'The local provider could not answer this question.') });
       if (activeLessonIdRef.current === chatLessonId) {
         updateLessonWorkspace(chatLessonId, (current) => ({
@@ -3088,7 +3108,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
               </div>)}</div>
               {resources.length > 3 && <button className="text-action" onClick={() => setShowAllResources((value) => !value)}>{showAllResources ? 'Show fewer' : `Show ${resources.length - 3} more sources`}</button>}
             </section>}
-            {view === 'chat' && <VisualJobsContext.Provider value={visualControls}><CourseChat key={activeLessonId} messages={chat} sourceCount={resources.length} hasMaterial={Boolean(resources.length || transcript.length)} providerName={localProvider ? (usesNim(serviceSettings) ? 'NVIDIA NIM' : 'Local AI') : null} draft={composerValue} isSending={isSending} error={chatError?.lessonId === activeLessonId ? chatError.message : null} onDraftChange={(value) => { setComposerValue(value); if (chatError) setChatError(null); }} onSubmit={submitComposer} onOpenSources={() => setView('sources')} onOpenSettings={() => setShowSettingsPanel(true)} onOpenCitation={openCitation} /></VisualJobsContext.Provider>}
+            {view === 'chat' && <VisualJobsContext.Provider value={visualControls}><CourseChat key={activeLessonId} messages={chat} streamingText={streamingAnswer?.lessonId === activeLessonId ? streamingAnswer.text : null} sourceCount={resources.length} hasMaterial={Boolean(resources.length || transcript.length)} providerName={localProvider ? (usesNim(serviceSettings) ? 'NVIDIA NIM' : 'Local AI') : null} draft={composerValue} isSending={isSending} error={chatError?.lessonId === activeLessonId ? chatError.message : null} onDraftChange={(value) => { setComposerValue(value); if (chatError) setChatError(null); }} onSubmit={submitComposer} onOpenSources={() => setView('sources')} onOpenSettings={() => setShowSettingsPanel(true)} onOpenCitation={openCitation} /></VisualJobsContext.Provider>}
             {view === 'study' && <section className="study-view" id="view-panel-study" role="tabpanel" aria-labelledby="view-tab-study">
               <h2>Study materials</h2><p className="muted">Choose a format and build it from the material saved in this course.</p>
               {!hasStudyMaterial && <p className="study-empty-hint"><AnimatedIcon name="star" size={22} intro className="hint-icon" />Import notes or finish a transcription to enable study material generation.</p>}

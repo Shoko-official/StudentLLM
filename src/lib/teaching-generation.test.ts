@@ -27,6 +27,24 @@ describe('generateTutorProse', () => {
   });
 });
 
+describe('generateTutorProse streaming', () => {
+  it('passes onText to the provider and still prepares the result from the complete text', async () => {
+    const provider = replying('Prose.\n\n```student-visual-request\n{"id":"v1","type":"quiz","intent":"Check","content":"Ask"}\n```');
+    const onText = vi.fn();
+    const result = await generateTutorProse(provider, [], { maxTokens: 4096, onText });
+    expect(provider.generate.mock.calls[0][1]).toMatchObject({ maxTokens: 4096, onText });
+    expect(result.jobs).toHaveLength(1);
+    expect(result.markdown).toContain('student-visual-request');
+    expect(result.needsDecision).toBe(false);
+  });
+
+  it('leaves onText out when the caller has none', async () => {
+    const provider = replying('Prose.');
+    await generateTutorProse(provider, [], { maxTokens: 4096 });
+    expect(provider.generate.mock.calls[0][1]?.onText).toBeUndefined();
+  });
+});
+
 describe('generateTutorProse needsDecision', () => {
   const fence = '```';
   const request = `${fence}student-visual-request
