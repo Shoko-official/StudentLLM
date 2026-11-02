@@ -540,12 +540,96 @@ describe('generateVisual', () => {
     expect(repair.errors.join(' ')).toContain('answer must be a zero-based index');
   });
 
-  it('repairs when the visual contradicts the brief', async () => {
-    const provider = replying(JSON.stringify(quiz), JSON.stringify({ ...quiz, answer: 0 }));
-    const result = await generateVisual(provider, job({ correctAnswer: 'A' }));
-    expect(result.attempts).toBe(2);
-    expect(result.visual?.type).toBe('quiz');
-    expect(payload(provider, 1).errors[0]).toContain('keyed option');
+  describe('a quiz whose key differs from the answer in the request', () => {
+    const solved = (answer: number, explanation: string) => JSON.stringify({ ...quiz, options: ['30', '36', '48'], answer, explanation });
+    const brief = { correctAnswer: '36' };
+
+    it('asks once to recompute, stating both, and takes the reply when it agrees with itself', async () => {
+      const provider = replying(solved(2, 'On trouve 48.'), solved(1, 'Reprise : on trouve 36.'));
+      const result = await generateVisual(provider, job(brief));
+      expect(result.attempts).toBe(2);
+      expect(result.visual).toMatchObject({ answer: 1 });
+      expect(payload(provider, 1).disagreements[0]).toBe('the keyed option is "48", expected "36"');
+      expect(payload(provider, 1).task).toMatch(/either may be wrong/);
+      expect(payload(provider, 1).previousOutput).toContain('On trouve 48.');
+    });
+
+    it('keeps a key the builder stands by, even against the request', async () => {
+      const provider = replying(solved(2, 'On trouve 48.'), solved(2, 'On retrouve bien 48.'));
+      const result = await generateVisual(provider, job(brief));
+      expect(result).toMatchObject({ attempts: 2, errors: [], visual: { answer: 2, explanation: 'On retrouve bien 48.' } });
+      expect(result.unconfirmed[0]).toContain('expected "36"');
+      expect(provider.generate).toHaveBeenCalledTimes(2);
+    });
+
+    it('never takes a reply that keys the request against its own working', async () => {
+      const provider = replying(solved(2, 'On trouve 48.'), solved(1, 'On trouve toujours 48.'));
+      expect((await generateVisual(provider, job(brief))).visual).toMatchObject({ answer: 2, explanation: 'On trouve 48.' });
+    });
+
+    it('keeps the first quiz when the recheck fails or cannot be read', async () => {
+      const failing = vi.fn<LLMProvider['generate']>(async () => { throw new Error('busy'); }).mockResolvedValueOnce({ content: solved(2, 'On trouve 48.'), model: 'm' });
+      expect((await generateVisual({ generate: failing, supportsStructuredOutputs: true }, job(brief))).visual).toMatchObject({ answer: 2 });
+      expect((await generateVisual(replying(solved(2, 'On trouve 48.'), 'not json'), job(brief))).visual).toMatchObject({ answer: 2 });
+    });
+
+    it('fails when neither quiz agrees with itself', async () => {
+      const provider = replying(solved(2, 'On trouve 30.'), solved(0, 'On trouve 48.'));
+      const result = await generateVisual(provider, job(brief));
+      expect(result.visual).toBeNull();
+      expect(result.errors[0]).toMatch(/key and the explanation/);
+    });
+
+    it('makes no extra call when the key matches', async () => {
+      const provider = replying(solved(1, 'On trouve 36.'));
+      expect((await generateVisual(provider, job(brief))).attempts).toBe(1);
+    });
+  });
+
+  describe('a plot where nothing moves', () => {
+    const plotJob = (): VisualJob => ({ brief: { id: 'v1', type: 'plot', intent: 'Uniform motion', content: 'v(t)=v0, slider v0' }, section: 'Around.' });
+    const plot = (expression: string) => JSON.stringify({ type: 'plot', title: 'Speed', x: { min: 0, max: 10 }, parameters: [{ name: 'v0', label: 'v0', min: 0, max: 10, step: 1, value: 5 }], series: [{ label: 'Speed', expression }] });
+
+    it('asks once, says a truly constant curve stays, and keeps a plot the model repeats', async () => {
+      const provider = replying(plot('v0'), plot('v0'));
+      const result = await generateVisual(provider, plotJob());
+      expect(result).toMatchObject({ attempts: 2, errors: [], visual: { series: [{ expression: 'v0' }] } });
+      expect(provider.generate).toHaveBeenCalledTimes(2);
+      expect(payload(provider, 1).task).toMatch(/truly constant/);
+      expect(payload(provider, 1).disagreements[0]).toMatch(/If it is truly constant, keep it/);
+    });
+
+    it('takes a corrected curve', async () => {
+      const result = await generateVisual(replying(plot('v0'), plot('v0*x')), plotJob());
+      expect(result).toMatchObject({ attempts: 2, errors: [], unconfirmed: [], visual: { series: [{ expression: 'v0*x' }] } });
+    });
+
+    it('keeps the original plot when the repair fails or cannot be used, never no visual', async () => {
+      const failing = vi.fn<LLMProvider['generate']>(async () => { throw new Error('busy'); }).mockResolvedValueOnce({ content: plot('v0'), model: 'm' });
+      expect((await generateVisual({ generate: failing, supportsStructuredOutputs: true }, plotJob())).visual).toMatchObject({ series: [{ expression: 'v0' }] });
+      for (const reply of ['not json', plot('nope(')]) {
+        expect((await generateVisual(replying(plot('v0'), reply), plotJob())).visual).toMatchObject({ series: [{ expression: 'v0' }] });
+      }
+    });
+
+    it('still costs one call in all with a value the tutor gave that disagrees', async () => {
+      const checked: VisualJob = { ...plotJob(), brief: { ...plotJob().brief, checks: [{ output: 'Speed now', at: {}, expected: 7 }] } };
+      const flat = JSON.stringify({ ...JSON.parse(plot('v0')), outputs: [{ label: 'Speed now', expression: 'v0' }] });
+      const provider = replying(flat, flat);
+      const result = await generateVisual(provider, checked);
+      expect(provider.generate).toHaveBeenCalledTimes(2);
+      expect(result.visual).not.toBeNull();
+      expect(payload(provider, 1).disagreements).toHaveLength(2);
+    });
+
+    it('passes the notes along with a repair for real errors, without failing a plot for them', async () => {
+      const checked: VisualJob = { ...plotJob(), brief: { ...plotJob().brief, parameters: ['v0', 'a'] } };
+      const provider = replying(plot('v0'), JSON.stringify({ ...JSON.parse(plot('v0')), parameters: [...JSON.parse(plot('v0')).parameters, { name: 'a', label: 'a', min: 0, max: 1, step: 1, value: 0 }], outputs: [{ label: 'A', expression: 'a' }] }));
+      const result = await generateVisual(provider, checked);
+      expect(payload(provider, 1).errors.join(' ')).toMatch(/missing parameter "a".*never uses x/);
+      expect(result.visual).not.toBeNull();
+      expect(result.errors).toEqual([]);
+    });
   });
 
   it('stops after one failed repair and keeps the errors', async () => {

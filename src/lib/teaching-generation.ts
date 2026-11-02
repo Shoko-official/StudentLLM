@@ -3,12 +3,14 @@ import { redactContextImages } from './context-text';
 import { visualDecisionResponseFormat, visualResponseFormat } from './teaching-schemas';
 import { diagnoseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 import { appendVisualRequest, hasVisualFence, jobFromMarkdown, missingArtefacts, parseVisualBrief, refusesVisual, prepareTutorMarkdown, replaceVisualFence, requestsVisual, type VisualBrief, type VisualJob, type VisualType } from './visual-brief';
-import { checkVisualAgainstBrief, disagreeingChecks } from './visual-checks';
+import { checkVisualAgainstBrief, disagreeingChecks, quizAgreesWithItself, stillPlotNotes } from './visual-checks';
 import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES, visualTargetNote } from '../prompts';
 
 const VISUAL_MAX_TOKENS = 4096;
 const stoppedMessage = 'Visual generation was stopped.';
 const recheckTask = 'Recheck this visual against the request. The listed values disagree with values the tutor gave, and either side may be wrong. Correct the formula only if it is wrong, never bend a correct formula to match a value. Return the complete object.';
+const stillPlotTask = 'Recheck this plot against the request. Follow each listed note where it applies and keep what is right: a curve that is truly constant stays constant. Return the complete object.';
+const quizRecheckTask = 'Recheck this quiz. The option you keyed and the answer the tutor expected disagree, and either may be wrong. Solve the question again in explanation, then key the option equal to your result, even if it differs from the expected answer. Explanation, options and key must agree. Return the complete object.';
 const noAnswerMessage = 'The model returned no answer. Try again or choose another model in Settings.';
 const LEARNER_MESSAGE_FOR_PLOT_CHARACTERS = 2000;
 
@@ -44,7 +46,14 @@ function assess(output: string, brief: VisualBrief): { visual: TeachingVisual | 
   const { visual, errors } = diagnoseTeachingVisual(jsonObjectIn(output));
   if (!visual) return { visual: null, errors, disagreements: [] };
   const problems = checkVisualAgainstBrief(visual, brief);
-  return problems.length ? { visual: null, errors: problems, disagreements: [] } : { visual, errors: [], disagreements: disagreeingChecks(visual, brief) };
+  const notes = stillPlotNotes(visual);
+  return problems.length ? { visual: null, errors: [...problems, ...notes], disagreements: [] } : { visual, errors: [], disagreements: [...disagreeingChecks(visual, brief), ...notes] };
+}
+
+function recheckTaskFor(visual: TeachingVisual, brief: VisualBrief) {
+  if (visual.type === 'quiz') return quizRecheckTask;
+  if (!disagreeingChecks(visual, brief).length) return stillPlotTask;
+  return stillPlotNotes(visual).length ? `${recheckTask} ${stillPlotTask}` : recheckTask;
 }
 
 function attemptSignal(deadlineMs: number | undefined, parent: AbortSignal | undefined) {
@@ -100,11 +109,13 @@ export async function generateVisual(provider: LLMProvider, job: VisualJob, opti
   if (first.visual) {
     const kept: VisualJobResult = { visual: first.visual, attempts, errors: [], unconfirmed: first.disagreements };
     let rechecked: string;
-    try { rechecked = await ask({ task: recheckTask, previousOutput: output.slice(0, 16384), disagreements: first.disagreements }); }
+    try { rechecked = await ask({ task: recheckTaskFor(first.visual, brief), previousOutput: output.slice(0, 16384), disagreements: first.disagreements }); }
     catch { return options.signal?.aborted ? stopped(attempts) : kept; }
     if (options.signal?.aborted) return stopped(attempts);
     const second = assess(rechecked, brief);
-    return second.visual ? { visual: second.visual, attempts, errors: [], unconfirmed: second.disagreements } : kept;
+    // A reply that keys the expected answer against its own working has been pushed there, not convinced.
+    if (second.visual && quizAgreesWithItself(second.visual)) return { visual: second.visual, attempts, errors: [], unconfirmed: second.disagreements };
+    return quizAgreesWithItself(first.visual) ? kept : { visual: null, attempts, errors: ['the key and the explanation of the quiz disagree'], unconfirmed: [] };
   }
   let repaired: string;
   try { repaired = await ask({ task: 'Correct this visual. Fix every listed error and return the complete object.', invalidOutput: output.slice(0, 16384), errors: first.errors }); }

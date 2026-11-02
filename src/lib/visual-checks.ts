@@ -28,18 +28,43 @@ function plotProblems(visual: Plot, brief: VisualBrief) {
     const compute = compileExpression(series.expression);
     if (!plotSampleXs(visual.x).some((x) => Number.isFinite(compute?.({ ...defaults, x })))) errors.push(`series "${series.label}" has no finite value at the default parameters`);
   }
-  // A formula copied with a reading slider named like its variable, or readouts with typed-in values, parse and draw, but nothing moves.
-  const formulas = visual.series.flatMap((series) => (series.expression === undefined ? [] : [series.expression]));
-  if (formulas.length === visual.series.length && !formulas.some((formula) => namesIn(formula).includes('x'))) {
-    for (const series of visual.series) errors.push(`series "${series.label}" never uses x, so it draws a flat line: write the variable of the horizontal axis as x, even when a slider has the same name as that variable`);
-  }
-  const used = new Set([...formulas, ...outputs.map((item) => item.expression)].flatMap(namesIn));
-  for (const { name } of declared) if (!used.has(name)) errors.push(`slider "${name}" changes nothing: use it by name in a series or a readout, never its value typed as a number`);
   return errors;
 }
 
-/** Checks the tutor gave a plot's values for. A disagreement may come from either side, so it never rejects the plot on its own. */
+/**
+ * A formula copied with a reading slider named like its variable, or readouts with typed-in values, parse and draw, but
+ * nothing moves. A uniform speed or a direct current is a correct flat line, so these only ever ask, and never reject.
+ */
+export function stillPlotNotes(visual: TeachingVisual): string[] {
+  if (visual.type !== 'plot') return [];
+  const notes: string[] = [];
+  const formulas = visual.series.flatMap((series) => (series.expression === undefined ? [] : [series.expression]));
+  if (formulas.length === visual.series.length && !formulas.some((formula) => namesIn(formula).includes('x'))) {
+    for (const series of visual.series) notes.push(`series "${series.label}" never uses x, so it draws a flat line. If this curve is meant to vary along the horizontal axis, write that variable as x, even when a slider has the same name. If it is truly constant, keep it.`);
+  }
+  const used = new Set([...formulas, ...(visual.outputs ?? []).map((item) => item.expression)].flatMap(namesIn));
+  for (const { name } of visual.parameters ?? []) if (!used.has(name)) notes.push(`slider "${name}" changes nothing. If it should act on the plot, use it by name in a series or a readout, never its value typed as a number. Otherwise keep the plot.`);
+  return notes;
+}
+
+const numbersIn = (text: string) => (text.match(/\d+(?:[.,]\d+)?/g) ?? []).map((item) => Number(item.replace(',', '.')));
+
+/** Whether the numbers of the keyed option appear in the explanation, rounded or not. A key with no number cannot be compared, so it passes. */
+export function quizAgreesWithItself(visual: TeachingVisual): boolean {
+  if (visual.type !== 'quiz') return true;
+  const worked = numbersIn(visual.explanation);
+  return numbersIn(visual.options[visual.answer] ?? '').every((value) => worked.some((item) => Math.abs(item - value) <= Math.max(1e-9, Math.abs(value) * .01)));
+}
+
+/** Values the tutor gave for a plot, and the answer it gave for a quiz. A disagreement may come from either side, so it never rejects a visual on its own. */
 export function disagreeingChecks(visual: TeachingVisual, brief: VisualBrief): string[] {
+  if (visual.type === 'quiz') {
+    const keyed = visual.options[visual.answer];
+    const expected = brief.correctAnswer;
+    if (expected === undefined || simplified(keyed) === simplified(expected)) return [];
+    const accentOnly = normalized(keyed) === normalized(expected) && !visual.options.some((option, index) => index !== visual.answer && normalized(option) === normalized(keyed));
+    return accentOnly ? [] : [`the keyed option is "${keyed}", expected "${expected}"`];
+  }
   if (visual.type !== 'plot') return [];
   const errors: string[] = [];
   const declared = visual.parameters ?? [];
@@ -70,12 +95,6 @@ export function checkVisualAgainstBrief(visual: TeachingVisual, brief: VisualBri
   if (visual.type === 'quiz') {
     const errors: string[] = [];
     if (new Set(visual.options.map(simplified)).size !== visual.options.length) errors.push('quiz options must be distinct');
-    const keyed = visual.options[visual.answer];
-    const expected = brief.correctAnswer;
-    if (expected !== undefined && simplified(keyed) !== simplified(expected)) {
-      const accentOnly = normalized(keyed) === normalized(expected) && !visual.options.some((option, index) => index !== visual.answer && normalized(option) === normalized(keyed));
-      if (!accentOnly) errors.push(`the keyed option is "${keyed}", expected "${expected}"`);
-    }
     return errors;
   }
   return [];

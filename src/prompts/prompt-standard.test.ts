@@ -81,11 +81,19 @@ describe('prompt standard: tutor prompts', () => {
     }
     expect(VISUAL_MODULES.quiz).toContain('Write explanation before options');
     expect(VISUAL_MODULES.quiz).toContain('the choices in the request may be wrong');
+    expect(VISUAL_MODULES.quiz).toMatch(/correctAnswer/);
+    expect(VISUAL_MODULES.quiz).toMatch(/previousOutput and disagreements/);
   });
 
   it('teaches the plot builder a reading slider named like the axis, and the learner message', () => {
     expect(VISUAL_MODULES.plot).toContain('Curve written with a slider\'s name');
     expect(VISUAL_MODULES.plot).toContain('learnerMessage');
+    // The tutor may be correcting the learner: the words of the learner only fill what the request leaves out.
+    expect(VISUAL_MODULES.plot).toMatch(/only to supply/);
+    expect(VISUAL_MODULES.plot).toMatch(/The request wins for every formula/);
+    expect(VISUAL_MODULES.plot).not.toMatch(/follow learnerMessage/);
+    // A curve that is truly constant is not an error to correct.
+    expect(VISUAL_MODULES.plot).toMatch(/truly constant/);
     const collision = examples(VISUAL_MODULES.plot).map((example) => JSON.parse(goodOutput(example))).find((visual) => visual.parameters?.some((item: { name: string }) => item.name === 't'));
     expect(collision.series.every((item: { expression: string }) => /\bx\b/.test(item.expression))).toBe(true);
     expect(collision.outputs.some((item: { expression: string }) => /\bt\b/.test(item.expression))).toBe(true);
