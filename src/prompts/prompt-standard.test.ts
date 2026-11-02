@@ -9,7 +9,7 @@ import { TUTOR_PROMPT, TUTOR_SYSTEM_PROMPT, VISUAL_DECISION_PROMPT, VISUAL_MODUL
 const examples = (prompt: string): string[] => prompt.match(/<example>[\s\S]*?<\/example>/g) ?? [];
 const fences = (prompt: string, language: string) => Array.from(prompt.matchAll(new RegExp('```' + language + '\\n([\\s\\S]*?)\\n```', 'g')), (match) => match[1]);
 const goodOutput = (example: string) => /<good_output>([\s\S]*?)<\/good_output>/.exec(example)![1].trim();
-const BENCHMARK_TOPICS = /taylor|loi binomiale|binomial distribution|half-life|demi-vie|sinusoid|rms voltage|peak-to-peak/i;
+const BENCHMARK_TOPICS = /taylor|loi binomiale|binomial distribution|half-life|demi-vie|sinusoid|rms voltage|peak-to-peak|supply and demand|offre et demande|water cycle|cycle de l.eau|binary search|photosynth|prime number|nombre premier|ecosystem|[ée]cosyst[eè]me|reaction rate|vitesse d.une r[ée]action|pression.*profondeur|pressure.*depth/i;
 
 describe('prompt standard: tutor prompts', () => {
   const all = { tutor: TUTOR_PROMPT, routing: VISUAL_ROUTING_PROMPT, decision: VISUAL_DECISION_PROMPT, ...VISUAL_MODULES };
@@ -69,6 +69,11 @@ describe('prompt standard: tutor prompts', () => {
       expect(result.error).toBeUndefined();
       expect(result.brief === null).toBe(JSON.parse(good).visual === false);
     }
+  });
+
+  it('tells the plot builder that a disagreeing value may be the tutor\'s mistake', () => {
+    expect(VISUAL_MODULES.plot).toContain('It may instead contain previousOutput and disagreements: those values disagree with values the tutor gave, and either side may be wrong.');
+    expect(VISUAL_MODULES.plot).toContain('Never bend a correct formula to match a value.');
   });
 
   it('keeps the established evidence and honesty rules', () => {

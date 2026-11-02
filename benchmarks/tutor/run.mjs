@@ -263,12 +263,9 @@ async function runNew(provider, prompt, withVisuals) {
   let decision = { asked: false };
   if (tutor.needsDecision) {
     const decided = await newPipeline.decideVisual(provider, { question: prompt, answer: tutor.markdown }, { deadlineMs: VISUAL_DEADLINE_MS });
-    decision = { asked: true, requested: decided.brief !== null, ...(decided.error === undefined ? {} : { error: decided.error }) };
-    if (decided.brief) {
-      const appended = briefs.appendVisualRequest(content, decided.brief);
-      content = appended.markdown;
-      if (appended.job) jobs.push(appended.job);
-    }
+    const appended = decided.brief ? briefs.appendVisualRequest(content, decided.brief) : null;
+    if (appended?.job) { content = appended.markdown; jobs.push(appended.job); }
+    decision = { asked: true, requested: Boolean(appended?.job), ...(decided.error === undefined ? {} : { error: decided.error }) };
   }
   if (withVisuals) {
     await newPipeline.runVisualJobs(provider, jobs, { deadlineMs: VISUAL_DEADLINE_MS, concurrency: 2, onResult: (brief, result) => {

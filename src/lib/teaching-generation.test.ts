@@ -137,6 +137,12 @@ describe('decideVisual', () => {
     expect(stopped.error).toBe('Visual generation was stopped.');
   });
 
+  it('returns no brief when the stop arrives during the call, even if the reply is a valid decision', async () => {
+    const controller = new AbortController();
+    const generate = vi.fn<LLMProvider['generate']>(async () => { controller.abort(); return { content: JSON.stringify(request), model: 'fixture' }; });
+    expect(await decide({ generate }, input, { signal: controller.signal })).toEqual({ brief: null, error: 'Visual generation was stopped.' });
+  });
+
   it('makes no call when already stopped', async () => {
     const controller = new AbortController();
     controller.abort();
@@ -281,8 +287,10 @@ describe('generateVisual', () => {
       expect(result).toEqual({ visual: plot(), attempts: 2, errors: [], unconfirmed: [] });
       const recheck = payload(provider, 1);
       expect(recheck.task).toBe('Recheck this visual against the request. The listed values disagree with values the tutor gave, and either side may be wrong. Correct the formula only if it is wrong, never bend a correct formula to match a value. Return the complete object.');
-      expect(recheck.errors).toEqual([disagreement]);
-      expect(recheck.invalidOutput).toBe(JSON.stringify(wrong));
+      expect(recheck.disagreements).toEqual([disagreement]);
+      expect(recheck.previousOutput).toBe(JSON.stringify(wrong));
+      expect(recheck).not.toHaveProperty('errors');
+      expect(recheck).not.toHaveProperty('invalidOutput');
     });
 
     it('keeps the second plot with its own disagreements and makes no third call', async () => {
@@ -332,6 +340,17 @@ describe('generateVisual', () => {
       const generate = vi.fn<LLMProvider['generate']>(async () => { controller.abort(); return { content: JSON.stringify(wrong), model: 'fixture' }; });
       expect(await generateVisual({ generate }, plotJob(), { signal: controller.signal })).toEqual({ visual: null, attempts: 1, errors: ['Visual generation was stopped.'], unconfirmed: [] });
       expect(generate).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns no visual when the parent stops during the repair of an invalid first output', async () => {
+      const controller = new AbortController();
+      let calls = 0;
+      const generate = vi.fn<LLMProvider['generate']>(async () => {
+        if (++calls === 1) return { content: '{"bad":', model: 'fixture' };
+        controller.abort();
+        return { content: JSON.stringify(plot()), model: 'fixture' };
+      });
+      expect(await generateVisual({ generate }, plotJob(), { signal: controller.signal })).toEqual({ visual: null, attempts: 2, errors: ['Visual generation was stopped.'], unconfirmed: [] });
     });
 
     it('shows a repaired plot with unconfirmed disagreements after an invalid first output', async () => {

@@ -123,7 +123,7 @@ At most one repair call per visual. It receives the type module, the brief, the 
 - At most 4 visual jobs per answer run automatically, in reading order. Further requests stay as retryable placeholders, so no call is spent unasked.
 - 2 visual calls at a time.
 - Hosted NVIDIA: a 120 s deadline per visual or decision attempt, enforced with an `AbortSignal`. This is the limit of the tutor call: at 60 s Mistral Large 4 lost both of its quizzes in round 2.
-- Local providers: the existing provider timeout applies, because a local CPU model cannot meet 60 s.
+- Local providers: the provider's own timeout applies, because a local CPU model cannot meet the hosted limit.
 - The tutor call keeps its current token budget and failure behaviour.
 
 ### Visual decision call
