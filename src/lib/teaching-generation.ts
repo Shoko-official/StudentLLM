@@ -2,7 +2,7 @@ import type { LLMProvider, ProviderMessage, ProviderResponseFormat } from './llm
 import { redactContextImages } from './context-text';
 import { visualDecisionResponseFormat, visualResponseFormat } from './teaching-schemas';
 import { diagnoseTeachingVisual, type TeachingVisual } from './teaching-visuals';
-import { asksForVisual, hasVisualFence, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, type VisualBrief, type VisualJob } from './visual-brief';
+import { asksForVisual, hasVisualFence, parseVisualBrief, refusesVisual, prepareTutorMarkdown, replaceVisualFence, type VisualBrief, type VisualJob } from './visual-brief';
 import { checkVisualAgainstBrief, disagreeingChecks } from './visual-checks';
 import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
 
@@ -13,11 +13,18 @@ const noAnswerMessage = 'The model returned no answer. Try again or choose anoth
 
 export interface VisualJobResult { visual: TeachingVisual | null; attempts: number; errors: string[]; unconfirmed: string[] }
 
+/**
+ * The note sent after the question. A history that holds a refusal outweighs the system prompt, so when the learner has
+ * refused visuals and now asks for one, the note says the refusal has ended. Without a refusal it is the plain reminder.
+ */
+export function tutorNote(question: string, earlierLearnerTexts: string[]) {
+  return asksForVisual(question) && earlierLearnerTexts.some(refusesVisual) ? `${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}` : TUTOR_LENGTH_REMINDER;
+}
+
 export async function generateTutorProse(provider: LLMProvider, messages: ProviderMessage[], options: { maxTokens: number; signal?: AbortSignal; onText?: (text: string) => void }) {
   // The system prompt alone did not hold the length on small models: a note after the question does. It is never saved or shown.
-  // A history that holds a refusal outweighs the system prompt, so a message that asks for a visual says the refusal has ended.
-  const latest = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
-  const note = asksForVisual(latest) ? `${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}` : TUTOR_LENGTH_REMINDER;
+  const learner = messages.filter((message) => message.role === 'user' && !message.content.includes('"kind":"course_evidence"')).map((message) => message.content);
+  const note = tutorNote(learner.at(-1) ?? '', learner.slice(0, -1));
   const response = await provider.generate([...messages, { role: 'user', content: note }], options);
   const { markdown, jobs } = prepareTutorMarkdown(response.content.trim());
   const readable = jobs.reduce((text, job) => replaceVisualFence(text, job.brief.id, ''), markdown);
@@ -117,7 +124,7 @@ export async function decideVisual(provider: LLMProvider, input: { question: str
   try {
     const content = await generateWithin(
       provider,
-      [{ role: 'system', content: VISUAL_DECISION_PROMPT }, { role: 'user', content: JSON.stringify({ learnerMessage: redactContextImages(input.question).slice(0, 2000), tutorAnswer: redactContextImages(input.answer).slice(0, 6000), earlierVisuals: (input.earlierVisuals ?? []).map((item) => redactContextImages(item)), earlierLearnerMessages: recentLearnerMessages(asksForVisual(input.question) ? [] : input.earlierMessages ?? []) }) }],
+      [{ role: 'system', content: VISUAL_DECISION_PROMPT }, { role: 'user', content: JSON.stringify({ learnerMessage: redactContextImages(input.question).slice(0, 2000), tutorAnswer: redactContextImages(input.answer).slice(0, 6000), earlierVisuals: (input.earlierVisuals ?? []).map((item) => redactContextImages(item)), earlierLearnerMessages: recentLearnerMessages(asksForVisual(input.question) && (input.earlierMessages ?? []).some(refusesVisual) ? [] : input.earlierMessages ?? []) }) }],
       { maxTokens: VISUAL_MAX_TOKENS, ...(provider.supportsStructuredOutputs ? { responseFormat: visualDecisionResponseFormat() } : {}) },
       options,
     );

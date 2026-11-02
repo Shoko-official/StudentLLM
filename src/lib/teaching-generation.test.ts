@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { decideVisual, generateTutorProse, generateVisual, runVisualJobs } from './teaching-generation';
+import { decideVisual, generateTutorProse, tutorNote, generateVisual, runVisualJobs } from './teaching-generation';
 import type { LLMProvider, ProviderMessage } from './llm-provider';
 import type { VisualJob } from './visual-brief';
 import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
@@ -22,7 +22,7 @@ describe('generateTutorProse', () => {
     expect(result.model).toBe('fixture');
   });
 
-  it('adds the visual request sentence to the note only when the latest learner message asks for a visual, and never keeps it', async () => {
+  it('adds the visual request sentence to the note only when the latest message asks for a visual after a refusal, and never keeps it', async () => {
     const asked = async (history: ProviderMessage[]) => {
       const provider = replying('An answer.');
       const result = await generateTutorProse(provider, history, { maxTokens: 4096 });
@@ -31,12 +31,22 @@ describe('generateTutorProse', () => {
       return (provider.generate.mock.calls[0][0] as ProviderMessage[]).at(-1)!.content;
     };
     const system: ProviderMessage = { role: 'system', content: 'S' };
-    expect(await asked([system, { role: 'user', content: 'Finalement, montre-moi un schéma du cycle.' }])).toBe(`${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}`);
-    expect(await asked([system, { role: 'user', content: 'Why does it happen?' }])).toBe(TUTOR_LENGTH_REMINDER);
-    // An earlier request does not count: only the latest learner message does.
-    expect(await asked([system, { role: 'user', content: 'Show me a diagram.' }, { role: 'assistant', content: 'Here.' }, { role: 'user', content: 'And why?' }])).toBe(TUTOR_LENGTH_REMINDER);
-    expect(await asked([system, { role: 'user', content: 'No diagrams please.' }, { role: 'assistant', content: 'Ok.' }, { role: 'user', content: 'Actually, show me a diagram of it.' }])).toBe(`${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}`);
-    expect(await asked([system, { role: 'user', content: 'Sans schéma, explique.' }])).toBe(TUTOR_LENGTH_REMINDER);
+    const user = (content: string): ProviderMessage => ({ role: 'user', content });
+    const reply: ProviderMessage = { role: 'assistant', content: 'Ok.' };
+    const lifted = `${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}`;
+    expect(await asked([system, user('No diagrams please.'), reply, user('Actually, show me a diagram of it.')])).toBe(lifted);
+    expect(await asked([system, user('Sans schéma, explique.'), reply, user('Finalement, montre-moi un schéma du cycle.')])).toBe(lifted);
+    // Without a refusal in the conversation the call is what it always was.
+    expect(await asked([system, user('Finalement, montre-moi un schéma du cycle.')])).toBe(TUTOR_LENGTH_REMINDER);
+    expect(await asked([system, user('Why does it happen?'), reply, user('Show me a diagram of it.')])).toBe(TUTOR_LENGTH_REMINDER);
+    // A refusal alone, an earlier request alone, or a message that holds both do not lift anything.
+    expect(await asked([system, user('Sans schéma, explique.')])).toBe(TUTOR_LENGTH_REMINDER);
+    expect(await asked([system, user('No diagrams please.'), reply, user('Why does it happen?')])).toBe(TUTOR_LENGTH_REMINDER);
+    expect(await asked([system, user('No diagrams please.'), reply, user('Show a table, not a diagram.')])).toBe(TUTOR_LENGTH_REMINDER);
+    expect(await asked([system, user('Show me a diagram.'), reply, user('No diagrams please.'), reply, user('And why?')])).toBe(TUTOR_LENGTH_REMINDER);
+    // Course text sent as evidence is not the learner.
+    const evidence = user('Evidence {"kind":"course_evidence","documents":[{"text":"drawn without a diagram"}]}');
+    expect(await asked([system, evidence, user('Show me a diagram of it.')])).toBe(TUTOR_LENGTH_REMINDER);
   });
 
   it('sends the length reminder last, leaves the other messages as they were, and keeps it out of the result', async () => {
@@ -155,17 +165,19 @@ describe('decideVisual', () => {
     expect(JSON.stringify(sent)).not.toContain('AAAA');
   });
 
-  it('drops the earlier learner messages only when this message asks for a visual, so a past refusal cannot match', async () => {
-    const earlier = ['No diagrams, please.', 'And then?'];
-    const sentFor = async (question: string) => {
+  it('drops the earlier learner messages only when this message asks for a visual and an earlier one refused, so a past refusal cannot match', async () => {
+    const sentFor = async (question: string, earlier: string[]) => {
       const provider = replying('{"visual":false}');
       await decide(provider, { ...input, question, earlierMessages: earlier });
       return JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content).earlierLearnerMessages;
     };
-    expect(await sentFor('Actually, show me a diagram of the cycle.')).toEqual([]);
-    expect(await sentFor('Finalement, montre-moi un schéma.')).toEqual([]);
-    expect(await sentFor('Why does it happen?')).toEqual(earlier);
-    expect(await sentFor('No diagram, but show me the numbers.')).toEqual(earlier);
+    const refused = ['No diagrams, please.', 'And then?'];
+    expect(await sentFor('Actually, show me a diagram of the cycle.', refused)).toEqual([]);
+    expect(await sentFor('Finalement, montre-moi un schéma.', ['Sans schéma.', 'Et ensuite ?'])).toEqual([]);
+    expect(await sentFor('Why does it happen?', refused)).toEqual(refused);
+    expect(await sentFor('No diagram, but show me the numbers.', refused)).toEqual(refused);
+    // No refusal before: what was sent before is sent still.
+    expect(await sentFor('Show me a diagram of the cycle.', ['Why?', 'And then?'])).toEqual(['Why?', 'And then?']);
   });
 
   it('never carries the length reminder, which belongs to the tutor answer call only', async () => {
@@ -616,5 +628,15 @@ describe('runVisualJobs', () => {
       expect(provider.generate).toHaveBeenCalledTimes(3);
       expect(error).toHaveBeenCalled();
     } finally { error.mockRestore(); }
+  });
+});
+
+describe('tutorNote', () => {
+  it('is the plain reminder unless the question asks for a visual and an earlier message refused one', () => {
+    const lifted = `${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}`;
+    expect(tutorNote('Show me a diagram of it.', ['No diagrams.'])).toBe(lifted);
+    expect(tutorNote('Show me a diagram of it.', ['Why?'])).toBe(TUTOR_LENGTH_REMINDER);
+    expect(tutorNote('Why?', ['No diagrams.'])).toBe(TUTOR_LENGTH_REMINDER);
+    expect(tutorNote('Show me a diagram of it.', [])).toBe(TUTOR_LENGTH_REMINDER);
   });
 });

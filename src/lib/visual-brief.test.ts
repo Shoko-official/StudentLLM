@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendVisualRequest, asksForVisual, compactVisualFences, describeEarlierVisuals, hasVisualFence, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, stripVisualNotes, visualFence } from './visual-brief';
+import { appendVisualRequest, asksForVisual, refusesVisual, compactVisualFences, describeEarlierVisuals, hasVisualFence, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, stripVisualNotes, visualFence } from './visual-brief';
 import { parseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 
 const brief = { id: 'v1', type: 'quiz', intent: 'Check the idea', content: 'Ask about pressure' };
@@ -450,6 +450,8 @@ describe('asksForVisual', () => {
     'Show me the curve for a larger k.',
     'Génère un diagramme de flux pour cet algorithme.',
     'Could you display a figure of the forces?',
+    'Montre-moi un petit schéma du cycle.',
+    'Show me a quick sketch of the forces.',
   ])('is true for %s', (text) => { expect(asksForVisual(text)).toBe(true); });
 
   it.each([
@@ -470,6 +472,33 @@ describe('asksForVisual', () => {
     'text only',
     '',
     'Why is the diagram in my textbook wrong?',
+    // Everyday verbs followed by a noun that is not the thing to be shown.
+    'Montre que la figure est un carré.',
+    'Show that the curve is convex.',
+    'Fais un résumé de la figure 3.',
+    'Make sense of this chart.',
+    'Include a figure of speech in my essay.',
+    'Crée une liste des figures de style.',
+    'Give me the definition of a graph.',
+    'Donne-moi la différence entre un graphe et un arbre.',
+    'Donne un exemple de graphe orienté.',
+    'Generate a graph theory proof.',
+    // A request for code, naming a language or a library.
+    'Fais un graphique avec matplotlib.',
+    'Build a bar chart in Python code.',
+    // A contrast: the same message refuses a visual.
+    'Fais un tableau, pas un graphique.',
+    'Montre-moi la formule, pas le graphique.',
+    "Montre-moi plutôt un tableau qu'un schéma.",
+    "Fais-moi un résumé au lieu d'un schéma.",
+    'Show a table, not a diagram.',
+    'Show me a table instead of a diagram.',
+    'Show me a table, I do not want a graph.',
+    "Draw a table, I don't need a diagram.",
+    'Show me the numbers, not a graph.',
+    'Give me the answer rather than a diagram.',
+    "Montre-moi le résultat, je ne veux pas de schéma.",
+    "Dessine le tableau, pas besoin d'un graphique.",
   ])('is false for %j', (text) => { expect(asksForVisual(text)).toBe(false); });
 
   it('ignores a request written inside code or inside an image reference', () => {
@@ -477,5 +506,46 @@ describe('asksForVisual', () => {
     expect(asksForVisual('Utilise `montre-moi un schéma` comme texte.')).toBe(false);
     expect(asksForVisual('![show me a diagram](https://example.com/a.png) Explain this.')).toBe(false);
     expect(asksForVisual('![x](a.png) Draw a diagram of it.')).toBe(true);
+  });
+});
+
+describe('refusesVisual', () => {
+  it.each([
+    'Sans schéma, explique le cycle.',
+    'Pas de graphique, juste le texte.',
+    'No diagram please, explain it.',
+    'Explain it without a chart.',
+    "Don't draw anything, just explain.",
+    'text only',
+    'Fais un tableau, pas un graphique.',
+    'Montre-moi la formule, pas le graphique.',
+    "Montre-moi plutôt un tableau qu'un schéma.",
+    "Fais-moi un résumé au lieu d'un schéma.",
+    'Show a table, not a diagram.',
+    'Show me a table instead of a diagram.',
+    'Show me a table, I do not want a graph.',
+    "Draw a table, I don't need a diagram.",
+    'Show me the numbers, not a graph.',
+    'Give me the answer rather than a diagram.',
+    "Je ne veux pas de schéma.",
+    "Pas besoin d'un graphique.",
+  ])('is true for %j', (text) => { expect(refusesVisual(text)).toBe(true); });
+
+  it.each([
+    'Montre-moi un schéma du cycle.',
+    'Actually, show me a diagram of it.',
+    'What does this graph mean?',
+    "J'ai besoin d'un schéma.",
+    'I need a diagram of the circuit.',
+    "I don't understand the graph.",
+    'Je ne comprends pas le graphique.',
+    'This is not the time to draw.',
+    "Je n'ai pas le temps de faire un point.",
+    'Explique la différence entre un diagramme et un tableau.',
+    '',
+  ])('is false for %j', (text) => { expect(refusesVisual(text)).toBe(false); });
+
+  it('ignores a refusal written inside code', () => {
+    expect(refusesVisual(['Voici :', '```', 'sans schéma', '```'].join(String.fromCharCode(10)))).toBe(false);
   });
 });

@@ -73,11 +73,11 @@ import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
 import { CourseChat } from './lib/course-chat';
 import { VisualBlockView } from './lib/visual-blocks-view';
-import { generateTutorProse } from './lib/teaching-generation';
+import { generateTutorProse, tutorNote } from './lib/teaching-generation';
 import { describeEarlierVisuals, jobFromMarkdown, MAX_AUTOMATIC_VISUALS } from './lib/visual-brief';
 import { VisualJobsContext, type VisualJobControls } from './lib/visual-request-view';
 import { pendingVisualKey, useVisualJobs } from './lib/use-visual-jobs';
-import { STUDY_ASSISTANT_PROMPT, TUTOR_LENGTH_REMINDER, TUTOR_SYSTEM_PROMPT, studyMaterialRequest } from './prompts';
+import { STUDY_ASSISTANT_PROMPT, TUTOR_SYSTEM_PROMPT, studyMaterialRequest } from './prompts';
 import { buildChatContext, estimateContextTokens } from './lib/chat-context';
 import { NimTextEmbedder } from './lib/nim-text-embedder';
 import { contextOutputTokens, parseContextWindow, resolveContextWindow } from './lib/model-context';
@@ -2086,8 +2086,8 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
         course: { title: activeLesson.title, subject: activeLesson.subject, chapter: activeLesson.chapter },
         systemPrompt: TUTOR_SYSTEM_PROMPT,
         contextWindowTokens: windowTokens, outputTokens: maxTokens,
-        // generateTutorProse sends the length reminder after the context, so the context must leave room for it.
-        schemaTokens: estimateContextTokens(TUTOR_LENGTH_REMINDER) + 32,
+        // generateTutorProse sends the length note after the context, so the context must leave room for it, the longer one included.
+        schemaTokens: estimateContextTokens(tutorNote(message, chat.filter((item) => item.role === 'user').map((item) => item.content))) + 32,
         embedder: retrievalEmbedder,
         redactImages: localProvider.redactEmbeddedImages,
       });
