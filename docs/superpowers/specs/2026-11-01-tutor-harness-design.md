@@ -243,6 +243,7 @@ The old pipeline stays reachable from the benchmark until the gate is decided. B
 - Rate cases, for the visual decision: 6 explanatory questions that should get a visual and 4 simple definitions that should not.
 - Budget cap: 400 POST requests, without key rotation. Concurrency 2.
 - Raw outputs are stored outside Git, with a summary in `docs/status.md`.
+- Note, 2026-11-02: from the next round, on the user's decision after round 3, Mistral Large 4 is report-only because it gave no usable quality answer inside 120 s in either arm. It is still measured, its numbers are reported apart in the gate under `details.reportOnly`, and its cells take no part in any criterion, in `missing` or in `incomplete`. It runs after the other models, and a 120 s timeout is final for it at once. The criteria and thresholds below are unchanged for Lightning and Super, and the earlier rounds keep their results as measured.
 
 ### Promotion criteria, fixed before running
 
