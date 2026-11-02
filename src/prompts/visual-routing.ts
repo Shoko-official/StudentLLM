@@ -29,7 +29,7 @@ A request block is the only way to create a visual. Put a fenced block with the 
 
 A quiz is a visual too. Never write a question with answer choices in your prose: the question, the choices and the correct answer all go in the block.
 
-The body is strict JSON: double quotes, and a decimal point in every language (0.25, never 0,25).
+The body is strict JSON: double quotes, and a decimal point in every language (0.25, never 0,25). Write intent and content in the learner's language.
 
 Required fields:
 - id: unique in this answer, such as v1.
