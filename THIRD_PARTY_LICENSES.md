@@ -6,13 +6,13 @@ StudentLLM itself is released under the MIT licence (see `LICENSE`). Components 
 
 Generated from these lockfiles (line endings normalised):
 
-- `package-lock.json`: sha256 `e0cb66caf5c238ad30d5fa0cf1c64783e0553635b2a7ab47c1f7e3539626af61`
+- `package-lock.json`: sha256 `1ed1a283c30703d132f47f531aab0bfba2c26b5e1655480184f282c8e8721721`
 - `cloud/package-lock.json`: sha256 `2613b6b6f54483dcee76a90c99fb6de037b05854b73d08e88f8b4ea8f1e48a38`
 - `src-tauri/Cargo.lock`: sha256 `92b2c43068ef4e73fd9b9446b20ab1b0b12593824a696e3a2ae0c79015276ce0`
 
 Rust licence strings were read from the deps.dev API (cargo is not installed here).
 
-## npm production dependencies (144)
+## npm production dependencies (142)
 
 Every package the lockfile does not mark as development-only. This is a superset of what the Vite bundle contains: it also lists optional platform binaries such as `@napi-rs/canvas-*`, which `pdfjs-dist` only uses under Node.
 
@@ -51,7 +51,6 @@ Every package the lockfile does not mark as development-only. This is a superset
 | character-reference-invalid | 2.0.1 | MIT | <https://www.npmjs.com/package/character-reference-invalid/v/2.0.1> |
 | comma-separated-tokens | 2.0.3 | MIT | <https://www.npmjs.com/package/comma-separated-tokens/v/2.0.3> |
 | commander | 15.0.0 | MIT | <https://www.npmjs.com/package/commander/v/15.0.0> |
-| commander | 8.3.0 | MIT | <https://www.npmjs.com/package/commander/v/8.3.0> |
 | csstype | 3.2.3 | MIT | <https://www.npmjs.com/package/csstype/v/3.2.3> |
 | debug | 4.4.3 | MIT | <https://www.npmjs.com/package/debug/v/4.4.3> |
 | decode-named-character-reference | 1.3.0 | MIT | <https://www.npmjs.com/package/decode-named-character-reference/v/1.3.0> |
@@ -78,7 +77,6 @@ Every package the lockfile does not mark as development-only. This is a superset
 | is-decimal | 2.0.1 | MIT | <https://www.npmjs.com/package/is-decimal/v/2.0.1> |
 | is-hexadecimal | 2.0.1 | MIT | <https://www.npmjs.com/package/is-hexadecimal/v/2.0.1> |
 | is-plain-obj | 4.1.0 | MIT | <https://www.npmjs.com/package/is-plain-obj/v/4.1.0> |
-| katex | 0.16.47 | MIT | <https://www.npmjs.com/package/katex/v/0.16.47> |
 | katex | 0.18.9 | MIT | <https://www.npmjs.com/package/katex/v/0.18.9> |
 | longest-streak | 3.1.0 | MIT | <https://www.npmjs.com/package/longest-streak/v/3.1.0> |
 | lucide-react | 1.34.0 | ISC | <https://www.npmjs.com/package/lucide-react/v/1.34.0> |

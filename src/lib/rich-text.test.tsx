@@ -1,8 +1,24 @@
 import { render, screen } from '@testing-library/react';
+import katex from 'katex';
 import { describe, expect, it } from 'vitest';
+import packageLock from '../../package-lock.json';
 import { RichText } from './rich-text';
 
+function classNames(root: Element) {
+  return new Set([...root.querySelectorAll('[class]')].flatMap((element) => [...element.classList]));
+}
+
 describe('RichText', () => {
+  // KaTeX renames classes between versions, so Markdown math must come from the build that katex.min.css belongs to.
+  it('installs one KaTeX, shared by rehype-katex and the stylesheet', () => {
+    expect(Object.keys(packageLock.packages).filter((path) => /(^|\/)node_modules\/katex$/.test(path))).toEqual(['node_modules/katex']);
+
+    const { container } = render(<RichText content={'$(x+y)^n$'} />);
+    const direct = document.createElement('div');
+    direct.innerHTML = katex.renderToString('(x+y)^n');
+    expect(classNames(container.querySelector('.katex')!)).toEqual(classNames(direct.querySelector('.katex')!));
+  });
+
   it('lets a conversation opt into keyboard scrolling for formulas, code and tables', () => {
     const { container } = render(<RichText focusableScrollRegions content={'$$y=\\frac{x}{2}$$\n\n```text\na long code line\n```\n\n| A | B |\n| --- | --- |\n| one | two |'} />);
     for (const selector of ['.katex-display', 'pre', 'table']) expect(container.querySelector(selector)).toHaveAttribute('tabindex', '0');
