@@ -232,7 +232,8 @@ export function describeEarlierVisuals(contents: string[]): string[] {
     for (const fence of scanFences(content).fences) {
       if (fence.language !== DIRECT) continue;
       const visual = parseTeachingVisual(fence.raw);
-      if (visual) described.push(describeVisual(visual).replace(/\s*[\r\n]+\s*/g, ' ').slice(0, EARLIER_VISUAL_CHARACTERS));
+      // Cut by code points, so an emoji or other pair is never split.
+      if (visual) described.push([...describeVisual(visual).replace(/\s*[\r\n]+\s*/g, ' ')].slice(0, EARLIER_VISUAL_CHARACTERS).join(''));
     }
   }
   return described.slice(-EARLIER_VISUALS_LIMIT);

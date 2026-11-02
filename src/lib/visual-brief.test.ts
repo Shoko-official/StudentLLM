@@ -417,6 +417,15 @@ describe('describeEarlierVisuals', () => {
     expect(described).toContain('First line. xxx');
   });
 
+  it('never splits a surrogate pair when it cuts', () => {
+    const emoji = String.fromCodePoint(0x1F600);
+    const figure = { type: 'figure', title: 'T', description: 'x'.repeat(287) + emoji + 'y'.repeat(50), width: 400, height: 240, shapes: [{ type: 'text', x: 20, y: 40, text: 'a' }] };
+    const [described] = describeEarlierVisuals([direct(figure)]);
+    expect([...described]).toHaveLength(300);
+    expect(described.endsWith(emoji)).toBe(true);
+    expect(described.isWellFormed()).toBe(true);
+  });
+
   it('returns nothing without a visual fence', () => {
     expect(describeEarlierVisuals([])).toEqual([]);
     expect(describeEarlierVisuals(['Plain text.', ''])).toEqual([]);
