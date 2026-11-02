@@ -23,7 +23,7 @@ export function tutorNote(question: string, earlierLearnerTexts: string[]) {
 
 export async function generateTutorProse(provider: LLMProvider, messages: ProviderMessage[], options: { maxTokens: number; signal?: AbortSignal; onText?: (text: string) => void }) {
   // The system prompt alone did not hold the length on small models: a note after the question does. It is never saved or shown.
-  const learner = messages.filter((message) => message.role === 'user' && !message.content.includes('"kind":"course_evidence"')).map((message) => message.content);
+  const learner = messages.filter((message) => message.role === 'user' && !message.content.includes('"kind":"course_evidence"') && !message.content.includes('"kind":"extractive_conversation_memory"')).map((message) => message.content);
   const note = tutorNote(learner.at(-1) ?? '', learner.slice(0, -1));
   const response = await provider.generate([...messages, { role: 'user', content: note }], options);
   const { markdown, jobs } = prepareTutorMarkdown(response.content.trim());

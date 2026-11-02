@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decideVisual, generateTutorProse, tutorNote, generateVisual, runVisualJobs } from './teaching-generation';
 import type { LLMProvider, ProviderMessage } from './llm-provider';
 import type { VisualJob } from './visual-brief';
-import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
+import { CONVERSATION_MEMORY_INSTRUCTIONS, TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
 
 const quiz = { type: 'quiz', title: 'Check', question: 'Q?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' };
 const job = (extra: Partial<VisualJob['brief']> = {}, more: Partial<VisualJob> = {}): VisualJob => ({ brief: { id: 'v1', type: 'quiz', intent: 'Check', content: 'Ask', ...extra }, section: 'Around.', ...more });
@@ -44,6 +44,11 @@ describe('generateTutorProse', () => {
     expect(await asked([system, user('No diagrams please.'), reply, user('Why does it happen?')])).toBe(TUTOR_LENGTH_REMINDER);
     expect(await asked([system, user('No diagrams please.'), reply, user('Show a table, not a diagram.')])).toBe(TUTOR_LENGTH_REMINDER);
     expect(await asked([system, user('Show me a diagram.'), reply, user('No diagrams please.'), reply, user('And why?')])).toBe(TUTOR_LENGTH_REMINDER);
+    // Neither is the conversation memory, which carries compacted assistant excerpts.
+    const memory = user(CONVERSATION_MEMORY_INSTRUCTIONS + String.fromCharCode(10) + JSON.stringify({ kind: 'extractive_conversation_memory', records: [{ id: 'a1', role: 'assistant', excerpts: ['no diagram needed here'], shortened: false }] }));
+    expect(await asked([system, memory, user('Show me a diagram of it.')])).toBe(TUTOR_LENGTH_REMINDER);
+    // A real refusal still counts when a memory message sits in the same call.
+    expect(await asked([system, memory, user('No diagrams please.'), reply, user('Show me a diagram of it.')])).toBe(lifted);
     // Course text sent as evidence is not the learner.
     const evidence = user('Evidence {"kind":"course_evidence","documents":[{"text":"drawn without a diagram"}]}');
     expect(await asked([system, evidence, user('Show me a diagram of it.')])).toBe(TUTOR_LENGTH_REMINDER);
