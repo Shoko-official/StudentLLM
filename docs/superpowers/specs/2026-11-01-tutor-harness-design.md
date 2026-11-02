@@ -111,19 +111,32 @@ Only top-level fences in assistant messages count. Other positions are demoted t
 - a series with no finite value at the default parameters, sampled the way the renderer samples;
 - duplicate quiz options;
 - `correctAnswer` not matching the keyed option;
-- a `checks` value outside its tolerance, evaluated with `compileExpression`.
+
+A `checks` entry that disagrees with the built plot is reported apart by `disagreeingChecks`: a value outside its tolerance, a non-finite readout, a readout or a parameter that only the check names. It never rejects a plot, because the tutor can be the one that is wrong.
 
 ### Repair
 
-At most one repair call per visual. It receives the type module, the brief, the invalid output and the error list, and it asks for a complete corrected object. If the repair output still fails, the fence stays in the message. The previous documented rule, "no automatic repair generation", is replaced deliberately, and `docs/teaching-visuals.md` is updated.
+At most one repair call per visual. It receives the type module, the brief, the invalid output and the error list, and it asks for a complete corrected object. If the repair output still fails, the fence stays in the message, unless the first output failed only on disagreeing checks: that plot is kept and shown. A repair for disagreeing checks asks to recheck the formula and never to bend a correct formula to a value, and if it fails or times out the first plot is shown. The previous documented rule, "no automatic repair generation", is replaced deliberately, and `docs/teaching-visuals.md` is updated.
 
 ### Limits
 
 - At most 4 visual jobs per answer run automatically, in reading order. Further requests stay as retryable placeholders, so no call is spent unasked.
 - 2 visual calls at a time.
-- Hosted NVIDIA: a 60 s deadline per visual attempt, enforced with an `AbortSignal`.
+- Hosted NVIDIA: a 120 s deadline per visual or decision attempt, enforced with an `AbortSignal`. This is the limit of the tutor call: at 60 s Mistral Large 4 lost both of its quizzes in round 2.
 - Local providers: the existing provider timeout applies, because a local CPU model cannot meet 60 s.
 - The tutor call keeps its current token budget and failure behaviour.
+
+### Visual decision call
+
+An answer with no visual fence of either kind gets one more call, after its text is saved and shown. The tutor can skip a visual that the learner would benefit from, and a stronger instruction helped on known questions only (17 of 18 known, 8 of 12 hidden in round 2).
+
+- System message: `src/prompts/visual-decision.ts`, with the same decision steps as the routing prompt.
+- User message: JSON data with the learner's message (at most 2000 characters) and the answer (at most 6000 characters), images redacted. No course text.
+- `response_format`: a flat strict schema when supported, `visual` required and the request fields optional.
+- Output budget: at most 1024 tokens. It shares the limit of 2 visual calls at a time.
+- Result: `visual: false`, or a request with no `checks`, id `auto-1`, which goes through `parseVisualBrief`. It is appended after the answer and built like any other request.
+- There is no repair. A failed, late or invalid decision leaves the prose alone, with no placeholder and no error: the answer the learner already has is complete.
+- Nothing shows while the call runs, since it may decide on no visual.
 
 ### Tolerated deviations
 
@@ -209,6 +222,8 @@ The examples must not use any benchmark topic: Taylor series, the binomial law, 
 | Tutor call fails or returns nothing | As today: alert, question returned to the composer, nothing saved |
 | Malformed request fence | Treated as inert text, prose kept |
 | Visual call fails, times out or returns invalid output | One repair call if there was an output to repair, otherwise retry placeholder. Prose kept |
+| Visual decision call fails, times out or returns anything invalid | No visual, no placeholder, no error. Prose kept |
+| Only `checks` disagree with a plot | One repair call, then the plot is shown either way |
 | Student clicks retry | One new job with the same limits |
 | Provider rate limit during visual jobs | Provider's existing single retry, then retry placeholder |
 | Course or message removed during a job | Result discarded |
@@ -260,6 +275,8 @@ The rewritten non-tutor prompts are compared with their current versions on real
 ## Risks
 
 - **More calls and more total time.** An answer with 3 visuals costs at least 4 requests. Text comes first, and limits bound the cost. The benchmark reports the real numbers.
-- **The tutor's anchors can be wrong.** A wrong `expected` value can trigger a needless repair, or make a correct visual fail and leave a retry placeholder. The benchmark counts these cases separately.
+- **The tutor's anchors can be wrong, and so can the builder.** In round 2, 9 of 13 failed plots on two models were rejected by a tutor `checks` value, and the 3 recomputed by hand were correct plots. A disagreement no longer rejects a plot, so a plot that is really wrong can now reach the learner next to prose that says otherwise, with no warning. `noNewNumericErrors` measures this, and the benchmark records every shown plot with `unconfirmed` checks. A visible warning is out of scope for this slice.
+- **Repair can bend a correct formula.** A repair told about a wrong value may change a correct formula to match it. The repair instruction forbids it, and this is not measured separately.
+- **The decision call costs one request per answer without a visual**, after the text. It may add visuals that were not needed: `definitionRate` measures it.
 - **Local models.** Sequential local generation can be slow. The text-first flow reduces the impact, but this slice measures hosted models only, so local behaviour stays unmeasured.
 - **Weak default model.** A better harness may not rescue a model that gets the mathematics wrong. The benchmark informs the separate model decision.
