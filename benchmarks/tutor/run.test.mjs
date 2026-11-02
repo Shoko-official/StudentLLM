@@ -381,6 +381,17 @@ describe('real run', () => {
     expect(result.counts.decision).toBe(asked.length);
   }, SLOW);
 
+  it('sends the length reminder on tutor prose calls and on no other call', () => {
+    const out = outDir();
+    const result = run(real(out, casesFile(), holdoutsFile()), { fake: { decide: true } });
+    const { reminders } = result.counts;
+    expect(result.counts.prose).toBeGreaterThan(0);
+    expect(result.counts.decision).toBeGreaterThan(0);
+    expect(result.counts.visual).toBeGreaterThan(0);
+    expect(reminders.prose).toBe(result.counts.prose);
+    expect([reminders.old, reminders.decision, reminders.visual]).toEqual([0, 0, 0]);
+  }, SLOW);
+
   it('keeps the answer and records no request when the decision call declines', () => {
     const out = outDir();
     run(real(out, casesFile(), holdoutsFile()), {});
