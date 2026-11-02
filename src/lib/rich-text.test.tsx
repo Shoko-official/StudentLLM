@@ -14,6 +14,7 @@ describe('RichText', () => {
     expect(table).toHaveTextContent('one');
     expect(table).not.toHaveAttribute('tabindex');
     expect(table?.parentElement).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('region', { name: 'Table' })).toBe(table?.parentElement);
   });
   it('renders GitHub-flavored Markdown, code, tables, and LaTeX together', () => {
     const { container } = render(<RichText content={'## Key ideas\n\n- Scale by $\\sqrt{d_k}$\n- Keep the source visible\n\n```ts\nconst answer = 42;\n```\n\n| Term | Value |\n| --- | ---: |\n| Batch | 32 |'} />);

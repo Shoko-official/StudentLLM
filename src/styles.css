@@ -355,6 +355,7 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .rich-text pre { max-width: 100%; overflow: auto; margin: 1em 0; padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--code-surface); }
 .rich-text pre code { padding: 0; background: transparent; white-space: pre; }
 .table-scroll { max-width: 100%; margin: 1em 0; overflow-x: auto; overflow-y: hidden; }
+.table-scroll:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .rich-text table { width: 100%; border-collapse: collapse; font-size: .94em; }
 .rich-text th, .rich-text td { padding: 8px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: break-word; }
 .rich-text th { background: var(--surface-2); font-weight: 600; }
