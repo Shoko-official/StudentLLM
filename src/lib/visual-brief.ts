@@ -179,6 +179,11 @@ export function repairVisualFences(markdown: string, repair: (raw: string) => st
   }));
 }
 
+/** The answer without its visual fences, valid or not: what is left is the text the model wrote. */
+export function withoutVisualFences(markdown: string) {
+  return applyEdits(markdown, scanFences(markdown).fences.map(({ start, end }) => ({ start, end, text: '' })));
+}
+
 export function jobFromMarkdown(markdown: string, id: string): VisualJob | null {
   return jobsOf(markdown, new Map()).find((job) => job.brief.id === id) ?? null;
 }

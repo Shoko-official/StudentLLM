@@ -69,7 +69,27 @@ describe('generateTutorProse', () => {
     expect(result.markdown).toBe('A short answer.');
   });
 
-  it.each(['', '   ', '```student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n```', '[Visual not generated: I]', '[Visual shown to the learner: quiz "T"]\n\n[Visual not generated: I]\n'])('rejects a reply with no readable text: %j', async (content) => {
+  it.each([
+    ['one request', '```student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n```', 1],
+    ['two requests', '```student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n```\n\n```student-visual-request\n{"id":"v2","type":"plot","intent":"I","content":"y=x"}\n```', 2],
+    ['a request and a marker', '[Visual not generated: I]\n\n```student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n```', 1],
+    ['a direct visual to repair', '```student-visual\n{"type":"quiz","title":"T"}\n```', 1],
+    ['a finished direct visual', '```student-visual\n{"type":"quiz","title":"T","question":"Q?","options":["A","B"],"answer":1,"explanation":"E."}\n```', 0],
+  ])('accepts a reply that holds %s and no text, adding no sentence', async (_name, content, jobs) => {
+    const result = await generateTutorProse(replying(content), [], { maxTokens: 4096 });
+    expect(result.jobs).toHaveLength(jobs);
+    expect(result.markdown.replace(/```+[\s\S]*?```+/g, '').trim()).toBe('');
+  });
+
+  it.each(['```student-visual-request\n{"id":"v1"}\n```', '```student-visual-request\nnot json\n```', '```student-visual\n{"type":"nope"}\n```', '[Visual not generated: I]\n\n```student-visual-request\nnot json\n```'])('rejects a reply whose only block cannot be read: %j', async (content) => {
+    await expect(generateTutorProse(replying(content), [], { maxTokens: 4096 })).rejects.toThrow('The model returned no answer');
+  });
+
+  it('keeps a reply with text beside a block it cannot read', async () => {
+    expect((await generateTutorProse(replying('Prose.\n\n```student-visual-request\nnot json\n```'), [], { maxTokens: 4096 })).markdown).toContain('Prose.');
+  });
+
+  it.each(['', '   ', '[Visual not generated: I]', '[Visual shown to the learner: quiz "T"]\n\n[Visual not generated: I]\n'])('rejects a reply with no readable text: %j', async (content) => {
     await expect(generateTutorProse(replying(content), [], { maxTokens: 4096 })).rejects.toThrow('The model returned no answer');
   });
 });

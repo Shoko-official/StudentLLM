@@ -58,6 +58,60 @@ it('keeps the explanation and offers a retry when a visual fails, then repairs i
   expect(generate).toHaveBeenCalledTimes(4);
 });
 
+describe('a reply that is only a request', () => {
+  const quizBrief = { id: 'v1', type: 'quiz', intent: 'Check the idea', content: 'Which is right? Choices: A, B.' };
+  const quizVisual = { type: 'quiz', title: 'Levers', question: 'Which lever is right?', options: ['A', 'B'], answer: 1, explanation: 'B holds.' };
+  const ask = async (generate: unknown, question = 'Quiz me on levers.') => {
+    const user = userEvent.setup();
+    render(<App provider={{ generate: generate as never, supportsStructuredOutputs: true }} />);
+    await user.click(screen.getByRole('tab', { name: /^Chat$/ }));
+    await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), question);
+    await user.click(screen.getByRole('button', { name: /^Send$/ }));
+    return user;
+  };
+  const lastAnswer = () => screen.getAllByRole('article', { name: 'Course assistant response' }).at(-1)!;
+
+  it('shows the pending visual and then the visual, never an error or a blank message', async () => {
+    let release: (value: { content: string; model: string }) => void = () => undefined;
+    const generate = vi.fn((_messages: ProviderMessage[], options?: { responseFormat?: unknown }) => isVisualCall(options)
+      ? new Promise<{ content: string; model: string }>((resolve) => { release = resolve; })
+      : Promise.resolve({ content: requestFence(quizBrief), model: 'test-model' }));
+    await ask(generate);
+    expect(await screen.findByText('Preparing a visual: Check the idea')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(lastAnswer().querySelector('.message-content')).toHaveTextContent('Preparing a visual: Check the idea');
+    release({ content: JSON.stringify(quizVisual), model: 'test-model' });
+    expect(await screen.findByText('Which lever is right?')).toBeInTheDocument();
+    expect(screen.queryByText(/Preparing a visual/)).not.toBeInTheDocument();
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
+  it('offers the existing retry when the visual fails, and the retry works', async () => {
+    const replies = [requestFence(quizBrief), '{"bad":', '{"bad":', JSON.stringify(quizVisual)];
+    const generate = vi.fn(async (_messages: ProviderMessage[]) => ({ content: replies.shift()!, model: 'test-model' }));
+    const user = await ask(generate);
+    const retry = await screen.findByRole('button', { name: 'Retry this visual' });
+    expect(screen.getByText('This visual was not generated: Check the idea')).toBeInTheDocument();
+    await user.click(retry);
+    expect(await screen.findByText('Which lever is right?')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('sends no empty assistant message on the next question after the visual failed', async () => {
+    const replies = [requestFence(quizBrief), '{"bad":', '{"bad":', 'A plain next answer.', '{"visual":false}'];
+    const generate = vi.fn(async (_messages: ProviderMessage[]) => ({ content: replies.shift() ?? '{"visual":false}', model: 'test-model' }));
+    const user = await ask(generate);
+    await screen.findByRole('button', { name: 'Retry this visual' });
+    await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), 'What is a fulcrum?');
+    await user.click(screen.getByRole('button', { name: /^Send$/ }));
+    expect(await screen.findByText('A plain next answer.')).toBeInTheDocument();
+    const sent = generate.mock.calls[3][0];
+    expect(sent.filter((message) => message.role === 'assistant' && !message.content.trim())).toEqual([]);
+    expect(sent.some((message) => message.content === 'Quiz me on levers.')).toBe(true);
+    expect(JSON.stringify(sent.filter((message) => message.role !== 'system'))).not.toContain('student-visual-request');
+  });
+});
+
 it('starts at most the automatic limit of visuals from one reply and leaves the rest retryable', async () => {
   const user = userEvent.setup();
   const requests = Array.from({ length: MAX_AUTOMATIC_VISUALS + 2 }, (_, index) => requestFence({ ...plotBrief, id: `v${index + 1}`, intent: `Curve ${index + 1}` }));

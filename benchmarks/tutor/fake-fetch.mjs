@@ -1,6 +1,6 @@
 // Test double for run.test.mjs, loaded with node --import. It replaces the global fetch with a local fake and
 // compresses time, so a whole run takes seconds. Any host other than the benchmark's own endpoint throws.
-// Configuration comes from TUTOR_FAKE (JSON: speed, decide (the decision call asks for a quiz instead of declining), latency, first503, oldMode, echoKey, echoVisual, hang, hangModels (model ids whose every call hangs), errorModels (model ids whose every call answers 503), hangCalls and errorCalls ({ old | prose | visual | decision: [1-based call numbers of that kind] } that hang for ever or answer 503), badBody {kind, mode: html | error | truncate}, recordOld (a file that receives each old arm request body, one per line)); TUTOR_FAKE_STATS names a file that receives the call counts at exit.
+// Configuration comes from TUTOR_FAKE (JSON: speed, onlyRequest (the tutor replies with one request and no text), decide (the decision call asks for a quiz instead of declining), latency, first503, oldMode, echoKey, echoVisual, hang, hangModels (model ids whose every call hangs), errorModels (model ids whose every call answers 503), hangCalls and errorCalls ({ old | prose | visual | decision: [1-based call numbers of that kind] } that hang for ever or answer 503), badBody {kind, mode: html | error | truncate}, recordOld (a file that receives each old arm request body, one per line)); TUTOR_FAKE_STATS names a file that receives the call counts at exit.
 import { appendFileSync } from 'node:fs';
 
 const config = JSON.parse(process.env.TUTOR_FAKE ?? '{}');
@@ -63,6 +63,7 @@ globalThis.fetch = async (url, init) => {
       return answer(JSON.stringify({ sections: [{ markdown: 'Texte', visual: /QCASE|HOLD/.test(user) ? quiz : null }] }), body.model);
     }
     if (kind === 'prose') {
+      if (config.onlyRequest) return answer(request('v1', 'quiz', 'quiz'), body.model);
       if (/QCASE|HOLD/.test(user)) return answer(`Prose.\n\n${request('v1', 'quiz', 'quiz')}\n\nSuite.\n\n${request('v2', 'quiz', 'quiz')}`, body.model);
       return answer(/DEF/.test(user) ? 'Une definition.' : `Une explication.\n\n${request('v1', 'quiz', 'quiz')}`, body.model);
     }
