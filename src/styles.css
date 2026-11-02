@@ -203,7 +203,7 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .chat-context[open] summary > svg:last-child { transform: rotate(180deg); }
 .chat-context-content { position: absolute; z-index: 3; top: calc(100% + 4px); right: 0; width: min(280px, 70vw); padding: 16px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-pop); }
 .chat-context-content p { margin: 0 0 5px; font-size: 13px; color: var(--muted); }
-.chat-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 28px 12px 32px; scrollbar-gutter: stable; overscroll-behavior-y: contain; }
+.chat-scroll { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 28px 12px 32px; scrollbar-gutter: stable; overscroll-behavior-y: contain; }
 .chat-scroll:focus-visible { outline-offset: -2px; }
 .chat-intro { display: grid; justify-items: center; align-content: center; min-height: 100%; max-width: 550px; margin: 0 auto; padding: 24px 0 40px; text-align: center; }
 .chat-intro > svg { color: var(--muted); margin-bottom: 22px; }

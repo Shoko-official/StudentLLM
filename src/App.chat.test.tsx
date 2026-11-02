@@ -5,6 +5,7 @@ import App from './App';
 import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace } from './test/workspace-fixture';
 import { OpenAICompatibleProvider, type ProviderGenerateOptions, type ProviderMessage } from './lib/llm-provider';
+import { AI_UNREACHABLE_MESSAGE } from './lib/service-errors';
 import { VISUAL_DECISION_PROMPT } from './prompts';
 
 beforeEach(() => {
@@ -278,6 +279,31 @@ describe('a streamed answer', () => {
     await pause();
     expect(assistantMessages()).toHaveLength(1);
     expect(screen.getByText('LM Studio · json-model')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['local', false, AI_UNREACHABLE_MESSAGE],
+    ['cloud', true, 'The NVIDIA model is not answering right now. Try another model in Settings.'],
+  ])('turns a %s stream cut after its headers into the helpful message, with no partial and the question back', async (_label, cloud, expected) => {
+    if (cloud) localStorage.setItem('studentllm.services.v1', JSON.stringify({ llmProvider: 'nvidia-nim' }));
+    const encoder = new TextEncoder();
+    let upstream!: ReadableStreamDefaultController<Uint8Array>;
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { upstream = controller; } }), { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    const user = userEvent.setup();
+    render(<App provider={new OpenAICompatibleProvider({ baseUrl: 'http://127.0.0.1:1234/v1', model: 'fixture-model', fetchImpl: fetchMock })} />);
+    await user.click(screen.getByRole('tab', { name: 'Chat' }));
+    await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), 'Explain pressure.');
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(upstream).toBeDefined());
+    upstream.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: 'Partial explanation' } }] })}\n\n`));
+    expect(await screen.findByText('Partial explanation')).toBeInTheDocument();
+    upstream.error(new TypeError('network error'));
+    expect(await screen.findByRole('alert')).toHaveTextContent(expected);
+    expect(screen.getByRole('alert')).not.toHaveTextContent('network error');
+    expect(screen.queryByText('Partial explanation')).not.toBeInTheDocument();
+    expect(assistantMessages()).toHaveLength(0);
+    expect(screen.getByRole('textbox', { name: 'Ask the course chat' })).toHaveValue('Explain pressure.');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('streams end to end through the provider from server-sent events', async () => {

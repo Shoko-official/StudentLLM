@@ -8,6 +8,13 @@ describe('service error messages', () => {
     }
   });
 
+  it('gives a stream cut after its headers the same message as the gateway timeout it replaces', () => {
+    const cut = new Error('Provider stream interrupted.');
+    expect(describeAiFailure(cut, undefined, { cloud: true })).toBe(describeAiFailure(new Error('Provider request failed (504): NVIDIA NIM did not respond in time.'), undefined, { cloud: true }));
+    expect(describeAiFailure(cut)).toBe(AI_UNREACHABLE_MESSAGE);
+    expect(describeAiFailure(new Error('Provider request failed (504)'))).toBe(AI_UNREACHABLE_MESSAGE);
+  });
+
   it('explains retired NIM models without repeating arbitrary provider errors', () => {
     expect(describeAiFailure(new Error('Provider request failed (410): raw upstream error'), undefined, { cloud: true })).toBe('This NVIDIA model is no longer available. Choose another model in Settings.');
   });

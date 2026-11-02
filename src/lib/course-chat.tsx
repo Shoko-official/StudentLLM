@@ -5,6 +5,11 @@ import type { ChatMessage } from '../types';
 import { RichText } from './rich-text';
 import { streamingPreview } from './visual-brief';
 
+// A move down within this gap counts as a return to the end: a smooth scroll to the end lands a little short while text arrives.
+const RESUME_FOLLOWING_GAP_PX = 48;
+const STOP_FOLLOWING_GAP_PX = 96;
+const SCROLL_UP_KEYS = new Set(['ArrowUp', 'PageUp', 'Home']);
+
 interface CourseChatProps {
   messages: ChatMessage[];
   streamingText: string | null;
@@ -29,6 +34,11 @@ export function CourseChat({ messages, streamingText, sourceCount, hasMaterial, 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composeAreaRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
+  const lastScrollRef = useRef({ top: 0, limit: 0 });
+  const scrollToEnd = (thread: HTMLElement) => {
+    thread.scrollTop = thread.scrollHeight;
+    lastScrollRef.current = { top: thread.scrollTop, limit: thread.scrollHeight - thread.clientHeight };
+  };
   const preview = useMemo(() => streamingText ? streamingPreview(streamingText) : '', [streamingText]);
   const hasPreview = Boolean(preview.trim());
 
@@ -52,7 +62,7 @@ export function CourseChat({ messages, streamingText, sourceCount, hasMaterial, 
 
   useLayoutEffect(() => {
     const thread = threadRef.current;
-    if (thread && followingRef.current) thread.scrollTop = thread.scrollHeight;
+    if (thread && followingRef.current) scrollToEnd(thread);
   }, [messages.length, isSending, preview]);
 
   useLayoutEffect(() => {
@@ -71,7 +81,7 @@ export function CourseChat({ messages, streamingText, sourceCount, hasMaterial, 
       const available = view.clientHeight - heading.getBoundingClientRect().height - composerChrome - threadSpace;
       const limit = Math.max(40, Math.min(200, available));
       field.style.height = `${Math.min(Math.max(64, field.scrollHeight), limit)}px`;
-      if (followingRef.current) thread.scrollTop = thread.scrollHeight;
+      if (followingRef.current) scrollToEnd(thread);
     };
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resizeField);
     observer?.observe(view);
@@ -91,7 +101,18 @@ export function CourseChat({ messages, streamingText, sourceCount, hasMaterial, 
     </header>
     <div className="chat-scroll" ref={threadRef} tabIndex={0} role="region" aria-label="Conversation history" onScroll={(event) => {
       const node = event.currentTarget;
-      followingRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 96;
+      const top = node.scrollTop, limit = node.scrollHeight - node.clientHeight, gap = limit - top;
+      const last = lastScrollRef.current;
+      // A thread that got shorter moves up by itself and lands on its end; that is not the learner scrolling up.
+      const scrolledUp = top < last.top && !(limit < last.limit && gap < 2);
+      if (scrolledUp || gap >= STOP_FOLLOWING_GAP_PX) followingRef.current = false;
+      else if (gap < RESUME_FOLLOWING_GAP_PX) followingRef.current = true;
+      lastScrollRef.current = { top, limit };
+    }} onWheel={(event) => {
+      // Ahead of the scroll event: a render that scrolls to the end first would cancel the smooth scroll this starts.
+      if (event.deltaY < 0 && event.currentTarget.scrollTop > 0) followingRef.current = false;
+    }} onKeyDown={(event) => {
+      if (event.target === event.currentTarget && event.currentTarget.scrollTop > 0 && (SCROLL_UP_KEYS.has(event.key) || (event.key === ' ' && event.shiftKey))) followingRef.current = false;
     }}>
       {!messages.length && <div className="chat-intro">
         <BookOpen size={26} strokeWidth={1.5} aria-hidden="true" />

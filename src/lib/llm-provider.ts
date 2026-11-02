@@ -95,7 +95,14 @@ async function readEventStream(response: Response, onText: ProviderGenerateOptio
   const reader = response.body?.getReader();
   try {
     while (reader && !finished) {
-      const next = await reader.read();
+      let next: ReadableStreamReadResult<Uint8Array>;
+      try {
+        next = await reader.read();
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') throw error;
+        // Each browser words a failed body read its own way, and none of them tells a student anything.
+        throw new Error('Provider stream interrupted.');
+      }
       if (!next.done) {
         size += next.value.byteLength;
         if (size > MAX_JSON_RESPONSE_BYTES) throw tooLarge();
