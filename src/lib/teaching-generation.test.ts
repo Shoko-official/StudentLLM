@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decideVisual, generateTutorProse, generateVisual, runVisualJobs } from './teaching-generation';
 import type { LLMProvider, ProviderMessage } from './llm-provider';
 import type { VisualJob } from './visual-brief';
-import { TUTOR_LENGTH_REMINDER, VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
+import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES } from '../prompts';
 
 const quiz = { type: 'quiz', title: 'Check', question: 'Q?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' };
 const job = (extra: Partial<VisualJob['brief']> = {}, more: Partial<VisualJob> = {}): VisualJob => ({ brief: { id: 'v1', type: 'quiz', intent: 'Check', content: 'Ask', ...extra }, section: 'Around.', ...more });
@@ -20,6 +20,23 @@ describe('generateTutorProse', () => {
     expect(provider.generate).toHaveBeenCalledWith([...messages, { role: 'user', content: TUTOR_LENGTH_REMINDER }], { maxTokens: 4096 });
     expect(result.jobs.map((item) => item.brief.id)).toEqual(['v1']);
     expect(result.model).toBe('fixture');
+  });
+
+  it('adds the visual request sentence to the note only when the latest learner message asks for a visual, and never keeps it', async () => {
+    const asked = async (history: ProviderMessage[]) => {
+      const provider = replying('An answer.');
+      const result = await generateTutorProse(provider, history, { maxTokens: 4096 });
+      expect(JSON.stringify(result)).not.toContain('Note from StudentLLM');
+      expect(JSON.stringify(result)).not.toContain(TUTOR_VISUAL_REQUEST_NOTE);
+      return (provider.generate.mock.calls[0][0] as ProviderMessage[]).at(-1)!.content;
+    };
+    const system: ProviderMessage = { role: 'system', content: 'S' };
+    expect(await asked([system, { role: 'user', content: 'Finalement, montre-moi un schéma du cycle.' }])).toBe(`${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}`);
+    expect(await asked([system, { role: 'user', content: 'Why does it happen?' }])).toBe(TUTOR_LENGTH_REMINDER);
+    // An earlier request does not count: only the latest learner message does.
+    expect(await asked([system, { role: 'user', content: 'Show me a diagram.' }, { role: 'assistant', content: 'Here.' }, { role: 'user', content: 'And why?' }])).toBe(TUTOR_LENGTH_REMINDER);
+    expect(await asked([system, { role: 'user', content: 'No diagrams please.' }, { role: 'assistant', content: 'Ok.' }, { role: 'user', content: 'Actually, show me a diagram of it.' }])).toBe(`${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}`);
+    expect(await asked([system, { role: 'user', content: 'Sans schéma, explique.' }])).toBe(TUTOR_LENGTH_REMINDER);
   });
 
   it('sends the length reminder last, leaves the other messages as they were, and keeps it out of the result', async () => {
@@ -136,6 +153,19 @@ describe('decideVisual', () => {
     expect(sent.earlierLearnerMessages[1]).toContain('Second');
     expect(sent.earlierLearnerMessages[2]).toBe('W'.repeat(300));
     expect(JSON.stringify(sent)).not.toContain('AAAA');
+  });
+
+  it('drops the earlier learner messages only when this message asks for a visual, so a past refusal cannot match', async () => {
+    const earlier = ['No diagrams, please.', 'And then?'];
+    const sentFor = async (question: string) => {
+      const provider = replying('{"visual":false}');
+      await decide(provider, { ...input, question, earlierMessages: earlier });
+      return JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content).earlierLearnerMessages;
+    };
+    expect(await sentFor('Actually, show me a diagram of the cycle.')).toEqual([]);
+    expect(await sentFor('Finalement, montre-moi un schéma.')).toEqual([]);
+    expect(await sentFor('Why does it happen?')).toEqual(earlier);
+    expect(await sentFor('No diagram, but show me the numbers.')).toEqual(earlier);
   });
 
   it('never carries the length reminder, which belongs to the tutor answer call only', async () => {
