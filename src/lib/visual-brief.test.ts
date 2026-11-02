@@ -1,11 +1,65 @@
 import { describe, expect, it } from 'vitest';
-import { appendVisualRequest, compactVisualFences, hasVisualFence, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, visualFence } from './visual-brief';
+import { appendVisualRequest, compactVisualFences, hasVisualFence, jobFromMarkdown, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, stripVisualNotes, visualFence } from './visual-brief';
 import { parseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 
 const brief = { id: 'v1', type: 'quiz', intent: 'Check the idea', content: 'Ask about pressure' };
 const request = (value: unknown = brief) => '```student-visual-request\n' + JSON.stringify(value) + '\n```';
 const quiz = { type: 'quiz', title: 'Check', question: 'Q?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' };
 const direct = (value: unknown) => '```student-visual\n' + JSON.stringify(value) + '\n```';
+const notGenerated = '[Visual not generated: Compare the two curves]';
+const shown = '[Visual shown to the learner: plot "Height", x from 0 to 7]';
+
+describe('stripVisualNotes', () => {
+  it.each([notGenerated, shown])('removes the whole line %s', (note) => {
+    expect(stripVisualNotes(`Answer.\n\n${note}`)).toBe('Answer.');
+    expect(stripVisualNotes(`${note}\n\nAnswer.`)).toBe('Answer.');
+    expect(stripVisualNotes(`Answer.\n\n  ${note}\t\n`)).toBe('Answer.');
+    expect(stripVisualNotes(note)).toBe('');
+  });
+
+  it('collapses the blank lines it leaves between paragraphs, and only those', () => {
+    expect(stripVisualNotes(`One.\n\n${notGenerated}\n\nTwo.`)).toBe('One.\n\nTwo.');
+    expect(stripVisualNotes(`One.\n\n${notGenerated}\n\n${shown}\n\n\nTwo.`)).toBe('One.\n\nTwo.');
+    expect(stripVisualNotes(`One.\n${shown}\nTwo.`)).toBe('One.\nTwo.');
+    expect(stripVisualNotes(`One.\n${shown}\n\nTwo.`)).toBe('One.\n\nTwo.');
+    expect(stripVisualNotes(`One.\n\n\n\nTwo.\n\n${shown}\n\nThree.\n`)).toBe('One.\n\n\n\nTwo.\n\nThree.\n');
+  });
+
+  it('handles CRLF line ends', () => {
+    expect(stripVisualNotes(`One.\r\n\r\n${notGenerated}\r\n\r\nTwo.`)).toBe('One.\r\n\r\nTwo.');
+    expect(stripVisualNotes(`One.\r\n\r\n${shown}\r\n`)).toBe('One.');
+  });
+
+  it.each([
+    ['a fence with a language', '```text\n[note]\n\n\n[note]\n```'],
+    ['a fence with no language', '```\n[note]\n```'],
+    ['a tilde fence', '~~~\n[note]\n~~~'],
+    ['an unclosed fence', '```text\n[note]'],
+    ['an indented code block', '    [note]'],
+    ['a fence in a list', '- item\n\n  ```text\n  [note]\n  ```'],
+  ])('keeps a note inside %s', (_name, sample) => {
+    const code = sample.replaceAll('[note]', notGenerated);
+    expect(stripVisualNotes(code)).toBe(code);
+    expect(stripVisualNotes(`${shown}\n\n${code}`)).toBe(code);
+  });
+
+  it.each([
+    `The tutor wrote ${notGenerated} earlier.`,
+    `${notGenerated} and more text.`,
+    `- ${shown}`,
+    '[Visual not generated: never closed',
+    'Visual not generated: no bracket]',
+    '[Visual aid: a real link label]',
+    '[Visual shown to someone: x]',
+  ])('keeps a line that is not only a note: %s', (line) => {
+    expect(stripVisualNotes(line)).toBe(line);
+    expect(stripVisualNotes(`One.\n\n${line}\n\nTwo.`)).toBe(`One.\n\n${line}\n\nTwo.`);
+  });
+
+  it('returns text with no note unchanged', () => {
+    for (const text of ['', 'Plain.\n\n\n', '\n\nA\r\n']) expect(stripVisualNotes(text)).toBe(text);
+  });
+});
 
 describe('parseVisualBrief', () => {
   it('accepts a complete brief and keeps only known fields', () => {
@@ -90,6 +144,29 @@ describe('prepareTutorMarkdown', () => {
   });
 });
 
+describe('prepareTutorMarkdown and copied notes', () => {
+  it('never saves a copied note, and a real request next to it still makes a job', () => {
+    const { markdown, jobs } = prepareTutorMarkdown(`Text.\n\n${notGenerated}\n\n${request()}\n\n${shown}`);
+    expect(markdown).toBe(`Text.\n\n${request()}`);
+    expect(jobs.map((job) => job.brief.id)).toEqual(['v1']);
+    expect(jobs[0].section).not.toContain('Visual not generated');
+    expect(jobs[0].section).not.toContain('shown to the learner');
+    expect(hasVisualFence(markdown)).toBe(true);
+  });
+
+  it('leaves no visual fence behind when only a note was written', () => {
+    const { markdown, jobs } = prepareTutorMarkdown(`Text.\n\n${notGenerated}`);
+    expect(markdown).toBe('Text.');
+    expect(jobs).toEqual([]);
+    expect(hasVisualFence(markdown)).toBe(false);
+  });
+
+  it('keeps a note the tutor quotes in a code sample', () => {
+    const sample = '```text\n' + notGenerated + '\n```';
+    expect(prepareTutorMarkdown(`Text.\n\n${sample}`).markdown).toBe(`Text.\n\n${sample}`);
+  });
+});
+
 describe('fence replacement', () => {
   it('replaces only the requested fence and keeps surrounding text', () => {
     const markdown = `A\n\n${request()}\n\nB\n\n${request({ ...brief, id: 'v2' })}`;
@@ -118,8 +195,37 @@ describe('compactVisualFences', () => {
 
   it('compacts quizzes and pending requests, and returns other text unchanged', () => {
     expect(compactVisualFences(visualFence(parseTeachingVisual(JSON.stringify(quiz))!))).toContain('correct option: B');
-    expect(compactVisualFences(request())).toBe('[Visual not generated: Check the idea]');
     expect(compactVisualFences('Plain text.')).toBe('Plain text.');
+  });
+
+  it('removes a pending request with no replacement and collapses the gap', () => {
+    expect(compactVisualFences(request())).toBe('');
+    expect(compactVisualFences(`Before.\n\n${request()}`)).toBe('Before.');
+    expect(compactVisualFences(`Before.\n\n${request()}\n\nAfter.`)).toBe('Before.\n\nAfter.');
+    expect(compactVisualFences(`Before.\r\n\r\n${request()}\r\n\r\nAfter.`)).toBe('Before.\r\n\r\nAfter.');
+    expect(compactVisualFences(`Before.\n\n${request()}\n\n    indented code`)).toBe('Before.\n\n    indented code');
+    expect(compactVisualFences(`Before.\n\n${request()}`)).not.toContain('Visual not generated');
+  });
+
+  it('removes a pending request and keeps a real visual beside it', () => {
+    const compact = compactVisualFences(`Before.\n\n${request()}\n\n${direct(quiz)}\n\nAfter.`);
+    expect(compact).toMatch(/^Before\.\n\n\[Visual shown to the learner: quiz "Check": Q\? correct option: B\]\n\nAfter\.$/);
+  });
+
+  it('cleans notes saved in old answers, with and without a fence', () => {
+    expect(compactVisualFences(`Old answer.\n\n${notGenerated}\n\n${shown}`)).toBe('Old answer.');
+    expect(compactVisualFences(notGenerated)).toBe('');
+    expect(compactVisualFences(`Old answer.\n\n${notGenerated}\n\n${direct(quiz)}`)).toBe('Old answer.\n\n[Visual shown to the learner: quiz "Check": Q? correct option: B]');
+    expect(compactVisualFences(`Old answer.\n\n${shown}\n\n${request()}`)).toBe('Old answer.');
+  });
+
+  it('writes a note on one line, so a copy of it can always be removed', () => {
+    const figure = parseTeachingVisual(JSON.stringify({ type: 'figure', title: 'T', description: 'First line.\nSecond line.', width: 400, height: 240, shapes: [{ type: 'text', x: 20, y: 40, text: 'a' }] }));
+    expect(figure).not.toBeNull();
+    const note = compactVisualFences(visualFence(figure!));
+    expect(note.split('\n')).toHaveLength(1);
+    expect(note).toContain('First line. Second line.');
+    expect(stripVisualNotes(note)).toBe('');
   });
 
   it('keeps an unreadable visual fence as it is', () => {
@@ -244,5 +350,40 @@ describe('streamingPreview', () => {
     }
     const complete = streamingPreview(answer);
     for (const kept of ['# Pressure', 'print("kept")', 'After the first visual.', 'The end.']) expect(complete).toContain(kept);
+  });
+
+  it('never shows a copied note at any prefix of an answer', () => {
+    const notes = ['[Visual not generated:', '[Visual shown to the learner:'];
+    const prefixes = notes.flatMap((note) => Array.from({ length: note.length - '[Visual'.length }, (_, i) => note.slice(0, '[Visual'.length + i + 1)));
+    for (const answer of [
+      `# Pressure\n\nForce over area.\n\n${notGenerated}\n\n${shown}`,
+      `# Pressure\r\n\r\n  ${shown}  \r\n${notGenerated}\r\n`,
+      `${notGenerated}\n\nAfter the note.\n\n${shown}\n\nThe end.`,
+      `\`\`\`text\nquoted\n\`\`\`\n\n${shown}`,
+    ]) for (let end = 0; end <= answer.length; end++) {
+      const preview = streamingPreview(answer.slice(0, end));
+      for (const prefix of prefixes) expect(preview, `${JSON.stringify(answer)} at ${end}`).not.toContain(prefix);
+      expect(preview, `${JSON.stringify(answer)} at ${end}`).not.toContain('[Vis');
+    }
+  });
+
+  it('shows the text after a closed note line', () => {
+    expect(streamingPreview(`One.\n\n${notGenerated}\n\nTwo`)).toBe('One.\n\nTwo');
+    expect(streamingPreview(`${shown}\nTwo`)).toBe('Two');
+  });
+
+  it('holds a last line only while it can still become a note', () => {
+    expect(streamingPreview('One.\n\n[')).toBe('One.\n\n');
+    expect(streamingPreview('One.\n\n  [Visual sh')).toBe('One.\n\n');
+    expect(streamingPreview('One.\n\n[1')).toBe('One.\n\n[1');
+    expect(streamingPreview('[link](url)')).toBe('[link](url)');
+    expect(streamingPreview('[Visual a')).toBe('[Visual a');
+    expect(streamingPreview('[Visual not generated: x] and')).toBe('');
+    expect(streamingPreview('[Visual not generated: x] and\n')).toBe('[Visual not generated: x] and\n');
+  });
+
+  it('keeps a line that merely starts like a note inside a code block', () => {
+    expect(streamingPreview('```text\n[Vis')).toBe('```text\n[Vis');
+    expect(streamingPreview('```text\n' + notGenerated + '\n')).toBe('```text\n' + notGenerated + '\n');
   });
 });

@@ -53,7 +53,7 @@ function memoryMessage(records: Array<{ id: string; role: string; excerpts: stri
   return records.length ? { role: 'user', content: CONVERSATION_MEMORY_INSTRUCTIONS + '\n' + JSON.stringify({ kind: 'extractive_conversation_memory', records }) } : null;
 }
 function packet(system: ProviderMessage, evidence: ProviderMessage | null, memory: ProviderMessage | null, history: ProviderMessage[], current: ProviderMessage) {
-  return [system, ...(evidence ? [evidence] : []), ...(memory ? [memory] : []), ...history, current];
+  return [system, ...(evidence ? [evidence] : []), ...(memory ? [memory] : []), ...history.filter(message => message.content.trim()), current];
 }
 function historyTurns(history: ChatMessage[]) {
   const turns: ChatMessage[][] = [];

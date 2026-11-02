@@ -22,7 +22,7 @@ describe('generateTutorProse', () => {
     expect(result.model).toBe('fixture');
   });
 
-  it.each(['', '   ', '```student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n```'])('rejects a reply with no readable text: %j', async (content) => {
+  it.each(['', '   ', '```student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n```', '[Visual not generated: I]', '[Visual shown to the learner: quiz "T"]\n\n[Visual not generated: I]\n'])('rejects a reply with no readable text: %j', async (content) => {
     await expect(generateTutorProse(replying(content), [], { maxTokens: 4096 })).rejects.toThrow('The model returned no answer');
   });
 });
@@ -63,6 +63,11 @@ ${fence}`;
   it('is true for plain prose and for a malformed request that was demoted', async () => {
     expect(await prose('Plain text only.')).toBe(true);
     expect(await prose(`Text.\n\n${fence}student-visual-request\n{"id":"v1"}\n${fence}`)).toBe(true);
+  });
+
+  it('stays true when the model wrote a note instead of asking for a visual, and the note is not saved', async () => {
+    const result = await generateTutorProse(replying('Text.\n\n[Visual not generated: See the curve]'), [], { maxTokens: 4096 });
+    expect(result).toMatchObject({ markdown: 'Text.', jobs: [], needsDecision: true });
   });
 });
 
