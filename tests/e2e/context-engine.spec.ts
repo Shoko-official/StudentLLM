@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { TUTOR_LENGTH_REMINDER } from '../../src/prompts';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from '../../src/test/workspace-fixture';
 import { savedWorkspace } from './workspace-store';
 
@@ -38,7 +39,8 @@ test('full context retains later sources and exact dialogue while generated plot
   await expect(slider).toHaveValue('1');
   expect(requests).toHaveLength(1);
   const messages = requests[0].messages;
-  expect(messages.at(-1)).toEqual({ role: 'user', content: question });
+  // The length note follows the question on purpose: the question stays whole, as the last words of the learner.
+  expect(messages.slice(-2)).toEqual([{ role: 'user', content: question }, { role: 'user', content: TUTOR_LENGTH_REMINDER }]);
   expect(messages).toContainEqual({ role: 'user', content: 'Pour cette discussion, garde la temperature a 275 K.' });
   expect(messages).toContainEqual({ role: 'assistant', content: 'Temperature choisie : 275 K.' });
   expect(messages[0].content).not.toContain('COURSE_MARKER_');
