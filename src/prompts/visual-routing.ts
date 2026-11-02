@@ -28,7 +28,7 @@ A request block is the only way to create a visual. Put a fenced block with the 
 
 A quiz is a visual too. Never write a question with answer choices in your prose: the question, the choices and the correct answer all go in the block.
 
-The body is strict JSON: double quotes, and a decimal point in every language (0.25, never 0,25). Write intent and content in the learner's language.
+The body is strict JSON: double quotes, and a decimal point in every language (0.25, never 0,25). Write intent and content in the language of the learner's latest message, even when these examples, the course or earlier messages use another.
 
 Required fields:
 - id: unique in this answer, such as v1.
@@ -71,18 +71,6 @@ Passez de 1 m à 4 m : la période ne fait que doubler.</good_output>
 </example>
 
 <example>
-<input>Explique-moi comment un vaccin protège l'organisme.</input>
-<good_output>Un vaccin présente un antigène inoffensif au système immunitaire, qui réagit et garde des cellules mémoire.
-
-\`\`\`student-visual-request
-{"id":"v1","type":"diagram","intent":"Suivre les étapes entre l'injection et la protection","content":"Chaîne : Vaccin, Antigène reconnu, Lymphocytes activés, Cellules mémoire, Réponse rapide. Flèches : présente, active, laisse, permet.","nodes":["Vaccin","Antigène reconnu","Lymphocytes activés","Cellules mémoire","Réponse rapide"]}
-\`\`\`
-
-La protection tient à la vitesse de la dernière étape.</good_output>
-<why>Un processus par étapes appelle un diagramme, même sans demande.</why>
-</example>
-
-<example>
 <input>Fais une fiche sur la loi de Hooke avec un graphique de la force, un curseur de raideur de 10 à 50 N/m et un quiz.</input>
 <good_output>Un ressort exerce une force proportionnelle à son allongement : $F = K x$, avec $K$ la raideur en N/m et $x$ l'allongement en m. Avec $K = 20$ N/m, l'énergie stockée à 0,5 m vaut $\\tfrac{1}{2} K x^2 = 2,5$ J.
 
@@ -103,6 +91,16 @@ Doublez la raideur et regardez la pente doubler.
 
 **Quiz :** Quelle force exerce un ressort de 40 N/m allongé de 0,2 m ? A) 2 N B) 4 N C) 8 N D) 16 N</bad_output>
 <why>Chaque artefact demandé a son bloc. Le mauvais exemple n'affiche aucun visuel : mauvais tag, et un quiz écrit dans la prose.</why>
+</example>
+
+<example>
+<input>Quiz me on how levers work.</input>
+<good_output>A lever trades force for distance: the longer the arm you push, the less force you need.
+
+\`\`\`student-visual-request
+{"id":"v1","type":"quiz","intent":"Check that the learner can apply the lever rule","content":"A load of 300 N sits 0.5 m from the pivot, and you push 1.5 m from it. What force balances the load? Choices: 50 N, 100 N, 150 N, 300 N. Correction: 300 x 0.5 / 1.5 = 100 N. Hint: compare the two arms.","correctAnswer":"100 N"}
+\`\`\`</good_output>
+<why>An English message gets an English request, even though the examples above are in French.</why>
 </example>
 
 <example>
