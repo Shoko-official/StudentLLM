@@ -164,6 +164,41 @@ describe('useVisualJobs', () => {
       expect(messages.content().match(/student-visual-request/g)).toHaveLength(1);
     });
 
+    it('asks for each named artefact in turn, beside a request the tutor made, and builds what is added', async () => {
+      const plotFence = '```student-visual-request\n' + JSON.stringify({ id: 'v1', type: 'plot', intent: 'I', content: 'C' }) + '\n```';
+      const answer = `Answer.\n\nQuiz : What is it?\n\n${plotFence}`;
+      const decisions: string[] = [];
+      const diagram = { type: 'diagram', title: 'Tree', nodes: [{ id: 'a', label: 'A' }], edges: [] };
+      const generate = vi.fn(async (sent: Array<{ content: string }>) => {
+        if (!isDecision(sent)) return { content: JSON.stringify(JSON.parse(sent[1].content).request.type === 'diagram' ? diagram : quiz), model: 'fixture' };
+        const type = sent.at(-1)!.content.includes('names a diagram') ? 'diagram' : 'quiz';
+        decisions.push(type);
+        return { content: JSON.stringify({ ...decision, type }), model: 'fixture' };
+      });
+      const messages = store(answer);
+      const { result } = renderHook(() => useVisualJobs({ provider: { supportsStructuredOutputs: true, generate }, updateMessage: messages.updateMessage }));
+      act(() => result.current.decide('lesson-a', 'm1', 'Fais un graphique, ajoute un arbre et termine par un quiz.', answer));
+      await waitFor(() => expect(decisions).toEqual(['diagram', 'quiz']));
+      await waitFor(() => expect(messages.content().match(/```student-visual\n/g)).toHaveLength(2));
+      await waitFor(() => expect(result.current.pending.size).toBe(0));
+      expect(messages.content()).toContain('"id":"v1"');
+      expect(messages.content()).not.toContain('Quiz :');
+      expect(messages.content()).not.toContain('auto-');
+    });
+
+    it('stops the sequence when the provider is gone, so the next call never reaches another provider', async () => {
+      const gate: Array<() => void> = [];
+      const generate = vi.fn(() => new Promise<{ content: string; model: string }>((resolve) => { gate.push(() => resolve({ content: '{"visual":false}', model: 'fixture' })); }));
+      const provider: LLMProvider = { supportsStructuredOutputs: true, generate };
+      const { result, rerender } = renderHook(({ current }: { current: LLMProvider | null }) => useVisualJobs({ provider: current, updateMessage: vi.fn() }), { initialProps: { current: provider as LLMProvider | null } });
+      act(() => result.current.decide('lesson-a', 'm1', 'Ajoute un arbre et un quiz.', 'A.'));
+      await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+      rerender({ current: null });
+      act(() => gate[0]());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(generate).toHaveBeenCalledTimes(1);
+    });
+
     it('stops a decision in flight when its lesson is cancelled or the hook unmounts', async () => {
       const signals: AbortSignal[] = [];
       const generate = vi.fn((_messages: unknown, options?: { signal?: AbortSignal }) => new Promise<never>((_resolve, reject) => {

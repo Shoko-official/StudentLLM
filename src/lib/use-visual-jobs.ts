@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LLMProvider } from './llm-provider';
-import { decideVisual, runVisualJobs } from './teaching-generation';
-import { appendVisualRequest, hasVisualFence, replaceVisualFence, visualFence, type VisualJob } from './visual-brief';
+import { decideVisuals, runVisualJobs } from './teaching-generation';
+import { appendVisualRequest, hasVisualFence, jobFromMarkdown, replaceVisualFence, visualFence, type VisualJob } from './visual-brief';
 
 export const pendingVisualKey = (messageId: string, briefId: string) => `${messageId}\u0000${briefId}`;
 
@@ -51,15 +51,15 @@ export function useVisualJobs(options: VisualJobsOptions) {
         if (!provider) { settle(run); continue; }
         active.current++;
         // A decision shows nothing while it runs and nothing when it fails: only a brief reaches the learner.
-        decideVisual(provider, { question: item.question, answer: item.answer, earlierVisuals: item.earlierVisuals, earlierMessages: item.earlierMessages }, { deadlineMs, signal: run.controller.signal }).then(({ brief }) => {
-          if (!brief) return;
-          const { job } = appendVisualRequest(item.answer, brief);
-          if (!job) return;
-          latest.current.updateMessage(run.lessonId, messageId, (content) => hasVisualFence(content) ? content : appendVisualRequest(content, brief).markdown);
+        // A sequence of decisions holds one call slot, so what it adds can build in the other.
+        decideVisuals(() => latest.current.provider, { question: item.question, answer: item.answer, earlierVisuals: item.earlierVisuals, earlierMessages: item.earlierMessages }, { deadlineMs, signal: run.controller.signal, onRequest: (job, _markdown, target) => {
+          const { brief } = job;
+          latest.current.updateMessage(run.lessonId, messageId, (content) => (target ? jobFromMarkdown(content, brief.id) : hasVisualFence(content)) ? content : appendVisualRequest(content, brief).markdown);
           run.remaining++;
           change([pendingVisualKey(messageId, brief.id)], true);
           queue.current.push({ kind: 'visual', run, messageId, job });
-        }).catch((error) => {
+          pump();
+        } }).catch((error) => {
           console.error('A visual decision failed', error);
         }).finally(() => {
           settle(run);

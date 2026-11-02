@@ -264,10 +264,9 @@ async function runNew(provider, prompt, withVisuals) {
   const jobs = tutor.jobs.slice(0, briefs.MAX_AUTOMATIC_VISUALS);
   let decision = { asked: false };
   if (tutor.needsDecision) {
-    const decided = await newPipeline.decideVisual(provider, { question: prompt, answer: tutor.markdown }, { deadlineMs: VISUAL_DEADLINE_MS });
-    const appended = decided.brief ? briefs.appendVisualRequest(content, decided.brief) : null;
-    if (appended?.job) { content = appended.markdown; jobs.push(appended.job); }
-    decision = { asked: true, requested: Boolean(appended?.job), ...(decided.error === undefined ? {} : { error: decided.error }) };
+    // The same sequence as the app: a call for each artefact the prompt names and the answer lacks, then the general one.
+    const decided = await newPipeline.decideVisuals(() => provider, { question: prompt, answer: tutor.markdown }, { deadlineMs: VISUAL_DEADLINE_MS, onRequest: (job, markdown) => { content = markdown; jobs.push(job); } });
+    decision = { asked: true, requested: decided.requested > 0, ...(decided.targets.length ? { targets: decided.targets } : {}), ...(decided.error === undefined ? {} : { error: decided.error }) };
   }
   if (withVisuals) {
     await newPipeline.runVisualJobs(provider, jobs, { deadlineMs: VISUAL_DEADLINE_MS, concurrency: 2, onResult: (brief, result) => {
