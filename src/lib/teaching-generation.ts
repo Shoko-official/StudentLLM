@@ -14,6 +14,7 @@ const stillPlotTask = 'Recheck this plot against the request. Follow each listed
 const quizRecheckTask = 'Recheck this quiz. The option you keyed disagrees with your working or with the answer the tutor expected, and either may be wrong. Solve the question again in explanation, then key the option equal to your result, even if it differs from the expected answer. If no option holds your result, correct the options. Explanation, options and key must agree. Return the complete object.';
 const noAnswerMessage = 'The model returned no answer. Try again or choose another model in Settings.';
 const LEARNER_MESSAGE_FOR_PLOT_CHARACTERS = 2000;
+const LEARNER_MESSAGE_FOR_LANGUAGE_CHARACTERS = 300;
 
 export interface VisualJobResult { visual: TeachingVisual | null; attempts: number; errors: string[]; unconfirmed: string[]; rekeyed?: string }
 
@@ -90,8 +91,9 @@ export async function generateVisual(provider: LLMProvider, job: VisualJob, opti
   const { brief } = job;
   const stopped = (attempts: number): VisualJobResult => ({ visual: null, attempts, errors: [stoppedMessage], unconfirmed: [] });
   if (options.signal?.aborted) return stopped(0);
-  // The tutor's request can lose a formula, a range or a readout that the learner wrote out: the plot builder gets the original too.
-  const learner = brief.type === 'plot' && job.learnerMessage ? { learnerMessage: [...redactContextImages(job.learnerMessage)].slice(0, LEARNER_MESSAGE_FOR_PLOT_CHARACTERS).join('') } : {};
+  // The tutor's request can lose a formula, a range or a readout that the learner wrote out, so the plot builder gets the
+  // original. Every builder reads it for the language to write in, since a request can come in another language.
+  const learner = job.learnerMessage ? { learnerMessage: [...redactContextImages(job.learnerMessage)].slice(0, brief.type === 'plot' ? LEARNER_MESSAGE_FOR_PLOT_CHARACTERS : LEARNER_MESSAGE_FOR_LANGUAGE_CHARACTERS).join('') } : {};
   const ask = (data: Record<string, unknown>) => generateWithin(
     provider,
     [{ role: 'system', content: VISUAL_MODULES[brief.type] }, { role: 'user', content: JSON.stringify({ ...data, request: brief, surroundingExplanation: job.section, ...learner }) }],

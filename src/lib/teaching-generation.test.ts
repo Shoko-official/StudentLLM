@@ -511,10 +511,11 @@ describe('the learner message on the way to the plot builder', () => {
     expect([...sent(long).learnerMessage].length).toBe(2000);
   });
 
-  it('stays out of the other builders, and of a job that has none', async () => {
+  it('goes to the other builders for its language, shorter, and stays out of a job that has none', async () => {
     const other = replying(JSON.stringify(quiz));
-    await generateVisual(other, job({}, { learnerMessage: 'Ask me.' }));
-    expect(sent(other)).not.toHaveProperty('learnerMessage');
+    await generateVisual(other, job({}, { learnerMessage: `Quiz me on this. ${'word '.repeat(200)}` }));
+    expect(sent(other).learnerMessage.startsWith('Quiz me on this.')).toBe(true);
+    expect([...sent(other).learnerMessage].length).toBe(300);
     const none = replying(plotOutput);
     await generateVisual(none, { brief: plotBrief, section: 'Around.' });
     expect(sent(none)).not.toHaveProperty('learnerMessage');

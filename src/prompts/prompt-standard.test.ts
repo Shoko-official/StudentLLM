@@ -158,9 +158,16 @@ describe('prompt standard: tutor prompts', () => {
     expect(estimateContextTokens(TUTOR_LENGTH_REMINDER)).toBeLessThanOrEqual(300);
   });
 
-  it('has the tutor write the request in the learner language and the builders follow the request language', () => {
-    expect(VISUAL_ROUTING_PROMPT).toContain("Write intent and content in the learner's language.");
-    for (const type of VISUAL_TYPES) expect(VISUAL_MODULES[type]).toContain("in the language of request.intent and request.content, which is the learner's language.");
+  it('has learner-facing text follow the language of the latest message, with a request example in English', () => {
+    expect(VISUAL_ROUTING_PROMPT).toContain("Write intent and content in the language of the learner's latest message");
+    expect(TUTOR_PROMPT).toContain("Answer in the language of the learner's latest message");
+    for (const type of VISUAL_TYPES) {
+      expect(VISUAL_MODULES[type]).toContain('in the language of learnerMessage when the user message holds one, otherwise of request.intent and request.content.');
+    }
+    const english = examples(VISUAL_ROUTING_PROMPT).find((example) => /<input>Quiz me\b/.test(example));
+    const brief = parseVisualBrief(fences(english ?? '', 'student-visual-request')[0] ?? '');
+    expect(brief).toMatchObject({ type: 'quiz' });
+    expect(brief!.intent).toMatch(/\b(?:the|that|can)\b/);
   });
 
   it('keeps the length examples inside their table rows and the reminder minimums on the row lower bounds', () => {
