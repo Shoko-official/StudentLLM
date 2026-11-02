@@ -240,26 +240,54 @@ export function describeEarlierVisuals(contents: string[]): string[] {
 }
 
 const VISUAL_NOUNS = 'schemas?|diagrammes?|graphiques?|graphes?|courbes?|figures?|dessins?|illustrations?|visuels?|visualisations?|diagrams?|charts?|graphs?|curves?|plots?|pictures?|drawings?|sketch(?:es)?|visuals?';
-const REQUEST_VERBS = 'montr(?:e|es|er|ez)|dessin(?:e|es|er|ez)|trac(?:e|es|er|ez)|fais|faire|faites|affich(?:e|es|er|ez)|gener(?:e|es|er|ez)|represent(?:e|es|er|ez)|donn(?:e|es|er|ez)|propos(?:e|es|er|ez)|construi(?:s|re|sez)|cre(?:e|es|er|ez)|ajout(?:e|es|er|ez)|show|shows|draw|plot|sketch|make|give|create|generate|display|illustrate|visuali[sz]e|add|include|produce|build';
-const ASKS_FOR_VISUAL = new RegExp(`\\b(?:${REQUEST_VERBS})\\b[^.!?;\\n]{0,50}?\\b(?:${VISUAL_NOUNS})\\b`);
+// Verbs that mean "show a picture" by themselves: a noun a few words later is enough.
+const VISUAL_VERBS = 'dessin(?:e|es|er|ez)|trac(?:e|es|er|ez)|affich(?:e|es|er|ez)|represent(?:e|es|er|ez)|illustr(?:e|es|er|ez)|draw|plot|sketch|display|illustrate|visuali[sz]e';
+// Everyday verbs ("show that", "give the definition of"): only verb, article and noun together, with nothing like "que" or "of" before the noun.
+const GENERIC_VERBS = 'montr(?:e|es|er|ez)|fais|faire|faites|donn(?:e|es|er|ez)|propos(?:e|es|er|ez)|construi(?:s|re|sez)|cre(?:e|es|er|ez)|ajout(?:e|es|er|ez)|gener(?:e|es|er|ez)|show|shows|make|give|create|generate|add|include|produce|build';
+const ARTICLE = "(?:un|une|le|la|les|l'|des|a|an|the|some|ce|cette|this|these)";
+const SIZE = '(?:(?:petit|petite|simple|quick|small|rapide|rapid|nouveau|nouvelle|new|bon|good)\\s+)?';
+const ASKS_FOR_VISUAL = [
+  new RegExp(`\\b(?:${VISUAL_VERBS})\\b[^.!?;\\n]{0,50}?\\b(?:${VISUAL_NOUNS})\\b`),
+  new RegExp(`\\b(?:${GENERIC_VERBS})\\b(?:[ -](?:moi|toi|nous|lui|me|us|him|her|them|te))?\\s+${ARTICLE}\\s*${SIZE}(?:${VISUAL_NOUNS})\\b(?!\\s+(?:theory|theorie))`),
+];
+// A request to write code names a language or a library: it asks for a program, not to be shown a picture.
+const CODE_REQUEST = /\b(?:python|matplotlib|plotly|seaborn|pandas|numpy|ggplot|tikz|latex|excel|javascript|typescript|html|css|react|d3|code|script|sql|matlab)\b/;
 const REFUSES_VISUAL = [
   new RegExp(`\\bsans\\b[^.!?;\\n]{0,30}\\b(?:${VISUAL_NOUNS})\\b`),
   new RegExp(`\\bpas\\s+(?:de|d')\\s*(?:\\w+\\s+){0,2}(?:${VISUAL_NOUNS})\\b`),
+  new RegExp(`(?:^|[,;]\\s*|\\bmais\\s+|\\bet\\s+)pas\\s+${ARTICLE}\\s*(?:\\w+\\s+)?(?:${VISUAL_NOUNS})\\b`),
+  new RegExp(`(?:^|[,;]\\s*|\\bbut\\s+)not\\s+(?:a|an|the)\\s+(?:\\w+\\s+)?(?:${VISUAL_NOUNS})\\b`),
+  new RegExp(`\\bplutot\\b[^.!?;\\n]{0,40}\\bqu(?:'|e\\s)\\s*(?:\\w+\\s+)?(?:${VISUAL_NOUNS})\\b`),
   new RegExp(`\\b(?:no|without)\\b[^.!?;\\n]{0,25}\\b(?:${VISUAL_NOUNS})\\b`),
+  new RegExp(`\\b(?:instead of|rather than|plutot qu|au lieu d)\\b[^.!?;\\n]{0,25}\\b(?:${VISUAL_NOUNS})\\b`),
+  new RegExp(`\\b(?:do not|don't|dont)\\s+(?:want|need)\\b[^.!?;\\n]{0,25}\\b(?:${VISUAL_NOUNS})\\b`),
+  new RegExp(`\\b(?:ne veux pas|pas besoin)\\b[^.!?;\\n]{0,25}\\b(?:${VISUAL_NOUNS})\\b`),
   /\b(?:do not|don't|dont|never|stop)\s+(?:draw|plot|sketch|show|make|display|use)/,
   /\bne\s+(?:me\s+)?(?:montr|dessin|trac|fais|affich)\w*\s+pas\b/,
   /\bjuste le texte\b|\btext only\b|\bonly text\b|\btexte (?:seulement|uniquement)\b/,
 ];
 
-/**
- * Whether a learner message asks to see a visual (French or English): a request verb followed by an artefact noun, and no
- * refusal of visuals in the same message. Code and image references do not count, and a question about a thing is not a request.
- */
-export function asksForVisual(text: string): boolean {
+/** Lower case, without accents, code and image references: what the detectors read. */
+function plainMessage(text: string) {
   let plain = text;
   for (const range of codeRanges(text).sort((a, b) => b.start - a.start)) plain = plain.slice(0, range.start) + ' ' + plain.slice(range.end);
-  plain = plain.replace(/`[^`]*`/g, ' ').replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').normalize('NFD').replace(/\p{M}/gu, '').replace(/[‘’]/g, "'").toLowerCase();
-  return ASKS_FOR_VISUAL.test(plain) && !REFUSES_VISUAL.some((pattern) => pattern.test(plain));
+  return plain.replace(/`[^`]*`/g, ' ').replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').normalize('NFD').replace(/\p{M}/gu, '').replace(/[‘’]/g, "'").toLowerCase();
+}
+
+/** Whether a learner message refuses visuals (French or English), including in contrast: "not a diagram", "instead of a chart". */
+export function refusesVisual(text: string): boolean {
+  const plain = plainMessage(text);
+  return REFUSES_VISUAL.some((pattern) => pattern.test(plain));
+}
+
+/**
+ * Whether a learner message asks to see a visual (French or English): a request verb followed by an artefact noun, and no
+ * refusal of visuals in the same message. Code and image references do not count, a request for code does not count, and a
+ * question about a thing is not a request.
+ */
+export function asksForVisual(text: string): boolean {
+  const plain = plainMessage(text).replace(/\bfigures? (?:de style|of speech)\b/g, ' ');
+  return ASKS_FOR_VISUAL.some((pattern) => pattern.test(plain)) && !CODE_REQUEST.test(plain) && !REFUSES_VISUAL.some((pattern) => pattern.test(plain));
 }
 
 /** History keeps what a follow-up needs, without replaying JSON the model could learn to copy. */
