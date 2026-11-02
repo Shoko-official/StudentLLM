@@ -26,9 +26,9 @@ describe('prompt standard: tutor prompts', () => {
   });
 
   it('respects the size budgets', () => {
-    expect(estimateContextTokens(TUTOR_SYSTEM_PROMPT)).toBeLessThanOrEqual(6000);
+    expect(estimateContextTokens(TUTOR_SYSTEM_PROMPT)).toBeLessThanOrEqual(7200);
     for (const type of VISUAL_TYPES) expect(estimateContextTokens(VISUAL_MODULES[type])).toBeLessThanOrEqual(6000);
-    expect(estimateContextTokens(VISUAL_DECISION_PROMPT)).toBeLessThanOrEqual(3000);
+    expect(estimateContextTokens(VISUAL_DECISION_PROMPT)).toBeLessThanOrEqual(3700);
   });
 
   it('keeps every visual example valid for the real parser, and each module on its type', () => {
@@ -62,10 +62,11 @@ describe('prompt standard: tutor prompts', () => {
     expect(decisions.length).toBeGreaterThanOrEqual(2);
     for (const example of decisions) {
       const input = JSON.parse(/<input>([\s\S]*?)<\/input>/.exec(example)![1]);
-      expect(Object.keys(input)).toEqual(['learnerMessage', 'tutorAnswer']);
+      expect(Object.keys(input)).toEqual(['learnerMessage', 'tutorAnswer', 'earlierVisuals']);
+      expect(Array.isArray(input.earlierVisuals) && input.earlierVisuals.every((item: unknown) => typeof item === 'string')).toBe(true);
       const good = goodOutput(example);
       const generate = vi.fn(async () => ({ content: good, model: 'fixture' }));
-      const result = await decideVisual({ generate }, { question: input.learnerMessage, answer: input.tutorAnswer });
+      const result = await decideVisual({ generate }, { question: input.learnerMessage, answer: input.tutorAnswer, earlierVisuals: input.earlierVisuals });
       expect(result.error).toBeUndefined();
       expect(result.brief === null).toBe(JSON.parse(good).visual === false);
     }
@@ -88,9 +89,38 @@ describe('prompt standard: tutor prompts', () => {
     expect(VISUAL_MODULES.plot).toContain('binomial(n,x,p)');
   });
 
-  it('routes explicit requests to see or practise before the text-only rule', () => {
-    const positions = ['asked to see', 'wants to be tested', 'Text alone is complete', 'has behaviour'].map((phrase) => VISUAL_ROUTING_PROMPT.indexOf(phrase));
-    expect(positions.every((position) => position >= 0)).toBe(true);
-    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  it('routes a refusal first, then explicit requests to see or practise, before the text-only rule', () => {
+    const inOrder = (prompt: string, phrases: string[]) => {
+      const positions = phrases.map((phrase) => prompt.indexOf(phrase));
+      expect(positions.every((position) => position >= 0)).toBe(true);
+      expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    };
+    inOrder(VISUAL_ROUTING_PROMPT, ['refused a visual', 'asked to see', 'wants to be tested', 'Text alone is complete', 'already shows this idea', 'has behaviour']);
+    inOrder(VISUAL_DECISION_PROMPT, ['refused a visual', 'asked to see', 'wants to be tested', 'Text alone is complete', 'already shows this idea', 'how or why something works']);
+    expect(VISUAL_ROUTING_PROMPT).toMatch(/1\. \*\*The learner refused a visual/);
+    expect(VISUAL_DECISION_PROMPT).toMatch(/1\. \*\*The learner refused a visual/);
+  });
+
+  it('describes earlierVisuals to the decision call and teaches both the refusal and the redraw cases', () => {
+    expect(VISUAL_DECISION_PROMPT).toContain('earlierVisuals, a list of descriptions of the visuals the learner saw in the last two replies');
+    const inputs = examples(VISUAL_DECISION_PROMPT).map((example) => JSON.parse(/<input>([\s\S]*?)<\/input>/.exec(example)![1]));
+    expect(inputs.some((input) => /sans sch/.test(input.learnerMessage) && input.earlierVisuals.length === 0)).toBe(true);
+    expect(inputs.some((input) => input.earlierVisuals.length > 0)).toBe(true);
+  });
+
+  it('sets the length from the latest message, with a table and the two length examples', () => {
+    expect(TUTOR_PROMPT).toContain('## How much to write');
+    expect(TUTOR_PROMPT).toContain('The latest message alone sets the length. An earlier reply is never a model');
+    expect(TUTOR_PROMPT).toContain('| how or why something works, happens or changes | one or two short paragraphs, about 80 to 180 words');
+    expect(TUTOR_PROMPT).toContain('Too little is a failure too');
+    expect(TUTOR_PROMPT).not.toContain('Match your effort to the request.');
+    expect(TUTOR_PROMPT.indexOf('## How you sound')).toBeLessThan(TUTOR_PROMPT.indexOf('## How much to write'));
+    expect(TUTOR_PROMPT.indexOf('## How much to write')).toBeLessThan(TUTOR_PROMPT.indexOf('## Evidence and provenance'));
+    expect(TUTOR_PROMPT).toContain('Canberra.');
+    expect(TUTOR_PROMPT).toContain('wet towel');
+  });
+
+  it('keeps the visual notes out of what the tutor writes', () => {
+    expect(VISUAL_ROUTING_PROMPT).toContain('Never write a note such as [Visual shown to the learner: ...]');
   });
 });
