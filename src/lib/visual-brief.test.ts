@@ -263,6 +263,51 @@ describe('appendVisualRequest', () => {
     expect(result.job?.section).toContain('Answer.');
     expect(hasVisualFence(result.markdown)).toBe(true);
   });
+
+  const quizBrief = parseVisualBrief(JSON.stringify(brief))!;
+  const plotBrief = parseVisualBrief(JSON.stringify({ ...brief, type: 'plot' }))!;
+
+  it.each([
+    ['a labelled question with choices', 'Quiz : Quelle est la valeur en $x=1$ ? Choix : 2, 2,5, 3. Correction : 2,5.'],
+    ['a labelled question', 'Quiz : pour r = 0,6, quelle est la valeur de G ?'],
+    ['a bold label over the question', '**Quiz**\nUn essai avec n=5. Quelle est P(X=0) ?\nChoix : 0,05 ; 0,168. Correction : 0,168.'],
+    ['a bold label with its colon inside', '**Quiz :** What is the run time?'],
+    ['a label with choices and no question mark', 'QCM : la valeur vaut. Choices: 2, 3, 4.'],
+    ['a heading over the question', '# Quiz\n\nA job takes 240 minutes. What is the run time?'],
+    ['a label alone over the question', '**Quiz**\n\nWhat is the run time?'],
+  ])('removes %s when a quiz request takes over, keeping the explanation', (_name, written) => {
+    const result = appendVisualRequest(`The explanation.\n\n${written}\n\nThe summary.`, quizBrief);
+    expect(result.markdown).toBe(`The explanation.\n\nThe summary.\n\n${request()}`);
+    expect(result.job?.section).not.toContain(written.split('\n')[0]);
+  });
+
+  it.each([
+    ['an explanation that mentions a quiz', 'A quiz checks what you know. Why does that help?'],
+    ['an explanation that starts with the word', 'Quiz scores help retention. Why does that help?'],
+    ['a label with no question', 'Quiz : les valeurs de la formule sont importantes pour la suite.'],
+    ['a heading over an explanation', '# Quiz\n\nThe period grows with the length.'],
+    ['a question with no label', 'Which value would you pick?'],
+    ['a label over a list of choices, which removing would orphan', 'Quiz : What is the run time?\n\n- 30\n- 48'],
+    ['a label in a quote', '> Quiz : What is the run time?'],
+  ])('leaves %s', (_name, written) => {
+    const text = `The explanation.\n\n${written}`;
+    expect(appendVisualRequest(text, quizBrief).markdown).toBe(`${text}\n\n${request()}`);
+  });
+
+  it('removes nothing for a request of another type', () => {
+    const text = 'The explanation.\n\nQuiz : What is the run time?';
+    expect(appendVisualRequest(text, plotBrief).markdown).toBe(`${text}\n\n${request(plotBrief)}`);
+  });
+
+  it('keeps a quiz that is all the prose there is, so the answer is never left empty', () => {
+    const text = 'Quiz : What is the run time?';
+    expect(appendVisualRequest(text, quizBrief).markdown).toBe(`${text}\n\n${request()}`);
+  });
+
+  it('leaves a request fence and a built visual around the removed quiz', () => {
+    const text = `Before.\n\n${request({ ...brief, id: 'v9', type: 'plot' })}\n\nQuiz : What is it?\n\nAfter.\n\n${direct(quiz)}`;
+    expect(appendVisualRequest(text, quizBrief).markdown).toBe(`Before.\n\n${request({ ...brief, id: 'v9', type: 'plot' })}\n\nAfter.\n\n${direct(quiz)}\n\n${request()}`);
+  });
 });
 
 describe('streamingPreview', () => {

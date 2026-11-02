@@ -178,8 +178,35 @@ export function jobFromMarkdown(markdown: string, id: string): VisualJob | null 
 /** True when the prepared markdown holds a request or a direct fence; quoted and demoted fences do not count. */
 export function hasVisualFence(markdown: string) { return scanFences(markdown).fences.length > 0; }
 
+const QUIZ_LABEL = /^(?:(?:\*\*|__)\s*(?:quiz|qcm)\s*:?\s*(?:\*\*|__)\s*:?|(?:quiz|qcm)\s*:|(?:quiz|qcm)[ \t]*(?=\r?\n|$))\s*/i;
+const QUIZ_CONTENT = /\?|\b(?:choix|choices|options?|correction|answer|r[ée]ponse)\s*:/i;
+
+/**
+ * Removes a quiz the tutor wrote in its prose: only a top-level paragraph or heading labelled Quiz or QCM that holds a
+ * question or choices, so an explanation is never taken. Used when a quiz block takes over, and never empties the prose.
+ */
+function withoutProseQuiz(markdown: string) {
+  const nodes = (fromMarkdown(markdown) as unknown as MarkdownNode).children ?? [];
+  const source = (node: MarkdownNode | undefined) => (node ? markdown.slice(node.position?.start.offset ?? 0, node.position?.end.offset ?? 0) : '');
+  const removed = new Set<number>();
+  nodes.forEach((node, index) => {
+    if (node.type !== 'paragraph' && node.type !== 'heading') return;
+    const text = source(node).replace(/^#+\s*/, '');
+    const label = QUIZ_LABEL.exec(text);
+    if (!label) return;
+    const next = nodes[index + 1];
+    if (next?.type === 'list') return;
+    if (node.type === 'paragraph' && QUIZ_CONTENT.test(text.slice(label[0].length))) { removed.add(index); return; }
+    // A label alone: the quiz is the paragraph under it.
+    if (!text.slice(label[0].length).trim() && next?.type === 'paragraph' && QUIZ_CONTENT.test(source(next)) && nodes[index + 2]?.type !== 'list') { removed.add(index); removed.add(index + 1); }
+  });
+  const kept = nodes.filter((node, index) => !removed.has(index) && !(node.type === 'code' && (node.lang === REQUEST || node.lang === DIRECT)));
+  if (!removed.size || !kept.length) return markdown;
+  return applyEdits(markdown, [...removed].map((index) => ({ start: nodes[index].position?.start.offset ?? 0, end: nodes[index + 1]?.position?.start.offset ?? markdown.length, text: '' })));
+}
+
 export function appendVisualRequest(markdown: string, brief: VisualBrief): { markdown: string; job: VisualJob | null } {
-  const next = markdown.trimEnd() + '\n\n' + fenceText(REQUEST, JSON.stringify(brief));
+  const next = (brief.type === 'quiz' ? withoutProseQuiz(markdown) : markdown).trimEnd() + '\n\n' + fenceText(REQUEST, JSON.stringify(brief));
   return { markdown: next, job: jobFromMarkdown(next, brief.id) };
 }
 
