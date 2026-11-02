@@ -73,6 +73,24 @@ describe('prompt standard: tutor prompts', () => {
     }
   });
 
+  it('has every quiz example solve the question before its options and key', () => {
+    for (const example of examples(VISUAL_MODULES.quiz)) {
+      const keys = Object.keys(JSON.parse(goodOutput(example)));
+      expect(keys.indexOf('explanation')).toBeLessThan(keys.indexOf('options'));
+      expect(keys.indexOf('options')).toBeLessThan(keys.indexOf('answer'));
+    }
+    expect(VISUAL_MODULES.quiz).toContain('Write explanation before options');
+    expect(VISUAL_MODULES.quiz).toContain('the choices in the request may be wrong');
+  });
+
+  it('teaches the plot builder a reading slider named like the axis, and the learner message', () => {
+    expect(VISUAL_MODULES.plot).toContain('Curve written with a slider\'s name');
+    expect(VISUAL_MODULES.plot).toContain('learnerMessage');
+    const collision = examples(VISUAL_MODULES.plot).map((example) => JSON.parse(goodOutput(example))).find((visual) => visual.parameters?.some((item: { name: string }) => item.name === 't'));
+    expect(collision.series.every((item: { expression: string }) => /\bx\b/.test(item.expression))).toBe(true);
+    expect(collision.outputs.some((item: { expression: string }) => /\bt\b/.test(item.expression))).toBe(true);
+  });
+
   it('tells the plot builder that a disagreeing value may be the tutor\'s mistake', () => {
     expect(VISUAL_MODULES.plot).toContain('It may instead contain previousOutput and disagreements: those values disagree with values the tutor gave, and either side may be wrong.');
     expect(VISUAL_MODULES.plot).toContain('Never bend a correct formula to match a value.');
