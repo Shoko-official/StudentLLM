@@ -13,6 +13,12 @@ it('offers one strict schema per visual type, pinned to that type', () => {
   }
 });
 
+it('has the quiz builder write its working before it can commit to options and a key', () => {
+  const keys = Object.keys(visualTypeSchemas.quiz.properties as object);
+  expect(keys.indexOf('explanation')).toBeLessThan(keys.indexOf('options'));
+  expect(keys.indexOf('options')).toBeLessThan(keys.indexOf('answer'));
+});
+
 it('offers a flat strict decision schema where only visual is required', () => {
   const format = visualDecisionResponseFormat();
   expect(format.json_schema).toMatchObject({ name: 'teaching_visual_decision', strict: true });

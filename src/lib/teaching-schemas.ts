@@ -44,9 +44,10 @@ export const visualTypeSchemas: Record<VisualType, Schema> = {
     ] }, 1, 64),
   }, ['type', 'title', 'width', 'height', 'shapes']),
   quiz: object({
-    type: { const: 'quiz' }, title: text(180), question: text(2000), options: array(text(500), 2, 6),
-    answer: { type: 'integer', minimum: 0, maximum: 5 }, explanation: text(3000), hint: text(1000),
-  }, ['type', 'title', 'question', 'options', 'answer', 'explanation']),
+    // The working comes first: a model that fixes the options and the key before solving keeps them when the solution disagrees.
+    type: { const: 'quiz' }, title: text(180), question: text(2000), explanation: text(3000), options: array(text(500), 2, 6),
+    answer: { type: 'integer', minimum: 0, maximum: 5 }, hint: text(1000),
+  }, ['type', 'title', 'question', 'explanation', 'options', 'answer']),
 };
 
 const decisionLabels = array(label, 0, 8);
