@@ -68,7 +68,7 @@ h2 { font-size: 20px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 12px
 h3 { font-size: 16px; font-weight: 600; }
 p { line-height: 1.6; }
 svg { flex-shrink: 0; }
-html { scroll-padding-top: 72px; }
+html { scroll-padding-top: 72px; scrollbar-gutter: stable; }
 .topbar { position: sticky; z-index: 8; top: 0; height: 60px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid var(--line); background: var(--page); }
 .topbar-leading { display: flex; align-items: center; gap: 14px; }
 .brand-name { display: inline-flex; align-items: center; gap: 8px; font-family: var(--display); font-variation-settings: var(--display-soft); font-size: 18px; font-weight: 600; letter-spacing: -.02em; }
@@ -136,7 +136,7 @@ html { scroll-padding-top: 72px; }
 .course-note-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 28px; color: var(--muted); font-size: 13px; font-weight: 500; }
 .course-note-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 14px; min-width: 0; }
 .course-note-status { color: var(--text); font-size: 12px; white-space: nowrap; }
-.course-note-content { display: grid; gap: 18px; min-width: 0; }
+.course-note-content { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; min-width: 0; }
 .course-note-paragraph { margin: 0; color: var(--text); font-size: 16px; line-height: 1.8; white-space: pre-wrap; }
 .course-note-meta { display: block; color: var(--muted); font-size: 11px; }
 .note-empty { display: grid; justify-items: center; gap: 2px; max-width: 460px; margin: 0 auto; padding: 36px 0; text-align: center; }
@@ -189,8 +189,8 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .tone-violet { --tone: var(--tone-violet); }
 .tone-cyan { --tone: var(--tone-cyan); }
 .resource-open small { color: var(--muted); font-size: 12px; }
-.main-panel.chat-main-panel { display: flex; flex-direction: column; height: calc(100dvh - 60px); max-width: 1180px; padding-top: 24px; padding-bottom: 14px; }
-.chat-main-panel > .main-header { flex: 0 0 auto; margin-bottom: 18px; }
+.main-panel.chat-main-panel { display: flex; flex-direction: column; height: calc(100dvh - 60px); padding-bottom: 14px; }
+.chat-main-panel > .main-header { flex: 0 0 auto; }
 .chat-main-panel > .view-tabs { flex: 0 0 auto; margin-bottom: 12px; }
 .chat-view { display: flex; flex: 1; flex-direction: column; gap: 0; width: min(100%, 840px); min-height: 0; margin: 0 auto; }
 .app-shell:has(.chat-view) { --toast-bottom: 180px; }
@@ -205,7 +205,7 @@ button:hover .animated-icon svg, button:focus-visible .animated-icon svg { anima
 .chat-context-content p { margin: 0 0 5px; font-size: 13px; color: var(--muted); }
 .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 28px 12px 32px; scrollbar-gutter: stable; overscroll-behavior-y: contain; }
 .chat-scroll:focus-visible { outline-offset: -2px; }
-.chat-intro { display: grid; justify-items: start; align-content: center; min-height: 100%; max-width: 550px; margin: 0 auto; padding: 24px 0 40px; }
+.chat-intro { display: grid; justify-items: center; align-content: center; min-height: 100%; max-width: 550px; margin: 0 auto; padding: 24px 0 40px; text-align: center; }
 .chat-intro > svg { color: var(--muted); margin-bottom: 22px; }
 .chat-intro h2 { font-family: var(--display); font-size: 29px; font-weight: 500; letter-spacing: -.02em; margin-bottom: 14px; }
 .chat-intro p { max-width: 520px; color: var(--muted); font-size: 15px; line-height: 1.7; margin: 0; }
