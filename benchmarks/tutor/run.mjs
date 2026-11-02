@@ -122,8 +122,6 @@ for (const model of MODELS) {
     });
   }
 }
-// Report-only pairs run after every gated pair, whatever the order of MODELS (the sort is stable).
-pairs.sort((a, b) => Number(Boolean(a.model.reportOnly)) - Number(Boolean(b.model.reportOnly)));
 const stored = readRows(join(out, 'results.jsonl'));
 const done = new Set(stored.map((item) => item.cell));
 console.log(`${expected.length} cells, ${expected.filter((item) => !done.has(item.cell)).length} left, ${quality.length} quality cases`);
@@ -138,7 +136,7 @@ if (!dryRun) {
 
 const server = await createServer({ configFile: false, appType: 'custom', root: process.cwd(), cacheDir: join(out, 'vite-cache'), optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false, watch: null }, logLevel: 'error' });
 const load = (path) => server.ssrLoadModule(path);
-const [{ OpenAICompatibleProvider }, { buildChatContext, estimateContextTokens }, prompts, oldPipeline, newPipeline, briefs, { scoreSafely, requestedVisual, decideGate, missingHoldouts, validateCases }] = await Promise.all([
+const [{ OpenAICompatibleProvider }, { buildChatContext, estimateContextTokens }, prompts, oldPipeline, newPipeline, briefs, { scoreSafely, requestedVisual, decideGate, missingHoldouts, reportOnlyLast, validateCases }] = await Promise.all([
   load('/src/lib/llm-provider.ts'), load('/src/lib/chat-context.ts'), load('/src/prompts/index.ts'), load('/src/lib/teaching-answer.ts'), load('/src/lib/teaching-generation.ts'), load('/src/lib/visual-brief.ts'), load('/benchmarks/tutor/evaluate.mjs'),
 ]);
 
@@ -336,7 +334,7 @@ async function attempt(pair, mayDiscard) {
   return outcomes;
 }
 
-for (const pair of pairs.filter((item) => !done.has(item.cells.old.cell))) {
+for (const pair of reportOnlyLast(pairs).filter((item) => !done.has(item.cells.old.cell))) {
   const model = pair.model.id;
   if (skipped.has(model)) continue;
   const cells = [pair.cells.old.cell, pair.cells.new.cell];

@@ -571,7 +571,8 @@ describe('real run', () => {
       expect(Object.keys(gate.details.perModel)).not.toContain(mistral);
     }, SLOW);
 
-    it('runs after every gated pair, whatever its place in the model list', () => {
+    // That the sort puts report-only pairs last whatever the model list order is tested on reportOnlyLast in evaluate.test.mjs.
+    it('stores the report-only rows after every gated row', () => {
       const out = outDir();
       run(real(out, casesFile(), holdoutsFile()));
       const order = rows(out).map((row) => row.model);
@@ -594,12 +595,13 @@ describe('real run', () => {
       expect(dataReasons(gate)).toEqual([]);
       expect(gate.details.reportOnly[mistral]).toMatchObject({ failed: { old: 8, new: 8 }, missing: 0 });
       expect(gate.details.timeouts).toEqual({ old: 0, new: 0 });
-      // The data is complete and the others decide: only --allow-dirty and --cases make this run incomplete.
+      // The exit code is 2 here only because these runs always use --allow-dirty and --cases (a clean-tree run is not possible
+      // from this harness); the assertion that matters is dataReasons being empty. The gate logic is tested on decideGate itself.
       expect(result.code).toBe(2);
       expect(gate.incomplete).toBe(true);
     }, SLOW);
 
-    it('leaves the exit code and incomplete to the gated models when its provider keeps failing, and is not an invalidation when skipped', () => {
+    it('skips a report-only model whose provider keeps failing, with no invalidation and no missing cell for the decision', () => {
       const out = outDir();
       const result = run(real(out, casesFile(), holdoutsFile()), { fake: { errorModels: [mistral], speed: 400 } });
       const gate = gateOf(out);
