@@ -112,6 +112,18 @@ describe('useVisualJobs', () => {
       expect(messages.updateMessage.mock.calls.map(([lessonId, messageId]) => [lessonId, messageId])).toEqual([['lesson-a', 'm1'], ['lesson-a', 'm1']]);
     });
 
+    it('passes the earlier visuals to the decision call, and an empty list by default', async () => {
+      const generate = vi.fn(async () => ({ content: '{"visual":false}', model: 'fixture' }));
+      const { result } = renderHook(() => useVisualJobs({ provider: { supportsStructuredOutputs: true, generate }, updateMessage: vi.fn() }));
+      act(() => {
+        result.current.decide('lesson-a', 'm1', 'Why?', 'A.', ['diagram "Lock" with nodes: A, B']);
+        result.current.decide('lesson-a', 'm2', 'Why?', 'A.');
+      });
+      await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+      const sent = (generate.mock.calls as unknown as Array<[Array<{ content: string }>]>).map(([messages]) => JSON.parse(messages[1].content).earlierVisuals);
+      expect(sent).toEqual([['diagram "Lock" with nodes: A, B'], []]);
+    });
+
     it('marks the follow-up job pending as soon as the request is appended', async () => {
       let release: (content: string) => void = () => undefined;
       const generate = vi.fn((messages: Array<{ content: string }>) => isDecision(messages)

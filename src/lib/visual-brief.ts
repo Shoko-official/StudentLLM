@@ -221,6 +221,23 @@ function describeVisual(visual: TeachingVisual) {
   return `quiz "${visual.title}": ${visual.question} correct option: ${visual.options[visual.answer]}`;
 }
 
+const EARLIER_VISUALS_LIMIT = 6;
+const EARLIER_VISUAL_CHARACTERS = 300;
+
+/** What the learner already saw, oldest first, so a later decision does not draw the same idea again. Requests never built are not visuals yet. */
+export function describeEarlierVisuals(contents: string[]): string[] {
+  const described: string[] = [];
+  for (const content of contents) {
+    if (!content.includes(DIRECT)) continue;
+    for (const fence of scanFences(content).fences) {
+      if (fence.language !== DIRECT) continue;
+      const visual = parseTeachingVisual(fence.raw);
+      if (visual) described.push(describeVisual(visual).replace(/\s*[\r\n]+\s*/g, ' ').slice(0, EARLIER_VISUAL_CHARACTERS));
+    }
+  }
+  return described.slice(-EARLIER_VISUALS_LIMIT);
+}
+
 /** History keeps what a follow-up needs, without replaying JSON the model could learn to copy. */
 export function compactVisualFences(content: string) {
   const text = stripVisualNotes(content);

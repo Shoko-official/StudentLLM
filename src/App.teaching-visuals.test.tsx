@@ -133,6 +133,31 @@ describe('visual jobs in the app', () => {
   }
   const openChat = async (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole('tab', { name: /^Chat$/ }));
 
+  it('sends the decision call the visuals of the last two answers only', async () => {
+    const user = userEvent.setup();
+    const shown = (title: string) => '```student-visual\n' + JSON.stringify({ ...plotVisual, title }) + '\n```';
+    const workspace = createFixtureWorkspace();
+    workspace.lessonWorkspaces![workspace.activeLessonId].chat = [
+      { id: 'a0', role: 'assistant', content: ['Oldest.', shown('Oldest')].join('\n\n') },
+      { id: 'u1', role: 'user', content: 'Encore' },
+      { id: 'a1', role: 'assistant', content: ['Older.', shown('Older')].join('\n\n') },
+      { id: 'u2', role: 'user', content: 'Et ensuite' },
+      { id: 'a2', role: 'assistant', content: ['Newest.', shown('Newest'), requestFence(plotBrief)].join('\n\n') },
+    ];
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(workspace));
+    const generate = vi.fn(async (_messages: ProviderMessage[], options?: { responseFormat?: unknown }) => ({ content: isVisualCall(options) ? '{"visual":false}' : 'Prose only.', model: 'test-model' }));
+    render(<App provider={{ generate, supportsStructuredOutputs: true }} />);
+    await openChat(user);
+    await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), 'Et pourquoi ?');
+    await user.click(screen.getByRole('button', { name: /^Send$/ }));
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
+    const decision = JSON.parse(generate.mock.calls[1][0][1].content);
+    expect(decision.earlierVisuals).toHaveLength(2);
+    expect(decision.earlierVisuals[0]).toContain('"Older"');
+    expect(decision.earlierVisuals[1]).toContain('"Newest"');
+    expect(JSON.stringify(decision.earlierVisuals)).not.toContain('Oldest');
+  });
+
   it('keeps at most two visual calls in flight across three retry clicks, and finishes all of them', async () => {
     seedChat(manyRequests(3));
     const user = userEvent.setup();
