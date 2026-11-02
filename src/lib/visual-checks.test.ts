@@ -235,3 +235,69 @@ describe('quizKeyFromAgreement', () => {
     expect(rekeyed).toContain('from "36 min" to "48 min"');
   });
 });
+
+describe('a key compared with the answer in the request', () => {
+  const brief = (correctAnswer: string) => ({ id: 'v1', type: 'quiz' as const, intent: 'I', content: 'C', correctAnswer });
+  const checks = (key: string, expected: string) => disagreeingChecks({ type: 'quiz', title: 'T', question: 'Q?', options: [key, 'autre'], answer: 0, explanation: 'E.' }, brief(expected));
+
+  it.each([
+    ['3', '-3'], ['2 m/s', '-2 m/s'], ['2 m', '2 km'], ['2 MPa', '2 kPa'], ['0,5 %', '50 %'], ['y = 2', 'x = 2'],
+    ['101', '100'], ['1792', '1789'], ['50 %', '0.5 kg'], ['0.5 kg', '50 %'],
+  ])('tells %j from %j', (key, expected) => { expect(checks(key, expected)).toHaveLength(1); });
+
+  it.each([
+    ['1/2', '0.5'], ['50 %', '0.5'], ['0.5', '50 %'], ['48 min', '48'], ['48', '48 min'], ['2,5', '2.5'], ['0,17', '0.16807'], ['-3', '-3.0'], ['−3', '-3'], ['x = 2', 'x=2'],
+  ])('takes %j for %j', (key, expected) => { expect(checks(key, expected)).toEqual([]); });
+});
+
+describe('what the working check reads', () => {
+  const quiz = (options: string[], answer: number, explanation: string) => ({ type: 'quiz' as const, title: 'T', question: 'Q?', options, answer, explanation });
+  const notes = (options: string[], answer: number, explanation: string) => quizWorkingNotes(quiz(options, answer, explanation));
+
+  it.each([
+    ['a further result with a unit', ['48 min', '36 min'], 0, 'Total = 48 min, soit 48 min = 0,8 h.'],
+    ['a conversion', ['2 km', '2000 km'], 0, 'd = 2 km = 2000 m.'],
+    ['a final parameter', ['0.16807', '0.3'], 0, 'P = 0.7^5 = 0.16807. C\'est le cas k=0 de la formule.'],
+    ['a check at the end', ['60', '120'], 0, 'v = 120 / 2 = 60. Vérification : 60 x 2 = 120.'],
+    ['an aside', ['48', '3'], 0, 'T = 48. Rappel : 3 conditions.'],
+    ['a negative result', ['-3', '5'], 0, 'a = 2, b = 5, x = -3.'],
+    ['a bold result', ['48', '36'], 0, 'T = 24 + 24 = **48**.'],
+    ['a result in brackets', ['48', '36'], 0, 'On trouve bien (T = 48).'],
+    ['a bullet after the result', ['48', '36'], 0, 'T = 48\n- 36 vient d\'une erreur'],
+    ['a dash after the result', ['48', '36'], 0, 'T = 48 - la bonne valeur'],
+    ['a rounded key', ['0,17', '0,3'], 0, 'P = 0.16807.'],
+    ['a rounded key with more digits to spare', ['0,168', '0,3'], 0, 'P = 0.16807.'],
+  ])('does not flag a right key through %s', (_name, options, answer, explanation) => { expect(notes(options, answer, explanation)).toEqual([]); });
+
+  it('flags a key that the working only mentions, with a sign read', () => {
+    expect(notes(['3', '-3'], 0, 'On obtient x = -3.')[0]).toContain('the option "-3"');
+    expect(notes(['36', '48'], 0, 'T = 48. Le 36 vient d\'une erreur.')[0]).toContain('the option "48"');
+  });
+
+  it('does not take 0,5 % for a result of 0,5', () => {
+    expect(notes(['0,5 %', '50 %'], 0, 'P = 0,5.')[0]).toContain('the option "50 %"');
+  });
+
+  it('accepts a rounded key in the check against its own working', () => {
+    expect(quizAgreesWithItself(quiz(['0,17', '0,3'], 0, 'P = 0.16807.'))).toBe(true);
+    expect(quizAgreesWithItself(quiz(['3', '-3'], 0, 'x = -3.'))).toBe(false);
+    expect(quizAgreesWithItself(quiz(['3', '3,4'], 0, 'x = 3,4.'))).toBe(false);
+  });
+});
+
+describe('quizKeyFromAgreement leaves these to the recheck', () => {
+  const brief = (correctAnswer: string) => ({ id: 'v1', type: 'quiz' as const, intent: 'I', content: 'C', correctAnswer });
+  const move = (options: string[], answer: number, explanation: string, expected: string) => quizKeyFromAgreement({ type: 'quiz', title: 'T', question: 'Q?', options, answer, explanation }, brief(expected)).rekeyed;
+
+  it.each([
+    ['a key the working computed, against an error it explains', ['48', '36'], 0, 'Calcul : 120 x 0,4 = 48. L\'erreur classique : 120 x 0,3 = 36.', '36'],
+    ['a key the working computed, before a check', ['60', '120'], 0, 'v = 120 / 2 = 60. Vérification : 60 x 2 = 120.', '120'],
+    ['an option in another unit than the tutor', ['2 km', '2000 km'], 0, 'd = 2 x 1000 = 2000 m', '2000 m'],
+    ['minutes against seconds', ['2 min', '120 min'], 0, 't = 2 x 60 = 120 s', '120 s'],
+  ])('%s', (_name, options, answer, explanation, expected) => { expect(move(options, answer, explanation, expected)).toBeUndefined(); });
+
+  it('still moves the key when the tutor and the working agree and the key is no result, with a sign read', () => {
+    expect(move(['36', '48'], 0, 'Total : 24 + 24 = 48 minutes.', '48')).toContain('to "48"');
+    expect(move(['3', '-3'], 0, 'On obtient x = -3.', '-3')).toContain('to "-3"');
+  });
+});
