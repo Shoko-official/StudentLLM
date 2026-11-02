@@ -169,6 +169,8 @@ describe('prompt standard: tutor prompts', () => {
     const stepOne = (prompt: string) => prompt.split('\n').find((line) => line.startsWith('1. **The learner refused a visual'))!;
     expect(stepOne(VISUAL_ROUTING_PROMPT)).toMatch(/until a later message asks to see something or to be tested/);
     expect(stepOne(VISUAL_DECISION_PROMPT)).toMatch(/no later message asks to see something or to be tested/);
+    expect(VISUAL_ROUTING_PROMPT).toContain('A learner who refused a visual and has not asked since has no block.');
+    expect(VISUAL_ROUTING_PROMPT).not.toContain('A learner who refused a visual has no block.');
   });
 
   it('keeps the visual notes out of what the tutor writes', () => {
