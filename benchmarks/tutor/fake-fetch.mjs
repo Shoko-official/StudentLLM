@@ -51,7 +51,8 @@ globalThis.fetch = async (url, init) => {
   try {
     await sleep(config.hang === kind || config.hangModels?.includes(body.model) || config.hangCalls?.[kind]?.includes(counts[kind]) ? 1e9 : (config.latency ?? 100), init.signal);
     if (config.badBody?.kind === kind) return badResponse(config.badBody.mode);
-    const user = body.messages.at(-1).content;
+    // The tutor call ends with a length reminder from StudentLLM; the question is the message before it.
+    const user = body.messages.findLast((message) => !message.content.startsWith('Note from StudentLLM')).content;
     if (kind === 'old') {
       if (config.oldMode === 'invalid') return answer('not json', body.model);
       return answer(JSON.stringify({ sections: [{ markdown: 'Texte', visual: /QCASE|HOLD/.test(user) ? quiz : null }] }), body.model);
