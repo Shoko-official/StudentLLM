@@ -4,7 +4,7 @@ import { parseTeachingVisual } from '../lib/teaching-visuals';
 import { checkVisualAgainstBrief } from '../lib/visual-checks';
 import { decideVisual } from '../lib/teaching-generation';
 import { parseVisualBrief, VISUAL_TYPES } from '../lib/visual-brief';
-import { TUTOR_LENGTH_REMINDER, TUTOR_PROMPT, TUTOR_SYSTEM_PROMPT, VISUAL_DECISION_PROMPT, VISUAL_MODULES, VISUAL_ROUTING_PROMPT } from './index';
+import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, TUTOR_PROMPT, TUTOR_SYSTEM_PROMPT, VISUAL_DECISION_PROMPT, VISUAL_MODULES, VISUAL_ROUTING_PROMPT } from './index';
 
 const examples = (prompt: string): string[] => prompt.match(/<example>[\s\S]*?<\/example>/g) ?? [];
 const fences = (prompt: string, language: string) => Array.from(prompt.matchAll(new RegExp('```' + language + '\\n([\\s\\S]*?)\\n```', 'g')), (match) => match[1]);
@@ -180,6 +180,16 @@ describe('prompt standard: tutor prompts', () => {
     }
     expect(VISUAL_ROUTING_PROMPT).toContain('or a learner who refused a visual has no block, unless step 1 applied.');
     expect(VISUAL_ROUTING_PROMPT).not.toContain('has not asked since');
+  });
+
+  it('keeps the visual request sentence short, plain and about the end of an earlier refusal', () => {
+    expect(TUTOR_VISUAL_REQUEST_NOTE).toMatch(/asking for a visual/);
+    expect(TUTOR_VISUAL_REQUEST_NOTE).toMatch(/earlier refusal/);
+    expect(TUTOR_VISUAL_REQUEST_NOTE).toMatch(/request block/);
+    expect(TUTOR_VISUAL_REQUEST_NOTE.split('. ').length).toBe(1);
+    expect(TUTOR_VISUAL_REQUEST_NOTE).not.toMatch(/[\u2013\u2014]/);
+    expect(TUTOR_VISUAL_REQUEST_NOTE).not.toMatch(BENCHMARK_TOPICS);
+    expect(estimateContextTokens(TUTOR_VISUAL_REQUEST_NOTE)).toBeLessThanOrEqual(80);
   });
 
   it('keeps the visual notes out of what the tutor writes', () => {
