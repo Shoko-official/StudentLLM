@@ -14,6 +14,8 @@ export const MAX_AUTOMATIC_VISUALS = 4;
 
 const REQUEST = 'student-visual-request';
 const DIRECT = 'student-visual';
+const VISUAL_NOTES = { notGenerated: '[Visual not generated:', shown: '[Visual shown to the learner:' };
+const NOTE_PREFIXES = Object.values(VISUAL_NOTES);
 
 function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
 function shortText(value: unknown, limit: number): value is string { return typeof value === 'string' && !!value.trim() && value.length <= limit; }
@@ -77,6 +79,34 @@ function scanFences(markdown: string) {
   return { fences, demotions };
 }
 
+function codeRanges(markdown: string) {
+  const ranges: { start: number; end: number }[] = [];
+  const visit = (node: MarkdownNode) => {
+    for (const child of node.children ?? []) visit(child);
+    const start = node.position?.start.offset, end = node.position?.end.offset;
+    if (node.type === 'code' && start !== undefined && end !== undefined) ranges.push({ start, end });
+  };
+  visit(fromMarkdown(markdown) as unknown as MarkdownNode);
+  return ranges;
+}
+
+/** A model that sees these notes in its history copies them, so a line that is only a note never belongs in an answer. */
+export function stripVisualNotes(markdown: string) {
+  if (!NOTE_PREFIXES.some((prefix) => markdown.includes(prefix))) return markdown;
+  const code = codeRanges(markdown);
+  let kept = '', offset = 0, afterNote = false, afterBlank = true;
+  for (const line of markdown.match(/[^\r\n]*(?:\r\n?|\n)|[^\r\n]+$/g) ?? []) {
+    const start = offset, text = line.trim();
+    offset += line.length;
+    if (text.endsWith(']') && NOTE_PREFIXES.some((prefix) => text.startsWith(prefix)) && !code.some((range) => range.start <= start && start < range.end)) { afterNote = true; continue; }
+    if (afterNote && afterBlank && !text) continue;
+    kept += line;
+    afterBlank = !text;
+    if (text) afterNote = false;
+  }
+  return afterNote ? kept.trimEnd() : kept;
+}
+
 function fenceText(language: string, body: string) {
   // A body may hold its own backtick runs; the fence must be strictly longer than any of them.
   const longest = Math.max(0, ...(body.match(/`+/g) ?? []).map((run) => run.length));
@@ -111,7 +141,8 @@ function jobsOf(markdown: string, outputs: Map<string, string>): VisualJob[] {
   });
 }
 
-export function prepareTutorMarkdown(input: string): { markdown: string; jobs: VisualJob[] } {
+export function prepareTutorMarkdown(answer: string): { markdown: string; jobs: VisualJob[] } {
+  const input = stripVisualNotes(answer);
   const { fences, demotions } = scanFences(input);
   const edits = [...demotions];
   const seen = new Set<string>();
@@ -158,7 +189,12 @@ export function replaceVisualFence(markdown: string, id: string, replacement: st
 }
 
 /** What may be shown of an answer still arriving. The AST ends an unclosed fence at the end of the text, so it is removed the same way. */
-export function streamingPreview(text: string) {
+export function streamingPreview(answer: string) {
+  const noteStart = Math.max(answer.lastIndexOf('\n'), answer.lastIndexOf('\r')) + 1;
+  const tail = answer.slice(noteStart).trimStart();
+  const mayBecomeNote = !!tail && NOTE_PREFIXES.some((prefix) => prefix.startsWith(tail) || tail.startsWith(prefix));
+  const held = mayBecomeNote && !codeRanges(answer).some((range) => range.start <= noteStart && noteStart < range.end);
+  const text = stripVisualNotes(held ? answer.slice(0, noteStart) : answer);
   const lastLine = Math.max(text.lastIndexOf('\n'), text.lastIndexOf('\r')) + 1;
   const mayBecomeFence = /^ {0,3}(?:`{3,}|~{3,})/.test(text.slice(lastLine));
   const edits: Edit[] = [];
@@ -187,16 +223,17 @@ function describeVisual(visual: TeachingVisual) {
 
 /** History keeps what a follow-up needs, without replaying JSON the model could learn to copy. */
 export function compactVisualFences(content: string) {
-  if (!content.includes(DIRECT)) return content;
+  const text = stripVisualNotes(content);
+  if (!text.includes(DIRECT)) return text;
   const edits: Edit[] = [];
-  for (const fence of scanFences(content).fences) {
+  for (const fence of scanFences(text).fences) {
     if (fence.language === REQUEST) {
-      const brief = parseVisualBrief(fence.raw);
-      if (brief) edits.push({ start: fence.start, end: fence.end, text: `[Visual not generated: ${brief.intent}]` });
+      const gap = /^(?:[ \t]*(?:\r\n?|\n))*/.exec(text.slice(fence.end))?.[0].length ?? 0;
+      if (parseVisualBrief(fence.raw)) edits.push({ start: fence.start, end: fence.end + gap, text: '' });
     } else {
       const visual = parseTeachingVisual(fence.raw);
-      if (visual) edits.push({ start: fence.start, end: fence.end, text: `[Visual shown to the learner: ${describeVisual(visual)}]` });
+      if (visual) edits.push({ start: fence.start, end: fence.end, text: `${VISUAL_NOTES.shown} ${describeVisual(visual).replace(/\s*[\r\n]+\s*/g, ' ')}]` });
     }
   }
-  return applyEdits(content, edits);
+  return edits.length ? applyEdits(text, edits).trimEnd() : text;
 }

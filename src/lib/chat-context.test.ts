@@ -80,6 +80,27 @@ describe('chat context selection', () => {
     expect(history[1].content).toBe(content);
   });
 
+  it('sends neither a copied note nor a pending request, in recent turns and in memory', async () => {
+    const pending = '```student-visual-request\n{"id":"v1","type":"quiz","intent":"Check the idea","content":"Ask"}\n```';
+    const copied = 'Reponse.\n\n[Visual not generated: Compare]\n\n[Visual shown to the learner: plot "Hauteur"]';
+    const answered: ChatMessage[] = [{ id: 'u1', role: 'user', content: 'Explique.' }, { id: 'a1', role: 'assistant', content: copied }, { id: 'u2', role: 'user', content: 'Encore.' }, { id: 'a2', role: 'assistant', content: `Suite.\n\n${pending}` }];
+    const recent = await buildChatContext({ ...base, documents: [], history: answered, question: 'Et ensuite ?' });
+    expect(recent.messages.filter(message => message.role === 'assistant').map(message => message.content)).toEqual(['Reponse.', 'Suite.']);
+    const filler: ChatMessage[] = Array.from({ length: 40 }, (_, i) => ({ id: `filler-${i}`, role: i % 2 ? 'assistant' : 'user', content: 'Ancien chapitre et explication. '.repeat(30) }));
+    const old = await buildChatContext({ ...base, contextWindowTokens: 5000, documents: [], history: [...answered, ...filler], question: 'Reponse et suite ?' });
+    expect(old.compressedMessages).toBeGreaterThan(0);
+    for (const message of old.messages) for (const raw of ['Visual not generated', 'shown to the learner', 'student-visual', 'Check the idea']) expect(message.content).not.toContain(raw);
+    expect(old.messages.find(message => message.content.startsWith(CONVERSATION_MEMORY_INSTRUCTIONS))?.content).toContain('Reponse.');
+    expect(answered[1].content).toBe(copied);
+  });
+
+  it('sends no empty assistant message for an old answer that held only a note', async () => {
+    const history: ChatMessage[] = [{ id: 'u', role: 'user', content: 'Trace.' }, { id: 'a', role: 'assistant', content: '[Visual not generated: Compare]' }];
+    const context = await buildChatContext({ ...base, documents: [], history, question: 'Et ensuite ?' });
+    expect(context.messages.filter(message => message.role === 'assistant')).toEqual([]);
+    expect(context.messages).toContainEqual({ role: 'user', content: 'Trace.' });
+  });
+
   it('compacts a visual in the conversation memory of older turns', async () => {
     const plot = { type: 'plot', title: 'Parabole', x: { min: 0, max: 7 }, parameters: [{ name: 'v0', label: 'Vitesse', min: 5, max: 30, step: 5, value: 20 }], series: [{ label: 'h', expression: 'v0*x-4.9*x^2' }] };
     const visual = 'La parabole decrit la hauteur.\n\n```student-visual\n' + JSON.stringify(plot) + '\n```';
