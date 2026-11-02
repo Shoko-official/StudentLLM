@@ -616,6 +616,20 @@ describe('generateVisual', () => {
       expect(result).toMatchObject({ attempts: 2, visual: { answer: 2 } });
     });
 
+    it('sends a key the working computed to the recheck, whatever the tutor expects', async () => {
+      const explanation = 'Calcul : 120 x 0,4 = 48. L\'erreur classique : 120 x 0,3 = 36.';
+      const provider = replying(worked(2, explanation), worked(2, explanation));
+      const result = await generateVisual(provider, job({ correctAnswer: '36' }));
+      expect(result.rekeyed).toBeUndefined();
+      expect(result).toMatchObject({ attempts: 2, visual: { answer: 2 } });
+    });
+
+    it('does not lose a rounded key when the request differs', async () => {
+      const reply = JSON.stringify({ ...quiz, options: ['0,17', '0,25'], answer: 0, explanation: 'P = 0.16807.' });
+      const result = await generateVisual(replying(reply, reply), job({ correctAnswer: '0,25' }));
+      expect(result).toMatchObject({ attempts: 2, errors: [], visual: { answer: 0 } });
+    });
+
     it('does not lose a right quiz on a format difference', async () => {
       for (const [options, brief, explanation] of [[['1/2', '1/4'], '0.5', 'On obtient 0,5.'], [['50 %', '25 %'], '0.5', 'On obtient 0,5.'], [['0,5', '0,25'], '1/2', 'P = 1/2.']] as const) {
         const provider = replying(JSON.stringify({ ...quiz, options, answer: 0, explanation }));
