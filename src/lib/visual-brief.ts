@@ -9,7 +9,7 @@ export interface VisualBrief {
   id: string; type: VisualType; intent: string; content: string;
   parameters?: string[]; outputs?: string[]; checks?: VisualCheck[]; nodes?: string[]; correctAnswer?: string;
 }
-export interface VisualJob { brief: VisualBrief; section: string; initialOutput?: string }
+export interface VisualJob { brief: VisualBrief; section: string; initialOutput?: string; learnerMessage?: string }
 export const MAX_AUTOMATIC_VISUALS = 4;
 
 const REQUEST = 'student-visual-request';

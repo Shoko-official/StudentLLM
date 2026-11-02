@@ -10,6 +10,7 @@ const VISUAL_MAX_TOKENS = 4096;
 const stoppedMessage = 'Visual generation was stopped.';
 const recheckTask = 'Recheck this visual against the request. The listed values disagree with values the tutor gave, and either side may be wrong. Correct the formula only if it is wrong, never bend a correct formula to match a value. Return the complete object.';
 const noAnswerMessage = 'The model returned no answer. Try again or choose another model in Settings.';
+const LEARNER_MESSAGE_FOR_PLOT_CHARACTERS = 2000;
 
 export interface VisualJobResult { visual: TeachingVisual | null; attempts: number; errors: string[]; unconfirmed: string[] }
 
@@ -30,7 +31,7 @@ export async function generateTutorProse(provider: LLMProvider, messages: Provid
   const { markdown, jobs } = prepareTutorMarkdown(response.content.trim());
   const readable = jobs.reduce((text, job) => replaceVisualFence(text, job.brief.id, ''), markdown);
   if (!readable.trim()) throw new Error(noAnswerMessage);
-  return { markdown, model: response.model, jobs, needsDecision: !hasVisualFence(markdown) || missingArtefacts(question, markdown).length > 0 };
+  return { markdown, model: response.model, jobs: jobs.map((job) => ({ ...job, learnerMessage: question })), needsDecision: !hasVisualFence(markdown) || missingArtefacts(question, markdown).length > 0 };
 }
 
 function jsonObjectIn(content: string) {
@@ -76,9 +77,11 @@ export async function generateVisual(provider: LLMProvider, job: VisualJob, opti
   const { brief } = job;
   const stopped = (attempts: number): VisualJobResult => ({ visual: null, attempts, errors: [stoppedMessage], unconfirmed: [] });
   if (options.signal?.aborted) return stopped(0);
+  // The tutor's request can lose a formula, a range or a readout that the learner wrote out: the plot builder gets the original too.
+  const learner = brief.type === 'plot' && job.learnerMessage ? { learnerMessage: [...redactContextImages(job.learnerMessage)].slice(0, LEARNER_MESSAGE_FOR_PLOT_CHARACTERS).join('') } : {};
   const ask = (data: Record<string, unknown>) => generateWithin(
     provider,
-    [{ role: 'system', content: VISUAL_MODULES[brief.type] }, { role: 'user', content: JSON.stringify({ ...data, request: brief, surroundingExplanation: job.section }) }],
+    [{ role: 'system', content: VISUAL_MODULES[brief.type] }, { role: 'user', content: JSON.stringify({ ...data, request: brief, surroundingExplanation: job.section, ...learner }) }],
     { maxTokens: VISUAL_MAX_TOKENS, ...(provider.supportsStructuredOutputs ? { responseFormat: visualResponseFormat(brief.type) } : {}) },
     options,
   );
@@ -172,7 +175,7 @@ export async function decideVisuals(getProvider: () => LLMProvider | null, input
       if (appended.job) {
         markdown = appended.markdown;
         requested++;
-        options.onRequest(appended.job, markdown, target);
+        options.onRequest({ ...appended.job, learnerMessage: input.question }, markdown, target);
       }
     }
     return !options.signal?.aborted && (result.error === undefined || result.error === invalidDecision);
