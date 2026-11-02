@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { compileExpression } from '../../src/lib/teaching-visuals.ts';
 import cases from './cases.json';
 import { decideGate, evaluateAnswer, matchAmount, reportOnlyLast, requestedVisual, scoreSafely, validateCases } from './evaluate.mjs';
-import { asksForVisual } from '../../src/lib/visual-brief.ts';
+import { namedArtefacts } from '../../src/lib/visual-brief.ts';
 
 const fence = (value) => '```student-visual\n' + JSON.stringify(value) + '\n```';
 const testCase = {
@@ -644,10 +644,10 @@ describe('reportOnlyLast', () => {
   });
 });
 
-describe('the tutor note for a visual request', () => {
-  it('is not triggered by any committed rate prompt', () => {
+describe('the gate for a named artefact', () => {
+  it('costs no call on any committed rate prompt', () => {
     const prompts = Object.values(cases.rate).flat();
     expect(prompts.length).toBeGreaterThan(5);
-    expect(prompts.filter((prompt) => asksForVisual(prompt))).toEqual([]);
+    expect(prompts.filter((prompt) => namedArtefacts(prompt).length)).toEqual([]);
   });
 });
