@@ -10,7 +10,8 @@ const realTimeout = globalThis.setTimeout.bind(globalThis), realSignalTimeout = 
 const t0 = realNow(), p0 = realPerf();
 Date.now = () => t0 + (realNow() - t0) * SPEED;
 performance.now = () => p0 + (realPerf() - p0) * SPEED;
-globalThis.setTimeout = (fn, ms, ...rest) => realTimeout(fn, (ms ?? 0) / SPEED, ...rest);
+// Vite's module runner gives each transform 60 s, which is real work and not run time: compressed, a slow load times out.
+globalThis.setTimeout = (fn, ms, ...rest) => realTimeout(fn, new Error().stack?.includes('module-runner') ? ms : (ms ?? 0) / SPEED, ...rest);
 AbortSignal.timeout = (ms) => realSignalTimeout(ms / SPEED);
 
 const request = (id, type, content) => '```student-visual-request\n' + JSON.stringify({ id, type, intent: 'intent', content }) + '\n```';

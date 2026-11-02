@@ -96,6 +96,13 @@ describe('hidden rate questions', () => {
     for (const dir of [out, noRate]) expect(rows(dir).filter((row) => row.kind === 'rate' && row.arm === 'old').some((row) => row.requested)).toBe(false);
   }, SLOW);
 
+  it.each([1000, 20000])('loads its modules at a fake speed of %i, so a slow transform does not time out', (speed) => {
+    const result = run(real(outDir(), casesFile(), hiddenFile({ explanatory: ['SECRET a'] })), { fake: { speed } });
+    expect(result.stderr).not.toMatch(/timed out/);
+    expect(result.stderr).toMatch(/rate/);
+    expect(result.code).toBe(1);
+  });
+
   it('refuses invalid rate data before any request, without printing the questions', () => {
     const cases = casesFile();
     const attempts = [
