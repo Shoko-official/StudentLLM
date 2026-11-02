@@ -24,7 +24,7 @@ export interface VisualJobResult { visual: TeachingVisual | null; attempts: numb
  * message is a request stays the model's to read. Without both it is the plain reminder.
  */
 export function tutorNote(question: string, earlierLearnerTexts: string[]) {
-  return namedArtefacts(question).length > 0 && earlierLearnerTexts.some(refusesVisual) ? `${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}` : TUTOR_LENGTH_REMINDER;
+  return namedArtefacts(question).length > 0 && !refusesVisual(question) && earlierLearnerTexts.some(refusesVisual) ? `${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}` : TUTOR_LENGTH_REMINDER;
 }
 
 export async function generateTutorProse(provider: LLMProvider, messages: ProviderMessage[], options: { maxTokens: number; signal?: AbortSignal; onText?: (text: string) => void }) {
@@ -185,6 +185,7 @@ export async function decideVisuals(getProvider: () => LLMProvider | null, input
   let markdown = input.answer, requested = 0, error: string | undefined;
   const targets = missingArtefacts(input.question, markdown);
   const endsAt = options.deadlineMs === undefined ? undefined : Date.now() + options.deadlineMs * SEQUENCE_DEADLINES;
+  const declined = new Set<string>();
   const ask = async (target?: VisualType[]) => {
     const provider = getProvider();
     const left = endsAt === undefined ? undefined : endsAt - Date.now();
@@ -193,6 +194,7 @@ export async function decideVisuals(getProvider: () => LLMProvider | null, input
     while (jobFromMarkdown(markdown, `auto-${free}`)) free++;
     const result = await decideVisual(provider, { ...input, answer: markdown, ...(target ? { target } : {}) }, { deadlineMs: left === undefined ? undefined : Math.min(left, options.deadlineMs!), signal: options.signal, id: `auto-${free}` });
     error = result.error ?? error;
+    if (target && !result.brief && result.error === undefined) declined.add(target.join('|'));
     if (result.brief) {
       const appended = appendVisualRequest(markdown, result.brief);
       if (appended.job) {
@@ -204,8 +206,8 @@ export async function decideVisuals(getProvider: () => LLMProvider | null, input
     return !options.signal?.aborted && (result.error === undefined || result.error === invalidDecision);
   };
   let going = true;
-  for (const target of targets) if (going) going = await ask(target);
-  if (going && !hasVisualFence(markdown)) await ask();
+  for (const target of targets) if (going && !declined.has(target.join('|'))) going = await ask(target);
+  if (going && !hasVisualFence(markdown) && !refusesVisual(input.question)) await ask();
   return { markdown, requested, targets: targets.map((types) => types.join('|')), ...(error === undefined ? {} : { error }) };
 }
 

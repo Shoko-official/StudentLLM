@@ -219,6 +219,7 @@ describe('prompt standard: tutor prompts', () => {
     expect(TUTOR_VISUAL_REQUEST_NOTE).toMatch(/asking for a visual/);
     expect(TUTOR_VISUAL_REQUEST_NOTE).toMatch(/earlier refusal/);
     expect(TUTOR_VISUAL_REQUEST_NOTE).toMatch(/request block/);
+    expect(TUTOR_VISUAL_REQUEST_NOTE).toMatch(/otherwise the refusal stands/);
     expect(TUTOR_VISUAL_REQUEST_NOTE.split('. ').length).toBe(1);
     expect(TUTOR_VISUAL_REQUEST_NOTE).not.toMatch(/[\u2013\u2014]/);
     expect(TUTOR_VISUAL_REQUEST_NOTE).not.toMatch(BENCHMARK_TOPICS);
@@ -231,6 +232,7 @@ describe('prompt standard: tutor prompts', () => {
     expect(note).toContain(`request of type ${type}`);
     expect(note).toContain('{"visual":false}');
     expect(note).not.toContain('{type}');
+    expect(note.replace('{"visual":false}', '')).not.toContain('"');
     expect(note).not.toMatch(/[\u2013\u2014]/);
     expect(note).not.toMatch(BENCHMARK_TOPICS);
     expect(estimateContextTokens(note)).toBeLessThanOrEqual(150);
