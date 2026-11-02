@@ -123,7 +123,8 @@ async function readEventStream(response: Response, onText: ProviderGenerateOptio
         if (typeof chunk?.model === 'string') model = chunk.model;
         const choice = Array.isArray(chunk?.choices) ? chunk.choices[0] : undefined;
         if (typeof choice?.delta?.content === 'string') text += choice.delta.content;
-        if (choice?.finish_reason && typeof choice.finish_reason === 'string') clean = true;
+        if (choice?.finish_reason === 'error') throw new Error(STREAM_INTERRUPTED);
+        if (choice?.finish_reason && typeof choice.finish_reason === 'string') finished = clean = true;
       }
       const nextVisible = visibleText(text);
       if (nextVisible !== visible) {
