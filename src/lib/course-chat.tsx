@@ -1,11 +1,13 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowUp, BookOpen, ChevronDown, FileText, LoaderCircle } from 'lucide-react';
 import type { ChatMessage } from '../types';
 import { RichText } from './rich-text';
+import { streamingPreview } from './visual-brief';
 
 interface CourseChatProps {
   messages: ChatMessage[];
+  streamingText: string | null;
   sourceCount: number;
   hasMaterial: boolean;
   providerName: string | null;
@@ -20,13 +22,15 @@ interface CourseChatProps {
 }
 
 /** Presentation and keyboard interaction; the parent owns requests, history and recovery. */
-export function CourseChat({ messages, sourceCount, hasMaterial, providerName, draft, isSending, error, onDraftChange, onSubmit, onOpenSources, onOpenSettings, onOpenCitation }: CourseChatProps) {
+export function CourseChat({ messages, streamingText, sourceCount, hasMaterial, providerName, draft, isSending, error, onDraftChange, onSubmit, onOpenSources, onOpenSettings, onOpenCitation }: CourseChatProps) {
   const threadRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composeAreaRef = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
+  const preview = useMemo(() => streamingText ? streamingPreview(streamingText) : '', [streamingText]);
+  const hasPreview = Boolean(preview.trim());
 
   useLayoutEffect(() => {
     const area = composeAreaRef.current;
@@ -49,7 +53,7 @@ export function CourseChat({ messages, sourceCount, hasMaterial, providerName, d
   useLayoutEffect(() => {
     const thread = threadRef.current;
     if (thread && followingRef.current) thread.scrollTop = thread.scrollHeight;
-  }, [messages.length, isSending]);
+  }, [messages.length, isSending, preview]);
 
   useLayoutEffect(() => {
     const field = textareaRef.current;
@@ -103,8 +107,13 @@ export function CourseChat({ messages, sourceCount, hasMaterial, providerName, d
             ? <button type="button" className="citation-chip" title="Open original source" key={citation} onClick={() => onOpenCitation(message.citationTargets![index])}><FileText size={13} /><span>{citation}</span></button>
             : <span className={/^(?:LM Studio|NVIDIA NIM) ·/.test(citation) ? 'citation-model' : 'citation-context'} key={citation}>{citation}</span>)}</div>}
         </article>)}
+        {/* Silent inside the log, which then announces only the saved message that replaces this one. */}
+        {hasPreview && <article className="chat-message assistant" data-role="assistant" aria-label="Course assistant response" aria-busy="true" aria-live="off" key="streaming">
+          <header className="message-header"><span className="message-role">Course assistant</span></header>
+          <div className="message-content"><RichText content={preview} className="chat-markdown" focusableScrollRegions /></div>
+        </article>}
       </div>
-      {isSending && <div className="chat-progress" role="status" aria-label="Answer in progress"><LoaderCircle size={15} aria-hidden="true" /><span>Preparing an answer...</span></div>}
+      {isSending && <div className={hasPreview ? 'visually-hidden' : 'chat-progress'} role="status" aria-label="Answer in progress">{!hasPreview && <LoaderCircle size={15} aria-hidden="true" />}<span>{hasPreview ? 'Writing the answer...' : 'Preparing an answer...'}</span></div>}
     </div>
     <div className="chat-compose-area" ref={composeAreaRef}>
       {error && <div className="action-error chat-error" role="alert"><p>{error}</p><button type="button" className="text-action" onClick={onOpenSettings}>Open Settings</button></div>}

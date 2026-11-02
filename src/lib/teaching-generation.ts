@@ -13,7 +13,7 @@ const noAnswerMessage = 'The model returned no answer. Try again or choose anoth
 
 export interface VisualJobResult { visual: TeachingVisual | null; attempts: number; errors: string[]; unconfirmed: string[] }
 
-export async function generateTutorProse(provider: LLMProvider, messages: ProviderMessage[], options: { maxTokens: number; signal?: AbortSignal }) {
+export async function generateTutorProse(provider: LLMProvider, messages: ProviderMessage[], options: { maxTokens: number; signal?: AbortSignal; onText?: (text: string) => void }) {
   const response = await provider.generate(messages, options);
   const { markdown, jobs } = prepareTutorMarkdown(response.content.trim());
   const readable = jobs.reduce((text, job) => replaceVisualFence(text, job.brief.id, ''), markdown);
