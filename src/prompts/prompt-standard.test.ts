@@ -26,9 +26,9 @@ describe('prompt standard: tutor prompts', () => {
   });
 
   it('respects the size budgets', () => {
-    expect(estimateContextTokens(TUTOR_SYSTEM_PROMPT)).toBeLessThanOrEqual(7500);
+    expect(estimateContextTokens(TUTOR_SYSTEM_PROMPT)).toBeLessThanOrEqual(7600);
     for (const type of VISUAL_TYPES) expect(estimateContextTokens(VISUAL_MODULES[type])).toBeLessThanOrEqual(6000);
-    expect(estimateContextTokens(VISUAL_DECISION_PROMPT)).toBeLessThanOrEqual(3700);
+    expect(estimateContextTokens(VISUAL_DECISION_PROMPT)).toBeLessThanOrEqual(4000);
   });
 
   it('keeps every visual example valid for the real parser, and each module on its type', () => {
@@ -62,11 +62,12 @@ describe('prompt standard: tutor prompts', () => {
     expect(decisions.length).toBeGreaterThanOrEqual(2);
     for (const example of decisions) {
       const input = JSON.parse(/<input>([\s\S]*?)<\/input>/.exec(example)![1]);
-      expect(Object.keys(input)).toEqual(['learnerMessage', 'tutorAnswer', 'earlierVisuals']);
+      expect(Object.keys(input)).toEqual(['learnerMessage', 'tutorAnswer', 'earlierVisuals', 'earlierLearnerMessages']);
+      expect(Array.isArray(input.earlierLearnerMessages) && input.earlierLearnerMessages.every((item: unknown) => typeof item === 'string')).toBe(true);
       expect(Array.isArray(input.earlierVisuals) && input.earlierVisuals.every((item: unknown) => typeof item === 'string')).toBe(true);
       const good = goodOutput(example);
       const generate = vi.fn(async () => ({ content: good, model: 'fixture' }));
-      const result = await decideVisual({ generate }, { question: input.learnerMessage, answer: input.tutorAnswer, earlierVisuals: input.earlierVisuals });
+      const result = await decideVisual({ generate }, { question: input.learnerMessage, answer: input.tutorAnswer, earlierVisuals: input.earlierVisuals, earlierMessages: input.earlierLearnerMessages });
       expect(result.error).toBeUndefined();
       expect(result.brief === null).toBe(JSON.parse(good).visual === false);
     }
@@ -102,7 +103,7 @@ describe('prompt standard: tutor prompts', () => {
   });
 
   it('describes earlierVisuals to the decision call and teaches both the refusal and the redraw cases', () => {
-    expect(VISUAL_DECISION_PROMPT).toContain('earlierVisuals, a list of descriptions of the visuals the learner saw in the last two replies');
+    expect(VISUAL_DECISION_PROMPT).toContain('earlierVisuals lists descriptions of the visuals the learner saw in the last two replies');
     const inputs = examples(VISUAL_DECISION_PROMPT).map((example) => JSON.parse(/<input>([\s\S]*?)<\/input>/.exec(example)![1]));
     expect(inputs.some((input) => /sans sch/.test(input.learnerMessage) && input.earlierVisuals.length === 0)).toBe(true);
     expect(inputs.some((input) => input.earlierVisuals.length > 0)).toBe(true);
@@ -148,6 +149,20 @@ describe('prompt standard: tutor prompts', () => {
     expect(minimum(/how or why question takes at least ([0-9]+) words/)).toBe(range(explain)[0]);
     expect(minimum(/does not understand gets at least ([0-9]+) words/)).toBe(range(gap)[0]);
     expect(minimum(/full lesson takes at least ([0-9]+) words/)).toBe(range(lesson)[0]);
+  });
+
+  it('lets a standing refusal in earlierLearnerMessages hold until the learner asks to see something', () => {
+    expect(VISUAL_DECISION_PROMPT).toContain('earlierLearnerMessages');
+    expect(VISUAL_DECISION_PROMPT).toMatch(/refused a visual, in learnerMessage or in earlierLearnerMessages/);
+    const inputs = examples(VISUAL_DECISION_PROMPT).map((example) => JSON.parse(/<input>([\s\S]*?)<\/input>/.exec(example)![1]));
+    expect(inputs.some((input) => /no diagram/i.test(input.earlierLearnerMessages.join(' ')) && !/diagram|draw/i.test(input.learnerMessage))).toBe(true);
+  });
+
+  it('covers every other request in the length table and lets the table, not case 7, set the size of a factual answer', () => {
+    const table = TUTOR_PROMPT.split('\n').filter((line) => line.startsWith('|'));
+    expect(table.some((line) => /anything else/.test(line) && /compar/.test(line) && /summar/.test(line) && /procedure/.test(line) && /code/.test(line) && /translation/.test(line))).toBe(true);
+    expect(TUTOR_PROMPT).not.toContain('explain as much as the question needs');
+    expect(TUTOR_PROMPT).toMatch(/A direct factual question\.\*\* Answer first, then add only what the length table allows/);
   });
 
   it('keeps the visual notes out of what the tutor writes', () => {
