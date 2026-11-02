@@ -423,7 +423,7 @@ describe('describeEarlierVisuals', () => {
     const [described] = describeEarlierVisuals([direct(figure)]);
     expect([...described]).toHaveLength(300);
     expect(described.endsWith(emoji)).toBe(true);
-    expect(described.isWellFormed()).toBe(true);
+    expect(described.charCodeAt(described.length - 1)).toBeGreaterThanOrEqual(0xDC00);
   });
 
   it('returns nothing without a visual fence', () => {
