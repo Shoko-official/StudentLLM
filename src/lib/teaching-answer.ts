@@ -2,13 +2,9 @@ import type { LLMProvider, ProviderMessage, ProviderResponse, ProviderResponseFo
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { parseTeachingVisual } from './teaching-visuals';
 import { STRUCTURED_TEACHING_CONTRACT } from '../prompts';
-import { object, sectionArray, sectionText, visualTypeSchemas, type Schema } from './teaching-schemas';
+import { teachingAnswerSchema } from './teaching-answer-schema';
 
-const visualSchema: Schema = { anyOf: [visualTypeSchemas.plot, visualTypeSchemas.diagram, visualTypeSchemas.figure, visualTypeSchemas.quiz, { type: 'null' }] };
-
-export const teachingAnswerSchema: Schema = object({
-  sections: sectionArray(object({ markdown: sectionText(12000, 0), visual: visualSchema }), 1, 16),
-});
+export { teachingAnswerSchema };
 
 export const teachingAnswerResponseFormat: ProviderResponseFormat = {
   type: 'json_schema',
