@@ -14,19 +14,29 @@ function plotProblems(visual: Plot, brief: VisualBrief) {
   for (const name of brief.parameters ?? []) if (!declared.some((item) => item.name === name)) errors.push(`missing parameter "${name}"`);
   const claimed = new Set<number>();
   const labels = [...new Set(brief.outputs ?? [])];
-  const claim = (label: string, same: (item: string) => boolean) => {
+  const claim = (same: (item: string) => boolean) => {
     const index = outputs.findIndex((item, at) => !claimed.has(at) && same(item.label));
     if (index >= 0) claimed.add(index);
     return index >= 0;
   };
-  const unmatched = labels.filter((label) => !claim(label, (item) => item === label));
-  for (const label of unmatched) if (!claim(label, (item) => normalized(item) === normalized(label))) errors.push(`missing readout "${label}"`);
+  const unmatched = labels.filter((label) => !claim((item) => item === label));
+  for (const label of unmatched) if (!claim((item) => normalized(item) === normalized(label))) errors.push(`missing readout "${label}"`);
   const defaults = Object.fromEntries(declared.map((item) => [item.name, item.value]));
   for (const series of visual.series) {
     if (series.expression === undefined) continue;
     const compute = compileExpression(series.expression);
     if (!plotSampleXs(visual.x).some((x) => Number.isFinite(compute?.({ ...defaults, x })))) errors.push(`series "${series.label}" has no finite value at the default parameters`);
   }
+  return errors;
+}
+
+/** Checks the tutor gave a plot's values for. A disagreement may come from either side, so it never rejects the plot on its own. */
+export function disagreeingChecks(visual: TeachingVisual, brief: VisualBrief): string[] {
+  if (visual.type !== 'plot') return [];
+  const errors: string[] = [];
+  const declared = visual.parameters ?? [];
+  const outputs = visual.outputs ?? [];
+  const defaults = Object.fromEntries(declared.map((item) => [item.name, item.value]));
   for (const check of brief.checks ?? []) {
     const output = outputs.find((item) => item.label === check.output) ?? outputs.find((item) => normalized(item.label) === normalized(check.output));
     if (!output) { if (!(brief.outputs ?? []).some((label) => normalized(label) === normalized(check.output))) errors.push(`missing readout "${check.output}"`); continue; }

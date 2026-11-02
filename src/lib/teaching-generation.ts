@@ -2,14 +2,15 @@ import type { LLMProvider, ProviderMessage } from './llm-provider';
 import { visualResponseFormat } from './teaching-schemas';
 import { diagnoseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 import { prepareTutorMarkdown, replaceVisualFence, type VisualBrief, type VisualJob } from './visual-brief';
-import { checkVisualAgainstBrief } from './visual-checks';
+import { checkVisualAgainstBrief, disagreeingChecks } from './visual-checks';
 import { VISUAL_MODULES } from '../prompts';
 
 const VISUAL_MAX_TOKENS = 4096;
 const stoppedMessage = 'Visual generation was stopped.';
+const recheckTask = 'Recheck this visual against the request. The listed values disagree with values the tutor gave, and either side may be wrong. Correct the formula only if it is wrong, never bend a correct formula to match a value. Return the complete object.';
 const noAnswerMessage = 'The model returned no answer. Try again or choose another model in Settings.';
 
-export interface VisualJobResult { visual: TeachingVisual | null; attempts: number; errors: string[] }
+export interface VisualJobResult { visual: TeachingVisual | null; attempts: number; errors: string[]; unconfirmed: string[] }
 
 export async function generateTutorProse(provider: LLMProvider, messages: ProviderMessage[], options: { maxTokens: number; signal?: AbortSignal }) {
   const response = await provider.generate(messages, options);
@@ -25,11 +26,11 @@ function jsonObjectIn(content: string) {
   return start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed;
 }
 
-function assess(output: string, brief: VisualBrief): { visual: TeachingVisual | null; errors: string[] } {
+function assess(output: string, brief: VisualBrief): { visual: TeachingVisual | null; errors: string[]; disagreements: string[] } {
   const { visual, errors } = diagnoseTeachingVisual(jsonObjectIn(output));
-  if (!visual) return { visual: null, errors };
+  if (!visual) return { visual: null, errors, disagreements: [] };
   const problems = checkVisualAgainstBrief(visual, brief);
-  return problems.length ? { visual: null, errors: problems } : { visual, errors: [] };
+  return problems.length ? { visual: null, errors: problems, disagreements: [] } : { visual, errors: [], disagreements: disagreeingChecks(visual, brief) };
 }
 
 function attemptSignal(deadlineMs: number | undefined, parent: AbortSignal | undefined) {
@@ -49,7 +50,7 @@ function attemptSignal(deadlineMs: number | undefined, parent: AbortSignal | und
 
 export async function generateVisual(provider: LLMProvider, job: VisualJob, options: { deadlineMs?: number; signal?: AbortSignal } = {}): Promise<VisualJobResult> {
   const { brief } = job;
-  const stopped = (attempts: number): VisualJobResult => ({ visual: null, attempts, errors: [stoppedMessage] });
+  const stopped = (attempts: number): VisualJobResult => ({ visual: null, attempts, errors: [stoppedMessage], unconfirmed: [] });
   if (options.signal?.aborted) return stopped(0);
   const ask = async (data: Record<string, unknown>) => {
     const attempt = attemptSignal(options.deadlineMs, options.signal);
@@ -65,7 +66,7 @@ export async function generateVisual(provider: LLMProvider, job: VisualJob, opti
       throw error;
     } finally { attempt.done(); }
   };
-  const failed = (attempts: number, error: unknown): VisualJobResult => ({ visual: null, attempts, errors: [error instanceof Error ? error.message : 'The visual request failed.'] });
+  const failed = (attempts: number, error: unknown): VisualJobResult => ({ visual: null, attempts, errors: [error instanceof Error ? error.message : 'The visual request failed.'], unconfirmed: [] });
   let attempts = 0;
   let output = job.initialOutput;
   if (output === undefined) {
@@ -74,14 +75,23 @@ export async function generateVisual(provider: LLMProvider, job: VisualJob, opti
     catch (error) { return failed(attempts, error); }
   }
   const first = assess(output, brief);
-  if (first.visual) return { visual: first.visual, attempts, errors: [] };
+  if (first.visual && !first.disagreements.length) return { visual: first.visual, attempts, errors: [], unconfirmed: [] };
   if (options.signal?.aborted) return stopped(attempts);
   attempts++;
+  if (first.visual) {
+    const kept: VisualJobResult = { visual: first.visual, attempts, errors: [], unconfirmed: first.disagreements };
+    let rechecked: string;
+    try { rechecked = await ask({ task: recheckTask, invalidOutput: output.slice(0, 16384), errors: first.disagreements }); }
+    catch { return options.signal?.aborted ? stopped(attempts) : kept; }
+    if (options.signal?.aborted) return stopped(attempts);
+    const second = assess(rechecked, brief);
+    return second.visual ? { visual: second.visual, attempts, errors: [], unconfirmed: second.disagreements } : kept;
+  }
   let repaired: string;
   try { repaired = await ask({ task: 'Correct this visual. Fix every listed error and return the complete object.', invalidOutput: output.slice(0, 16384), errors: first.errors }); }
   catch (error) { return failed(attempts, error); }
   const second = assess(repaired, brief);
-  return { visual: second.visual, attempts, errors: second.errors };
+  return { visual: second.visual, attempts, errors: second.errors, unconfirmed: second.disagreements };
 }
 
 export async function runVisualJobs(provider: LLMProvider, jobs: VisualJob[], options: { deadlineMs?: number; signal?: AbortSignal; concurrency?: number; onResult: (brief: VisualBrief, result: VisualJobResult) => void }) {

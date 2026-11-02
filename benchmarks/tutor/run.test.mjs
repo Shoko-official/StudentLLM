@@ -539,8 +539,8 @@ describe('real run', () => {
     expect(existsSync(join(out, 'failures.jsonl'))).toBe(false);
     const timedOut = rows(out).filter((row) => row.kind === 'quality' && row.arm === 'new');
     expect(timedOut).toHaveLength(18);
-    expect(timedOut.every((row) => row.complete === 0 && !row.failed && row.visualResults.every((visual) => !visual.ok && /timed out/.test(visual.errors[0])))).toBe(true);
-    expect(timedOut.every((row) => row.totalSeconds >= 60 && row.totalSeconds < 119)).toBe(true);
+    expect(timedOut.every((row) => row.complete === 0 && !row.failed && row.visualResults.every((visual) => !visual.ok && /timed out/.test(visual.errors[0]) && Array.isArray(visual.unconfirmed)))).toBe(true);
+    expect(timedOut.every((row) => row.totalSeconds >= 120 && row.totalSeconds < 239)).toBe(true);
     expect(dataReasons(gateOf(out))).toEqual([]);
   }, SLOW);
 

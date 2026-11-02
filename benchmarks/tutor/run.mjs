@@ -60,7 +60,7 @@ const MODELS = [
   { id: 'nvidia/nemotron-3.5-super-vl-120b-a12b', chatTemplateKwargs: { enable_thinking: false } },
   { id: 'mistralai/mistral-large-4-1t-a52b' },
 ];
-const SAMPLES = 2, POST_CAP = 360, SPACING_MS = 1700, DEADLINE_MS = 120_000, VISUAL_DEADLINE_MS = 60_000, WINDOW = 1_000_000, OUTPUT = 8192, MAX_CONSECUTIVE_FAILURES = 3;
+const SAMPLES = 2, POST_CAP = 360, SPACING_MS = 1700, DEADLINE_MS = 120_000, VISUAL_DEADLINE_MS = 120_000, WINDOW = 1_000_000, OUTPUT = 8192, MAX_CONSECUTIVE_FAILURES = 3;
 // Wait before a stalled pair is rerun, so the rerun is not inside the same outage. The environment variable is a test aid.
 const rerunWaitOverridden = Boolean(process.env.TUTOR_RERUN_WAIT_MS);
 const RERUN_WAIT_MS = process.env.TUTOR_RERUN_WAIT_MS && Number.isFinite(Number(process.env.TUTOR_RERUN_WAIT_MS)) ? Number(process.env.TUTOR_RERUN_WAIT_MS) : 60_000;
@@ -261,7 +261,7 @@ async function runNew(provider, prompt, withVisuals) {
   const visualResults = [];
   if (withVisuals) {
     await newPipeline.runVisualJobs(provider, tutor.jobs.slice(0, briefs.MAX_AUTOMATIC_VISUALS), { deadlineMs: VISUAL_DEADLINE_MS, concurrency: 2, onResult: (brief, result) => {
-      visualResults.push({ id: brief.id, type: brief.type, attempts: result.attempts, ok: Boolean(result.visual), errors: result.errors });
+      visualResults.push({ id: brief.id, type: brief.type, attempts: result.attempts, ok: Boolean(result.visual), errors: result.errors, unconfirmed: result.unconfirmed });
       if (result.visual) content = briefs.replaceVisualFence(content, brief.id, briefs.visualFence(result.visual));
     } });
   }

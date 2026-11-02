@@ -38,7 +38,7 @@ Required fields:
 Optional fields, which let the application catch mistakes:
 - parameters: slider identifiers the plot must declare.
 - outputs: exact labels of calculated readouts.
-- checks: known values, as {"output": label, "at": {parameter: value}, "expected": number, "tolerance": number}. Use only a value you have already worked out in your prose, and leave checks out when unsure: a wrong expected value rejects a good visual.
+- checks: known values, as {"output": label, "at": {parameter: value}, "expected": number, "tolerance": number}. Use only a value you have already worked out in your prose, and leave checks out when unsure: a wrong expected value misleads the builder.
 - nodes: labels of the boxes a diagram must contain. Text on an arrow, such as the probability of a branch, goes in content and not here.
 - correctAnswer: the exact text of the correct quiz option.
 
