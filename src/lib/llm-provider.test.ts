@@ -276,6 +276,36 @@ describe('OpenAI-compatible LLM provider streaming', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the answer when the connection is cut after a finish_reason', async () => {
+    let sent = false;
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent) { controller.error(new TypeError('network error')); return; }
+        sent = true;
+        controller.enqueue(encoder.encode(`${delta('Hello')}${finish('stop')}`));
+      },
+    }), { headers: { 'content-type': 'text/event-stream' } }));
+    const onText = vi.fn();
+    await expect(providerFor(fetchImpl).generate(ask, { onText })).resolves.toMatchObject({ content: 'Hello' });
+    expect(onText).toHaveBeenLastCalledWith('Hello');
+  });
+
+  it('stops reading at a finish_reason and releases a connection the server keeps open', async () => {
+    const cancel = vi.fn();
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(encoder.encode(`${delta('Hello')}${finish('length')}`)); },
+      cancel,
+    }), { headers: { 'content-type': 'text/event-stream' } }));
+    await expect(providerFor(fetchImpl).generate(ask, { onText: vi.fn() })).resolves.toMatchObject({ content: 'Hello' });
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it('treats a finish_reason of error as a cut, not as a finished answer', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => sse([delta('Partial'), finish('error'), done]));
+    await expect(providerFor(fetchImpl).generate(ask, { onText: vi.fn() })).rejects.toThrow(/^Provider stream interrupted\.$/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('stops reading at DONE and releases a connection the server keeps open', async () => {
     const cancel = vi.fn();
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({
