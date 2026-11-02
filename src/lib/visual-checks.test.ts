@@ -18,6 +18,45 @@ describe('checkVisualAgainstBrief', () => {
     expect(disagreeingChecks(plot, brief({ checks: [{ output: 'Peak', at: { v0: 20 }, expected: 20.408, tolerance: 0.01 }] }))).toEqual([]);
   });
 
+  describe('a plot that cannot move', () => {
+    const slider = (name: string) => ({ name, label: name, min: 0, max: 10, step: 1, value: 5 });
+    const moving = (extra: Partial<Extract<TeachingVisual, { type: 'plot' }>>): TeachingVisual => ({ type: 'plot', title: 'T', x: { min: 0, max: 10 }, series: [{ label: 'Distance', expression: 'v*x' }], parameters: [slider('v')], ...extra });
+
+    it('rejects a curve that never uses x, which is what a formula copied with a reading slider gives', () => {
+      const flat = moving({ parameters: [slider('v'), slider('t')], series: [{ label: 'Distance', expression: 'v*t' }], outputs: [{ label: 'At t', expression: 'v*t' }] });
+      const errors = checkVisualAgainstBrief(flat, brief());
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('series "Distance" never uses x');
+    });
+
+    it('rejects every curve when none uses x, and no curve when one does', () => {
+      expect(checkVisualAgainstBrief(moving({ series: [{ label: 'A', expression: 'v' }, { label: 'B', expression: 'max(v,2)' }] }), brief())).toHaveLength(2);
+      expect(checkVisualAgainstBrief(moving({ series: [{ label: 'Curve', expression: 'v*x' }, { label: 'Threshold', expression: 'v' }] }), brief())).toEqual([]);
+    });
+
+    it('accepts x inside a function or a sum, and does not take max or exp for x', () => {
+      expect(checkVisualAgainstBrief(moving({ series: [{ label: 'S', expression: 'sum(k,0,v,x^k/factorial(k))' }] }), brief())).toEqual([]);
+      expect(checkVisualAgainstBrief(moving({ series: [{ label: 'S', expression: 'exp(max(v,1))' }] }), brief())[0]).toContain('never uses x');
+    });
+
+    it('leaves supplied points alone', () => {
+      expect(checkVisualAgainstBrief(moving({ parameters: [], series: [{ label: 'Data', points: [[0, 1], [1, 2]] }] }), brief())).toEqual([]);
+      expect(checkVisualAgainstBrief(moving({ parameters: [], series: [{ label: 'Data', points: [[0, 1], [1, 2]] }, { label: 'Level', expression: '1' }] }), brief())).toEqual([]);
+    });
+
+    it('rejects a slider that nothing uses, which is what readouts with typed-in values give', () => {
+      const dead = moving({ parameters: [slider('v'), slider('n')], outputs: [{ label: 'At 3', expression: '3*2' }] });
+      const errors = checkVisualAgainstBrief(dead, brief());
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toContain('slider "n" changes nothing');
+    });
+
+    it('accepts a slider used only in a readout, and does not read a slider inside a longer name', () => {
+      expect(checkVisualAgainstBrief(moving({ parameters: [slider('v'), slider('n')], outputs: [{ label: 'At n', expression: 'v*n' }] }), brief())).toEqual([]);
+      expect(checkVisualAgainstBrief(moving({ parameters: [slider('v'), slider('n')], outputs: [{ label: 'V', expression: 'sin(v)' }] }), brief())[0]).toContain('slider "n"');
+    });
+  });
+
   it('rejects a different type', () => {
     expect(checkVisualAgainstBrief(quiz, brief())).toEqual(['expected a plot, received a quiz']);
   });

@@ -6,6 +6,7 @@ const simplified = (value: string) => value.normalize('NFC').replace(/(\d),(\d)/
 const normalized = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').replace(/(\d),(\d)/g, '$1.$2').toLowerCase().trim().replace(/\s+/g, ' ');
 
 type Plot = Extract<TeachingVisual, { type: 'plot' }>;
+const namesIn = (expression: string): string[] => expression.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? [];
 
 function plotProblems(visual: Plot, brief: VisualBrief) {
   const errors: string[] = [];
@@ -27,6 +28,13 @@ function plotProblems(visual: Plot, brief: VisualBrief) {
     const compute = compileExpression(series.expression);
     if (!plotSampleXs(visual.x).some((x) => Number.isFinite(compute?.({ ...defaults, x })))) errors.push(`series "${series.label}" has no finite value at the default parameters`);
   }
+  // A formula copied with a reading slider named like its variable, or readouts with typed-in values, parse and draw, but nothing moves.
+  const formulas = visual.series.flatMap((series) => (series.expression === undefined ? [] : [series.expression]));
+  if (formulas.length === visual.series.length && !formulas.some((formula) => namesIn(formula).includes('x'))) {
+    for (const series of visual.series) errors.push(`series "${series.label}" never uses x, so it draws a flat line: write the variable of the horizontal axis as x, even when a slider has the same name as that variable`);
+  }
+  const used = new Set([...formulas, ...outputs.map((item) => item.expression)].flatMap(namesIn));
+  for (const { name } of declared) if (!used.has(name)) errors.push(`slider "${name}" changes nothing: use it by name in a series or a readout, never its value typed as a number`);
   return errors;
 }
 
