@@ -15,7 +15,7 @@ Every prompt here follows one standard, checked by `prompt-standard.test.ts`.
 7. **Tagged examples:** `<example>` with `<input>`, `<good_output>`, an optional `<bad_output>` and `<why>`. At least two, including a tricky case. `context-data`, `conversation-memory` and `document-transcription` travel with every request or image, so one compact example is enough. Example inputs use the format the app really sends.
 8. **Checked examples:** JSON in an example is validated by a test against the real parser or `JSON.parse`.
 9. **Honest capabilities:** no vendor identity, no fictitious tools, no talk of internal machinery in user-facing output.
-10. **Size budget:** tutor plus routing at most 6000 estimated tokens, each type module at most 6000, other prompts at most 3000, and `context-data`, `conversation-memory` and `document-transcription` at most 450 each. StudentLLM runs on small local models too: quality comes from structure and examples, not length, and a longer note takes room from course evidence and memory.
+10. **Size budget:** tutor plus routing at most 7200 estimated tokens, each type module at most 6000, the visual decision prompt at most 3700, other prompts at most 3000, and `context-data`, `conversation-memory` and `document-transcription` at most 450 each. StudentLLM runs on small local models too: quality comes from structure and examples, not length, and a longer note takes room from course evidence and memory.
 
 Examples must never use a topic from `benchmarks/tutor/`, because that would contaminate the measurement.
 
@@ -24,6 +24,7 @@ Examples must never use a topic from `benchmarks/tutor/`, because that would con
 | `chat.ts` | Educational chat, useful answers with missing evidence, provenance and technical checks |
 | `study.ts` | Study aids and their source-linked legacy visual format |
 | `visuals.ts` | Actual plot/diagram/figure/quiz capabilities, examples, limits and consistency checks |
+| `tutor-length-reminder.ts` | Short note sent as the last message of every tutor answer call, never saved or shown, because the system prompt alone did not control the length of answers |
 | `visual-decision.ts` | One-shot decision, after a tutor answer without a visual, on whether to request one and what it contains |
 | `structured-teaching.ts` | JSON sections response protocol for capable providers |
 | `context-data.ts` | Full-course or retrieved evidence as untrusted data |
