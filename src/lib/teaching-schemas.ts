@@ -58,9 +58,9 @@ const decisionProperties = {
 };
 const visualDecisionSchema = object(decisionProperties, ['visual']);
 
-/** With a target, the decision can only name that type. */
-export function visualDecisionResponseFormat(target?: VisualType): ProviderResponseFormat {
-  const schema = target ? object({ ...decisionProperties, type: { type: 'string', enum: [target] } }, ['visual']) : visualDecisionSchema;
+/** With a target, the decision can only name one of those types. */
+export function visualDecisionResponseFormat(target?: VisualType[]): ProviderResponseFormat {
+  const schema = target ? object({ ...decisionProperties, type: { type: 'string', enum: target } }, ['visual']) : visualDecisionSchema;
   return { type: 'json_schema', json_schema: { name: 'teaching_visual_decision', strict: true, schema } };
 }
 
