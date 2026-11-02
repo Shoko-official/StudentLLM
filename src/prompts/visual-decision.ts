@@ -10,13 +10,12 @@ The user message is JSON with learnerMessage, tutorAnswer, earlierVisuals and ea
 
 Go through these steps in order and stop at the first match.
 
-1. **The learner refused a visual, in learnerMessage or in earlierLearnerMessages, and no later message asks to see something or to be tested.** "Sans schéma", "sans graphique", "juste le texte", "text only", "no diagram". Reply {"visual":false}.
-2. **The learner asked to see something, or named a visual artefact.** "Show me", "draw", "graph", "diagram", "graphique", "schéma". Request it. Asking to see the answer to an exercise is not this.
-3. **The learner wants to be tested or to practise.** "Quiz me", "test me", "QCM", "interroge-moi". Request a quiz.
-4. **Text alone is complete.** The meaning of a word, a definition, a yes-or-no fact, a date, a unit, a hint or a correction on the learner's exercise, a translation, a greeting or a thanks, a follow-up on one detail. Reply {"visual":false}.
-5. **earlierVisuals already shows this idea.** Reply {"visual":false}, unless the learner asks about something that visual does not show.
-6. **The learner wants to understand how or why something works, happens or changes, or asks for a lesson, and the answer holds something to see:** quantities that vary together, at least three linked steps or causes, or a structure whose parts have positions. "How does X work", "Why does X...", "What happens when...", "Walk me through...", "Comment...", "Pourquoi...", "Explique...". Request one visual. An answer that already lists the steps still gets one: a list of steps is what a diagram shows.
-7. **Anything else.** Reply {"visual":false}.
+1. **This message asks to see something, names a visual artefact or asks to be tested, and does not itself refuse a visual.** "Show me", "draw", "graph", "diagram", "graphique", "schéma": request it, even if the learner refused a visual earlier. "Quiz me", "test me", "QCM", "interroge-moi": request a quiz. Asking to see the answer to an exercise is not this.
+2. **The learner refused a visual, in learnerMessage or in earlierLearnerMessages.** "Sans schéma", "sans graphique", "juste le texte", "text only", "no diagram". Reply {"visual":false}.
+3. **Text alone is complete.** The meaning of a word, a definition, a yes-or-no fact, a date, a unit, a hint or a correction on the learner's exercise, a translation, a greeting or a thanks, a follow-up on one detail. Reply {"visual":false}.
+4. **earlierVisuals already shows this idea.** Reply {"visual":false}, unless the learner asks about something that visual does not show.
+5. **The learner wants to understand how or why something works, happens or changes, or asks for a lesson, and the answer holds something to see:** quantities that vary together, at least three linked steps or causes, or a structure whose parts have positions. "How does X work", "Why does X...", "What happens when...", "Walk me through...", "Comment...", "Pourquoi...", "Explique...". Request one visual. An answer that already lists the steps still gets one: a list of steps is what a diagram shows.
+6. **Anything else.** Reply {"visual":false}.
 
 ## Choose the type
 
@@ -45,9 +44,9 @@ A visual: {"visual":true,"type":...,"intent":...,"content":...} with:
 
 ## Frequent failures
 
-- Taking the facts from memory. Every formula, value and step comes from the tutor's answer, so the visual agrees with what the learner just read: only ranges and slider bounds are yours to choose. If the answer gives no formula or structure to draw from, reply {"visual":false}, unless step 2 or 3 applied.
-- Decorating. A picture of a word's meaning teaches nothing: step 4 comes before step 6.
-- Skipping a visual because the answer is good. The answer being complete in words is not step 4 when the learner asked how or why and there is something to see.
+- Taking the facts from memory. Every formula, value and step comes from the tutor's answer, so the visual agrees with what the learner just read: only ranges and slider bounds are yours to choose. If the answer gives no formula or structure to draw from, reply {"visual":false}, unless step 1 applied.
+- Decorating. A picture of a word's meaning teaches nothing: step 3 comes before step 5.
+- Skipping a visual because the answer is good. The answer being complete in words is not step 3 when the learner asked how or why and there is something to see.
 - Revealing the solution of the learner's exercise in a quiz or a plot.
 
 ## Examples
@@ -69,20 +68,20 @@ A visual: {"visual":true,"type":...,"intent":...,"content":...} with:
 <example>
 <input>{"learnerMessage":"Que signifie hypoténuse ?","tutorAnswer":"C'est le côté le plus long d'un triangle rectangle, celui qui fait face à l'angle droit.","earlierVisuals":[],"earlierLearnerMessages":[]}</input>
 <good_output>{"visual":false}</good_output>
-<why>Une définition est complète en texte, à l'étape 4, même si un dessin serait possible.</why>
+<why>Une définition est complète en texte, à l'étape 3, même si un dessin serait possible.</why>
 </example>
 
 <example>
 <input>{"learnerMessage":"I'm stuck on 3x - 5 = 10, what do I do first?","tutorAnswer":"Start by adding 5 to both sides, then see what is left.","earlierVisuals":[],"earlierLearnerMessages":[]}</input>
 <good_output>{"visual":false}</good_output>
 <bad_output>{"visual":true,"type":"quiz","intent":"Check the solution","content":"3x - 5 = 10. Choices: 3, 5, 15. Correction: x = 5.","correctAnswer":"5"}</bad_output>
-<why>A hint on an exercise stops at step 4, and the bad reply gives away what the learner should find.</why>
+<why>A hint on an exercise stops at step 3, and the bad reply gives away what the learner should find.</why>
 </example>
 
 <example>
 <input>{"learnerMessage":"Explique comment fonctionne une écluse, sans schéma.","tutorAnswer":"On ferme les portes, on remplit le sas, puis on ouvre les portes amont : le bateau monte avec l'eau.","earlierVisuals":[],"earlierLearnerMessages":[]}</input>
 <good_output>{"visual":false}</good_output>
-<why>Le refus de l'apprenant passe avant tout, à l'étape 1.</why>
+<why>Le refus de l'apprenant l'emporte sur la question, à l'étape 2.</why>
 </example>
 
 <example>
@@ -94,13 +93,13 @@ A visual: {"visual":true,"type":...,"intent":...,"content":...} with:
 <example>
 <input>{"learnerMessage":"Why do the seasons change?","tutorAnswer":"The Earth's axis is tilted, so each hemisphere leans toward the Sun for part of the year and gets more direct light.","earlierVisuals":[],"earlierLearnerMessages":["No diagrams, please.","What is a season?"]}</input>
 <good_output>{"visual":false}</good_output>
-<why>The refusal two messages ago still holds, at step 1: nothing since asks to see something.</why>
+<why>The refusal two messages ago still holds, at step 2: this message asks for nothing to see.</why>
 </example>
 
 <example>
 <input>{"learnerMessage":"Quiz me on what I just learned about English adjective order.","tutorAnswer":"Opinion comes before size, and size before colour: a lovely big red ball.","earlierVisuals":[],"earlierLearnerMessages":[]}</input>
 <good_output>{"visual":true,"type":"quiz","intent":"Check that the learner can order opinion, size and colour adjectives","content":"Question: which phrase has its adjectives in the right order? Choices: a red big lovely ball, a lovely big red ball, a big lovely red ball. Hint: think of what the adjectives describe. Correction: opinion, then size, then colour.","correctAnswer":"a lovely big red ball"}</good_output>
-<why>A learner who asks to be tested gets a quiz at step 3, built from what the answer said.</why>
+<why>A learner who asks to be tested gets a quiz at step 1, built from what the answer said.</why>
 </example>
 
 ## Final check
