@@ -58,8 +58,10 @@ function readRows(path) {
 const MODELS = [
   { id: 'nvidia/nemotron-3.5-lightning-30b-a3b', chatTemplateKwargs: { enable_thinking: false } },
   { id: 'nvidia/nemotron-3.5-super-vl-120b-a12b', chatTemplateKwargs: { enable_thinking: false } },
-  { id: 'mistralai/mistral-large-4-1t-a52b' },
+  // Measured apart (decision of 2026-11-02): its numbers are reported and decide nothing.
+  { id: 'mistralai/mistral-large-4-1t-a52b', reportOnly: true },
 ];
+const reportOnlyModels = MODELS.filter((model) => model.reportOnly).map((model) => model.id);
 const SAMPLES = 2, POST_CAP = 360, SPACING_MS = 1700, DEADLINE_MS = 120_000, VISUAL_DEADLINE_MS = 120_000, WINDOW = 1_000_000, OUTPUT = 8192, MAX_CONSECUTIVE_FAILURES = 3;
 // Wait before a stalled pair is rerun, so the rerun is not inside the same outage. The environment variable is a test aid.
 const rerunWaitOverridden = Boolean(process.env.TUTOR_RERUN_WAIT_MS);
@@ -120,6 +122,8 @@ for (const model of MODELS) {
     });
   }
 }
+// Report-only pairs run after every gated pair, whatever the order of MODELS (the sort is stable).
+pairs.sort((a, b) => Number(Boolean(a.model.reportOnly)) - Number(Boolean(b.model.reportOnly)));
 const stored = readRows(join(out, 'results.jsonl'));
 const done = new Set(stored.map((item) => item.cell));
 console.log(`${expected.length} cells, ${expected.filter((item) => !done.has(item.cell)).length} left, ${quality.length} quality cases`);
@@ -152,8 +156,8 @@ if (rerunWaitOverridden) invalidations.push('run with TUTOR_RERUN_WAIT_MS: not t
 
 if (missingHoldouts(expected)) {
   // gate.json says so as well, so a gate left in this directory by an earlier run cannot be read as the answer.
-  const gate = decideGate(stored, expected, { invalidations });
-  save('gate.json', JSON.stringify({ ...gate, dirty, allowDirty, customCases, hiddenRate: hidden, posts: lineCount(ledgerPath), cells: stored.length, expected: expected.length, pendingFailures: 0, stopped: null, skippedModels: [] }, null, 2));
+  const gate = decideGate(stored, expected, { invalidations, reportOnly: reportOnlyModels });
+  save('gate.json', JSON.stringify({ ...gate, dirty, allowDirty, customCases, hiddenRate: hidden, posts: lineCount(ledgerPath), cells: stored.length, expected: expected.length, pendingFailures: 0, stopped: null, skippedModels: [], reportOnlyModels }, null, 2));
   console.log(JSON.stringify({ pass: false, incomplete: true, reasons: ['no holdouts'] }));
   await server.close();
   process.exit(2);
@@ -184,7 +188,7 @@ const meta = {
   commit, dirty, allowDirty, customCases, hiddenRate: hidden, rerunWaitOverridden,
   promptsHash: sha256(filesIn(promptsDir).map((file) => `${relative(promptsDir, file).replaceAll('\\', '/')}\0${text(file)}`).join('\0\0')),
   casesHash: sha256(`${casesText}\0${holdoutsText}`),
-  models: MODELS, samples: SAMPLES, postCap: POST_CAP,
+  models: MODELS, reportOnlyModels, samples: SAMPLES, postCap: POST_CAP,
 };
 if (existsSync(join(out, 'run.json'))) {
   const previous = JSON.parse(readFileSync(join(out, 'run.json'), 'utf8'));
@@ -336,8 +340,10 @@ for (const pair of pairs.filter((item) => !done.has(item.cells.old.cell))) {
   const model = pair.model.id;
   if (skipped.has(model)) continue;
   const cells = [pair.cells.old.cell, pair.cells.new.cell];
-  let outcomes = await attempt(pair, !stalled.has(cells[0]));
-  const stall = outcomes.find((item) => item.row?.timedOut && !stalled.has(cells[0]));
+  // A report-only model decides nothing, so a 120 s timeout is a measurement at once: no discarded pair, no wait, no second run.
+  const final = Boolean(pair.model.reportOnly);
+  let outcomes = await attempt(pair, !final && !stalled.has(cells[0]));
+  const stall = final ? undefined : outcomes.find((item) => item.row?.timedOut && !stalled.has(cells[0]));
   if (stall) {
     // One stalled call (a 120 s timeout, either arm) must not decide the gate: discard the pair, once, wait, and rerun it.
     // The rerun is final: a timeout there is the model's, saved as a failed row with its real elapsed time.
@@ -350,7 +356,7 @@ for (const pair of pairs.filter((item) => !done.has(item.cells.old.cell))) {
   const failure = outcomes.find((item) => item.infra)?.infra;
   // Both arms timing out compares nothing: the endpoint may be down, so the pair gets one more run on resume.
   // After that it is a measurement, or a prompt too slow for both arms could never be decided.
-  const bothStalled = !failure && !retriedBothStalled.has(cells[0]) && outcomes.length === 2 && outcomes.every((item) => item.row?.timedOut);
+  const bothStalled = !failure && !final && !retriedBothStalled.has(cells[0]) && outcomes.length === 2 && outcomes.every((item) => item.row?.timedOut);
   if (failure || bothStalled) {
     if (failure) {
       append('failures.jsonl', `${JSON.stringify({ at: new Date().toISOString(), cells, ...failure })}\n`);
@@ -374,9 +380,10 @@ for (const pair of pairs.filter((item) => !done.has(item.cells.old.cell))) {
   console.log(`${pair.cells.old.cell}: posts ${postCount}${outcomes.some((outcome) => outcome.row.failed) ? ' (model output failure recorded)' : ''}`);
 }
 
-const gate = decideGate(results, expected, { invalidations: [...invalidations, ...skipped.values()] });
+// A report-only model that was skipped after repeated failures leaves cells missing in its own report only.
+const gate = decideGate(results, expected, { invalidations: [...invalidations, ...[...skipped].filter(([model]) => !reportOnlyModels.includes(model)).map(([, reason]) => reason)], reportOnly: reportOnlyModels });
 const pending = readRows(join(out, 'failures.jsonl')).filter((item) => item.cells.some((cell) => !results.some((row) => row.cell === cell))).length;
-save('gate.json', JSON.stringify({ ...gate, dirty, allowDirty, customCases, hiddenRate: hidden, posts: postCount, cells: results.length, expected: expected.length, pendingFailures: pending, stopped, skippedModels: [...skipped.keys()] }, null, 2));
+save('gate.json', JSON.stringify({ ...gate, dirty, allowDirty, customCases, hiddenRate: hidden, posts: postCount, cells: results.length, expected: expected.length, pendingFailures: pending, stopped, skippedModels: [...skipped.keys()], reportOnlyModels }, null, 2));
 console.log(JSON.stringify(gate, null, 2));
 if (stopped) console.log(`Stopped early: ${stopped}.`);
 if (gate.incomplete) console.log(`INCOMPLETE, no decision: ${gate.details.reasons.join('; ')}. Missing cells: ${gate.details.missing.slice(0, 10).join(', ') || 'none'}${gate.details.missing.length > 10 ? ' ...' : ''}.`);

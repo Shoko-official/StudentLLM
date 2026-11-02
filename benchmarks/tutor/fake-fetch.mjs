@@ -1,6 +1,6 @@
 // Test double for run.test.mjs, loaded with node --import. It replaces the global fetch with a local fake and
 // compresses time, so a whole run takes seconds. Any host other than the benchmark's own endpoint throws.
-// Configuration comes from TUTOR_FAKE (JSON: speed, decide (the decision call asks for a quiz instead of declining), latency, first503, oldMode, echoKey, echoVisual, hang, hangModels (model ids whose every call hangs), hangCalls and errorCalls ({ old | prose | visual | decision: [1-based call numbers of that kind] } that hang for ever or answer 503), badBody {kind, mode: html | error | truncate}); TUTOR_FAKE_STATS names a file that receives the call counts at exit.
+// Configuration comes from TUTOR_FAKE (JSON: speed, decide (the decision call asks for a quiz instead of declining), latency, first503, oldMode, echoKey, echoVisual, hang, hangModels (model ids whose every call hangs), errorModels (model ids whose every call answers 503), hangCalls and errorCalls ({ old | prose | visual | decision: [1-based call numbers of that kind] } that hang for ever or answer 503), badBody {kind, mode: html | error | truncate}); TUTOR_FAKE_STATS names a file that receives the call counts at exit.
 import { appendFileSync } from 'node:fs';
 
 const config = JSON.parse(process.env.TUTOR_FAKE ?? '{}');
@@ -47,7 +47,7 @@ globalThis.fetch = async (url, init) => {
   counts[kind]++;
   if (body.messages.some(isReminder)) counts.reminders[kind]++;
   if (config.echoKey || (config.echoVisual && kind === 'visual')) return failure(401, `rejected ${authorization} and again ${authorization}`);
-  if (counts.calls <= (config.first503 ?? 0) || config.errorCalls?.[kind]?.includes(counts[kind])) return failure(503, 'busy');
+  if (counts.calls <= (config.first503 ?? 0) || config.errorModels?.includes(body.model) || config.errorCalls?.[kind]?.includes(counts[kind])) return failure(503, 'busy');
   inFlight++;
   counts.maxInFlight = Math.max(counts.maxInFlight, inFlight);
   try {

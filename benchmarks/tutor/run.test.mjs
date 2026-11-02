@@ -277,7 +277,9 @@ describe('real run', () => {
     const gate = gateOf(out);
     expect(gate).toMatchObject({ pass: false, incomplete: true, posts: 0, cells: 0, expected: 24 });
     expect(gate.details.reasons).toContain('no holdouts');
-    expect(gate.details.missing).toHaveLength(24);
+    // The report-only model is out of `missing`; its own missing cells are counted apart.
+    expect(gate.details.missing).toHaveLength(16);
+    expect(Object.values(gate.details.reportOnly).map((item) => item.missing)).toEqual([8]);
   }, SLOW);
 
   it('refuses invalid holdouts before any request', () => {
@@ -428,15 +430,15 @@ describe('real run', () => {
   it('keeps a call that hits the 120 s limit as a failed row with its real time, and counts it per arm', () => {
     const out = outDir();
     const result = run(real(out, casesFile(), holdoutsFile()), { fake: { hang: 'prose', speed: 400 } });
-    // Every pair stalled once and was rerun; the second stall is the measurement.
-    expect(rows(out, 'failures.jsonl').filter((item) => item.kind === 'timeout')).toHaveLength(24);
-    expect(rows(out, 'failures.jsonl')).toHaveLength(24);
+    // Every gated pair stalled once and was rerun; the second stall is the measurement. The report-only model's stalls are final at once.
+    expect(rows(out, 'failures.jsonl').filter((item) => item.kind === 'timeout')).toHaveLength(16);
+    expect(rows(out, 'failures.jsonl')).toHaveLength(16);
     const newRows = rows(out).filter((row) => row.arm === 'new');
     expect(newRows).toHaveLength(24);
     expect(newRows.every((row) => row.failed && row.timedOut)).toBe(true);
     expect(newRows.filter((row) => row.kind === 'quality').every((row) => row.totalSeconds > 100 && row.totalSeconds < 200)).toBe(true);
     const gate = gateOf(out);
-    expect(gate.details.timeouts).toEqual({ old: 0, new: 24 });
+    expect(gate.details.timeouts).toEqual({ old: 0, new: 16 });
     expect(gate.criteria.noMoreFailures).toBe(false);
     expect(dataReasons(gate)).toEqual([]);
     expect(result.code).toBe(2);
@@ -555,6 +557,72 @@ describe('real run', () => {
     expect(second.counts.calls).toBeGreaterThan(0);
   }, SLOW);
 
+  describe('a report-only model', () => {
+    const mistral = 'mistralai/mistral-large-4-1t-a52b';
+    const lightning = 'nvidia/nemotron-3.5-lightning-30b-a3b';
+
+    it('is recorded as report-only in the metadata and in gate.json', () => {
+      const out = outDir();
+      run(real(out, casesFile(), holdoutsFile()));
+      expect(JSON.parse(readFileSync(join(out, 'run.json'), 'utf8')).reportOnlyModels).toEqual([mistral]);
+      const gate = gateOf(out);
+      expect(gate.reportOnlyModels).toEqual([mistral]);
+      expect(gate.details.reportOnly[mistral]).toMatchObject({ missing: 0 });
+      expect(Object.keys(gate.details.perModel)).not.toContain(mistral);
+    }, SLOW);
+
+    it('runs after every gated pair, whatever its place in the model list', () => {
+      const out = outDir();
+      run(real(out, casesFile(), holdoutsFile()));
+      const order = rows(out).map((row) => row.model);
+      const firstReportOnly = order.indexOf(mistral);
+      expect(firstReportOnly).toBe(32);
+      expect(order.slice(firstReportOnly).every((model) => model === mistral)).toBe(true);
+    }, SLOW);
+
+    it('takes a 120 s timeout as final at once: failed rows with their real time, no discarded pair, no wait, no skip', () => {
+      const out = outDir(), cases = casesFile(), holdouts = holdoutsFile();
+      const result = run(real(out, cases, holdouts), { fake: { hangModels: [mistral], speed: 400 } });
+      const measured = rows(out).filter((row) => row.model === mistral);
+      expect(measured).toHaveLength(16);
+      expect(measured.every((row) => row.failed && row.timedOut)).toBe(true);
+      expect(measured.filter((row) => row.kind === 'quality').every((row) => row.firstTextSeconds > 100 && row.firstTextSeconds < 200)).toBe(true);
+      expect(existsSync(join(out, 'failures.jsonl'))).toBe(false);
+      expect(result.stdout).not.toMatch(/discarded|skipped/);
+      const gate = gateOf(out);
+      expect(gate.skippedModels).toEqual([]);
+      expect(dataReasons(gate)).toEqual([]);
+      expect(gate.details.reportOnly[mistral]).toMatchObject({ failed: { old: 8, new: 8 }, missing: 0 });
+      expect(gate.details.timeouts).toEqual({ old: 0, new: 0 });
+      // The data is complete and the others decide: only --allow-dirty and --cases make this run incomplete.
+      expect(result.code).toBe(2);
+      expect(gate.incomplete).toBe(true);
+    }, SLOW);
+
+    it('leaves the exit code and incomplete to the gated models when its provider keeps failing, and is not an invalidation when skipped', () => {
+      const out = outDir();
+      const result = run(real(out, casesFile(), holdoutsFile()), { fake: { errorModels: [mistral], speed: 400 } });
+      const gate = gateOf(out);
+      expect(rows(out).filter((row) => row.model === mistral)).toHaveLength(0);
+      expect(gate.skippedModels).toEqual([mistral]);
+      expect(result.stdout).toMatch(/mistral.*skipped/);
+      expect(dataReasons(gate)).toEqual([]);
+      expect(gate.details.missing).toEqual([]);
+      expect(gate.details.reportOnly[mistral].missing).toBe(16);
+    }, SLOW);
+
+    it('does not change how a gated model that times out is handled', () => {
+      const out = outDir();
+      run(real(out, casesFile(), holdoutsFile()), { fake: { hangModels: [lightning, mistral], speed: 400 } });
+      const gate = gateOf(out);
+      expect(gate.skippedModels).toEqual([lightning]);
+      expect(gate.incomplete).toBe(true);
+      expect(gate.details.reasons.join(' ')).toMatch(/lightning.*3 pairs in a row/);
+      expect(gate.details.reasons.join(' ')).not.toMatch(/mistral/);
+      expect(rows(out).filter((row) => row.model === mistral)).toHaveLength(16);
+    }, SLOW);
+  });
+
   it('decides an old arm that always times out while the new arm answers', () => {
     const out = outDir();
     const result = run(real(out, casesFile(), holdoutsFile()), { fake: { hang: 'old', speed: 400 } });
@@ -562,10 +630,10 @@ describe('real run', () => {
     const oldRows = rows(out).filter((row) => row.arm === 'old');
     expect(oldRows.every((row) => row.failed && row.timedOut)).toBe(true);
     expect(rows(out).filter((row) => row.arm === 'new').some((row) => row.failed)).toBe(false);
-    expect(rows(out, 'failures.jsonl').map((item) => item.kind)).toEqual(Array(24).fill('timeout'));
+    expect(rows(out, 'failures.jsonl').map((item) => item.kind)).toEqual(Array(16).fill('timeout'));
     const gate = gateOf(out);
     expect(dataReasons(gate)).toEqual([]);
-    expect(gate.details.timeouts).toEqual({ old: 24, new: 0 });
+    expect(gate.details.timeouts).toEqual({ old: 16, new: 0 });
     expect(gate.criteria.firstText).toBe(true);
     expect(gate.criteria.noMoreFailures).toBe(true);
     expect(result.code).toBe(2);
