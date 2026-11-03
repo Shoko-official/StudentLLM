@@ -27,16 +27,16 @@ The gate passed at commit `8e3864f` on `nvidia/nemotron-3.5-lightning-30b-a3b` (
 
 | Measure | Old pipeline | Tutor pipeline |
 | --- | --- | --- |
-| Complete artefacts, both models, of 48 | 22 | 43 |
+| Complete artefacts, both models, of 52 | 22 | 43 |
 | Complete artefacts, sealed questions alone, of 16 | 5 | 12 |
-| Complete artefacts, Lightning / Super | 6 / 16 | 22 / 21 |
+| Complete artefacts, Lightning / Super, of 26 each | 6 / 16 | 22 / 21 |
 | Numeric errors in a visual | 9 | 3 |
 | Failed replies | 5 | 0 |
 | Median time to first text, Lightning / Super | 12.3 s / 6.0 s (whole reply) | 5.4 s / 3.0 s |
 | Visual offered for an explanatory question | not a criterion | 100 % |
 | Visual offered for a definition | not a criterion | 0 % |
 
-All seven criteria passed. `mistralai/mistral-large-4-1t-a52b` was measured apart, as report-only, and answered nothing within the 120 s limit in either pipeline, so it says nothing about the change.
+All seven criteria passed. `mistralai/mistral-large-4-1t-a52b` was measured apart, as report-only, and produced no complete artefact in either pipeline: 39 of its 44 cells timed out at the 120 s limit (all 24 quality cells and 15 of the 20 rate cells), and the 5 that answered were definitions in the rate cells (2 old, 3 new), so it says nothing about the change.
 
 Small exploratory samples on synthetic cases. Local models were not measured. The gate counts a number as wrong only inside a visual: wrong numbers in the prose are not measured by it, and an independent blind reading of the replies found that they remain, more often on Lightning. Curves, answer keys and figures in the text still need review. One commit after `8e3864f` changed only the detection of the message language (`src/lib/message-language.ts`) and was not re-measured. The harness that produced these numbers needed the old pipeline: `benchmarks/tutor/run.mjs` now only checks case files, and earlier results stay valid only for the commit recorded in their `run.json`.
 

@@ -1092,7 +1092,7 @@ The checkpoint is automatically loaded when it already exists. Its run metadata 
 
 ## Tutor pipeline
 
-The comparison between the single-envelope pipeline (old) and the two-step tutor pipeline (new) was decided at commit `8e3864f`: the gate passed on Nemotron 3.5 Lightning and Super with hidden test questions, and the numbers are in [docs/status.md](../docs/status.md). Synthetic text only; Mistral Large 4 was report-only and answered nothing within the 120 s limit.
+The comparison between the single-envelope pipeline (old) and the two-step tutor pipeline (new) was decided at commit `8e3864f`: the gate passed on Nemotron 3.5 Lightning and Super with hidden test questions, and the numbers are in [docs/status.md](../docs/status.md). Synthetic text only; Mistral Large 4 was report-only and produced no complete artefact: 39 of its 44 cells timed out at the 120 s limit.
 
 `tutor/evaluate.mjs` holds the scoring and the gate criteria, fixed before the first run, and `tutor/evaluate.test.mjs` still tests them. They are the record of what the gate asked and are unchanged.
 
