@@ -1092,16 +1092,23 @@ The checkpoint is automatically loaded when it already exists. Its run metadata 
 
 ## Tutor pipeline
 
-`tutor/run.mjs` compares the single-envelope pipeline (old) with the two-step tutor pipeline (new) on hosted models, using synthetic text only. The gate criteria live in `tutor/evaluate.mjs` and were fixed before the first run; the harness only decides which data is valid.
+The comparison between the single-envelope pipeline (old) and the two-step tutor pipeline (new) was decided at commit `8e3864f`: the gate passed on Nemotron 3.5 Lightning and Super with hidden test questions, and the numbers are in [docs/status.md](../docs/status.md). Synthetic text only; Mistral Large 4 was report-only and answered nothing within the 120 s limit.
+
+`tutor/evaluate.mjs` holds the scoring and the gate criteria, fixed before the first run, and `tutor/evaluate.test.mjs` still tests them. They are the record of what the gate asked and are unchanged.
+
+`tutor/run.mjs` used to run both pipelines on hosted models. The old pipeline, its schema and its frozen request snapshot were removed from the tree after the gate, so it can no longer measure anything and refuses to: without `--dry-run` it exits with code 1 and a message, before it reads a key or opens a connection. What remains is the check of the case files, which needs no key and sends nothing:
 
 ```bash
-node benchmarks/tutor/run.mjs --out "$HOME/tutor-bench/run-1" --holdouts "$HOME/tutor-bench/holdouts.json"
-node benchmarks/tutor/run.mjs --out "$HOME/tutor-bench/dry" --dry-run
+node benchmarks/tutor/run.mjs --out "$HOME/tutor-bench/dry" --dry-run [--holdouts "$HOME/tutor-bench/holdouts.json"]
 ```
 
-`--out` must be an absolute path outside the repository (a relative path resolves against the current directory, which may be a worktree inside the repository). `NVIDIA_API_KEY` is read from the process environment only and is replaced by `[key]` before anything is written to a file, stdout or stderr.
+It validates `cases.json` (or `--cases <file>`) and the holdouts as described below, prints the number of quality cases and rate prompts, and exits `1` with the problems otherwise. `--out` must be an absolute path outside the repository; it only holds the module cache of the check.
 
-### What a run does
+Every result of the comparison (a directory with a `run.json`) compared both pipelines and stays valid only for the commit recorded there, with the prompts hashed there and the cases it names. To repeat or extend one, check out that commit. A later change to the prompts, the pipeline or the cases is not covered by those numbers, and a measurement of the tutor pipeline alone has no gate: write its criteria before its first run.
+
+The sections below describe the protocol of the comparison as `run.mjs` implemented it up to `8e3864f`. They are kept as the record of how the gate's data was kept valid. Only the case format and the hidden rate question format are still read by code.
+
+### What a run did (up to `8e3864f`)
 
 - Cells run one at a time, an old and a new cell per pair; inside a new cell the visual calls run two at a time, as in the app. A pair is stored whole or not at all.
 - Before any request, every case and holdout is validated (format below). A real run also refuses a dirty working tree and needs two holdout cases (`--holdouts`, an array of cases or the object form with hidden rate questions below); without them it stops with `incomplete: true, reasons: ["no holdouts"]`, after writing a `gate.json` that says so (a gate left in that directory by an earlier run is not the answer). `--dry-run` validates, sends nothing, writes no ledger and prints the cell count (108, or 132 with two holdouts).
@@ -1110,7 +1117,7 @@ node benchmarks/tutor/run.mjs --out "$HOME/tutor-bench/dry" --dry-run
 - `run.json` records the commit, a hash of `src/prompts/`, a hash of the cases and holdouts, the models and the sample count. Resuming with any difference, with a stale or duplicated row, or with half a pair in `results.jsonl` is an error. A `results.jsonl` that ends in a truncated line (a killed run) is an error that says what to delete.
 - `--cases <file>`, `--allow-dirty` and the environment variable `TUTOR_RERUN_WAIT_MS` are test aids. A run that used any of them always ends `pass: false, incomplete: true`, with the reason in `gate.json`, on resume too; `gate.json` also records `dirty`.
 
-### What counts as a measurement
+### What counted as a measurement (up to `8e3864f`)
 
 - Infrastructure failures are not measurements: an HTTP error status that outlived the provider's own single retry (a 429 or 5xx that the retry cured is not one), a network error, the request cap, and a 200 reply that is not a completion (no `choices` array, such as a gateway page or an `{error}` body, or a body cut off mid-read). They go to `failures.jsonl`, the whole pair is discarded and rerun on resume, and the decision stays incomplete until every expected cell is measured. A visual call that hits one invalidates its cell the same way. Three failed pairs in a row for one model stop that model for this process: its remaining cells are skipped, the other models carry on, the gate ends incomplete naming the skipped model (`skippedModels` in `gate.json`), and a resume retries it. The request cap stops the whole run.
 - Model output failures are measurements and are never retried. A failed row is one where the learner got no usable answer: an old envelope rejected, a new reply with no answer, or a call that hits the 120 s limit twice (next item). It is saved with its real elapsed time, counted per arm in `gate.json`, counts as not complete and not requested, and is left out of the definition rate. It stays in both clocks (`firstText` and the totals), at its real elapsed time: the learner waited that long for that outcome. A visual that fails its repair or runs out of its own 120 s deadline is not a failed row: the learner keeps the prose and a Retry button, and the artefact already scores `missing` in `moreComplete`.

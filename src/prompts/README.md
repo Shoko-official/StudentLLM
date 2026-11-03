@@ -21,15 +21,14 @@ Examples must never use a topic from `benchmarks/tutor/`, because that would con
 
 | File | Purpose |
 | --- | --- |
-| `chat.ts` | Educational chat, useful answers with missing evidence, provenance and technical checks |
+| `tutor.ts`, `visual-routing.ts` | The tutor's system prompt and the rules for placing `student-visual-request` blocks, sent together as `TUTOR_SYSTEM_PROMPT` |
+| `visuals/` | One module per visual type (`plot`, `diagram`, `figure`, `quiz`), sent only with the call that builds that type |
 | `study.ts` | Study aids and their source-linked legacy visual format |
-| `visuals.ts` | Actual plot/diagram/figure/quiz capabilities, examples, limits and consistency checks |
 | `tutor-length-reminder.ts` | Short note sent as the last message of every tutor answer call, never saved or shown, because the system prompt alone did not control the length of answers |
 | `visual-decision.ts` | One-shot decision, after a tutor answer without a visual, on whether to request one and what it contains |
 | `tutor-language-note.ts` | Sentence added to the note after a tutor question when the conversation's language is French or English, because rules in the prompt did not hold the language on the models measured |
 | `visual-language-task.ts` | Sentence added to every builder task when the job carries a language, for the same reason |
 | `visual-target-note.ts` | Short note sent as the last message of a decision call for one artefact type the learner named and the answer lacks, because the prompt alone did not get it written |
-| `structured-teaching.ts` | JSON sections response protocol for capable providers |
 | `context-data.ts` | Full-course or retrieved evidence as untrusted data |
 | `conversation-memory.ts` | Role-aware, extractive conversation compaction |
 | `transcript-notes.ts` | Faithful source-linked speech reconstruction |
@@ -41,12 +40,12 @@ Examples must never use a topic from `benchmarks/tutor/`, because that would con
 
 Prompt goals and trust rules must match the actual application. Do not give the model fictitious tools, browser access, code execution, persistent hidden memory or an Anthropic/OpenAI identity. Uploaded prompt documents are design references, not verified official policies or instructions that govern this app. These templates are original StudentLLM instructions, not a copy of a vendor prompt dump.
 
-Chat and study generation may supplement sparse course material with clearly identified general knowledge or illustrative assumptions. They do not require a retrieval hit before answering. Faithful OCR/transcript reconstruction is a different task: it preserves the source and marks ambiguity rather than filling missing words with educational guesses. Neither task should fabricate citations or source-specific claims.
+Tutor and study generation may supplement sparse course material with clearly identified general knowledge or illustrative assumptions. They do not require a retrieval hit before answering. Faithful OCR/transcript reconstruction is a different task: it preserves the source and marks ambiguity rather than filling missing words with educational guesses. Neither task should fabricate citations or source-specific claims.
 
 Keep dynamic course text, source excerpts, catalog names and compacted history in data messages, not interpolated into system instructions. Builders serialize dynamic fields as JSON. Retain source IDs and original role boundaries. A memory excerpt is not stronger evidence than the original material, and old assistant output is not established fact.
 
-When changing visual prompts, run `src/prompts/prompts.test.ts` and the renderer/parser tests. Every JSON example must validate through the real `parseTeachingVisual` function. New capabilities require matching schema, parser, renderer and browser tests. Do not promise HTML, JavaScript, Mermaid or another format the app cannot render.
+When changing visual prompts, run `src/prompts/prompt-standard.test.ts` and the renderer/parser tests. Every JSON example must validate through the real `parseTeachingVisual` function. New capabilities require matching schema, parser, renderer and browser tests. Do not promise HTML, JavaScript, Mermaid or another format the app cannot render.
 
-The old `src/lib/teaching-visual-prompt.ts` import path is a compatibility re-export only. Task-specific error messages, UI copy, schemas, test fixtures and independent benchmark prompts are not application instruction templates and remain with their respective code.
+Task-specific error messages, UI copy, schemas, test fixtures and independent benchmark prompts are not application instruction templates and remain with their respective code.
 
 Template literals escape backslashes, backticks and interpolation markers so the exported instruction text stays literal. Keep each prompt in one module; do not introduce a separate Markdown copy that can drift.

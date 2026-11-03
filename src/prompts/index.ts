@@ -1,9 +1,6 @@
-import chat from './chat';
 import study from './study';
-import visuals from './visuals';
 import contextData from './context-data';
 import memory from './conversation-memory';
-import structured from './structured-teaching';
 import transcriptNotes from './transcript-notes';
 import documentNotes from './document-notes';
 import documentTranscription from './document-transcription';
@@ -23,12 +20,9 @@ import figureModule from './visuals/figure';
 import quizModule from './visuals/quiz';
 import probes from './probes.json' with { type: 'json' };
 
-export const CHAT_ASSISTANT_PROMPT = chat.trim();
 export const STUDY_ASSISTANT_PROMPT = study.trim();
-export const TEACHING_VISUAL_PROMPT = visuals.trim();
 export const CONTEXT_DATA_INSTRUCTIONS = contextData.trim();
 export const CONVERSATION_MEMORY_INSTRUCTIONS = memory.trim();
-export const STRUCTURED_TEACHING_CONTRACT = structured.trim();
 export const TRANSCRIPT_NOTES_PROMPT = transcriptNotes.trim();
 export const DOCUMENT_NOTES_PROMPT = documentNotes.trim();
 export const DOCUMENT_TRANSCRIPTION_PROMPT = documentTranscription.trim();
