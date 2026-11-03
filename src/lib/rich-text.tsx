@@ -1,4 +1,4 @@
-import { Fragment, isValidElement, memo, type ReactNode } from 'react';
+import { Fragment, isValidElement, memo, useLayoutEffect, useRef, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
@@ -234,6 +234,39 @@ function normalizeRichMarkdown(content: string) {
   return parts.join('\n');
 }
 
+// KaTeX can only break a formula between its runs (.katex-base). A run wider than the line has nowhere to go, so that formula
+// becomes a scroller on its own line. Only then: a scroller clips the ink KaTeX draws outside its boxes on purpose, such as
+// \mathclap or a negative space, and CSS cannot tell whether a formula fits.
+function fitWideFormulas(root: HTMLElement, focusableScrollRegions: boolean) {
+  const lineWidths = new Map<Element, number>();
+  const lineWidth = (formula: Element) => {
+    let block = formula.parentElement!;
+    while (getComputedStyle(block).display === 'inline') block = block.parentElement!;
+    if (!lineWidths.has(block)) {
+      const { paddingLeft, paddingRight } = getComputedStyle(block);
+      lineWidths.set(block, block.clientWidth - parseFloat(paddingLeft) - parseFloat(paddingRight));
+    }
+    return lineWidths.get(block)!;
+  };
+  const formulas = [...root.querySelectorAll('.katex')].filter((formula) => !formula.parentElement?.classList.contains('katex-display'));
+  // scrollWidth counts the ink past a run, such as \rlap. It also counts the 2 px every KaTeX stack hangs past its box (.vlist-s),
+  // and it is rounded, so a run in a line that shrinks to fit it, such as a table cell, reports up to 3 px too many.
+  const wide = formulas.map((formula) => Math.max(0, ...[...formula.querySelectorAll(':scope > .katex-html > .katex-base')].map((run) => run.scrollWidth)) - 3 > lineWidth(formula));
+  formulas.forEach((formula, index) => {
+    // The label of plain-text math is on its wrapper, and focus cannot go inside an element with the img role.
+    const scroller = formula.closest('.latex-inline') ?? formula;
+    scroller.classList.toggle('katex-scrolls', wide[index]);
+    if (wide[index]) scroller.setAttribute('tabindex', '0');
+    else scroller.removeAttribute('tabindex');
+  });
+  if (focusableScrollRegions) return;
+  for (const region of root.querySelectorAll('.katex-display, table')) {
+    const scroller = region.closest('.latex-block') ?? region;
+    if (region.scrollWidth > region.clientWidth) scroller.setAttribute('tabindex', '0');
+    else scroller.removeAttribute('tabindex');
+  }
+}
+
 interface RichTextProps {
   content: string;
   highlightExtractedMath?: boolean;
@@ -246,10 +279,31 @@ interface RichTextProps {
 // every keystroke in a search field or the chat composer. The props are plain strings, so a shallow compare is exact.
 export const RichText = memo(function RichText({ content, highlightExtractedMath = false, focusableScrollRegions = false, allowTeachingVisuals = false, className }: RichTextProps) {
   const classes = ['rich-text', className].filter(Boolean).join(' ');
-  if (highlightExtractedMath) return <div className={classes}>{renderExtractedText(content)}</div>;
+  const rootRef = useRef<HTMLDivElement>(null);
+  // No dependency list: ReactMarkdown rebuilds this DOM on each render, and the component is memoized.
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!root?.querySelector('.katex, table')) return;
+    fitWideFormulas(root, focusableScrollRegions);
+    let active = true;
+    // Measuring above is what starts loading the KaTeX fonts, and a run changes width when they arrive.
+    void document.fonts?.ready.then(() => { if (active) fitWideFormulas(root, focusableScrollRegions); });
+    let width = root.clientWidth;
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+      if (root.clientWidth === width) return;
+      width = root.clientWidth;
+      fitWideFormulas(root, focusableScrollRegions);
+    });
+    observer?.observe(root);
+    return () => {
+      active = false;
+      observer?.disconnect();
+    };
+  });
+  if (highlightExtractedMath) return <div ref={rootRef} className={classes}>{renderExtractedText(content)}</div>;
 
   return (
-    <div className={classes}>
+    <div ref={rootRef} className={classes}>
       <ReactMarkdown
         remarkPlugins={allowTeachingVisuals ? [remarkGfm, remarkMath, remarkTeachingVisualBudget] : [remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: 'ignore', errorColor: 'currentColor' }]]}

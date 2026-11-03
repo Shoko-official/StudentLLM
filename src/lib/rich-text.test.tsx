@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import katex from 'katex';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import packageLock from '../../package-lock.json';
 import { RichText } from './rich-text';
 
@@ -9,6 +9,11 @@ function classNames(root: Element) {
 }
 
 describe('RichText', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Reflect.deleteProperty(document, 'fonts');
+  });
+
   // KaTeX renames classes between versions, so Markdown math must come from the build that katex.min.css belongs to.
   it('installs one KaTeX, shared by rehype-katex and the stylesheet', () => {
     expect(Object.keys(packageLock.packages).filter((path) => /(^|\/)node_modules\/katex$/.test(path))).toEqual(['node_modules/katex']);
@@ -17,6 +22,39 @@ describe('RichText', () => {
     const direct = document.createElement('div');
     direct.innerHTML = katex.renderToString('(x+y)^n');
     expect(classNames(container.querySelector('.katex')!)).toEqual(classNames(direct.querySelector('.katex')!));
+  });
+
+  it('makes a scroller of a formula with a run wider than its line, and follows new content', () => {
+    // jsdom has no layout: a run that says "wide" measures wider than every line.
+    vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) { return this.textContent?.includes('wide') ? 900 : 10; });
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(300);
+    const wide = '$\\text{wide}$';
+    const { container, rerender } = render(<RichText content={`${wide} and $x$\n\n$$\\text{wide}$$\n\n$$y$$`} />);
+    const formulas = () => [...container.querySelectorAll('p .katex')];
+    expect(formulas()[0]).toHaveClass('katex-scrolls');
+    expect(formulas()[0]).toHaveAttribute('tabindex', '0');
+    expect(formulas()[1]).not.toHaveClass('katex-scrolls');
+    expect(formulas()[1]).not.toHaveAttribute('tabindex');
+    expect(container.querySelector('.katex-display .katex-scrolls')).toBeNull();
+    // Without the conversation's opt-in, only the display formula that overflows takes a tab stop.
+    expect([...container.querySelectorAll('.katex-display')].map((display) => display.getAttribute('tabindex'))).toEqual(['0', null]);
+
+    rerender(<RichText content={`$x$ and ${wide}`} />);
+    expect(formulas()[0]).not.toHaveClass('katex-scrolls');
+    expect(formulas()[1]).toHaveClass('katex-scrolls');
+  });
+
+  it('measures formulas again once the KaTeX fonts have loaded', async () => {
+    let loaded = () => {};
+    Object.defineProperty(document, 'fonts', { configurable: true, value: { ready: new Promise<void>((resolve) => { loaded = resolve; }) } });
+    const scrollWidth = vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockReturnValue(10);
+    vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(300);
+    const { container } = render(<RichText content={'$x$'} />);
+    expect(container.querySelector('.katex')).not.toHaveClass('katex-scrolls');
+
+    scrollWidth.mockReturnValue(900);
+    loaded();
+    await waitFor(() => expect(container.querySelector('.katex')).toHaveClass('katex-scrolls'));
   });
 
   it('lets a conversation opt into keyboard scrolling for formulas, code and tables', () => {
