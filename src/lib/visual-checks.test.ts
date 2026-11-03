@@ -107,7 +107,8 @@ describe('checkVisualAgainstBrief', () => {
 
   it('checks diagram nodes, quiz options and the keyed answer', () => {
     const diagram: TeachingVisual = { type: 'diagram', title: 'T', nodes: [{ id: 'a', label: 'Start' }], edges: [] };
-    expect(checkVisualAgainstBrief(diagram, brief({ type: 'diagram', nodes: ['End'] }))).toEqual(['missing node labelled "End"']);
+    expect(checkVisualAgainstBrief(diagram, brief({ type: 'diagram', nodes: ['End'] }))).toEqual([]);
+    expect(disagreeingChecks(diagram, brief({ type: 'diagram', nodes: ['End'] }))).toEqual(['missing node labelled "End"']);
     expect(checkVisualAgainstBrief({ ...quiz, options: ['A', ' a '] } as TeachingVisual, brief({ type: 'quiz' }))).toEqual(['quiz options must be distinct']);
     expect(disagreeingChecks(quiz, brief({ type: 'quiz', correctAnswer: '1 kPa' }))[0]).toContain('the keyed option is "2 kPa", expected "1 kPa"');
     expect(disagreeingChecks(quiz, brief({ type: 'quiz', correctAnswer: '2 KPA' }))).toEqual([]);
@@ -134,8 +135,8 @@ describe('checkVisualAgainstBrief', () => {
 
   it('accepts a diagram node named by its label or by its id', () => {
     const diagram: TeachingVisual = { type: 'diagram', title: 'T', nodes: [{ id: 'depart', label: 'Départ' }, { id: 'S', label: 'Succès' }], edges: [] };
-    expect(checkVisualAgainstBrief(diagram, brief({ type: 'diagram', nodes: ['depart', 'succes', 'DEPART'] }))).toEqual([]);
-    expect(checkVisualAgainstBrief(diagram, brief({ type: 'diagram', nodes: ['Echec'] }))).toEqual(['missing node labelled "Echec"']);
+    expect(disagreeingChecks(diagram, brief({ type: 'diagram', nodes: ['depart', 'succes', 'DEPART'] }))).toEqual([]);
+    expect(disagreeingChecks(diagram, brief({ type: 'diagram', nodes: ['Echec'] }))).toEqual(['missing node labelled "Echec"']);
   });
 
   it('treats a decimal comma like a decimal point in quiz answers and options', () => {

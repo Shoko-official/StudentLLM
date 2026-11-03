@@ -1138,6 +1138,65 @@ describe('runVisualJobs', () => {
   });
 });
 
+describe('a diagram whose request names labels it does not hold', () => {
+  const diagram = (labels: string[]) => JSON.stringify({ type: 'diagram', title: 'T', nodes: labels.map((label, index) => ({ id: `n${index}`, label })), edges: [] });
+  const request = (nodes: string[]) => job({ type: 'diagram', nodes });
+
+  it('asks once, then keeps the diagram marked, and is never lost over the wording', async () => {
+    const provider = replying(diagram(['Start']), diagram(['Start']));
+    const result = await generateVisual(provider, request(['End']));
+    expect(result).toMatchObject({ attempts: 2, errors: [], visual: { type: 'diagram' }, unconfirmed: ['missing node labelled "End"'] });
+    expect(provider.generate).toHaveBeenCalledTimes(2);
+    expect(payload(provider, 1).disagreements).toEqual(['missing node labelled "End"']);
+  });
+
+  it('tells the builder about labels and not about formulas', async () => {
+    const provider = replying(diagram(['Start']), diagram(['Start', 'End']));
+    const result = await generateVisual(provider, request(['End']));
+    expect(payload(provider, 1).task).toMatch(/labels/);
+    expect(payload(provider, 1).task).not.toMatch(/formula/);
+    expect(result).toMatchObject({ attempts: 2, errors: [], unconfirmed: [] });
+  });
+
+  it('keeps it when the recheck fails or cannot be read', async () => {
+    const failing = vi.fn<LLMProvider['generate']>(async () => { throw new Error('busy'); }).mockResolvedValueOnce({ content: diagram(['Start']), model: 'm' });
+    expect(await generateVisual({ generate: failing, supportsStructuredOutputs: true }, request(['End']))).toMatchObject({ visual: { type: 'diagram' }, unconfirmed: ['missing node labelled "End"'] });
+    expect(await generateVisual(replying(diagram(['Start']), 'not json'), request(['End']))).toMatchObject({ visual: { type: 'diagram' }, unconfirmed: ['missing node labelled "End"'] });
+  });
+
+  it('keeps it when the label is still missing after a repair', async () => {
+    const provider = replying('not json', diagram(['Start']));
+    const result = await generateVisual(provider, request(['End']));
+    expect(result).toMatchObject({ attempts: 2, errors: [], visual: { type: 'diagram' }, unconfirmed: ['missing node labelled "End"'] });
+  });
+
+  it('keeps it with a label that holds several names, with no extra call past the recheck', async () => {
+    const provider = replying(diagram(['A', 'B', 'C']), diagram(['A', 'B', 'C']));
+    const result = await generateVisual(provider, request(['A,B,C']));
+    expect(result).toMatchObject({ attempts: 2, errors: [], visual: { type: 'diagram' }, unconfirmed: ['missing node labelled "A,B,C"'] });
+  });
+
+  it('makes no extra call when the labels are there', async () => {
+    const provider = replying(diagram(['Start', 'End']));
+    expect(await generateVisual(provider, request(['end']))).toMatchObject({ attempts: 1, unconfirmed: [] });
+  });
+
+  it('still repairs a diagram that cannot be drawn', async () => {
+    const provider = replying(JSON.stringify({ type: 'diagram', title: 'T', nodes: [{ id: 'a', label: 'A' }], edges: [{ from: 'a', to: 'z' }] }), diagram(['A']));
+    const result = await generateVisual(provider, request(['A']));
+    expect(result).toMatchObject({ attempts: 2, errors: [], unconfirmed: [] });
+    expect(payload(provider, 1).errors.length).toBeGreaterThan(0);
+  });
+
+  it('passes the labels of a request through as they came, one for one', async () => {
+    const decided = await decideVisual(replying(JSON.stringify({ visual: true, type: 'diagram', intent: 'I', content: 'C', nodes: ['A', 'B, C', 'D'] })), { question: 'Q', answer: 'A' });
+    expect(decided.brief?.nodes).toEqual(['A', 'B, C', 'D']);
+    const fence = '```student-visual-request\n{"id":"v1","type":"diagram","intent":"I","content":"C","nodes":["A","B","C"]}\n```';
+    const prose = await generateTutorProse(replying(fence), [{ role: 'user', content: 'Q' }], { maxTokens: 4096 });
+    expect(prose.jobs[0].brief.nodes).toEqual(['A', 'B', 'C']);
+  });
+});
+
 describe('the language stated to the models', () => {
   const statement = (name: string) => `The learner wrote in ${name}. Write everything in ${name}, including every field of any request block, even though examples above are in another language.`;
   const task = (name: string) => `Write every text the learner sees in ${name}, even when the request is in another language.`;
@@ -1156,7 +1215,7 @@ describe('the language stated to the models', () => {
   });
 
   it('takes a neutral message from the conversation, and otherwise states nothing', async () => {
-    expect(await noteFor(user('Explique la dérivée.'), reply, user('QCM'))).toBe(`${TUTOR_LENGTH_REMINDER} ${statement('French')}`);
+    expect(await noteFor(user('Explique-moi la dérivée.'), reply, user('QCM'))).toBe(`${TUTOR_LENGTH_REMINDER} ${statement('French')}`);
     expect(await noteFor(user('QCM'))).toBe(TUTOR_LENGTH_REMINDER);
     expect(await noteFor(user('Explícame la derivada por favor.'))).toBe(TUTOR_LENGTH_REMINDER);
     expect(await noteFor(user('Réponds en anglais.'))).toBe(TUTOR_LENGTH_REMINDER);
@@ -1166,12 +1225,12 @@ describe('the language stated to the models', () => {
     const evidence = user('Evidence {"kind":"course_evidence","documents":[{"text":"the course is written in the English of this text"}]}');
     const memory = user(CONVERSATION_MEMORY_INSTRUCTIONS + String.fromCharCode(10) + JSON.stringify({ kind: 'extractive_conversation_memory', records: [] }));
     expect(await noteFor(evidence, memory, user('QCM'))).toBe(TUTOR_LENGTH_REMINDER);
-    expect(await noteFor(evidence, user('Explique la dérivée.'))).toBe(`${TUTOR_LENGTH_REMINDER} ${statement('French')}`);
+    expect(await noteFor(evidence, user('Explique-moi la dérivée.'))).toBe(`${TUTOR_LENGTH_REMINDER} ${statement('French')}`);
   });
 
   it('carries the language on the jobs of the tutor', async () => {
     const fence = '```student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n```';
-    const stated = await generateTutorProse(replying(fence), [user('Quiz me on levers.')], { maxTokens: 4096 });
+    const stated = await generateTutorProse(replying(fence), [user('Quiz me on the levers.')], { maxTokens: 4096 });
     expect(stated.jobs[0].language).toBe('en');
     const neutral = await generateTutorProse(replying(fence), [user('QCM')], { maxTokens: 4096 });
     expect(neutral.jobs[0]).not.toHaveProperty('language');
@@ -1180,7 +1239,7 @@ describe('the language stated to the models', () => {
   it('gives the decision call writeIn, and carries the language on its job', async () => {
     const provider = replying(JSON.stringify({ visual: true, type: 'quiz', intent: 'I', content: 'C' }));
     const added: VisualJob[] = [];
-    await decideVisuals(() => provider, { question: 'QCM', answer: 'Prose.', earlierMessages: ['Explique la dérivée.'] }, { onRequest: (item) => { added.push(item); } });
+    await decideVisuals(() => provider, { question: 'QCM', answer: 'Prose.', earlierMessages: ['Explique-moi la dérivée.'] }, { onRequest: (item) => { added.push(item); } });
     expect(JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content).writeIn).toBe('French');
     expect(added[0].language).toBe('fr');
     const silent = replying('{"visual":false}');
