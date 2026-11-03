@@ -360,3 +360,75 @@ describe('visual jobs in the app', () => {
     expect(total()).toBe(2);
   });
 });
+
+describe('a retried visual', () => {
+  const quizBrief = { id: 'v1', type: 'quiz', intent: 'Check the idea', content: 'Which is right? Choices: A, B.' };
+  const quizVisual = { type: 'quiz', title: 'Levers', question: 'Which lever is right?', options: ['A', 'B'], answer: 1, explanation: 'B holds.' };
+  const cases = [
+    { type: 'plot', brief: plotBrief, visual: plotVisual, question: 'Explain how the parabola changes with its coefficient, please.', built: () => screen.findByRole('slider', { name: /Coefficient/ }) },
+    { type: 'quiz', brief: quizBrief, visual: quizVisual, question: 'Please quiz me on how the levers work in this course.', built: () => screen.findByText('Which lever is right?') },
+  ];
+  const WRITE_IN_ENGLISH = 'Write every text the learner sees in English';
+  // The tutor's reply, then a visual that fails its first attempt and its correction, then one that works.
+  const failingOnce = (brief: object, visual: object) => {
+    const visuals = ['{"bad":', '{"bad":', JSON.stringify(visual)];
+    return vi.fn(async (_messages: ProviderMessage[], options?: { responseFormat?: unknown }) => ({ content: isVisualCall(options) ? visuals.shift()! : 'The idea in a few words.\n\n' + requestFence(brief), model: 'test-model' }));
+  };
+  const provider = (generate: unknown) => ({ generate: generate as never, supportsStructuredOutputs: true });
+  const ask = async (user: ReturnType<typeof userEvent.setup>, question: string) => {
+    await user.click(screen.getByRole('tab', { name: /^Chat$/ }));
+    await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), question);
+    await user.click(screen.getByRole('button', { name: /^Send$/ }));
+    await screen.findByRole('button', { name: 'Retry this visual' });
+  };
+  const visualBodies = (generate: ReturnType<typeof failingOnce>) => generate.mock.calls
+    .filter((call) => isVisualCall(call[1]))
+    .map((call) => JSON.parse(call[0].find((message) => message.role === 'user')!.content) as Record<string, unknown>);
+  const expectSameAsFirstAttempt = (generate: ReturnType<typeof failingOnce>, type: string, question: string) => {
+    const [first, , retried] = visualBodies(generate);
+    expect(first.task).toContain(WRITE_IN_ENGLISH);
+    if (type === 'plot') expect(first.learnerMessage).toBe(question);
+    else expect(first).not.toHaveProperty('learnerMessage');
+    expect(retried).toEqual(first);
+  };
+
+  it.each(cases)('gives a $type on an English turn what the first attempt had', async ({ type, brief, visual, question, built }) => {
+    const user = userEvent.setup();
+    const generate = failingOnce(brief, visual);
+    render(<App provider={provider(generate)} />);
+    await ask(user, question);
+    await user.click(screen.getByRole('button', { name: 'Retry this visual' }));
+    await built();
+    expectSameAsFirstAttempt(generate, type, question);
+  });
+
+  it.each(cases)('gives a $type on an English turn what the first attempt had, after a reload', async ({ type, brief, visual, question, built }) => {
+    const user = userEvent.setup();
+    const generate = failingOnce(brief, visual);
+    const view = render(<App provider={provider(generate)} />);
+    await ask(user, question);
+    await waitFor(() => expect(localStorage.getItem(WORKSPACE_STORAGE_KEY)).toContain('student-visual-request'));
+    view.unmount();
+    render(<App provider={provider(generate)} />);
+    await user.click(screen.getByRole('tab', { name: /^Chat$/ }));
+    await user.click(await screen.findByRole('button', { name: 'Retry this visual' }));
+    await built();
+    expectSameAsFirstAttempt(generate, type, question);
+  });
+
+  it('takes the language from an earlier turn when the message itself does not settle it', async () => {
+    const workspace = createFixtureWorkspace();
+    workspace.lessonWorkspaces![workspace.activeLessonId].chat = [
+      { id: 'q0', role: 'user', content: 'Explain how the parabola changes with its coefficient, please.' },
+      { id: 'a0', role: 'assistant', content: 'It gets narrower.' },
+    ];
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(workspace));
+    const user = userEvent.setup();
+    const generate = failingOnce(plotBrief, plotVisual);
+    render(<App provider={provider(generate)} />);
+    await ask(user, 'f(x) = x^2');
+    await user.click(screen.getByRole('button', { name: 'Retry this visual' }));
+    await screen.findByRole('slider', { name: /Coefficient/ });
+    expectSameAsFirstAttempt(generate, 'plot', 'f(x) = x^2');
+  });
+});

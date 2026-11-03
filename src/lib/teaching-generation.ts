@@ -46,6 +46,22 @@ export async function generateTutorProse(provider: LLMProvider, messages: Provid
   return { markdown, model: response.model, jobs: jobs.map((job) => ({ ...job, learnerMessage: question, ...(language ? { language } : {}) })), needsDecision: !hasVisualFence(markdown) || missingArtefacts(question, markdown).length > 0 };
 }
 
+/**
+ * A failed visual is rebuilt from its answer alone, also after a reload, when the first attempt's job is gone. What that
+ * job had is read again from the learner messages before the answer. They are the whole history, where the first attempt
+ * saw only what its context window kept, so a long conversation can read differently.
+ */
+export function retriedVisualJob(chat: { id: string; role: string; content: string }[], messageId: string, briefId: string): VisualJob | null {
+  const at = chat.findIndex((message) => message.id === messageId);
+  const job = at < 0 ? null : jobFromMarkdown(chat[at].content, briefId);
+  if (!job) return null;
+  const learner = chat.slice(0, at).filter((message) => message.role === 'user').map((message) => message.content);
+  const question = learner.at(-1);
+  if (question === undefined) return job;
+  const language = conversationLanguage(question, learner.slice(0, -1));
+  return { ...job, learnerMessage: question, ...(language ? { language } : {}) };
+}
+
 function jsonObjectIn(content: string) {
   const trimmed = content.trim();
   const start = trimmed.indexOf('{'), end = trimmed.lastIndexOf('}');
