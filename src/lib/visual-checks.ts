@@ -55,8 +55,8 @@ const STATED = new RegExp(String.raw`${SIGN}(?<![\p{L}\d.,^{])(${NUMBER})${SUFFI
 const decimal = (text: string) => Number(text.replace(',', '.'));
 const written = (text: string) => text.replace(/\*\*/g, '').replace(/\\d?frac\{(\d+)\}\{(\d+)\}/g, '$1/$2').replace(/\{,\}/g, ',').replace(/(\d)[   ](?=\d{3}(?!\d))/g, '$1');
 
-/** A number as written. A fraction or a power of ten has no precision of its own. `around` is what an answer holds besides it, a unit or a name. */
-interface Stated { value: number; decimals: number; percent: boolean; around?: string }
+/** A number as written. `around` is what an answer holds besides it, a unit or a name. */
+interface Stated { value: number; percent: boolean; around?: string }
 
 /** The numbers a text states: 0,5 and 1/2 are one value, and 50 % stays a percentage. */
 function statedValues(text: string): (Stated & { index: number; length: number })[] {
@@ -64,25 +64,18 @@ function statedValues(text: string): (Stated & { index: number; length: number }
     const [whole, number, over, power, percent] = match;
     const sign = /^[-−]/.test(whole) ? -1 : 1;
     const size = over ? decimal(number) / decimal(over) : power ? decimal(number) * 10 ** Number(power) : decimal(number);
-    return { value: sign * size, decimals: over || power ? Infinity : number.split(/[.,]/)[1]?.length ?? 0, percent: Boolean(percent), index: match.index, length: whole.length };
+    return { value: sign * size, percent: Boolean(percent), index: match.index, length: whole.length };
   });
 }
 
-/** Whether `other` rounds to `own` at the precision `own` is written in. A whole number stays exact against a whole number, and within 1% of anything else. */
-function atPrecision(own: Stated, other: Stated) {
-  const decimals = Number.isFinite(own.decimals) ? own.decimals : other.decimals;
-  if (!Number.isFinite(decimals)) return Math.abs(own.value - other.value) <= 1e-9 * Math.max(Math.abs(own.value), Math.abs(other.value));
-  const places = Math.min(decimals, 20);
-  if (Number(own.value.toFixed(places)) !== Number(other.value.toFixed(places))) return false;
-  return places > 0 || (Number.isInteger(own.value) && Number.isInteger(other.value)) || Math.abs(own.value - other.value) <= Math.abs(own.value) * .01;
-}
+/** Two whole numbers must be equal: 1792 is not 1789. Anything else may differ by 1%. */
+const close = (a: number, b: number) => (Number.isInteger(a) && Number.isInteger(b) ? a === b : Math.abs(a - b) <= Math.max(Math.abs(a), Math.abs(b)) * .01);
 
-/** `own` is the option or answer. A percentage meets another form of its value only in a bare number: 0,5 % is not 0.5, and 50 % is 50 or 0.5. */
-function sameValue(own: Stated, other: Stated) {
-  if (own.percent === other.percent) return atPrecision(own, other);
-  const [share, plain] = own.percent ? [own, other] : [other, own];
-  if (plain.around) return false;
-  return atPrecision({ ...share, value: share.value / 100, decimals: share.decimals + 2 }, plain) || (plain.value >= 1 && atPrecision(share, plain));
+/** A percentage meets another form of its value only in a bare number: 0,5 % is not 0.5, and 50 % is 50 or 0.5. */
+function sameValue(a: Stated, b: Stated) {
+  if (a.percent === b.percent) return close(a.value, b.value);
+  const [share, plain] = a.percent ? [a, b] : [b, a];
+  return !plain.around && (close(share.value / 100, plain.value) || (plain.value >= 1 && close(share.value, plain.value)));
 }
 
 /** The value of an option or an answer: its one number, or what follows its last equals sign. Anything else has no single value. */
@@ -116,11 +109,21 @@ const optionHolding = (visual: Quiz, value: Stated) => {
 };
 const isComputed = (key: Stated | null, results: Stated[]) => !!key && results.some((result) => sameValue(key, result));
 
-/** Whether the numbers of the keyed option appear in the explanation, rounded or not. A key with no number cannot be compared, so it passes. */
+/** Whether the numbers of the keyed option appear in the explanation. A key with no number cannot be compared, so it passes. */
 export function quizAgreesWithItself(visual: TeachingVisual): boolean {
   if (visual.type !== 'quiz') return true;
   const worked = statedValues(written(visual.explanation));
   return statedValues(written(visual.options[visual.answer] ?? '')).every((value) => worked.some((item) => sameValue(value, item)));
+}
+
+/** Whether the explanation states the value of another option and not the keyed one. This is the only reading strong enough to lose a quiz. */
+export function quizWorkingPointsElsewhere(visual: TeachingVisual): boolean {
+  if (visual.type !== 'quiz' || quizAgreesWithItself(visual)) return false;
+  const worked = statedValues(written(visual.explanation));
+  return visual.options.some((option, index) => {
+    const own = singleValue(option);
+    return index !== visual.answer && !!own && worked.some((item) => sameValue(own, item));
+  });
 }
 
 /**
@@ -137,24 +140,9 @@ export function quizWorkingNotes(visual: TeachingVisual): string[] {
   const key = singleValue(keyed);
   if (isComputed(key, results)) return [];
   const other = optionHolding(visual, result);
-  if (other !== null) return [`the working reaches ${result.value}, which is the option "${visual.options[other]}", but the keyed option is "${keyed}"`];
-  return key ? [`the working reaches ${result.value}, which no option holds, and the keyed option is "${keyed}"`] : [];
-}
-
-/**
- * Moves the key with no call when the tutor's answer and the working's last result agree on what one option holds, the
- * current key is no result of the working, and that option reads like the tutor's answer. The last result can still be an
- * aside, and no stored run holds a tutor answer to try this on, so the move is a judgement and is reported back to be
- * recorded. Anything less clear goes to the recheck.
- */
-export function quizKeyFromAgreement(visual: TeachingVisual, brief: VisualBrief): { visual: TeachingVisual; rekeyed?: string } {
-  if (visual.type !== 'quiz' || brief.correctAnswer === undefined) return { visual };
-  const results = computedResults(visual.explanation);
-  const result = results.at(-1), expected = singleValue(brief.correctAnswer);
-  if (!result || !expected || !sameValue(expected, result) || isComputed(singleValue(visual.options[visual.answer] ?? ''), results)) return { visual };
-  const holding = optionHolding(visual, result);
-  if (holding === null || holding === visual.answer || !comparable(singleValue(visual.options[holding])!, expected)) return { visual };
-  return { visual: { ...visual, answer: holding }, rekeyed: `key moved from "${visual.options[visual.answer]}" to "${visual.options[holding]}": the tutor and the working both give ${result.value}` };
+  const again = 'Derive the answer again from the question and keep the key if it is right';
+  if (other !== null) return [`the working may end on ${result.value}, which looks like the option "${visual.options[other]}", while the keyed option is "${keyed}". ${again}`];
+  return key ? [`the working may end on ${result.value}, which no option seems to hold, while the keyed option is "${keyed}". ${again}`] : [];
 }
 
 /** Values the tutor gave for a plot, and the answer it gave for a quiz. A disagreement may come from either side, so it never rejects a visual on its own. */

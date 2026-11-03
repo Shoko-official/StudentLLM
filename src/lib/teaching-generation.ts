@@ -4,19 +4,19 @@ import { repairLatexJson } from './latex-json';
 import { visualDecisionResponseFormat, visualResponseFormat } from './teaching-schemas';
 import { diagnoseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 import { appendVisualRequest, hasVisualFence, jobFromMarkdown, missingArtefacts, namedArtefacts, parseVisualBrief, refusesVisual, prepareTutorMarkdown, repairVisualFences, stripVisualNotes, withoutVisualFences, type VisualBrief, type VisualJob, type VisualType } from './visual-brief';
-import { checkVisualAgainstBrief, disagreeingChecks, quizAgreesWithItself, quizKeyFromAgreement, quizWorkingNotes, stillPlotNotes } from './visual-checks';
+import { checkVisualAgainstBrief, disagreeingChecks, quizAgreesWithItself, quizWorkingNotes, quizWorkingPointsElsewhere, stillPlotNotes } from './visual-checks';
 import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES, visualTargetNote } from '../prompts';
 
 const VISUAL_MAX_TOKENS = 4096;
 const stoppedMessage = 'Visual generation was stopped.';
 const recheckTask = 'Recheck this visual against the request. The listed values disagree with values the tutor gave, and either side may be wrong. Correct the formula only if it is wrong, never bend a correct formula to match a value. Return the complete object.';
 const stillPlotTask = 'Recheck this plot against the request. Follow each listed note where it applies and keep what is right: a curve that is truly constant stays constant. Return the complete object.';
-const quizRecheckTask = 'Recheck this quiz. The option you keyed disagrees with your working or with the answer the tutor expected, and either may be wrong. Solve the question again in explanation, then key the option equal to your result, even if it differs from the expected answer. If no option holds your result, correct the options. Explanation, options and key must agree. Return the complete object.';
+const quizRecheckTask = 'Recheck this quiz. The option you keyed may disagree with your working or with the answer the tutor expected, and either may be wrong. Solve the question again in explanation, then key the option equal to your result, even if it differs from the expected answer. If no option holds your result, correct the options. Explanation, options and key must agree. Return the complete object.';
 const noAnswerMessage = 'The model returned no answer. Try again or choose another model in Settings.';
 const LEARNER_MESSAGE_FOR_PLOT_CHARACTERS = 2000;
 const LEARNER_MESSAGE_FOR_LANGUAGE_CHARACTERS = 300;
 
-export interface VisualJobResult { visual: TeachingVisual | null; attempts: number; errors: string[]; unconfirmed: string[]; rekeyed?: string }
+export interface VisualJobResult { visual: TeachingVisual | null; attempts: number; errors: string[]; unconfirmed: string[] }
 
 /**
  * The note sent after the question. A history that holds a refusal outweighs the system prompt, so when the learner has
@@ -46,13 +46,12 @@ function jsonObjectIn(content: string) {
   return start >= 0 && end > start ? trimmed.slice(start, end + 1) : trimmed;
 }
 
-function assess(output: string, brief: VisualBrief): { visual: TeachingVisual | null; errors: string[]; disagreements: string[]; rekeyed?: string } {
-  const { visual: read, errors } = diagnoseTeachingVisual(repairLatexJson(jsonObjectIn(output)));
-  if (!read) return { visual: null, errors, disagreements: [] };
-  const { visual, rekeyed } = quizKeyFromAgreement(read, brief);
+function assess(output: string, brief: VisualBrief): { visual: TeachingVisual | null; errors: string[]; disagreements: string[] } {
+  const { visual, errors } = diagnoseTeachingVisual(repairLatexJson(jsonObjectIn(output)));
+  if (!visual) return { visual: null, errors, disagreements: [] };
   const problems = checkVisualAgainstBrief(visual, brief);
   const notes = [...stillPlotNotes(visual), ...quizWorkingNotes(visual)];
-  return problems.length ? { visual: null, errors: [...problems, ...notes], disagreements: [] } : { visual, errors: [], disagreements: [...disagreeingChecks(visual, brief), ...notes], ...(rekeyed ? { rekeyed } : {}) };
+  return problems.length ? { visual: null, errors: [...problems, ...notes], disagreements: [] } : { visual, errors: [], disagreements: [...disagreeingChecks(visual, brief), ...notes] };
 }
 
 function recheckTaskFor(visual: TeachingVisual, brief: VisualBrief) {
@@ -109,28 +108,27 @@ export async function generateVisual(provider: LLMProvider, job: VisualJob, opti
     catch (error) { return failed(attempts, error); }
   }
   const first = assess(output, brief);
-  const noted = (from: { rekeyed?: string }, result: VisualJobResult): VisualJobResult => (from.rekeyed ? { ...result, rekeyed: from.rekeyed } : result);
-  if (first.visual && !first.disagreements.length) return noted(first, { visual: first.visual, attempts, errors: [], unconfirmed: [] });
+  if (first.visual && !first.disagreements.length) return { visual: first.visual, attempts, errors: [], unconfirmed: [] };
   if (options.signal?.aborted) return stopped(attempts);
   attempts++;
   if (first.visual) {
-    const kept = noted(first, { visual: first.visual, attempts, errors: [], unconfirmed: first.disagreements });
+    const kept: VisualJobResult = { visual: first.visual, attempts, errors: [], unconfirmed: first.disagreements };
     let rechecked: string;
     try { rechecked = await ask({ task: recheckTaskFor(first.visual, brief), previousOutput: output.slice(0, 16384), disagreements: first.disagreements }); }
     catch { return options.signal?.aborted ? stopped(attempts) : kept; }
     if (options.signal?.aborted) return stopped(attempts);
     const second = assess(rechecked, brief);
     // A reply that keys the expected answer against its own working has been pushed there, not convinced.
-    if (second.visual && quizAgreesWithItself(second.visual)) return noted(second, { visual: second.visual, attempts, errors: [], unconfirmed: second.disagreements });
-    // Only a key that the tutor and the working both leave alone is lost: the working by itself never rejects.
-    return quizAgreesWithItself(first.visual) || !disagreeingChecks(first.visual, brief).length ? kept : { visual: null, attempts, errors: ['the key and the explanation of the quiz disagree'], unconfirmed: [] };
+    if (second.visual && quizAgreesWithItself(second.visual)) return { visual: second.visual, attempts, errors: [], unconfirmed: second.disagreements };
+    // A lasting doubt keeps the quiz. Only a key the tutor differs from, while the working states another option and not this one, is lost.
+    return !quizWorkingPointsElsewhere(first.visual) || !disagreeingChecks(first.visual, brief).length ? kept : { visual: null, attempts, errors: ['the key and the explanation of the quiz disagree'], unconfirmed: [] };
   }
   let repaired: string;
   try { repaired = await ask({ task: 'Correct this visual. Fix every listed error and return the complete object.', invalidOutput: output.slice(0, 16384), errors: first.errors }); }
   catch (error) { return failed(attempts, error); }
   if (options.signal?.aborted) return stopped(attempts);
   const second = assess(repaired, brief);
-  return noted(second, { visual: second.visual, attempts, errors: second.errors, unconfirmed: second.disagreements });
+  return { visual: second.visual, attempts, errors: second.errors, unconfirmed: second.disagreements };
 }
 
 const invalidDecision = 'invalid decision';

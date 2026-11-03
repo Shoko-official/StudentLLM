@@ -270,7 +270,7 @@ async function runNew(provider, prompt, withVisuals) {
   }
   if (withVisuals) {
     await newPipeline.runVisualJobs(provider, jobs, { deadlineMs: VISUAL_DEADLINE_MS, concurrency: 2, onResult: (brief, result) => {
-      visualResults.push({ id: brief.id, type: brief.type, attempts: result.attempts, ok: Boolean(result.visual), errors: result.errors, unconfirmed: result.unconfirmed, ...(result.rekeyed ? { rekeyed: result.rekeyed } : {}) });
+      visualResults.push({ id: brief.id, type: brief.type, attempts: result.attempts, ok: Boolean(result.visual), errors: result.errors, unconfirmed: result.unconfirmed });
       if (result.visual) content = briefs.replaceVisualFence(content, brief.id, briefs.visualFence(result.visual));
     } });
   }

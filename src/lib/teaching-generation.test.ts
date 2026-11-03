@@ -608,7 +608,7 @@ describe('generateVisual', () => {
       const provider = replying(key, key);
       const result = await generateVisual(provider, job());
       expect(result).toMatchObject({ attempts: 2, errors: [], visual: { answer: 1 } });
-      expect(result.unconfirmed[0]).toContain('the working reaches 48');
+      expect(result.unconfirmed[0]).toContain('may end on 48');
       const failing = vi.fn<LLMProvider['generate']>(async () => { throw new Error('busy'); }).mockResolvedValueOnce({ content: key, model: 'm' });
       expect((await generateVisual({ generate: failing, supportsStructuredOutputs: true }, job())).visual).toMatchObject({ answer: 1 });
     });
@@ -619,31 +619,43 @@ describe('generateVisual', () => {
       expect(provider.generate).toHaveBeenCalledTimes(1);
     });
 
-    it('sets the key with no call when the tutor and the working agree on an option, and records it', async () => {
-      const provider = replying(worked(1, 'Total : 24 + 24 = 48 minutes.'));
+    it('moves no key by itself: a key against the tutor and the working goes to the recheck', async () => {
+      const provider = replying(worked(1, 'Total : 24 + 24 = 48 minutes.'), worked(2, 'Total : 24 + 24 = 48 minutes.'));
       const result = await generateVisual(provider, job({ correctAnswer: '48' }));
-      expect(result).toMatchObject({ attempts: 1, errors: [], unconfirmed: [], visual: { answer: 2 } });
-      expect(result.rekeyed).toBe('key moved from "36" to "48": the tutor and the working both give 48');
-      expect(provider.generate).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ attempts: 2, errors: [], unconfirmed: [], visual: { answer: 2 } });
+      expect(result).not.toHaveProperty('rekeyed');
+      expect(provider.generate).toHaveBeenCalledTimes(2);
     });
 
-    it('leaves the key to the recheck when the tutor and the working differ', async () => {
-      const provider = replying(worked(1, 'Total = 48 minutes.'), worked(2, 'Total = 48 minutes.'));
-      const result = await generateVisual(provider, job({ correctAnswer: '36' }));
-      expect(result.rekeyed).toBeUndefined();
-      expect(result).toMatchObject({ attempts: 2, visual: { answer: 2 } });
+    it.each([
+      ['a key stated in words, then an error it explains', ['48', '36'], "120 x 0,4 donne 48. L'erreur classique : 120 x 0,3 = 36.", '36'],
+      ['a key stated in words, then a check', ['60', '120'], 'On trouve 60. Vérification : 60 x 2 = 120.', '120'],
+      ['a brief with no unit', ['2 km', '2000 km'], 'd = 2 x 1000 = 2000 m.', '2000'],
+      ['a key the working computed', ['48', '36'], "Calcul : 120 x 0,4 = 48. L'erreur classique : 120 x 0,3 = 36.", '36'],
+    ])('keeps the key through a recheck that repeats on %s', async (_name, options, explanation, correctAnswer) => {
+      const reply = worked(0, explanation, options);
+      const result = await generateVisual(replying(reply, reply), job({ correctAnswer }));
+      expect(result).toMatchObject({ attempts: 2, errors: [], visual: { answer: 0 } });
+      expect(result.unconfirmed.length).toBeGreaterThan(0);
     });
 
-    it('sends a key the working computed to the recheck, whatever the tutor expects', async () => {
-      const explanation = 'Calcul : 120 x 0,4 = 48. L\'erreur classique : 120 x 0,3 = 36.';
-      const provider = replying(worked(2, explanation), worked(2, explanation));
-      const result = await generateVisual(provider, job({ correctAnswer: '36' }));
-      expect(result.rekeyed).toBeUndefined();
-      expect(result).toMatchObject({ attempts: 2, visual: { answer: 2 } });
+    it('flags a key near the right option, and rejects it only when the working states that option', async () => {
+      const reply = worked(0, 'P = 0,24.', ['0,2', '0,24']);
+      const result = await generateVisual(replying(reply, reply), job({ correctAnswer: '0,24' }));
+      expect(result).toMatchObject({ attempts: 2, visual: null });
+      expect(result.errors[0]).toMatch(/key and the explanation/);
     });
 
-    it('does not lose a rounded key when the request differs', async () => {
-      const reply = JSON.stringify({ ...quiz, options: ['0,17', '0,25'], answer: 0, explanation: 'P = 0.16807.' });
+    it('does not lose a precise key when a repeating recheck meets a rounded request', async () => {
+      const reply = worked(0, 'P ≈ 0,17.', ['0,16807', '0,24']);
+      const provider = replying(reply, reply);
+      const result = await generateVisual(provider, job({ correctAnswer: '0,17' }));
+      expect(result).toMatchObject({ attempts: 2, errors: [], visual: { answer: 0 } });
+      expect(result.unconfirmed[0]).toBe('the keyed option is "0,16807", expected "0,17"');
+    });
+
+    it('does not lose a rounded key when the request differs and the working states no option', async () => {
+      const reply = worked(0, 'P = 0.16807.', ['0,17', '0,25']);
       const result = await generateVisual(replying(reply, reply), job({ correctAnswer: '0,25' }));
       expect(result).toMatchObject({ attempts: 2, errors: [], visual: { answer: 0 } });
     });
