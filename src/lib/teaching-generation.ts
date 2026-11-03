@@ -1,11 +1,12 @@
 import type { LLMProvider, ProviderMessage, ProviderResponseFormat } from './llm-provider';
 import { redactContextImages } from './context-text';
 import { repairLatexJson } from './latex-json';
+import { conversationLanguage, languageName } from './message-language';
 import { visualDecisionResponseFormat, visualResponseFormat } from './teaching-schemas';
 import { diagnoseTeachingVisual, type TeachingVisual } from './teaching-visuals';
 import { appendVisualRequest, hasVisualFence, jobFromMarkdown, missingArtefacts, namedArtefacts, parseVisualBrief, refusesVisual, prepareTutorMarkdown, repairVisualFences, stripVisualNotes, withoutVisualFences, type VisualBrief, type VisualJob, type VisualType } from './visual-brief';
 import { checkVisualAgainstBrief, disagreeingChecks, quizAgreesWithItself, quizWorkingNotes, quizWorkingPointsElsewhere, stillPlotNotes } from './visual-checks';
-import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES, visualTargetNote } from '../prompts';
+import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, VISUAL_DECISION_PROMPT, VISUAL_MODULES, tutorLanguageNote, visualLanguageTask, visualTargetNote } from '../prompts';
 
 const VISUAL_MAX_TOKENS = 4096;
 const stoppedMessage = 'Visual generation was stopped.';
@@ -14,30 +15,34 @@ const stillPlotTask = 'Recheck this plot against the request. Follow each listed
 const quizRecheckTask = 'Recheck this quiz. The option you keyed may disagree with your working or with the answer the tutor expected, and either may be wrong. Solve the question again in explanation, then key the option equal to your result, even if it differs from the expected answer. If no option holds your result, correct the options. Explanation, options and key must agree. Return the complete object.';
 const noAnswerMessage = 'The model returned no answer. Try again or choose another model in Settings.';
 const LEARNER_MESSAGE_FOR_PLOT_CHARACTERS = 2000;
-const LEARNER_MESSAGE_FOR_LANGUAGE_CHARACTERS = 300;
 
 export interface VisualJobResult { visual: TeachingVisual | null; attempts: number; errors: string[]; unconfirmed: string[] }
 
 /**
  * The note sent after the question. A history that holds a refusal outweighs the system prompt, so when the learner has
  * refused visuals and this message has a word for one, the note says a new request would end the refusal. Whether this
- * message is a request stays the model's to read. Without both it is the plain reminder.
+ * message is a request stays the model's to read. The note also names the language when it can: only naming it held the
+ * language on the models measured, where rules and "the language of the learner's message" did not.
  */
 export function tutorNote(question: string, earlierLearnerTexts: string[]) {
-  return namedArtefacts(question).length > 0 && !refusesVisual(question) && earlierLearnerTexts.some(refusesVisual) ? `${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}` : TUTOR_LENGTH_REMINDER;
+  const language = conversationLanguage(question, earlierLearnerTexts);
+  const lifted = namedArtefacts(question).length > 0 && !refusesVisual(question) && earlierLearnerTexts.some(refusesVisual);
+  return [TUTOR_LENGTH_REMINDER, ...(language ? [tutorLanguageNote(languageName(language))] : []), ...(lifted ? [TUTOR_VISUAL_REQUEST_NOTE] : [])].join(' ');
 }
 
 export async function generateTutorProse(provider: LLMProvider, messages: ProviderMessage[], options: { maxTokens: number; signal?: AbortSignal; onText?: (text: string) => void }) {
   // The system prompt alone did not hold the length on small models: a note after the question does. It is never saved or shown.
   const learner = messages.filter((message) => message.role === 'user' && !message.content.includes('"kind":"course_evidence"') && !message.content.includes('"kind":"extractive_conversation_memory"')).map((message) => message.content);
   const question = learner.at(-1) ?? '';
-  const note = tutorNote(question, learner.slice(0, -1));
+  const earlier = learner.slice(0, -1);
+  const note = tutorNote(question, earlier);
+  const language = conversationLanguage(question, earlier);
   const response = await provider.generate([...messages, { role: 'user', content: note }], options);
   const reply = repairVisualFences(response.content.trim(), repairLatexJson);
   const { markdown, jobs } = prepareTutorMarkdown(reply);
   // "Quiz me on X" can get only a request, which the learner then sees as a pending visual. A block that cannot be read is no answer.
   if (!withoutVisualFences(stripVisualNotes(reply)).trim() && !hasVisualFence(markdown)) throw new Error(noAnswerMessage);
-  return { markdown, model: response.model, jobs: jobs.map((job) => ({ ...job, learnerMessage: question })), needsDecision: !hasVisualFence(markdown) || missingArtefacts(question, markdown).length > 0 };
+  return { markdown, model: response.model, jobs: jobs.map((job) => ({ ...job, learnerMessage: question, ...(language ? { language } : {}) })), needsDecision: !hasVisualFence(markdown) || missingArtefacts(question, markdown).length > 0 };
 }
 
 function jsonObjectIn(content: string) {
@@ -90,12 +95,12 @@ export async function generateVisual(provider: LLMProvider, job: VisualJob, opti
   const { brief } = job;
   const stopped = (attempts: number): VisualJobResult => ({ visual: null, attempts, errors: [stoppedMessage], unconfirmed: [] });
   if (options.signal?.aborted) return stopped(0);
-  // The tutor's request can lose a formula, a range or a readout that the learner wrote out, so the plot builder gets the
-  // original. Every builder reads it for the language to write in, since a request can come in another language.
-  const learner = job.learnerMessage ? { learnerMessage: [...redactContextImages(job.learnerMessage)].slice(0, brief.type === 'plot' ? LEARNER_MESSAGE_FOR_PLOT_CHARACTERS : LEARNER_MESSAGE_FOR_LANGUAGE_CHARACTERS).join('') } : {};
-  const ask = (data: Record<string, unknown>) => generateWithin(
+  // The tutor's request can lose a formula, a range or a readout that the learner wrote out: the plot builder gets the original too.
+  const learner = brief.type === 'plot' && job.learnerMessage ? { learnerMessage: [...redactContextImages(job.learnerMessage)].slice(0, LEARNER_MESSAGE_FOR_PLOT_CHARACTERS).join('') } : {};
+  const writeIn = job.language ? ` ${visualLanguageTask(languageName(job.language))}` : '';
+  const ask = (data: { task: string } & Record<string, unknown>) => generateWithin(
     provider,
-    [{ role: 'system', content: VISUAL_MODULES[brief.type] }, { role: 'user', content: JSON.stringify({ ...data, request: brief, surroundingExplanation: job.section, ...learner }) }],
+    [{ role: 'system', content: VISUAL_MODULES[brief.type] }, { role: 'user', content: JSON.stringify({ ...data, task: `${data.task}${writeIn}`, request: brief, surroundingExplanation: job.section, ...learner }) }],
     { maxTokens: VISUAL_MAX_TOKENS, ...(provider.supportsStructuredOutputs ? { responseFormat: visualResponseFormat(brief.type) } : {}) },
     options,
   );
@@ -149,10 +154,11 @@ interface DecisionInput { question: string; answer: string; earlierVisuals?: str
 export async function decideVisual(provider: LLMProvider, input: DecisionInput & { target?: VisualType[] }, options: { deadlineMs?: number; signal?: AbortSignal; id?: string } = {}): Promise<{ brief: VisualBrief | null; error?: string }> {
   const { target } = input;
   if (options.signal?.aborted) return { brief: null, error: stoppedMessage };
+  const language = conversationLanguage(input.question, input.earlierMessages);
   try {
     const content = await generateWithin(
       provider,
-      [{ role: 'system', content: VISUAL_DECISION_PROMPT }, { role: 'user', content: JSON.stringify({ learnerMessage: redactContextImages(input.question).slice(0, 2000), tutorAnswer: redactContextImages(input.answer).slice(0, 6000), earlierVisuals: (input.earlierVisuals ?? []).map((item) => redactContextImages(item)), earlierLearnerMessages: recentLearnerMessages(input.earlierMessages ?? []) }) }, ...(target ? [{ role: 'user' as const, content: visualTargetNote(target.join(' or ')) }] : [])],
+      [{ role: 'system', content: VISUAL_DECISION_PROMPT }, { role: 'user', content: JSON.stringify({ learnerMessage: redactContextImages(input.question).slice(0, 2000), tutorAnswer: redactContextImages(input.answer).slice(0, 6000), earlierVisuals: (input.earlierVisuals ?? []).map((item) => redactContextImages(item)), earlierLearnerMessages: recentLearnerMessages(input.earlierMessages ?? []), ...(language ? { writeIn: languageName(language) } : {}) }) }, ...(target ? [{ role: 'user' as const, content: visualTargetNote(target.join(' or ')) }] : [])],
       { maxTokens: VISUAL_MAX_TOKENS, ...(provider.supportsStructuredOutputs ? { responseFormat: visualDecisionResponseFormat(target) } : {}) },
       options,
     );
@@ -182,6 +188,7 @@ export async function decideVisual(provider: LLMProvider, input: DecisionInput &
 export async function decideVisuals(getProvider: () => LLMProvider | null, input: DecisionInput, options: { deadlineMs?: number; signal?: AbortSignal; onRequest: (job: VisualJob, markdown: string, target?: VisualType[]) => void }) {
   let markdown = input.answer, requested = 0, error: string | undefined;
   const targets = missingArtefacts(input.question, markdown);
+  const language = conversationLanguage(input.question, input.earlierMessages);
   const endsAt = options.deadlineMs === undefined ? undefined : Date.now() + options.deadlineMs * SEQUENCE_DEADLINES;
   const declined = new Set<string>();
   const ask = async (target?: VisualType[]) => {
@@ -198,7 +205,7 @@ export async function decideVisuals(getProvider: () => LLMProvider | null, input
       if (appended.job) {
         markdown = appended.markdown;
         requested++;
-        options.onRequest({ ...appended.job, learnerMessage: input.question }, markdown, target);
+        options.onRequest({ ...appended.job, learnerMessage: input.question, ...(language ? { language } : {}) }, markdown, target);
       }
     }
     return !options.signal?.aborted && (result.error === undefined || result.error === invalidDecision);

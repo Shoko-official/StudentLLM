@@ -11,6 +11,7 @@ const replying = (...contents: string[]) => {
   const generate = vi.fn<LLMProvider['generate']>(async () => ({ content: contents.shift() ?? '', model: 'fixture' }));
   return { generate, supportsStructuredOutputs: true } satisfies LLMProvider;
 };
+const withoutLanguage = (note: string) => note.replace(/ The learner wrote in .*? another language\./, '');
 const payload = (provider: { generate: ReturnType<typeof vi.fn> }, call: number) => JSON.parse(((provider.generate.mock.calls[call][0]) as ProviderMessage[])[1].content);
 
 describe('generateTutorProse', () => {
@@ -29,7 +30,7 @@ describe('generateTutorProse', () => {
       const result = await generateTutorProse(provider, history, { maxTokens: 4096 });
       expect(JSON.stringify(result)).not.toContain('Note from StudentLLM');
       expect(JSON.stringify(result)).not.toContain(TUTOR_VISUAL_REQUEST_NOTE);
-      return (provider.generate.mock.calls[0][0] as ProviderMessage[]).at(-1)!.content;
+      return withoutLanguage((provider.generate.mock.calls[0][0] as ProviderMessage[]).at(-1)!.content);
     };
     const system: ProviderMessage = { role: 'system', content: 'S' };
     const user = (content: string): ProviderMessage => ({ role: 'user', content });
@@ -214,7 +215,7 @@ describe('decideVisual', () => {
     await decide(provider);
     const [messages, options] = provider.generate.mock.calls[0];
     expect(messages![0]).toEqual({ role: 'system', content: VISUAL_DECISION_PROMPT });
-    expect(JSON.parse(messages![1].content)).toEqual({ learnerMessage: input.question, tutorAnswer: input.answer, earlierVisuals: [], earlierLearnerMessages: [] });
+    expect(JSON.parse(messages![1].content)).toEqual({ learnerMessage: input.question, tutorAnswer: input.answer, earlierVisuals: [], earlierLearnerMessages: [], writeIn: 'English' });
     expect(options?.maxTokens).toBe(4096);
     expect(options?.responseFormat?.json_schema?.name).toBe('teaching_visual_decision');
   });
@@ -293,7 +294,7 @@ describe('decideVisual with a target', () => {
     const [messages, options] = provider.generate.mock.calls[0];
     expect(messages).toHaveLength(3);
     expect(messages![0]).toEqual({ role: 'system', content: VISUAL_DECISION_PROMPT });
-    expect(Object.keys(JSON.parse(messages![1].content))).toEqual(['learnerMessage', 'tutorAnswer', 'earlierVisuals', 'earlierLearnerMessages']);
+    expect(Object.keys(JSON.parse(messages![1].content))).toEqual(['learnerMessage', 'tutorAnswer', 'earlierVisuals', 'earlierLearnerMessages', 'writeIn']);
     expect(messages![2]).toEqual({ role: 'user', content: visualTargetNote('quiz') });
     const schema = options?.responseFormat?.json_schema?.schema as { properties: { type: { enum: string[] } } };
     expect(schema.properties.type.enum).toEqual(['quiz']);
@@ -529,11 +530,10 @@ describe('the learner message on the way to the plot builder', () => {
     expect([...sent(long).learnerMessage].length).toBe(2000);
   });
 
-  it('goes to the other builders for its language, shorter, and stays out of a job that has none', async () => {
+  it('stays out of the other builders, and of a job that has none', async () => {
     const other = replying(JSON.stringify(quiz));
-    await generateVisual(other, job({}, { learnerMessage: `Quiz me on this. ${'word '.repeat(200)}` }));
-    expect(sent(other).learnerMessage.startsWith('Quiz me on this.')).toBe(true);
-    expect([...sent(other).learnerMessage].length).toBe(300);
+    await generateVisual(other, job({}, { learnerMessage: 'Ask me.' }));
+    expect(sent(other)).not.toHaveProperty('learnerMessage');
     const none = replying(plotOutput);
     await generateVisual(none, { brief: plotBrief, section: 'Around.' });
     expect(sent(none)).not.toHaveProperty('learnerMessage');
@@ -1138,13 +1138,80 @@ describe('runVisualJobs', () => {
   });
 });
 
+describe('the language stated to the models', () => {
+  const statement = (name: string) => `The learner wrote in ${name}. Write everything in ${name}, including every field of any request block, even though examples above are in another language.`;
+  const task = (name: string) => `Write every text the learner sees in ${name}, even when the request is in another language.`;
+  const user = (content: string): ProviderMessage => ({ role: 'user', content });
+  const noteFor = async (...history: ProviderMessage[]) => {
+    const provider = replying('An answer.');
+    await generateTutorProse(provider, [{ role: 'system', content: 'S' }, ...history], { maxTokens: 4096 });
+    return (provider.generate.mock.calls[0][0] as ProviderMessage[]).at(-1)!.content;
+  };
+  const reply: ProviderMessage = { role: 'assistant', content: 'Ok.' };
+
+  it('names the language right after the length reminder, in the wording of the trial', async () => {
+    expect(await noteFor(user('Why does it happen?'))).toBe(`${TUTOR_LENGTH_REMINDER} ${statement('English')}`);
+    expect(await noteFor(user('Pourquoi ça arrive ?'))).toBe(`${TUTOR_LENGTH_REMINDER} ${statement('French')}`);
+    expect(await noteFor(user('No diagrams please.'), reply, user('Show me a diagram of it.'))).toBe(`${TUTOR_LENGTH_REMINDER} ${statement('English')} ${TUTOR_VISUAL_REQUEST_NOTE}`);
+  });
+
+  it('takes a neutral message from the conversation, and otherwise states nothing', async () => {
+    expect(await noteFor(user('Explique la dérivée.'), reply, user('QCM'))).toBe(`${TUTOR_LENGTH_REMINDER} ${statement('French')}`);
+    expect(await noteFor(user('QCM'))).toBe(TUTOR_LENGTH_REMINDER);
+    expect(await noteFor(user('Explícame la derivada por favor.'))).toBe(TUTOR_LENGTH_REMINDER);
+    expect(await noteFor(user('Réponds en anglais.'))).toBe(TUTOR_LENGTH_REMINDER);
+  });
+
+  it('does not read course text or the memory as the learner', async () => {
+    const evidence = user('Evidence {"kind":"course_evidence","documents":[{"text":"the course is written in the English of this text"}]}');
+    const memory = user(CONVERSATION_MEMORY_INSTRUCTIONS + String.fromCharCode(10) + JSON.stringify({ kind: 'extractive_conversation_memory', records: [] }));
+    expect(await noteFor(evidence, memory, user('QCM'))).toBe(TUTOR_LENGTH_REMINDER);
+    expect(await noteFor(evidence, user('Explique la dérivée.'))).toBe(`${TUTOR_LENGTH_REMINDER} ${statement('French')}`);
+  });
+
+  it('carries the language on the jobs of the tutor', async () => {
+    const fence = '```student-visual-request\n{"id":"v1","type":"quiz","intent":"I","content":"C"}\n```';
+    const stated = await generateTutorProse(replying(fence), [user('Quiz me on levers.')], { maxTokens: 4096 });
+    expect(stated.jobs[0].language).toBe('en');
+    const neutral = await generateTutorProse(replying(fence), [user('QCM')], { maxTokens: 4096 });
+    expect(neutral.jobs[0]).not.toHaveProperty('language');
+  });
+
+  it('gives the decision call writeIn, and carries the language on its job', async () => {
+    const provider = replying(JSON.stringify({ visual: true, type: 'quiz', intent: 'I', content: 'C' }));
+    const added: VisualJob[] = [];
+    await decideVisuals(() => provider, { question: 'QCM', answer: 'Prose.', earlierMessages: ['Explique la dérivée.'] }, { onRequest: (item) => { added.push(item); } });
+    expect(JSON.parse((provider.generate.mock.calls[0][0] as ProviderMessage[])[1].content).writeIn).toBe('French');
+    expect(added[0].language).toBe('fr');
+    const silent = replying('{"visual":false}');
+    await decideVisual(silent, { question: 'QCM', answer: 'Prose.' });
+    expect(JSON.parse((silent.generate.mock.calls[0][0] as ProviderMessage[])[1].content)).not.toHaveProperty('writeIn');
+  });
+
+  it('ends every builder task with the language of the job, and adds nothing without one', async () => {
+    const asked = (provider: { generate: ReturnType<typeof vi.fn> }, call: number) => JSON.parse((provider.generate.mock.calls[call][0] as ProviderMessage[])[1].content).task as string;
+    const repaired = replying('not json', JSON.stringify(quiz));
+    await generateVisual(repaired, job({}, { language: 'en' }));
+    expect(asked(repaired, 0)).toBe(`Build the visual described by this request. ${task('English')}`);
+    expect(asked(repaired, 1).endsWith(task('English'))).toBe(true);
+    const rechecked = replying(JSON.stringify({ ...quiz, options: ['30', '48'], answer: 0, explanation: 'T = 48.' }), JSON.stringify({ ...quiz, options: ['30', '48'], answer: 1, explanation: 'T = 48.' }));
+    await generateVisual(rechecked, job({}, { language: 'fr' }));
+    expect(asked(rechecked, 1).endsWith(task('French'))).toBe(true);
+    const silent = replying(JSON.stringify(quiz));
+    await generateVisual(silent, job());
+    expect(asked(silent, 0)).toBe('Build the visual described by this request.');
+    expect(JSON.parse((silent.generate.mock.calls[0][0] as ProviderMessage[])[1].content)).not.toHaveProperty('language');
+  });
+});
+
 describe('tutorNote', () => {
   it('is the plain reminder unless the question asks for a visual and an earlier message refused one', () => {
     const lifted = `${TUTOR_LENGTH_REMINDER} ${TUTOR_VISUAL_REQUEST_NOTE}`;
-    expect(tutorNote('Show me a diagram of it.', ['No diagrams.'])).toBe(lifted);
-    expect(tutorNote('Show me a diagram of it.', ['Why?'])).toBe(TUTOR_LENGTH_REMINDER);
-    expect(tutorNote('Why?', ['No diagrams.'])).toBe(TUTOR_LENGTH_REMINDER);
-    expect(tutorNote('Show me a diagram of it.', [])).toBe(TUTOR_LENGTH_REMINDER);
-    expect(tutorNote('No diagram, I said.', ['No diagrams.'])).toBe(TUTOR_LENGTH_REMINDER);
+    const note = (question: string, earlier: string[]) => withoutLanguage(tutorNote(question, earlier));
+    expect(note('Show me a diagram of it.', ['No diagrams.'])).toBe(lifted);
+    expect(note('Show me a diagram of it.', ['Why?'])).toBe(TUTOR_LENGTH_REMINDER);
+    expect(note('Why?', ['No diagrams.'])).toBe(TUTOR_LENGTH_REMINDER);
+    expect(note('Show me a diagram of it.', [])).toBe(TUTOR_LENGTH_REMINDER);
+    expect(note('No diagram, I said.', ['No diagrams.'])).toBe(TUTOR_LENGTH_REMINDER);
   });
 });
