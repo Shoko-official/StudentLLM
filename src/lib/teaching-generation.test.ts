@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { decideVisual, decideVisuals, generateTutorProse, tutorNote, generateVisual, runVisualJobs } from './teaching-generation';
+import { decideVisual, decideVisuals, generateTutorProse, retriedVisualJob, tutorNote, generateVisual, runVisualJobs } from './teaching-generation';
 import type { LLMProvider, ProviderMessage } from './llm-provider';
 import { parseTeachingVisual } from './teaching-visuals';
 import { jobFromMarkdown, parseVisualBrief, type VisualJob } from './visual-brief';
@@ -1272,5 +1272,39 @@ describe('tutorNote', () => {
     expect(note('Why?', ['No diagrams.'])).toBe(TUTOR_LENGTH_REMINDER);
     expect(note('Show me a diagram of it.', [])).toBe(TUTOR_LENGTH_REMINDER);
     expect(note('No diagram, I said.', ['No diagrams.'])).toBe(TUTOR_LENGTH_REMINDER);
+  });
+});
+
+describe('retriedVisualJob', () => {
+  const fence = '```student-visual-request\n{"id":"v1","type":"plot","intent":"Compare","content":"y=x^2 from -2 to 2"}\n```';
+  const english = 'Explain how the parabola changes with its coefficient, please.';
+  const french = 'Explique-moi comment la parabole change avec son coefficient, s\'il te plait.';
+  const chat = [
+    { id: 'q1', role: 'user' as const, content: english },
+    { id: 'a1', role: 'assistant' as const, content: `In short.\n\n${fence}` },
+    { id: 'q2', role: 'user' as const, content: french },
+    { id: 'a2', role: 'assistant' as const, content: `En bref.\n\n${fence}` },
+  ];
+
+  it('reads the turn of that answer, not a later one', () => {
+    expect(retriedVisualJob(chat, 'a1', 'v1')).toMatchObject({ learnerMessage: english, language: 'en' });
+    expect(retriedVisualJob(chat, 'a2', 'v1')).toMatchObject({ learnerMessage: french, language: 'fr' });
+  });
+
+  it('reads the earlier messages as the first attempt did, up to the same refusal to guess', () => {
+    const history = [{ id: 'q0', role: 'user' as const, content: 'Please answer in Spanish from now on.' }, ...chat.slice(0, 2)];
+    const job = retriedVisualJob(history, 'a1', 'v1')!;
+    expect(job.learnerMessage).toBe(english);
+    expect(job).not.toHaveProperty('language');
+  });
+
+  it('adds nothing to an answer with no learner message before it', () => {
+    expect(retriedVisualJob(chat.slice(1, 2), 'a1', 'v1')).toEqual(jobFromMarkdown(chat[1].content, 'v1'));
+  });
+
+  it('finds nothing for an unknown message or an unknown visual', () => {
+    expect(retriedVisualJob(chat, 'missing', 'v1')).toBeNull();
+    expect(retriedVisualJob(chat, 'a1', 'missing')).toBeNull();
+    expect(retriedVisualJob(chat, 'q1', 'v1')).toBeNull();
   });
 });

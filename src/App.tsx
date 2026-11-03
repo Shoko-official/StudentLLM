@@ -73,8 +73,8 @@ import { RetrievalDocument, searchDocuments } from './lib/local-retrieval';
 import { RichText } from './lib/rich-text';
 import { CourseChat } from './lib/course-chat';
 import { VisualBlockView } from './lib/visual-blocks-view';
-import { generateTutorProse, tutorNote } from './lib/teaching-generation';
-import { describeEarlierVisuals, jobFromMarkdown, MAX_AUTOMATIC_VISUALS } from './lib/visual-brief';
+import { generateTutorProse, retriedVisualJob, tutorNote } from './lib/teaching-generation';
+import { describeEarlierVisuals, MAX_AUTOMATIC_VISUALS } from './lib/visual-brief';
 import { VisualJobsContext, type VisualJobControls } from './lib/visual-request-view';
 import { pendingVisualKey, useVisualJobs } from './lib/use-visual-jobs';
 import { STUDY_ASSISTANT_PROMPT, TUTOR_SYSTEM_PROMPT, studyMaterialRequest } from './prompts';
@@ -757,7 +757,7 @@ function WorkspaceApp({ bootstrap, provider, recorderSessionFactory = requestRec
   const visualControls: VisualJobControls = {
     isPending: (messageId, briefId) => visualJobs.pending.has(pendingVisualKey(messageId, briefId)),
     ...(localProvider ? { retry: (messageId: string, briefId: string) => {
-      const job = jobFromMarkdown(chat.find((message) => message.id === messageId)?.content ?? '', briefId);
+      const job = retriedVisualJob(chat, messageId, briefId);
       if (job) visualJobs.start(activeLessonId, messageId, [job]);
     } } : {}),
   };
