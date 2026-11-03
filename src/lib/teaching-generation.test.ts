@@ -294,7 +294,7 @@ describe('decideVisual with a target', () => {
     const [messages, options] = provider.generate.mock.calls[0];
     expect(messages).toHaveLength(3);
     expect(messages![0]).toEqual({ role: 'system', content: VISUAL_DECISION_PROMPT });
-    expect(Object.keys(JSON.parse(messages![1].content))).toEqual(['learnerMessage', 'tutorAnswer', 'earlierVisuals', 'earlierLearnerMessages', 'writeIn']);
+    expect(Object.keys(JSON.parse(messages![1].content))).toEqual(['learnerMessage', 'tutorAnswer', 'earlierVisuals', 'earlierLearnerMessages']);
     expect(messages![2]).toEqual({ role: 'user', content: visualTargetNote('quiz') });
     const schema = options?.responseFormat?.json_schema?.schema as { properties: { type: { enum: string[] } } };
     expect(schema.properties.type.enum).toEqual(['quiz']);
