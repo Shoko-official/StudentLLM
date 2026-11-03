@@ -1251,6 +1251,16 @@ test.describe('StudentLLM workspace', () => {
     await expect(navigation).toBeHidden();
     await expect(page.getByRole('tab', { name: 'Study' })).toHaveAttribute('aria-selected', 'true');
   });
+
+  test('reserves the scrollbar strip only on wide windows, so a narrow page cannot scroll sideways', async ({ page }) => {
+    await page.addInitScript((workspace) => localStorage.setItem('studentllm.workspace.v1', JSON.stringify(workspace)), createFixtureWorkspace());
+    const gutter = () => page.evaluate(() => getComputedStyle(document.documentElement).scrollbarGutter);
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.goto('/');
+    expect(await gutter()).toBe('auto');
+    await page.setViewportSize({ width: 1100, height: 800 });
+    expect(await gutter()).toBe('stable');
+  });
 });
 
 test.describe('StudentLLM empty workspace', () => {
