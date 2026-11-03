@@ -92,11 +92,13 @@ describe('detectMessageLanguage', () => {
 describe('namesALanguage', () => {
   it.each([
     'Réponds en anglais.', 'Reponds en anglais', 'Explique la dérivée in French please.', 'Answer in Spanish.', 'Traduis ça en espagnol', 'Write in English', 'En français stp', 'English please', 'Translate this into German',
+    "Tu peux utiliser l'anglais ?", "Je veux l'anglais", 'Could you use French?', 'Use English', 'Use French', 'Utilise le français', 'I want French', 'Reply using English', 'Write English', 'Écris français',
+    'English', 'english.', 'Anglais', 'Français', 'français ?', "L'anglais", 'French!',
     "Passe à l'anglais", 'Passons au français', 'Parle-moi anglais', 'Parle-nous en anglais', "Je préfère l'anglais", 'Je prefere le français', "Parle anglais s'il te plaît", "Parle français s’il te plait", 'Speak French with me', 'Speak English', 'I prefer French', 'Switch to English', 'Anglais uniquement', 'English only',
   ])('finds a request for a language in %j', (text) => { expect(namesALanguage(text)).toBe(true); });
 
   it.each([
-    'La Révolution française', 'The French Revolution', 'la guerre anglaise', 'Explique la guerre anglaise.', 'Parle de la Révolution française', 'The English Channel', 'I read a French novel', 'I prefer the French Revolution',
+    'La Révolution française', 'The French Revolution', 'la guerre anglaise', 'Explique la guerre anglaise.', 'Parle de la Révolution française', 'The English Channel', 'I read a French novel', 'I prefer the French Revolution', 'Explain the French Revolution.', 'French Revolution', 'Use the French Revolution as an example', 'Anglais et français', 'Je veux la guerre anglaise',
     'Explique la dérivée.', 'Quiz me on levers.', 'Le français est une langue.', 'in france',
   ])('finds none in %j', (text) => { expect(namesALanguage(text)).toBe(false); });
 });
@@ -112,7 +114,46 @@ describe('conversationLanguage', () => {
     expect(conversationLanguage('x = 2 ?', ['Explique-moi la dérivée.', 'Show me a plot.'])).toBe('en');
     expect(conversationLanguage('Merci', ['Explique-moi la dérivée.'])).toBe('fr');
     expect(conversationLanguage('Encore', ['Show me a plot.'])).toBe('en');
-    expect(conversationLanguage('Thanks', ['Explique-moi la dérivée.'])).toBe('fr');
+  });
+
+  it.each([
+    ['Explique la dérivée.', 'What is a derivative?'],
+    ['Pourquoi ?', 'What is a derivative?'],
+    ['Merci', 'What is a derivative?'],
+    ['Calcule la limite', 'What is a derivative?'],
+    ['Explain photosynthesis.', 'Pourquoi le ciel est bleu ?'],
+    ['Define entropy.', 'Pourquoi le ciel est bleu ?'],
+    ['Quiz me on levers.', 'Pourquoi le ciel est bleu ?'],
+    ['Thanks', 'Explique-moi la dérivée.'],
+  ])('lets a lone word of one language stop the fallback to another: %j after %j', (question, earlier) => {
+    expect(conversationLanguage(question, [earlier])).toBeUndefined();
+  });
+
+  it('keeps the fallback when a lone word agrees with the earlier language', () => {
+    expect(conversationLanguage('Explique la dérivée.', ['Pourquoi le ciel est bleu ?'])).toBe('fr');
+    expect(conversationLanguage('Explain photosynthesis.', ['What is a derivative?'])).toBe('en');
+    expect(conversationLanguage('Thanks', ['Show me a plot.'])).toBe('en');
+  });
+
+  it('keeps the fallback for a message with no word of either language', () => {
+    for (const earlier of ['What is a derivative?', 'Pourquoi le ciel est bleu ?']) {
+      expect(conversationLanguage('Quiz', [earlier])).toBe(conversationLanguage(earlier));
+      expect(conversationLanguage('Encore', [earlier])).toBe(conversationLanguage(earlier));
+    }
+  });
+
+  it('does not let a pasted statement decide for the question after it', () => {
+    expect(conversationLanguage('Explique la dérivée.', [STATEMENT_EN])).toBeUndefined();
+  });
+
+  it('lets a lone word on the way back stop the fallback too', () => {
+    expect(conversationLanguage('QCM', ['Explique-moi la dérivée.', 'Why?'])).toBeUndefined();
+    expect(conversationLanguage('QCM', ['Explique-moi la dérivée.', 'Pourquoi ?'])).toBe('fr');
+  });
+
+  it('states nothing for a lone word on a first message', () => {
+    expect(conversationLanguage('Explique la dérivée.')).toBeUndefined();
+    expect(conversationLanguage('Quiz me on levers.', [])).toBeUndefined();
   });
 
   it('does not bring a name or formula back as a language', () => {
@@ -142,6 +183,7 @@ describe('conversationLanguage', () => {
 
   it.each([
     'Réponds en anglais.', "Passe à l'anglais", 'Parle-moi anglais', "Je préfère l'anglais", "Parle anglais s'il te plaît", 'Speak French with me', 'Explique la dérivée in French please.',
+    "Tu peux utiliser l'anglais ?", "Je veux l'anglais", 'Could you use French?', 'Use English', 'Use French', 'I want French', 'Reply using English', 'English', 'Anglais', 'Français',
   ])('states nothing when the learner asks for a language: %j', (text) => {
     expect(conversationLanguage(text)).toBeUndefined();
     expect(conversationLanguage(text, ['Show me a plot.'])).toBeUndefined();

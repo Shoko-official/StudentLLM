@@ -39,9 +39,11 @@ const ELISION = /^(?:l|d|qu|j|c|n|s|m|t|jusqu|lorsqu|puisqu)['’]\p{Ll}/u;
 const MIN_HITS = 2;
 
 const LANGUAGE_NAMES = 'français|francais|anglais|espagnol|allemand|italien|portugais|chinois|japonais|arabe|russe|french|english|spanish|german|italian|portuguese|chinese|japanese|arabic|russian';
-const SWITCH_VERBS = "parle|parles|parlez|parlons|speak|passe|passes|passez|passons|switch|pr[ée]f[èe]re|pr[ée]f[èe]res|pr[ée]f[ée]rez|prefer";
-// A request says it with a verb, a preposition or a please. A bare adjective, as in "the French Revolution", is no request.
+const SWITCH_VERBS = "parle|parles|parlez|parlons|speak|passe|passes|passez|passons|switch|pr[ée]f[èe]re|pr[ée]f[èe]res|pr[ée]f[ée]rez|prefer|use|using|utilise|utilises|utiliser|utilisez|utilisons|veux|voudrais|want|write|[ée]cris|[ée]crivez";
+// A request says it with a verb, a preposition or a please, or is only the name. A bare adjective, as in "the French Revolution", is no request.
 const LANGUAGE_REQUEST = new RegExp(`(?<!\\p{L})(?:(?:en|in|into|to|vers)\\s+(?:${LANGUAGE_NAMES})|(?:${LANGUAGE_NAMES})\\s+(?:please|pls|stp|svp|s['’]il|only|uniquement|seulement)|(?:${SWITCH_VERBS})(?:[\\s-]+(?:moi|nous|me|us))?(?:\\s+(?:à|a|au|to|in|en|vers))?\\s+(?:le\\s+|l['’])?(?:${LANGUAGE_NAMES}))(?!\\p{L})`, 'u');
+
+const ONLY_A_LANGUAGE = new RegExp(`^\\s*(?:le\\s+|l['’])?(?:${LANGUAGE_NAMES})\\s*[.!?]*\\s*$`, 'u');
 
 /** Code, links, formulas and what touches an operator are not prose, and their letters must not be read as words: "F = ma", "du/dx". */
 const proseOf = (text: string) => text
@@ -54,45 +56,55 @@ const proseOf = (text: string) => text
   .replace(/\S+\s*=\s*\S+/g, ' ')
   .replace(/\S*[/=^]\S*/g, ' ');
 
-/**
- * The language of a learner's message, French against English, and only when it is plain: two different words of one
- * language and none of the other. Any line of the message counts towards this, so two lines in different languages give
- * "mixed". One word or none gives "unknown". Words of another language, or another script, give "other".
- */
-export function detectMessageLanguage(text: string): MessageReading {
+/** The reading of a message, and when it is "unknown" with one word of a language, that language as a lean. */
+function readMessage(text: string): { reading: MessageReading; lean?: MessageLanguage } {
   const prose = proseOf(text.normalize('NFC'));
   const fr = new Set<string>(), en = new Set<string>();
-  if (OTHER_MARK.test(prose)) return 'other';
+  if (OTHER_MARK.test(prose)) return { reading: 'other' };
   for (const [token] of prose.matchAll(WORD)) {
     const lower = token.toLowerCase();
     const parts = lower.split(/['’]/);
     // A capitalised word can be a name, so its letters say nothing: "Schrödinger".
-    if (NOT_LATIN.test(token) || parts.some((part) => OTHERS.has(part)) || (token === lower && OTHER_LETTER.test(token))) return 'other';
+    if (NOT_LATIN.test(token) || parts.some((part) => OTHERS.has(part)) || (token === lower && OTHER_LETTER.test(token))) return { reading: 'other' };
     if (ELISION.test(token)) fr.add(lower);
     else if (token.length > 1 && token === token.toUpperCase()) continue;
     else if (FRENCH.has(parts[0])) fr.add(parts[0]);
     else if (ENGLISH.has(parts[0])) en.add(parts[0]);
   }
   if (fr.size) en.delete(ALSO_FRENCH);
-  if (fr.size && en.size) return 'mixed';
-  if (fr.size >= MIN_HITS) return 'fr';
-  return en.size >= MIN_HITS ? 'en' : 'unknown';
+  if (fr.size && en.size) return { reading: 'mixed' };
+  if (fr.size >= MIN_HITS) return { reading: 'fr' };
+  if (en.size >= MIN_HITS) return { reading: 'en' };
+  return fr.size ? { reading: 'unknown', lean: 'fr' } : en.size ? { reading: 'unknown', lean: 'en' } : { reading: 'unknown' };
 }
 
+/**
+ * The language of a learner's message, French against English, and only when it is plain: two different words of one
+ * language and none of the other. Any line of the message counts towards this, so two lines in different languages give
+ * "mixed". One word or none gives "unknown". Words of another language, or another script, give "other".
+ */
+export const detectMessageLanguage = (text: string): MessageReading => readMessage(text).reading;
+
 /** Whether a message asks for a language to work in, as in "réponds en anglais" or "Speak French with me". It can also be a topic, and then too the model is left to read it. */
-export const namesALanguage = (text: string) => LANGUAGE_REQUEST.test(text.normalize('NFC').toLowerCase());
+export function namesALanguage(text: string) {
+  const lowered = text.normalize('NFC').toLowerCase();
+  return LANGUAGE_REQUEST.test(lowered) || ONLY_A_LANGUAGE.test(lowered);
+}
 
 /**
  * The language to state to a model for this conversation, if any. A learner who has asked for a language decides, and is
  * left to the model to follow. A message that reads as unknown takes the language of the latest earlier message, as long as
- * nothing mixed or foreign comes first. Whenever in doubt this states nothing, which leaves the rules in the prompts.
+ * nothing mixed or foreign comes first and no lone word on the way leans to the other language: "Explique la dérivée." after
+ * an English question is not English. Whenever in doubt this states nothing, which leaves the rules in the prompts.
  */
 export function conversationLanguage(question: string, earlierLearnerTexts: string[] = []): MessageLanguage | undefined {
   if ([question, ...earlierLearnerTexts].some(namesALanguage)) return undefined;
+  const leans = new Set<MessageLanguage>();
   for (const text of [question, ...[...earlierLearnerTexts].reverse()]) {
-    const reading = detectMessageLanguage(text);
-    if (reading === 'fr' || reading === 'en') return reading;
+    const { reading, lean } = readMessage(text);
+    if (reading === 'fr' || reading === 'en') return leans.size === 0 || (leans.size === 1 && leans.has(reading)) ? reading : undefined;
     if (reading !== 'unknown') return undefined;
+    if (lean) leans.add(lean);
   }
   return undefined;
 }
