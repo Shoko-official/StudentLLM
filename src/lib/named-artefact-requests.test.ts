@@ -85,6 +85,26 @@ describe('the gate on artefact words', () => {
     ['Schématise le cycle.', SCHEMA],
   ])('still fires on a drawing verb alone: %j', (text, expected) => { expect(read(text)).toBe(expected); });
 
+  it.each([
+    ['Trace y = x^2 puis ajoute un quiz.', `${GRAPH} ${QUIZ}`],
+    ['Trace la fonction sin(x), puis un quiz.', `${GRAPH} ${QUIZ}`],
+    ['Dessine le cycle et ajoute un quiz.', `${FIGURE} ${QUIZ}`],
+    ['Dessine les forces, puis fais un QCM.', `${FIGURE} ${QUIZ}`],
+    ['Draw the forces and quiz me.', `${FIGURE} ${QUIZ}`],
+    ['Sketch the setup, then give me a quiz.', `${FIGURE} ${QUIZ}`],
+    ['Illustre le principe et fais un quiz.', `${FIGURE} ${QUIZ}`],
+    ['Représente la fonction et fais un quiz.', `plot|diagram|figure ${QUIZ}`],
+    ['Schématise le cycle puis un quiz.', `${SCHEMA} ${QUIZ}`],
+    ['Visualize the flow and add a quiz.', `${FIGURE} ${QUIZ}`],
+    ['Draw the forces. Then quiz me.', `${FIGURE} ${QUIZ}`],
+    ['Draw the forces; a quiz after.', `${FIGURE} ${QUIZ}`],
+    ['Dessine les forces\nUn quiz ensuite.', `${FIGURE} ${QUIZ}`],
+  ])('counts a verb with no noun in its own clause: %j', (text, expected) => { expect(read(text)).toBe(expected); });
+
+  it('asks for both parts of a verb in one clause and a noun in another', () => {
+    expect(missingArtefacts('Draw the forces and quiz me.', 'Prose.')).toEqual([['figure', 'diagram'], ['quiz']]);
+  });
+
   it('keeps one schema at one block when a verb asks for it and the tutor made a figure', () => {
     const figure = '```student-visual-request\n{"id":"v1","type":"figure","intent":"I","content":"C"}\n```';
     expect(missingArtefacts('Dessine un seul schéma du pendule.', `Prose.\n\n${figure}`)).toEqual([]);

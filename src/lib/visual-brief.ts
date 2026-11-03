@@ -354,7 +354,7 @@ const ARTEFACT_FAMILIES: { words: string; types: VisualType[] }[] = [
   { words: "figures?|dessins?|croquis|illustrations?|drawings?|sketches|pictures?|visuels?|visuals?|visuali[sz]ations?", types: ['figure', 'diagram'] },
   { words: "quizz?(?:es|zes|s)?|quizzing|qcm|qcu|mcqs?|questions?\\s+a\\s+choix\\s+multiples?|multiple[- ]choice|(?:teste|testez|interroge|interrogez|questionne|questionnez)[ -](?:moi|nous)|test\\s+(?:me|us|my)|teste\\s+mes\\s+connaissances|test[ -]moi|pose[ -]moi\\s+(?:une|des)\\s+questions?|ask\\s+me\\s+(?:a|some)\\s+questions?", types: ['quiz'] },
 ];
-// A drawing verb only says how: "Draw a plot" is one plot. So these count only when the message has no word above.
+// A drawing verb only says how: "Draw a plot" is one plot. So these count only in a clause with no word above.
 const ARTEFACT_VERBS: { words: string; types: VisualType[] }[] = [
   { words: "trace[rz]?|traces", types: ['plot', 'diagram'] },
   { words: "dessine[rz]?|dessines|dessinons|draw|sketch|illustre[rz]?|illustrate|visuali[sz]e[rz]?|visualisons", types: ['figure', 'diagram'] },
@@ -364,6 +364,7 @@ const ARTEFACT_VERBS: { words: string; types: VisualType[] }[] = [
 const COUNTS: Record<string, number> = { deux: 2, two: 2, 2: 2, trois: 3, three: 3, 3: 3, quatre: 4, four: 4, 4: 4 };
 const artefactWord = (families: typeof ARTEFACT_FAMILIES) => new RegExp(`(?<![\\p{L}\\d])(?:(?<count>${Object.keys(COUNTS).join('|')})\\s+(?:[\\p{L}'-]+\\s+)?)?(?:${families.map(({ words }, index) => `(?<family${index}>${words})`).join('|')})(?![\\p{L}\\d])`, 'gu');
 const ARTEFACT_WORD = artefactWord(ARTEFACT_FAMILIES), ARTEFACT_VERB = artefactWord(ARTEFACT_VERBS);
+const CLAUSE_BREAK = /[.!?;,\r\n]+|(?<![\p{L}\d])(?:and|then|puis|et)(?![\p{L}\d])/u;
 
 export interface NamedArtefact { type: VisualType; count: number; also?: VisualType[] }
 
@@ -375,15 +376,16 @@ export interface NamedArtefact { type: VisualType; count: number; also?: VisualT
  */
 export function namedArtefacts(text: string): NamedArtefact[] {
   const found = new Map<VisualType, { count: number; also: VisualType[] }>();
-  const plain = plainMessage(text);
-  const nouns = [...plain.matchAll(ARTEFACT_WORD)];
-  const families = nouns.length ? ARTEFACT_FAMILIES : ARTEFACT_VERBS;
-  for (const { groups } of nouns.length ? nouns : plain.matchAll(ARTEFACT_VERB)) {
-    const index = families.findIndex((_, at) => groups![`family${at}`] !== undefined);
-    const [type, ...also] = families[index].types;
-    const count = /^(?:courbes?|curves?)$/.test(groups![`family${index}`]) ? 1 : COUNTS[groups!.count ?? ''] ?? 1;
-    const known = found.get(type);
-    found.set(type, { count: Math.max(known?.count ?? 1, count), also: [...new Set([...(known?.also ?? []), ...also])] });
+  for (const clause of plainMessage(text).split(CLAUSE_BREAK)) {
+    const nouns = [...clause.matchAll(ARTEFACT_WORD)];
+    const families = nouns.length ? ARTEFACT_FAMILIES : ARTEFACT_VERBS;
+    for (const { groups } of nouns.length ? nouns : clause.matchAll(ARTEFACT_VERB)) {
+      const index = families.findIndex((_, at) => groups![`family${at}`] !== undefined);
+      const [type, ...also] = families[index].types;
+      const count = /^(?:courbes?|curves?)$/.test(groups![`family${index}`]) ? 1 : COUNTS[groups!.count ?? ''] ?? 1;
+      const known = found.get(type);
+      found.set(type, { count: Math.max(known?.count ?? 1, count), also: [...new Set([...(known?.also ?? []), ...also])] });
+    }
   }
   return [...found].map(([type, { count, also }]) => ({ type, count, ...(also.length ? { also } : {}) }));
 }
