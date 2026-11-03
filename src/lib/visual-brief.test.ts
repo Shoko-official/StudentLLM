@@ -144,6 +144,72 @@ describe('prepareTutorMarkdown', () => {
   });
 });
 
+describe('prepareTutorMarkdown fence safety', () => {
+  const diagram = { type: 'diagram', title: 'Hidden visual', nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], edges: [{ from: 'a', to: 'b', label: 'then' }] };
+  const raw = JSON.stringify(diagram);
+  const requestRaw = JSON.stringify({ ...brief, id: 'hidden' });
+  // Each way a model, or a prompt injection, can dress a fence so that a reader sees code but a looser parser sees a visual.
+  const disguised = (body: string) => [
+    ['quoted tildes', (language: string) => `> ~~~${language}\n> ${body}\n> ~~~`],
+    ['in a list', (language: string) => `- \`\`\`${language}\n  ${body}\n  \`\`\``],
+    ['escaped hyphen', (language: string) => '```' + language.replace('-', '\\-') + '\n' + body + '\n```'],
+    ['numeric entity for the hyphen', (language: string) => '```' + language.replace('-', '&#45;') + '\n' + body + '\n```'],
+    ...['&#32;metadata', '&Tab;metadata', '&NewLine;metadata', '&#160;metadata'].map((suffix) => [`entity ${suffix}`, (language: string) => '```' + language + suffix + '\n' + body + '\n```'] as const),
+    ...['&#32;', '&Tab;'].map((prefix) => [`leading entity ${prefix}`, (language: string) => '```' + prefix + language + '\n' + body + '\n```'] as const),
+  ] as const;
+
+  describe.each([['student-visual', raw], ['student-visual-request', requestRaw]])('a %s fence', (language, body) => {
+    it.each(disguised(body))('stays inert code when it is %s', (_name, wrap) => {
+      const { markdown, jobs } = prepareTutorMarkdown(wrap(language));
+      expect(jobs).toEqual([]);
+      expect(hasVisualFence(markdown)).toBe(false);
+      expect(markdown).toContain(body);
+      expect(markdown).toMatch(/(?:```|~~~)text\n/);
+      expect(markdown).not.toMatch(new RegExp('(?:```|~~~)\\s*' + language));
+      expect(prepareTutorMarkdown(markdown)).toEqual({ markdown, jobs: [] });
+    });
+  });
+
+  it.each([
+    ['a plain fence', (body: string) => '```student-visual\n' + body + '\n```'],
+    ['a long fence with spaces and extra words in its info string', (body: string) => '```` \tstudent-visual metadata\n' + body + '\n````'],
+  ])('lets %s through only as the canonical visual the real parser accepts', (_name, wrap) => {
+    const { markdown, jobs } = prepareTutorMarkdown(wrap(JSON.stringify({ ...diagram, payload: '<script>secret</script>' })));
+    expect(jobs).toEqual([]);
+    expect(markdown).toBe(visualFence(parseTeachingVisual(raw)!));
+    expect(markdown).not.toContain('secret');
+  });
+
+  it('keeps the prose and shows a redundant placeholder fence as inert text', () => {
+    const { markdown, jobs } = prepareTutorMarkdown('## Pression\n\nÀ 10 m, la pression relative vaut 98100 Pa.\n\n```student-visual\n(voir bloc visuel ci-joint)\n```');
+    expect(markdown).toContain('98100 Pa.');
+    expect(markdown).toContain('```text\n(voir bloc visuel ci-joint)\n```');
+    expect(jobs).toEqual([]);
+    expect(hasVisualFence(markdown)).toBe(false);
+  });
+
+  it('keeps ordinary Python fence info and a literal visual fence inside its body, byte for byte', () => {
+    const markdown = 'Exemple 🧪\r\n\r\n````python linenos\r\nexample = """\r\n```student-visual\r\n{}\r\n```\r\n"""\r\nprint(example)\r\n````';
+    expect(prepareTutorMarkdown(markdown)).toEqual({ markdown, jobs: [] });
+    const request = '```student-visual-request\n' + requestRaw + '\n```';
+    const quoted = '~~~python\nexample = """\n' + request + '\n"""\n~~~';
+    expect(prepareTutorMarkdown(quoted)).toEqual({ markdown: quoted, jobs: [] });
+  });
+
+  it.each([
+    ['a quote', '> ```python\r\n> print(1)\r\n\r\n', '> ```python\r\n> print(1)\r\n\r\n'],
+    ['a list item', '- Item\r\n  ```python\r\n  print(1)\r\n\r\n', '- Item\r\n  ```python\r\n  print(1)\r\n\r\n'],
+  ])('finds the real fence that follows a code block ended implicitly by %s, with CRLF offsets', (_name, before, kept) => {
+    const placeholder = prepareTutorMarkdown(before + '```student-visual\r\n{}\r\n```');
+    expect(placeholder.markdown.startsWith(kept)).toBe(true);
+    expect(placeholder.markdown.slice(kept.length)).toBe('```text\n{}\n```');
+    expect(hasVisualFence(placeholder.markdown)).toBe(false);
+    const real = prepareTutorMarkdown(before + '```student-visual-request\r\n' + requestRaw + '\r\n```');
+    expect(real.markdown.startsWith(kept)).toBe(true);
+    expect(real.jobs.map((job) => job.brief.id)).toEqual(['hidden']);
+  });
+});
+
 describe('prepareTutorMarkdown and copied notes', () => {
   it('never saves a copied note, and a real request next to it still makes a job', () => {
     const { markdown, jobs } = prepareTutorMarkdown(`Text.\n\n${notGenerated}\n\n${request()}\n\n${shown}`);

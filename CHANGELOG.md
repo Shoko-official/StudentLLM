@@ -6,6 +6,8 @@
 
 - Course chat can generate inline interactive plots, calculated readouts, relationship diagrams, typed illustrations and quizzes alongside Markdown and LaTeX. A bounded data contract keeps visual interactions local and preserves the explanation when a generated block is invalid.
 
+- Course chat builds an answer in two steps. The tutor's explanation appears first, then each requested visual is generated on its own, checked locally against what the tutor asked for (sliders, readouts, computable curves, distinct quiz options, expected values) and corrected once if a check fails. A visual that still fails leaves the explanation in place with a **Retry this visual** button, also after a reload. At most four visuals are built automatically, two at a time. The single-envelope pipeline and its prompts are removed. On Nemotron 3.5 Lightning and Super with hidden test questions, complete visuals went from 22 to 43 of 48 and numeric errors in visuals from 9 to 3 (small exploratory samples, see `docs/status.md`).
+
 - Course chat has a bounded reading column, a scrolling conversation, secondary source context and an anchored multiline composer. Enter sends, Shift+Enter adds a line, and long drafts stay usable in short windows.
 - Local OCR uses multilingual PP-OCRv6 small on CPU and reuses its engine across a document's pages. Mixed PDFs retain native text while reading substantial scanned regions, including cropped/rotated pages. The development app offers explicit per-file NVIDIA vision analysis for complex sources; local extraction remains the default and originals stay available for review.
 
