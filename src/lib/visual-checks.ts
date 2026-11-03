@@ -145,7 +145,7 @@ export function quizWorkingNotes(visual: TeachingVisual): string[] {
   return key ? [`the working may end on ${result.value}, which no option seems to hold, while the keyed option is "${keyed}". ${again}`] : [];
 }
 
-/** Values the tutor gave for a plot, and the answer it gave for a quiz. A disagreement may come from either side, so it never rejects a visual on its own. */
+/** Values the tutor gave for a plot, the answer it gave for a quiz, and the labels it named for a diagram. A disagreement may come from either side, so it never rejects a visual on its own. */
 export function disagreeingChecks(visual: TeachingVisual, brief: VisualBrief): string[] {
   if (visual.type === 'quiz') {
     const keyed = visual.options[visual.answer];
@@ -155,6 +155,9 @@ export function disagreeingChecks(visual: TeachingVisual, brief: VisualBrief): s
     if (keyValue && expectedValue && comparable(keyValue, expectedValue) && sameValue(keyValue, expectedValue)) return [];
     const accentOnly = normalized(keyed) === normalized(expected) && !visual.options.some((option, index) => index !== visual.answer && normalized(option) === normalized(keyed));
     return accentOnly ? [] : [`the keyed option is "${keyed}", expected "${expected}"`];
+  }
+  if (visual.type === 'diagram') {
+    return (brief.nodes ?? []).filter((label) => !visual.nodes.some((node) => normalized(node.label) === normalized(label) || normalized(node.id) === normalized(label))).map((label) => `missing node labelled "${label}"`);
   }
   if (visual.type !== 'plot') return [];
   const errors: string[] = [];
@@ -180,9 +183,6 @@ export function disagreeingChecks(visual: TeachingVisual, brief: VisualBrief): s
 export function checkVisualAgainstBrief(visual: TeachingVisual, brief: VisualBrief): string[] {
   if (visual.type !== brief.type) return [`expected a ${brief.type}, received a ${visual.type}`];
   if (visual.type === 'plot') return plotProblems(visual, brief);
-  if (visual.type === 'diagram') {
-    return (brief.nodes ?? []).filter((label) => !visual.nodes.some((node) => normalized(node.label) === normalized(label) || normalized(node.id) === normalized(label))).map((label) => `missing node labelled "${label}"`);
-  }
   if (visual.type === 'quiz') {
     const errors: string[] = [];
     if (new Set(visual.options.map(simplified)).size !== visual.options.length) errors.push('quiz options must be distinct');

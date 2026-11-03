@@ -13,6 +13,7 @@ const stoppedMessage = 'Visual generation was stopped.';
 const recheckTask = 'Recheck this visual against the request. The listed values disagree with values the tutor gave, and either side may be wrong. Correct the formula only if it is wrong, never bend a correct formula to match a value. Return the complete object.';
 const stillPlotTask = 'Recheck this plot against the request. Follow each listed note where it applies and keep what is right: a curve that is truly constant stays constant. Return the complete object.';
 const quizRecheckTask = 'Recheck this quiz. The option you keyed may disagree with your working or with the answer the tutor expected, and either may be wrong. Solve the question again in explanation, then key the option equal to your result, even if it differs from the expected answer. If no option holds your result, correct the options. Explanation, options and key must agree. Return the complete object.';
+const diagramRecheckTask = 'Recheck this diagram against the request. The listed labels were expected and not found, and the wording may simply differ. Add or rename a node only if the diagram really lacks it, and keep what is right. Return the complete object.';
 const noAnswerMessage = 'The model returned no answer. Try again or choose another model in Settings.';
 const LEARNER_MESSAGE_FOR_PLOT_CHARACTERS = 2000;
 
@@ -61,6 +62,7 @@ function assess(output: string, brief: VisualBrief): { visual: TeachingVisual | 
 
 function recheckTaskFor(visual: TeachingVisual, brief: VisualBrief) {
   if (visual.type === 'quiz') return quizRecheckTask;
+  if (visual.type === 'diagram') return diagramRecheckTask;
   if (!disagreeingChecks(visual, brief).length) return stillPlotTask;
   return stillPlotNotes(visual).length ? `${recheckTask} ${stillPlotTask}` : recheckTask;
 }
