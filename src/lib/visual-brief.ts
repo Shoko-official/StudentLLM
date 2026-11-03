@@ -1,3 +1,4 @@
+import type { MessageLanguage } from './message-language';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { redactContextImages } from './context-text';
 import { diagnoseTeachingVisual, parseTeachingVisual, type TeachingVisual } from './teaching-visuals';
@@ -9,7 +10,7 @@ export interface VisualBrief {
   id: string; type: VisualType; intent: string; content: string;
   parameters?: string[]; outputs?: string[]; checks?: VisualCheck[]; nodes?: string[]; correctAnswer?: string;
 }
-export interface VisualJob { brief: VisualBrief; section: string; initialOutput?: string; learnerMessage?: string }
+export interface VisualJob { brief: VisualBrief; section: string; initialOutput?: string; learnerMessage?: string; language?: MessageLanguage }
 export const MAX_AUTOMATIC_VISUALS = 4;
 
 const REQUEST = 'student-visual-request';

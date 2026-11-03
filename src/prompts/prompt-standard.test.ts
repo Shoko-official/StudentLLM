@@ -4,7 +4,7 @@ import { parseTeachingVisual } from '../lib/teaching-visuals';
 import { checkVisualAgainstBrief } from '../lib/visual-checks';
 import { decideVisual } from '../lib/teaching-generation';
 import { parseVisualBrief, VISUAL_TYPES } from '../lib/visual-brief';
-import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, TUTOR_PROMPT, TUTOR_SYSTEM_PROMPT, VISUAL_DECISION_PROMPT, VISUAL_MODULES, VISUAL_ROUTING_PROMPT, visualTargetNote } from './index';
+import { TUTOR_LENGTH_REMINDER, TUTOR_VISUAL_REQUEST_NOTE, TUTOR_PROMPT, TUTOR_SYSTEM_PROMPT, VISUAL_DECISION_PROMPT, VISUAL_MODULES, VISUAL_ROUTING_PROMPT, tutorLanguageNote, visualLanguageTask, visualTargetNote } from './index';
 
 const examples = (prompt: string): string[] => prompt.match(/<example>[\s\S]*?<\/example>/g) ?? [];
 const fences = (prompt: string, language: string) => Array.from(prompt.matchAll(new RegExp('```' + language + '\\n([\\s\\S]*?)\\n```', 'g')), (match) => match[1]);
@@ -159,10 +159,13 @@ describe('prompt standard: tutor prompts', () => {
   });
 
   it('has learner-facing text follow the language of the latest message, with a request example in English', () => {
-    expect(VISUAL_ROUTING_PROMPT).toContain("Write intent and content in the language of the learner's latest message");
-    expect(TUTOR_PROMPT).toContain("Answer in the language of the learner's latest message");
+    expect(TUTOR_PROMPT).toContain("Answer in the language of the learner's latest message, or the one they are using in this conversation if it has no clear one. An explicit request for a language wins.");
+    expect(VISUAL_ROUTING_PROMPT).toContain('Write intent and content in the language of your answer, even when these examples or the course use another.');
+    expect(tutorLanguageNote('English')).toBe('The learner wrote in English. Write everything in English, including every field of any request block, even though examples above are in another language.');
+    expect(visualLanguageTask('French')).toBe('Write every text the learner sees in French, even when the request is in another language.');
     for (const type of VISUAL_TYPES) {
-      expect(VISUAL_MODULES[type]).toContain('in the language of learnerMessage when the user message holds one, otherwise of request.intent and request.content.');
+      expect(VISUAL_MODULES[type]).toContain('in the language the task names, otherwise of request.intent and request.content.');
+      if (type !== 'plot') expect(VISUAL_MODULES[type]).not.toContain('learnerMessage');
     }
     const english = examples(VISUAL_ROUTING_PROMPT).find((example) => /<input>Quiz me\b/.test(example));
     const brief = parseVisualBrief(fences(english ?? '', 'student-visual-request')[0] ?? '');
