@@ -31,8 +31,9 @@ class ProxyError extends Error {
 }
 
 function sendProxyError(res: ServerResponse, error: ProxyError) {
+  // Ending normally would present a cut-off stream as a complete answer.
   if (res.headersSent) {
-    res.end();
+    res.destroy();
     return;
   }
   res.statusCode = error.status;
@@ -82,8 +83,8 @@ function validateChatBody(raw: string) {
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ProxyError(400, 'bad_request', 'The request body must be a JSON object.');
   const stream = (parsed as { stream?: unknown }).stream;
-  if (stream !== undefined && stream !== false) throw new ProxyError(400, 'bad_request', 'Streaming responses are not supported.');
-  return raw;
+  if (stream !== undefined && typeof stream !== 'boolean') throw new ProxyError(400, 'bad_request', 'The stream field must be true or false.');
+  return { body: raw, streaming: stream === true };
 }
 
 function validateEmbeddingBody(raw: string) {
@@ -117,6 +118,39 @@ async function readUpstreamBody(response: Response) {
   return Buffer.concat(chunks);
 }
 
+function isEventStream(response: Response) {
+  return response.ok && !!response.body && /^text\/event-stream\b/i.test(response.headers.get('content-type') ?? '');
+}
+
+async function pipeEventStream(upstream: Response, res: ServerResponse) {
+  res.statusCode = upstream.status;
+  res.setHeader('content-type', upstream.headers.get('content-type')!);
+  res.setHeader('cache-control', 'no-store');
+  res.flushHeaders();
+  const reader = upstream.body!.getReader();
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done || res.destroyed) break;
+      size += value.byteLength;
+      if (size > MAX_RESPONSE_BYTES) throw new ProxyError(502, 'failed', 'NVIDIA NIM returned a response that is too large.');
+      if (!res.write(value)) await new Promise<void>((resolve) => {
+        const resume = () => {
+          res.off('drain', resume);
+          res.off('close', resume);
+          resolve();
+        };
+        res.once('drain', resume);
+        res.once('close', resume);
+      });
+    }
+    res.end();
+  } finally {
+    void reader.cancel().catch(() => undefined);
+  }
+}
+
 export function createNimProxyHandler(options: NimProxyOptions = {}) {
   const readKey = options.readKey ?? (() => process.env.NVIDIA_API_KEY);
   const fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
@@ -139,10 +173,12 @@ export function createNimProxyHandler(options: NimProxyOptions = {}) {
         throw new ProxyError(405, 'method', 'Method not allowed.');
       }
       let body: string | undefined;
+      let streaming = false;
       if (method === 'POST') {
         if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) throw new ProxyError(415, 'bad_request', 'The request body must be JSON.');
         const raw = await readBody(req);
-        body = path === '/embeddings' ? validateEmbeddingBody(raw) : validateChatBody(raw);
+        if (path === '/embeddings') body = validateEmbeddingBody(raw);
+        else ({ body, streaming } = validateChatBody(raw));
       }
       const key = readKey()?.trim();
       if (!key) throw new ProxyError(503, 'missing_key', 'NVIDIA_API_KEY is not set. Set it in your Windows User environment, then restart the dev server.');
@@ -154,7 +190,7 @@ export function createNimProxyHandler(options: NimProxyOptions = {}) {
         upstream = await fetchImpl(`${NIM_UPSTREAM}${path}`, {
           method,
           headers: {
-            accept: 'application/json',
+            accept: streaming ? 'text/event-stream' : 'application/json',
             authorization: `Bearer ${key}`,
             ...(body === undefined ? {} : { 'content-type': 'application/json' }),
           },
@@ -162,6 +198,10 @@ export function createNimProxyHandler(options: NimProxyOptions = {}) {
           signal: controller.signal,
           redirect: 'error',
         });
+        if (streaming && isEventStream(upstream)) {
+          await pipeEventStream(upstream, res);
+          return;
+        }
         upstreamBody = await readUpstreamBody(upstream);
       } catch (error) {
         if (error instanceof ProxyError) throw error;

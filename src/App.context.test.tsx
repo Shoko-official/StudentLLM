@@ -5,6 +5,7 @@ import App from './App';
 import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from './test/workspace-fixture';
 import type { ProviderMessage } from './lib/llm-provider';
+import { TUTOR_LENGTH_REMINDER, tutorLanguageNote } from './prompts';
 
 beforeEach(() => { vi.stubEnv('VITE_LM_STUDIO_AUTO_CONNECT', 'false'); localStorage.clear(); sessionStorage.clear(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
@@ -26,7 +27,8 @@ it('answers an unmatched course question using actual prior dialogue instead of 
   const messages = generate.mock.calls[0][0];
   expect(messages).toContainEqual({ role: 'user', content: 'Je fixe la température à 275 K pour cette discussion.' });
   expect(messages).toContainEqual({ role: 'assistant', content: 'Nous utiliserons 275 K.' });
-  expect(messages.at(-1)).toEqual({ role: 'user', content: 'Dans ce cours, comment appliquer cela au gaz parfait ?' });
+  expect(messages.at(-2)).toEqual({ role: 'user', content: 'Dans ce cours, comment appliquer cela au gaz parfait ?' });
+  expect(messages.at(-1)).toEqual({ role: 'user', content: `${TUTOR_LENGTH_REMINDER} ${tutorLanguageNote('French')}` });
   expect(messages[0].content).not.toContain('Not enough evidence');
 });
 
@@ -41,7 +43,7 @@ it('sends all available course text when it fits, including later passages witho
   await user.click(screen.getByRole('tab', { name: /^Chat$/ }));
   await user.type(screen.getByRole('textbox', { name: 'Ask the course chat' }), 'Explique le chapitre 0');
   await user.click(screen.getByRole('button', { name: /^Send$/ }));
-  await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
   const sourceData = generate.mock.calls[0][0].filter(message => message.role !== 'system').map(message => message.content).join('\n');
   expect(sourceData).toContain('REPERE_0'); expect(sourceData).toContain('REPERE_23');
   expect(generate.mock.calls[0][0][0].content).not.toContain('REPERE_23');
@@ -64,6 +66,7 @@ it('includes later chapters in study material and keeps source text out of syste
   const data = messages.filter(message => message.role === 'user').map(message => message.content).join('\n');
   expect(data).toContain('CHAPTER_0'); expect(data).toContain('CHAPTER_23');
   expect(messages.at(-1)?.content).toBe('Generate the study guide.');
+  expect(JSON.stringify(messages)).not.toContain('Note from StudentLLM');
   expect(embed).not.toHaveBeenCalled();
 });
 

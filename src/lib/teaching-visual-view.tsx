@@ -1,5 +1,6 @@
 import { useId, useMemo, useState } from 'react';
-import { compileExpression, type TeachingVisual } from './teaching-visuals';
+import { compileExpression, plotSampleXs, type TeachingVisual } from './teaching-visuals';
+import { layoutDiagram } from './diagram-layout';
 import { RichText } from './rich-text';
 import './teaching-visual-view.css';
 
@@ -7,7 +8,6 @@ type Plot = Extract<TeachingVisual, { type: 'plot' }>;
 type Diagram = Extract<TeachingVisual, { type: 'diagram' }>;
 type Figure = Extract<TeachingVisual, { type: 'figure' }>;
 type Quiz = Extract<TeachingVisual, { type: 'quiz' }>;
-const SAMPLE_COUNT = 161;
 const DASHES = ['', '9 4', '3 4', '11 3 2 3'];
 
 function numberLabel(value: number) {
@@ -27,10 +27,7 @@ function PlotView({ visual }: { visual: Plot }) {
   // Four series, 161 samples each, and the evaluator's per-call budget bound the total work.
   const sampled = useMemo(() => visual.series.map((series, index) => ({
     label: series.label,
-    points: series.points ?? Array.from({ length: visual.x.step ? Math.min(SAMPLE_COUNT, Math.floor((visual.x.max - visual.x.min) / visual.x.step + 1e-9) + 1) : SAMPLE_COUNT }, (_, sample) => {
-      const x = visual.x.step ? visual.x.min + sample * visual.x.step : visual.x.min + sample / (SAMPLE_COUNT - 1) * (visual.x.max - visual.x.min);
-      return [x, functions[index]?.({ ...parameters, x }) ?? NaN] as [number, number];
-    }),
+    points: series.points ?? plotSampleXs(visual.x).map((x) => [x, functions[index]?.({ ...parameters, x }) ?? NaN] as [number, number]),
   })), [visual, functions, parameters]);
   const validPoint = ([x, y]: [number, number]) => Number.isFinite(x) && Number.isFinite(y) && Math.abs(y) < 1e100;
   const finiteValues = sampled.flatMap((series) => series.points.filter((point) => validPoint(point) && point[0] >= visual.x.min && point[0] <= visual.x.max).map(([, y]) => y));
@@ -114,40 +111,18 @@ function wrapLabel(label: string, length = 22, maxLines = 3) {
 
 function DiagramView({ visual }: { visual: Diagram }) {
   const id = useId().replace(/[^a-zA-Z0-9_-]/g, '');
-  const incoming = new Map(visual.nodes.map((node) => [node.id, 0]));
-  for (const edge of visual.edges) incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1);
-  const queue = visual.nodes.filter((node) => !incoming.get(node.id)).map((node) => node.id);
-  const levels = new Map(visual.nodes.map((node) => [node.id, 0]));
-  let processed = 0;
-  for (let index = 0; index < queue.length; index++) {
-    const node = queue[index]; processed++;
-    for (const edge of visual.edges.filter((item) => item.from === node)) {
-      levels.set(edge.to, Math.max(levels.get(edge.to)!, levels.get(node)! + 1));
-      incoming.set(edge.to, incoming.get(edge.to)! - 1);
-      if (incoming.get(edge.to) === 0) queue.push(edge.to);
-    }
-  }
-  const cyclic = processed !== visual.nodes.length;
-  const groups = new Map<number, typeof visual.nodes>();
-  visual.nodes.forEach((node, index) => { const level = cyclic ? index % 3 : levels.get(node.id)!; groups.set(level, [...(groups.get(level) ?? []), node]); });
-  const width = Math.max(580, groups.size * 230);
-  const height = Math.max(210, Math.max(...Array.from(groups.values(), (nodes) => nodes.length)) * 110 + 50);
-  const positions = new Map<string, { x: number; y: number }>();
-  for (const [level, nodes] of groups) nodes.forEach((node, index) => positions.set(node.id, { x: 100 + level * 230, y: 30 + (index + .5) * (height - 60) / nodes.length }));
+  const layout = useMemo(() => layoutDiagram(visual), [visual]);
+  const positions = new Map(layout.nodes.map((node) => [node.id, node]));
   const names = new Map(visual.nodes.map((node) => [node.id, node.label]));
   return <figure className="teaching-visual teaching-diagram" aria-labelledby={`${id}-title`}>
     <figcaption><strong id={`${id}-title`}>{visual.title}</strong><span className="teaching-kind">Diagram</span></figcaption>
     {visual.description && <p className="teaching-description">{visual.description}</p>}
     <div className="teaching-canvas" tabIndex={0} role="region" aria-label={`${visual.title}: scrollable diagram`}>
-      <svg viewBox={`0 0 ${width} ${height}`} style={{ minWidth: width }} role="img" aria-label={`${visual.title}. Relationships are listed below.`}>
+      <svg viewBox={`0 0 ${layout.width} ${layout.height}`} style={{ minWidth: layout.width }} role="img" aria-label={`${visual.title}. Relationships are listed below.`}>
         <defs><marker id={`${id}-arrow`} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0 0 L9 4.5 L0 9 Z" className="teaching-arrowhead" /></marker></defs>
-        {visual.edges.map((edge, index) => {
-          const from = positions.get(edge.from)!, to = positions.get(edge.to)!;
-          const forward = to.x >= from.x;
-          const x1 = from.x + (forward ? 84 : -84), x2 = to.x + (forward ? -88 : 88);
-          return <g key={index}><path className="teaching-edge" d={`M${x1} ${from.y} C${x1 + (forward ? 55 : -55)} ${from.y},${x2 - (forward ? 55 : -55)} ${to.y},${x2} ${to.y}`} markerEnd={`url(#${id}-arrow)`} />{edge.label && <text className="teaching-edge-label" x={(x1 + x2) / 2} y={(from.y + to.y) / 2 - 9} textAnchor="middle">{edge.label.length > 26 ? `${edge.label.slice(0, 25)}…` : edge.label}</text>}</g>;
-        })}
+        {layout.edges.map((edge, index) => <path className="teaching-edge" key={index} d={edge.path} markerEnd={`url(#${id}-arrow)`} />)}
         {visual.nodes.map((node) => { const position = positions.get(node.id)!; const lines = wrapLabel(node.label); return <g className="teaching-node" key={node.id} transform={`translate(${position.x - 84} ${position.y - 36})`}><rect width="168" height="72" rx="7" /><title>{node.label}</title><text x="84" y={40 - (lines.length - 1) * 8} textAnchor="middle">{lines.map((line, index) => <tspan key={index} x="84" dy={index ? 16 : 0}>{line}</tspan>)}</text></g>; })}
+        {layout.edges.map((edge, index) => edge.label && <text className="teaching-edge-label" key={index} x={edge.label.x} y={edge.label.y} textAnchor="middle">{edge.label.text}</text>)}
       </svg>
     </div>
     <details className="teaching-data"><summary>Read diagram relationships</summary><ul>{visual.edges.length ? visual.edges.map((edge, index) => <li key={index}>{names.get(edge.from)} → {names.get(edge.to)}{edge.label ? `: ${edge.label}` : ''}</li>) : visual.nodes.map((node) => <li key={node.id}>{node.label}</li>)}</ul></details>
