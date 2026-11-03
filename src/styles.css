@@ -68,7 +68,9 @@ h2 { font-size: 20px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 12px
 h3 { font-size: 16px; font-weight: 600; }
 p { line-height: 1.6; }
 svg { flex-shrink: 0; }
-html { scroll-padding-top: 72px; scrollbar-gutter: stable; }
+html { scroll-padding-top: 72px; }
+/* Keeps the header still between tabs that do and do not scroll. Not on phone widths: there the reserved strip let a focus scroll move the whole page sideways by its width. */
+@media (min-width: 701px) { html { scrollbar-gutter: stable; } }
 .topbar { position: sticky; z-index: 8; top: 0; height: 60px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; border-bottom: 1px solid var(--line); background: var(--page); }
 .topbar-leading { display: flex; align-items: center; gap: 14px; }
 .brand-name { display: inline-flex; align-items: center; gap: 8px; font-family: var(--display); font-variation-settings: var(--display-soft); font-size: 18px; font-weight: 600; letter-spacing: -.02em; }
