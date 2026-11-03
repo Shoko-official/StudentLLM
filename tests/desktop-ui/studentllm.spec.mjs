@@ -167,6 +167,35 @@ describe('StudentLLM packaged desktop workflow', () => {
     else expect(frameState.loaded).toBe(true);
   });
 
+  it('enforces the Content Security Policy in the packaged webview', async () => {
+    await expect(await visible('.topbar')).toBeDisplayed();
+    // Each canary must be blocked and must be reported as a violation: an inline script, a remote script, a remote request and a remote image.
+    // The WebDriver build uses the production policy (`tauri dev` is the only user of `devCsp`), so an inline script that ran would be a failure here.
+    const outcome = await browser.executeAsync((done) => {
+      const violations = [];
+      document.addEventListener('securitypolicyviolation', (event) => { violations.push(event.effectiveDirective); });
+      window.__cspInlineScriptRan = false;
+      const inline = document.createElement('script');
+      inline.textContent = 'window.__cspInlineScriptRan = true;';
+      document.head.append(inline);
+      const remote = document.createElement('script');
+      remote.src = 'https://example.com/studentllm-csp-canary.js';
+      document.head.append(remote);
+      const image = new Image();
+      image.src = 'https://example.com/studentllm-csp-canary.png';
+      let fetchOutcome = 'pending';
+      fetch('https://example.com/studentllm-csp-canary').then(() => { fetchOutcome = 'resolved'; }, () => { fetchOutcome = 'rejected'; });
+      setTimeout(() => done({ inlineScriptRan: window.__cspInlineScriptRan, fetchOutcome, violations }), 4_000);
+    });
+    console.log(`Content Security Policy canaries: ${JSON.stringify(outcome)}`);
+    expect(outcome.inlineScriptRan).toBe(false);
+    expect(outcome.fetchOutcome).toBe('rejected');
+    expect(outcome.violations.some((directive) => directive.startsWith('script-src'))).toBe(true);
+    expect(outcome.violations).toContain('connect-src');
+    expect(outcome.violations).toContain('img-src');
+    await expect(await visible('.topbar')).toBeDisplayed();
+  });
+
   it('opens no window for window.open or a target="_blank" link', async () => {
     const appOrigin = /^(?:tauri:\/\/localhost|https?:\/\/tauri\.localhost)(?:[/?#]|$)/;
     await expect(await visible('.topbar')).toBeDisplayed();

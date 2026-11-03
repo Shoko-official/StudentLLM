@@ -6,8 +6,9 @@ mod workspace;
 
 use std::time::Duration;
 
-use tauri::webview::NewWindowResponse;
-use tauri::{Emitter, Manager};
+#[cfg(debug_assertions)]
+use tauri::Emitter;
+use tauri::Manager;
 
 /// Creates the windows declared in `tauri.conf.json` (and in the `--config` overrides merged into
 /// it). Each has `"create": false`, so Tauri does not build them itself: only a window builder can
@@ -18,12 +19,14 @@ use tauri::{Emitter, Manager};
 /// can deadlock on Windows.
 fn create_windows(app: &tauri::AppHandle) -> tauri::Result<()> {
     for config in &app.config().app.windows {
+        #[cfg(debug_assertions)]
         let notifier = app.clone();
         tauri::WebviewWindowBuilder::from_config(app, config)?
             .on_new_window(move |url, _features| {
-                let response: NewWindowResponse<tauri::Wry> =
+                let response: tauri::webview::NewWindowResponse<tauri::Wry> =
                     navigation::new_window_response(&url);
-                if matches!(response, NewWindowResponse::Deny) {
+                #[cfg(debug_assertions)]
+                if matches!(response, tauri::webview::NewWindowResponse::Deny) {
                     announce_blocked_new_window(&notifier, &url);
                 }
                 response
@@ -36,9 +39,13 @@ fn create_windows(app: &tauri::AppHandle) -> tauri::Result<()> {
 /// Event emitted to the webviews when a new-window request was refused. Its payload is the scheme
 /// and host of the refused address only. Nothing in the app listens to it; the packaged WebDriver
 /// test does, because a refused request leaves no other trace that a test can observe (the
-/// WebDriver session does not list windows that the engine opens by itself).
+/// WebDriver session does not list windows that the engine opens by itself). Debug builds only:
+/// the WebDriver test builds in debug, and a release build has no use for it (so a script that
+/// spams `window.open` cannot flood the event channel there).
+#[cfg(debug_assertions)]
 const NEW_WINDOW_BLOCKED_EVENT: &str = "new-window-blocked";
 
+#[cfg(debug_assertions)]
 #[derive(Clone, serde::Serialize)]
 struct NewWindowBlocked {
     scheme: String,
@@ -47,6 +54,7 @@ struct NewWindowBlocked {
 
 /// Emits [`NEW_WINDOW_BLOCKED_EVENT`] from the async runtime, so that the webview's own event loop
 /// callback does not wait on the emit.
+#[cfg(debug_assertions)]
 fn announce_blocked_new_window(app: &tauri::AppHandle, url: &tauri::Url) {
     let app = app.clone();
     let payload = NewWindowBlocked {
