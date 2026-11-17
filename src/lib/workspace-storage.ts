@@ -311,6 +311,16 @@ export function migrateWithBackup(raw: string | null, snapshot: WorkspaceSnapsho
   return migrated !== snapshot && backUpBeforeMigration(raw, storage) ? migrated : snapshot;
 }
 
+/**
+ * True only inside a Tauri webview: the shell injects `__TAURI_INTERNALS__` (with `invoke`) before any page script runs.
+ * Unlike `isNativeRuntime`, a page served from `file:` or from `localhost` in a production browser build does not count.
+ */
+export function hasTauriBridge() {
+  if (typeof window === 'undefined') return false;
+  const internals = (window as Window & { __TAURI_INTERNALS__?: { invoke?: unknown } }).__TAURI_INTERNALS__;
+  return typeof internals?.invoke === 'function';
+}
+
 export function isNativeRuntime() {
   if (typeof window === 'undefined') return false;
   const internals = (window as Window & {

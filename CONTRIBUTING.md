@@ -9,6 +9,8 @@ npm run test:run
 npm run build
 ```
 
+The desktop app allows one instance per user session. With a StudentLLM instance running (installed, or left over from `npm run desktop:dev`), a new `npm run desktop:dev`, `npm run test:desktop-ui` or `node scripts/desktop-runtime-smoke.mjs` is handed over to it and exits with code 0 without running its checks. Quit the other instance first (see [docs/desktop.md](docs/desktop.md#single-instance)).
+
 Run browser tests and provider checks when the change touches those areas:
 
 ```bash
