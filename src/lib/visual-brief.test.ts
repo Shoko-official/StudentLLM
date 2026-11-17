@@ -1,0 +1,652 @@
+import { describe, expect, it } from 'vitest';
+import { appendVisualRequest, refusesVisual, compactVisualFences, describeEarlierVisuals, hasVisualFence, jobFromMarkdown, MAX_AUTOMATIC_VISUALS, missingArtefacts as findMissingArtefacts, parseVisualBrief, prepareTutorMarkdown, replaceVisualFence, streamingPreview, stripVisualNotes, visualFence } from './visual-brief';
+import { parseTeachingVisual, type TeachingVisual } from './teaching-visuals';
+
+const brief = { id: 'v1', type: 'quiz', intent: 'Check the idea', content: 'Ask about pressure' };
+const request = (value: unknown = brief) => '```student-visual-request\n' + JSON.stringify(value) + '\n```';
+const quiz = { type: 'quiz', title: 'Check', question: 'Q?', options: ['A', 'B'], answer: 1, explanation: 'B follows.' };
+const direct = (value: unknown) => '```student-visual\n' + JSON.stringify(value) + '\n```';
+const notGenerated = '[Visual not generated: Compare the two curves]';
+const shown = '[Visual shown to the learner: plot "Height", x from 0 to 7]';
+
+describe('stripVisualNotes', () => {
+  it.each([notGenerated, shown])('removes the whole line %s', (note) => {
+    expect(stripVisualNotes(`Answer.\n\n${note}`)).toBe('Answer.');
+    expect(stripVisualNotes(`${note}\n\nAnswer.`)).toBe('Answer.');
+    expect(stripVisualNotes(`Answer.\n\n  ${note}\t\n`)).toBe('Answer.');
+    expect(stripVisualNotes(note)).toBe('');
+  });
+
+  it('collapses the blank lines it leaves between paragraphs, and only those', () => {
+    expect(stripVisualNotes(`One.\n\n${notGenerated}\n\nTwo.`)).toBe('One.\n\nTwo.');
+    expect(stripVisualNotes(`One.\n\n${notGenerated}\n\n${shown}\n\n\nTwo.`)).toBe('One.\n\nTwo.');
+    expect(stripVisualNotes(`One.\n${shown}\nTwo.`)).toBe('One.\nTwo.');
+    expect(stripVisualNotes(`One.\n${shown}\n\nTwo.`)).toBe('One.\n\nTwo.');
+    expect(stripVisualNotes(`One.\n\n\n\nTwo.\n\n${shown}\n\nThree.\n`)).toBe('One.\n\n\n\nTwo.\n\nThree.\n');
+  });
+
+  it('handles CRLF line ends', () => {
+    expect(stripVisualNotes(`One.\r\n\r\n${notGenerated}\r\n\r\nTwo.`)).toBe('One.\r\n\r\nTwo.');
+    expect(stripVisualNotes(`One.\r\n\r\n${shown}\r\n`)).toBe('One.');
+  });
+
+  it.each([
+    ['a fence with a language', '```text\n[note]\n\n\n[note]\n```'],
+    ['a fence with no language', '```\n[note]\n```'],
+    ['a tilde fence', '~~~\n[note]\n~~~'],
+    ['an unclosed fence', '```text\n[note]'],
+    ['an indented code block', '    [note]'],
+    ['a fence in a list', '- item\n\n  ```text\n  [note]\n  ```'],
+  ])('keeps a note inside %s', (_name, sample) => {
+    const code = sample.replaceAll('[note]', notGenerated);
+    expect(stripVisualNotes(code)).toBe(code);
+    expect(stripVisualNotes(`${shown}\n\n${code}`)).toBe(code);
+  });
+
+  it.each([
+    `The tutor wrote ${notGenerated} earlier.`,
+    `${notGenerated} and more text.`,
+    `- ${shown}`,
+    '[Visual not generated: never closed',
+    'Visual not generated: no bracket]',
+    '[Visual aid: a real link label]',
+    '[Visual shown to someone: x]',
+  ])('keeps a line that is not only a note: %s', (line) => {
+    expect(stripVisualNotes(line)).toBe(line);
+    expect(stripVisualNotes(`One.\n\n${line}\n\nTwo.`)).toBe(`One.\n\n${line}\n\nTwo.`);
+  });
+
+  it('returns text with no note unchanged', () => {
+    for (const text of ['', 'Plain.\n\n\n', '\n\nA\r\n']) expect(stripVisualNotes(text)).toBe(text);
+  });
+});
+
+describe('parseVisualBrief', () => {
+  it('accepts a complete brief and keeps only known fields', () => {
+    const parsed = parseVisualBrief(JSON.stringify({ ...brief, type: 'plot', parameters: ['n'], outputs: ['Error'], checks: [{ output: 'Error', at: { n: 2 }, expected: 0.04, tolerance: 0.001 }], extra: 'dropped' }));
+    expect(parsed).toEqual({ ...brief, type: 'plot', parameters: ['n'], outputs: ['Error'], checks: [{ output: 'Error', at: { n: 2 }, expected: 0.04, tolerance: 0.001 }] });
+  });
+
+  it.each([
+    ['not JSON', '{'],
+    ['unknown type', JSON.stringify({ ...brief, type: 'mermaid' })],
+    ['bad id', JSON.stringify({ ...brief, id: 'a b' })],
+    ['long intent', JSON.stringify({ ...brief, intent: 'x'.repeat(301) })],
+    ['long content', JSON.stringify({ ...brief, content: 'x'.repeat(1501) })],
+    ['non-numeric check', JSON.stringify({ ...brief, checks: [{ output: 'E', at: { n: 'two' }, expected: 1 }] })],
+  ])('rejects %s', (_name, raw) => expect(parseVisualBrief(raw)).toBeNull());
+});
+
+describe('prepareTutorMarkdown', () => {
+  it('lists top-level requests in reading order with the prose around them', () => {
+    const second = { ...brief, id: 'v2' };
+    const { markdown, jobs } = prepareTutorMarkdown(`Before text.\n\n${request()}\n\nMiddle text.\n\n${request(second)}\n\nAfter text.`);
+    expect(jobs.map((job) => job.brief.id)).toEqual(['v1', 'v2']);
+    expect(jobs[0].section).toContain('Before text.');
+    expect(jobs[0].section).toContain('Middle text.');
+    expect(jobs[0].section).not.toContain('student-visual-request');
+    expect(markdown).toContain('Middle text.');
+  });
+
+  it('removes image payloads from the section before slicing it', () => {
+    const image = `![x](data:image/png;base64,${'AAAA'.repeat(1500)})`;
+    const { jobs } = prepareTutorMarkdown(`${image}\n\nBefore text.\n\n${request()}\n\n${'Z'.repeat(300)} ${image}`);
+    expect(jobs[0].section).toContain('Before text.');
+    expect(jobs[0].section).not.toContain('AAAA');
+  });
+
+  it('demotes malformed requests, duplicate ids and nested fences to inert text', () => {
+    const { markdown, jobs } = prepareTutorMarkdown(`${request()}\n\n${request()}\n\n> ${request({ ...brief, id: 'v3' }).replaceAll('\n', '\n> ')}\n\n` + '```student-visual-request\n{broken\n```');
+    expect(jobs.map((job) => job.brief.id)).toEqual(['v1']);
+    expect(markdown.match(/^```student-visual-request$/gm)).toHaveLength(1);
+    expect(markdown).toContain('```text');
+  });
+
+  it.each([
+    ['four backticks', '````'],
+    ['tildes', '~~~'],
+  ])('keeps a visual fence quoted inside a malformed %s outer fence inert', (_name, outer) => {
+    const input = [`${outer}student-visual-request`, '{broken', '```', '```student-visual-request', '{"id":"v9","type":"quiz","intent":"I","content":"C"}', '```', outer].join('\n');
+    const { markdown, jobs } = prepareTutorMarkdown(input);
+    expect(jobs).toEqual([]);
+    expect(prepareTutorMarkdown(markdown).jobs).toEqual([]);
+    expect(compactVisualFences(markdown)).toBe(markdown);
+  });
+
+  it('generates an id that does not collide with one the model already used', () => {
+    const taken = { ...brief, id: 'direct-2' };
+    const { jobs } = prepareTutorMarkdown(`${request(taken)}\n\n${direct({ ...quiz, answer: 9 })}`);
+    expect(jobs).toHaveLength(2);
+    expect(new Set(jobs.map((job) => job.brief.id)).size).toBe(2);
+    expect(jobs[0].brief.id).toBe('direct-2');
+  });
+
+  it('leaves ordinary code fences untouched, even when they mention a visual fence', () => {
+    const code = '```python\ntext = "```student-visual"\n```';
+    expect(prepareTutorMarkdown(`Intro.\n\n${code}`).markdown).toBe(`Intro.\n\n${code}`);
+  });
+
+  it('canonicalizes a valid direct visual without creating a job', () => {
+    const { markdown, jobs } = prepareTutorMarkdown(`Text.\n\n${direct({ ...quiz, unknown: 1 })}`);
+    expect(jobs).toEqual([]);
+    expect(markdown).toContain(visualFence(parseTeachingVisual(JSON.stringify(quiz))!));
+    expect(markdown).not.toContain('unknown');
+  });
+
+  it('turns an invalid direct visual of a known type into a job that carries its output', () => {
+    const invalid = { ...quiz, answer: 9 };
+    const { markdown, jobs } = prepareTutorMarkdown(`Text.\n\n${direct(invalid)}`);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].brief.type).toBe('quiz');
+    expect(jobs[0].initialOutput).toBe(JSON.stringify(invalid));
+    expect(markdown).toContain('```student-visual-request');
+    expect(prepareTutorMarkdown(`Text.\n\n${direct({ type: 'mermaid', title: 'T' })}`).jobs).toEqual([]);
+  });
+});
+
+describe('prepareTutorMarkdown fence safety', () => {
+  const diagram = { type: 'diagram', title: 'Hidden visual', nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], edges: [{ from: 'a', to: 'b', label: 'then' }] };
+  const raw = JSON.stringify(diagram);
+  const requestRaw = JSON.stringify({ ...brief, id: 'hidden' });
+  // Each way a model, or a prompt injection, can dress a fence so that a reader sees code but a looser parser sees a visual.
+  const disguised = (body: string) => [
+    ['quoted tildes', (language: string) => `> ~~~${language}\n> ${body}\n> ~~~`],
+    ['in a list', (language: string) => `- \`\`\`${language}\n  ${body}\n  \`\`\``],
+    ['escaped hyphen', (language: string) => '```' + language.replace('-', '\\-') + '\n' + body + '\n```'],
+    ['numeric entity for the hyphen', (language: string) => '```' + language.replace('-', '&#45;') + '\n' + body + '\n```'],
+    ...['&#32;metadata', '&Tab;metadata', '&NewLine;metadata', '&#160;metadata'].map((suffix) => [`entity ${suffix}`, (language: string) => '```' + language + suffix + '\n' + body + '\n```'] as const),
+    ...['&#32;', '&Tab;'].map((prefix) => [`leading entity ${prefix}`, (language: string) => '```' + prefix + language + '\n' + body + '\n```'] as const),
+  ] as const;
+
+  describe.each([['student-visual', raw], ['student-visual-request', requestRaw]])('a %s fence', (language, body) => {
+    it.each(disguised(body))('stays inert code when it is %s', (_name, wrap) => {
+      const { markdown, jobs } = prepareTutorMarkdown(wrap(language));
+      expect(jobs).toEqual([]);
+      expect(hasVisualFence(markdown)).toBe(false);
+      expect(markdown).toContain(body);
+      expect(markdown).toMatch(/(?:```|~~~)text\n/);
+      expect(markdown).not.toMatch(new RegExp('(?:```|~~~)\\s*' + language));
+      expect(prepareTutorMarkdown(markdown)).toEqual({ markdown, jobs: [] });
+    });
+  });
+
+  it.each([
+    ['a plain fence', (body: string) => '```student-visual\n' + body + '\n```'],
+    ['a long fence with spaces and extra words in its info string', (body: string) => '```` \tstudent-visual metadata\n' + body + '\n````'],
+  ])('lets %s through only as the canonical visual the real parser accepts', (_name, wrap) => {
+    const { markdown, jobs } = prepareTutorMarkdown(wrap(JSON.stringify({ ...diagram, payload: '<script>secret</script>' })));
+    expect(jobs).toEqual([]);
+    expect(markdown).toBe(visualFence(parseTeachingVisual(raw)!));
+    expect(markdown).not.toContain('secret');
+  });
+
+  it('keeps the prose and shows a redundant placeholder fence as inert text', () => {
+    const { markdown, jobs } = prepareTutorMarkdown('## Pression\n\nÀ 10 m, la pression relative vaut 98100 Pa.\n\n```student-visual\n(voir bloc visuel ci-joint)\n```');
+    expect(markdown).toContain('98100 Pa.');
+    expect(markdown).toContain('```text\n(voir bloc visuel ci-joint)\n```');
+    expect(jobs).toEqual([]);
+    expect(hasVisualFence(markdown)).toBe(false);
+  });
+
+  it('keeps ordinary Python fence info and a literal visual fence inside its body, byte for byte', () => {
+    const markdown = 'Exemple 🧪\r\n\r\n````python linenos\r\nexample = """\r\n```student-visual\r\n{}\r\n```\r\n"""\r\nprint(example)\r\n````';
+    expect(prepareTutorMarkdown(markdown)).toEqual({ markdown, jobs: [] });
+    const request = '```student-visual-request\n' + requestRaw + '\n```';
+    const quoted = '~~~python\nexample = """\n' + request + '\n"""\n~~~';
+    expect(prepareTutorMarkdown(quoted)).toEqual({ markdown: quoted, jobs: [] });
+  });
+
+  it.each([
+    ['a quote', '> ```python\r\n> print(1)\r\n\r\n', '> ```python\r\n> print(1)\r\n\r\n'],
+    ['a list item', '- Item\r\n  ```python\r\n  print(1)\r\n\r\n', '- Item\r\n  ```python\r\n  print(1)\r\n\r\n'],
+  ])('finds the real fence that follows a code block ended implicitly by %s, with CRLF offsets', (_name, before, kept) => {
+    const placeholder = prepareTutorMarkdown(before + '```student-visual\r\n{}\r\n```');
+    expect(placeholder.markdown.startsWith(kept)).toBe(true);
+    expect(placeholder.markdown.slice(kept.length)).toBe('```text\n{}\n```');
+    expect(hasVisualFence(placeholder.markdown)).toBe(false);
+    const real = prepareTutorMarkdown(before + '```student-visual-request\r\n' + requestRaw + '\r\n```');
+    expect(real.markdown.startsWith(kept)).toBe(true);
+    expect(real.jobs.map((job) => job.brief.id)).toEqual(['hidden']);
+  });
+});
+
+describe('prepareTutorMarkdown and copied notes', () => {
+  it('never saves a copied note, and a real request next to it still makes a job', () => {
+    const { markdown, jobs } = prepareTutorMarkdown(`Text.\n\n${notGenerated}\n\n${request()}\n\n${shown}`);
+    expect(markdown).toBe(`Text.\n\n${request()}`);
+    expect(jobs.map((job) => job.brief.id)).toEqual(['v1']);
+    expect(jobs[0].section).not.toContain('Visual not generated');
+    expect(jobs[0].section).not.toContain('shown to the learner');
+    expect(hasVisualFence(markdown)).toBe(true);
+  });
+
+  it('leaves no visual fence behind when only a note was written', () => {
+    const { markdown, jobs } = prepareTutorMarkdown(`Text.\n\n${notGenerated}`);
+    expect(markdown).toBe('Text.');
+    expect(jobs).toEqual([]);
+    expect(hasVisualFence(markdown)).toBe(false);
+  });
+
+  it('keeps a note the tutor quotes in a code sample', () => {
+    const sample = '```text\n' + notGenerated + '\n```';
+    expect(prepareTutorMarkdown(`Text.\n\n${sample}`).markdown).toBe(`Text.\n\n${sample}`);
+  });
+});
+
+describe('fence replacement', () => {
+  it('replaces only the requested fence and keeps surrounding text', () => {
+    const markdown = `A\n\n${request()}\n\nB\n\n${request({ ...brief, id: 'v2' })}`;
+    const result = replaceVisualFence(markdown, 'v2', 'DONE');
+    expect(result).toBe(`A\n\n${request()}\n\nB\n\nDONE`);
+    expect(replaceVisualFence(markdown, 'missing', 'DONE')).toBe(markdown);
+  });
+
+  it('rebuilds a job for a retry', () => {
+    expect(jobFromMarkdown(`A\n\n${request()}`, 'v1')?.brief.intent).toBe('Check the idea');
+    expect(jobFromMarkdown(`A\n\n${request()}`, 'v9')).toBeNull();
+  });
+});
+
+describe('compactVisualFences', () => {
+  const plot: TeachingVisual = { type: 'plot', title: 'Height', x: { min: 0, max: 7 }, parameters: [{ name: 'v0', label: 'Speed', min: 5, max: 30, step: 5, value: 20 }], series: [{ label: 'h', expression: 'v0*x-4.9*x^2' }], outputs: [{ label: 'Peak', expression: 'v0^2/19.6', unit: 'm' }] };
+
+  it('keeps what a follow-up needs without replaying the JSON', () => {
+    const compact = compactVisualFences(`Text.\n\n${visualFence(plot)}`);
+    expect(compact).toContain('Text.');
+    expect(compact).toContain('Height');
+    expect(compact).toContain('v0*x-4.9*x^2');
+    expect(compact).toContain('v0 from 5 to 30');
+    expect(compact).not.toContain('"series"');
+  });
+
+  it('compacts quizzes and pending requests, and returns other text unchanged', () => {
+    expect(compactVisualFences(visualFence(parseTeachingVisual(JSON.stringify(quiz))!))).toContain('correct option: B');
+    expect(compactVisualFences('Plain text.')).toBe('Plain text.');
+  });
+
+  it('removes a pending request with no replacement and collapses the gap', () => {
+    expect(compactVisualFences(request())).toBe('');
+    expect(compactVisualFences(`Before.\n\n${request()}`)).toBe('Before.');
+    expect(compactVisualFences(`Before.\n\n${request()}\n\nAfter.`)).toBe('Before.\n\nAfter.');
+    expect(compactVisualFences(`Before.\r\n\r\n${request()}\r\n\r\nAfter.`)).toBe('Before.\r\n\r\nAfter.');
+    expect(compactVisualFences(`Before.\n\n${request()}\n\n    indented code`)).toBe('Before.\n\n    indented code');
+    expect(compactVisualFences(`Before.\n\n${request()}`)).not.toContain('Visual not generated');
+  });
+
+  it('removes a pending request and keeps a real visual beside it', () => {
+    const compact = compactVisualFences(`Before.\n\n${request()}\n\n${direct(quiz)}\n\nAfter.`);
+    expect(compact).toMatch(/^Before\.\n\n\[Visual shown to the learner: quiz "Check": Q\? correct option: B\]\n\nAfter\.$/);
+  });
+
+  it('cleans notes saved in old answers, with and without a fence', () => {
+    expect(compactVisualFences(`Old answer.\n\n${notGenerated}\n\n${shown}`)).toBe('Old answer.');
+    expect(compactVisualFences(notGenerated)).toBe('');
+    expect(compactVisualFences(`Old answer.\n\n${notGenerated}\n\n${direct(quiz)}`)).toBe('Old answer.\n\n[Visual shown to the learner: quiz "Check": Q? correct option: B]');
+    expect(compactVisualFences(`Old answer.\n\n${shown}\n\n${request()}`)).toBe('Old answer.');
+  });
+
+  it('writes a note on one line, so a copy of it can always be removed', () => {
+    const figure = parseTeachingVisual(JSON.stringify({ type: 'figure', title: 'T', description: 'First line.\nSecond line.', width: 400, height: 240, shapes: [{ type: 'text', x: 20, y: 40, text: 'a' }] }));
+    expect(figure).not.toBeNull();
+    const note = compactVisualFences(visualFence(figure!));
+    expect(note.split('\n')).toHaveLength(1);
+    expect(note).toContain('First line. Second line.');
+    expect(stripVisualNotes(note)).toBe('');
+  });
+
+  it('keeps an unreadable visual fence as it is', () => {
+    const invalid = '```student-visual\n{"type":"plot","title":"Courbe"}\n```';
+    expect(compactVisualFences(invalid)).toBe(invalid);
+  });
+});
+
+describe('hasVisualFence', () => {
+  it('is true for a request or a direct fence', () => {
+    expect(hasVisualFence('Text.\n\n' + request())).toBe(true);
+    expect(hasVisualFence('Text.\n\n' + direct(quiz))).toBe(true);
+  });
+
+  it('is false for plain prose, other code fences and demoted fences', () => {
+    expect(hasVisualFence('Plain prose.')).toBe(false);
+    expect(hasVisualFence('```python\nprint(1)\n```')).toBe(false);
+    expect(hasVisualFence('> ' + request().replace(/\n/g, '\n> '))).toBe(false);
+    expect(hasVisualFence('- item\n\n  ' + request().replace(/\n/g, '\n  '))).toBe(false);
+    expect(hasVisualFence('````text\n' + request() + '\n````')).toBe(false);
+  });
+
+  it('is false for a malformed request once the markdown is prepared', () => {
+    const prepared = prepareTutorMarkdown('Text.\n\n```student-visual-request\n{"id":"v1"}\n```').markdown;
+    expect(hasVisualFence(prepared)).toBe(false);
+  });
+});
+
+describe('appendVisualRequest', () => {
+  it('appends the request after the trimmed text and returns its job', () => {
+    const result = appendVisualRequest('Answer.\n\n  ', parseVisualBrief(JSON.stringify(brief))!);
+    expect(result.markdown).toBe('Answer.\n\n' + request());
+    expect(result.job).toMatchObject({ brief });
+    expect(result.job?.section).toContain('Answer.');
+    expect(hasVisualFence(result.markdown)).toBe(true);
+  });
+
+  const quizBrief = parseVisualBrief(JSON.stringify(brief))!;
+  const plotBrief = parseVisualBrief(JSON.stringify({ ...brief, type: 'plot' }))!;
+
+  it.each([
+    ['a labelled question with choices and a correction', 'Quiz : Quelle est la valeur en $x=1$ ? Choix : 2, 2,5, 3. Correction : 2,5.'],
+    ['a labelled question with choices', 'Quiz : Quelle quantité reste après 16 minutes ? Choix : 20 mg, 10 mg, 5 mg.'],
+    ['a bold label over a question with choices', '**Quiz**\nUn essai avec n=5. Quelle est P(X=0) ?\nChoix : 0,05 ; 0,168. Correction : 0,168.'],
+    ['a bold label with its colon inside', '**Quiz :** What is the run time? Choices: 30, 48.'],
+    ['lettered choices in the paragraph', 'QCM : Que vaut X ?\nA) 1\nB) 2'],
+    ['a heading over a question with choices', '# Quiz\n\nA job takes 240 minutes. What is the run time? Options: 30, 48.'],
+    ['a label alone over a question with choices', '**Quiz**\n\nWhat is the run time? Choices: 30, 48.'],
+    ['a labelled question over paragraphs of choices and a correction', 'Quiz: What is the run time?\n\nA) 30\n\nB) 48\n\nCorrection: B.'],
+    ['a labelled quiz and its short answer', 'Quiz : Que vaut X ? Choix : 1, 2.\n\nRéponse : 2.'],
+    ['a labelled quiz and a choices paragraph', 'Quiz : Que vaut X ?\n\nChoix : 1, 2.'],
+  ])('removes %s when a quiz request takes over, keeping the explanation', (_name, written) => {
+    const result = appendVisualRequest(`The explanation.\n\n${written}\n\nThe summary.`, quizBrief);
+    expect(result.markdown).toBe(`The explanation.\n\nThe summary.\n\n${request()}`);
+    expect(result.job?.section).not.toContain(written.split('\n')[0]);
+  });
+
+  it.each([
+    ['an explanation that mentions a quiz', 'A quiz checks what you know. Why does that help?'],
+    ['an explanation that starts with the word', 'Quiz scores help retention. Why does that help?'],
+    ['a label with no question', 'Quiz : les valeurs de la formule sont importantes pour la suite.'],
+    ['a heading over an explanation', '# Quiz\n\nThe period grows with the length.'],
+    ['a question with no label', 'Which value would you pick?'],
+    ['a label over a list of choices, which removing would orphan', 'Quiz : What is the run time?\n\n- 30\n- 48'],
+    ['a label in a quote', '> Quiz : What is the run time? Choices: 30, 48.'],
+    // A question mark does not make a quiz: only choices do.
+    ['a question and no choices', 'Quiz : Quelle est la valeur de G ?'],
+    ['a heading over a question and no choices', '# Quiz\n\nA job takes 240 minutes. What is the run time?'],
+    ['a question whose answer is explained below', 'Quiz : Quelle est la valeur de G ?\n\nRéponse : 0,6 car G = r*N. Cela vient de la formule logistique, qui explique la croissance.'],
+    ['a French explanation under a heading', '## Quiz\n\nPourquoi la période augmente-t-elle avec la longueur ? Parce que la force de rappel varie moins vite ; cette idée est au coeur du cours.'],
+    ['a French explanation under a bold label', "**Quiz**\n\nAvant de te tester, retiens ceci : la dérivée mesure la pente. Pourquoi ? Parce que c'est la limite du taux d'accroissement."],
+    ['a French rhetorical question and its answer', "Quiz : tu te demandes sans doute pourquoi la pente change ? La pente change parce que la dérivée dépend de x, et c'est le point central de la leçon."],
+    ['an English rhetorical question and its answer', 'Quiz: why does the slope change? It changes because the derivative depends on x, which is the point of this lesson.'],
+    ['an English explanation under a heading', '## Quiz\n\nWhy does the period grow with the length? Because the restoring force varies more slowly, and that idea is the core of the course.'],
+    ['words that look like an answer label', 'Quiz: answer: mean = sum / n, which is the definition you must learn.'],
+    ['words that look like a choices label', 'Quiz: options: the two choices of method are integration by parts and substitution, the core of this chapter.'],
+    ['choices with no question', 'QCM : la valeur vaut. Choices: 2, 3, 4.'],
+    ['an explanation before the choices', 'Quiz : pourquoi ça monte ? Parce que la pente est positive, donc la courbe croît. Choix : 1, 2.'],
+    ['an explanation after the choices', 'Quiz : Que vaut X ? Choix : 1, 2. Correction : 2, parce que X est la somme de 1 et 1, ce qui se voit dans la formule du cours.'],
+  ])('leaves %s', (_name, written) => {
+    const text = `The explanation.\n\n${written}`;
+    expect(appendVisualRequest(text, quizBrief).markdown).toBe(`${text}\n\n${request()}`);
+  });
+
+  it('removes the quiz but leaves an answer paragraph that explains', () => {
+    const answer = 'Réponse : 2, car X est la somme de 1 et 1. Cela vient de la formule logistique, qui explique la croissance.';
+    expect(appendVisualRequest(`The explanation.\n\nQuiz : Que vaut X ? Choix : 1, 2.\n\n${answer}`, quizBrief).markdown).toBe(`The explanation.\n\n${answer}\n\n${request()}`);
+  });
+
+  it('removes nothing for a request of another type', () => {
+    const text = 'The explanation.\n\nQuiz : What is the run time? Choices: 30, 48.';
+    expect(appendVisualRequest(text, plotBrief).markdown).toBe(`${text}\n\n${request(plotBrief)}`);
+  });
+
+  it('keeps a quiz that is all the prose there is, so the answer is never left empty', () => {
+    const text = 'Quiz : What is the run time? Choices: 30, 48.';
+    expect(appendVisualRequest(text, quizBrief).markdown).toBe(`${text}\n\n${request()}`);
+  });
+
+  it('leaves a request fence and a built visual around the removed quiz', () => {
+    const text = `Before.\n\n${request({ ...brief, id: 'v9', type: 'plot' })}\n\nQuiz : What is it? Choices: 1, 2.\n\nAfter.\n\n${direct(quiz)}`;
+    expect(appendVisualRequest(text, quizBrief).markdown).toBe(`Before.\n\n${request({ ...brief, id: 'v9', type: 'plot' })}\n\nAfter.\n\n${direct(quiz)}\n\n${request()}`);
+  });
+});
+
+describe('streamingPreview', () => {
+  const json = JSON.stringify(brief);
+
+  it('leaves plain text and an empty answer alone', () => {
+    expect(streamingPreview('')).toBe('');
+    expect(streamingPreview('Some **text**\n')).toBe('Some **text**\n');
+  });
+
+  it.each(['student-visual-request', 'student-visual'])('removes a closed %s fence and keeps the text after it', (language) => {
+    const preview = streamingPreview('Before.\n\n```' + language + '\n' + json + '\n```\n\nAfter.');
+    expect(preview).toContain('Before.');
+    expect(preview).toContain('After.');
+    expect(preview).not.toContain(language);
+    expect(preview).not.toContain('Check the idea');
+    expect(preview).not.toContain('```');
+  });
+
+  it('removes several fences', () => {
+    const preview = streamingPreview(`One.\n\n${request()}\n\nTwo.\n\n${direct(quiz)}\n\nThree.`);
+    expect(preview.replace(/\s+/g, ' ').trim()).toBe('One. Two. Three.');
+  });
+
+  it.each(['student-visual-request', 'student-visual'])('hides an unclosed %s fence from its opening line to the end', (language) => {
+    expect(streamingPreview('Before.\n\n```' + language + '\n{"id":"v1"\nmore text\n\nand more').trim()).toBe('Before.');
+    expect(streamingPreview('Before.\n\n```' + language + '\n').trim()).toBe('Before.');
+    expect(streamingPreview('Before.\n\n```' + language).trim()).toBe('Before.');
+  });
+
+  it('accepts a longer or tilde fence, which closes only with a run at least as long', () => {
+    expect(streamingPreview('A.\n\n````student-visual-request\n{"a":1}\n```\nstill hidden\n````\nB.').replace(/\s+/g, ' ').trim()).toBe('A. B.');
+    expect(streamingPreview('A.\n\n````student-visual-request\n{"a":1}\n```\nstill hidden').trim()).toBe('A.');
+    expect(streamingPreview('A.\n\n~~~student-visual\n{"a":1}\n```\nstill hidden\n~~~\nB.').replace(/\s+/g, ' ').trim()).toBe('A. B.');
+    expect(streamingPreview('A.\n\n~~~~~student-visual\n{"a":1}\n~~~~\nstill hidden').trim()).toBe('A.');
+  });
+
+  it('accepts CRLF and an info string after the language', () => {
+    expect(streamingPreview('A.\r\n\r\n```student-visual-request\r\n{"a":1}\r\n```\r\n\r\nB.').replace(/\s+/g, ' ').trim()).toBe('A. B.');
+    expect(streamingPreview('A.\n\n```student-visual extra words\n{"a":1}').trim()).toBe('A.');
+  });
+
+  it.each(['```', '````', '~~~', '```s', '```student', '```student-', '```student-visual-req', '~~~student-v', '  ```stud', '```stud '])('hides a last line %j that could still become a visual fence', (line) => {
+    expect(streamingPreview('Before.\n\n' + line).trim()).toBe('Before.');
+    expect(streamingPreview(line).trim()).toBe('');
+  });
+
+  it.each(['```p', '```python', '~~~text', '``', '`', 'a ```', '```student_visual', '```Student', '```student-visual-requests'])('keeps a last line %j that cannot become a visual fence', (line) => {
+    expect(streamingPreview('Before.\n\n' + line)).toContain(line.trim());
+  });
+
+  it('keeps a normal code block visible, closed or unclosed', () => {
+    expect(streamingPreview('```python\nprint(1)\n```\n\nAfter.')).toBe('```python\nprint(1)\n```\n\nAfter.');
+    expect(streamingPreview('```python\nprint(1)')).toBe('```python\nprint(1)');
+    expect(streamingPreview('```\nplain\n')).toBe('```\nplain\n');
+    expect(streamingPreview('```\nplain')).toBe('```\nplain');
+  });
+
+  it('keeps a visual fence quoted inside a normal code block', () => {
+    const quoted = '````markdown\n```student-visual-request\n{"id":"v1"}\n```\n````';
+    expect(streamingPreview(quoted)).toBe(quoted);
+    expect(streamingPreview(quoted.slice(0, -5))).toBe(quoted.slice(0, -5));
+    expect(streamingPreview('````markdown\n```student')).toBe('````markdown\n```student');
+  });
+
+  it('keeps the line that closes a normal code block visible while it arrives', () => {
+    expect(streamingPreview('```python\nprint(1)\n```')).toBe('```python\nprint(1)\n```');
+  });
+
+  it('does not read an indented code line as a fence', () => {
+    expect(streamingPreview('    ```student')).toBe('    ```student');
+  });
+
+  it('also hides a visual fence nested in a list or a quote', () => {
+    expect(streamingPreview('1. Step\n\n   ```student-visual-request\n   {"id":"v1"}\n   ```\n\nAfter.')).not.toContain('v1');
+    expect(streamingPreview('> ```student-visual\n> {"id":"v1"}')).not.toContain('v1');
+  });
+
+  it('never shows a request at any prefix of an answer', () => {
+    const fence = '```student-visual-request\n' + JSON.stringify(brief, null, 2) + '\n```';
+    const answer = `# Pressure\n\nPressure is force over area.\n\n\`\`\`python\nprint("kept")\n\`\`\`\n\n${fence}\n\nAfter the first visual.\n\n~~~~student-visual\n${JSON.stringify(quiz)}\n~~~~\n\nThe end.`;
+    const raw = [/"id"/, /"intent"/, /Check the idea/, /Ask about pressure/, /"question"/, /B follows/, /student-/, /\{/];
+    for (let end = 0; end <= answer.length; end++) {
+      const preview = streamingPreview(answer.slice(0, end));
+      for (const pattern of raw) expect(preview, `prefix of ${end} characters`).not.toMatch(pattern);
+    }
+    const complete = streamingPreview(answer);
+    for (const kept of ['# Pressure', 'print("kept")', 'After the first visual.', 'The end.']) expect(complete).toContain(kept);
+  });
+
+  it('never shows a copied note at any prefix of an answer', () => {
+    const notes = ['[Visual not generated:', '[Visual shown to the learner:'];
+    const prefixes = notes.flatMap((note) => Array.from({ length: note.length - '[Visual'.length }, (_, i) => note.slice(0, '[Visual'.length + i + 1)));
+    for (const answer of [
+      `# Pressure\n\nForce over area.\n\n${notGenerated}\n\n${shown}`,
+      `# Pressure\r\n\r\n  ${shown}  \r\n${notGenerated}\r\n`,
+      `${notGenerated}\n\nAfter the note.\n\n${shown}\n\nThe end.`,
+      `\`\`\`text\nquoted\n\`\`\`\n\n${shown}`,
+    ]) for (let end = 0; end <= answer.length; end++) {
+      const preview = streamingPreview(answer.slice(0, end));
+      for (const prefix of prefixes) expect(preview, `${JSON.stringify(answer)} at ${end}`).not.toContain(prefix);
+      expect(preview, `${JSON.stringify(answer)} at ${end}`).not.toContain('[Vis');
+    }
+  });
+
+  it('shows the text after a closed note line', () => {
+    expect(streamingPreview(`One.\n\n${notGenerated}\n\nTwo`)).toBe('One.\n\nTwo');
+    expect(streamingPreview(`${shown}\nTwo`)).toBe('Two');
+  });
+
+  it('holds a last line only while it can still become a note', () => {
+    expect(streamingPreview('One.\n\n[')).toBe('One.\n\n');
+    expect(streamingPreview('One.\n\n  [Visual sh')).toBe('One.\n\n');
+    expect(streamingPreview('One.\n\n[1')).toBe('One.\n\n[1');
+    expect(streamingPreview('[link](url)')).toBe('[link](url)');
+    expect(streamingPreview('[Visual a')).toBe('[Visual a');
+    expect(streamingPreview('[Visual not generated: x] and')).toBe('');
+    expect(streamingPreview('[Visual not generated: x] and\n')).toBe('[Visual not generated: x] and\n');
+  });
+
+  it('keeps a line that merely starts like a note inside a code block', () => {
+    expect(streamingPreview('```text\n[Vis')).toBe('```text\n[Vis');
+    expect(streamingPreview('```text\n' + notGenerated + '\n')).toBe('```text\n' + notGenerated + '\n');
+  });
+});
+
+describe('describeEarlierVisuals', () => {
+  const shownQuiz = (index: number) => direct({ ...quiz, title: `Check ${index}`, question: `Q${index}?` });
+
+  it('describes the real visuals of each message in order, as compactVisualFences does', () => {
+    const plot = { type: 'plot', title: 'Height', x: { min: 0, max: 7 }, parameters: [{ name: 'v0', label: 'Speed', min: 5, max: 30, step: 5, value: 20 }], series: [{ label: 'h', expression: 'v0*x' }] };
+    const described = describeEarlierVisuals([`First.\n\n${direct(plot)}`, `Second.\n\n${shownQuiz(1)}`]);
+    expect(described).toEqual(['plot "Height", x from 0 to 7. parameters: v0 from 5 to 30 step 5, initial 20. series: h = v0*x', 'quiz "Check 1": Q1? correct option: B']);
+    expect(compactVisualFences(`${direct(plot)}`)).toContain(described[0]);
+  });
+
+  it('ignores requests that were never built, invalid fences, notes and fences quoted in code', () => {
+    expect(describeEarlierVisuals([`Text.\n\n${request()}`, `${notGenerated}\n\n${shown}`, direct({ type: 'quiz' }), '````md\n' + shownQuiz(1) + '\n````'])).toEqual([]);
+  });
+
+  it('keeps the most recent entries when there are more than six', () => {
+    const contents = [1, 2, 3, 4].map((index) => `${shownQuiz(index * 2 - 1)}\n\n${shownQuiz(index * 2)}`);
+    const described = describeEarlierVisuals(contents);
+    expect(described).toHaveLength(6);
+    expect(described[0]).toContain('Check 3');
+    expect(described[5]).toContain('Check 8');
+  });
+
+  it('cuts each description at 300 characters and writes it on one line', () => {
+    const figure = { type: 'figure', title: 'T', description: 'First line.\n' + 'x'.repeat(400), width: 400, height: 240, shapes: [{ type: 'text', x: 20, y: 40, text: 'a' }] };
+    const [described] = describeEarlierVisuals([direct(figure)]);
+    expect(described).toHaveLength(300);
+    expect(described).toContain('First line. xxx');
+  });
+
+  it('never splits a surrogate pair when it cuts', () => {
+    const emoji = String.fromCodePoint(0x1F600);
+    const figure = { type: 'figure', title: 'T', description: 'x'.repeat(287) + emoji + 'y'.repeat(50), width: 400, height: 240, shapes: [{ type: 'text', x: 20, y: 40, text: 'a' }] };
+    const [described] = describeEarlierVisuals([direct(figure)]);
+    expect([...described]).toHaveLength(300);
+    expect(described.endsWith(emoji)).toBe(true);
+    expect(described.charCodeAt(described.length - 1)).toBeGreaterThanOrEqual(0xDC00);
+  });
+
+  it('returns nothing without a visual fence', () => {
+    expect(describeEarlierVisuals([])).toEqual([]);
+    expect(describeEarlierVisuals(['Plain text.', ''])).toEqual([]);
+  });
+});
+
+describe('refusesVisual', () => {
+  it.each([
+    'Sans schéma, explique le cycle.',
+    'Pas de graphique, juste le texte.',
+    'No diagram please, explain it.',
+    'Explain it without a chart.',
+    "Don't draw anything, just explain.",
+    'text only',
+    "Don't use diagrams.",
+    'never show a chart',
+    'Ne me montre pas de schéma.',
+    'Fais un tableau, pas un graphique.',
+    'Montre-moi la formule, pas le graphique.',
+    "Montre-moi plutôt un tableau qu'un schéma.",
+    "Fais-moi un résumé au lieu d'un schéma.",
+    'Show a table, not a diagram.',
+    'Show me a table instead of a diagram.',
+    'Show me a table, I do not want a graph.',
+    "Draw a table, I don't need a diagram.",
+    'Show me the numbers, not a graph.',
+    'Give me the answer rather than a diagram.',
+    "Je ne veux pas de schéma.",
+    "Pas besoin d'un graphique.",
+  ])('is true for %j', (text) => { expect(refusesVisual(text)).toBe(true); });
+
+  it.each([
+    'Montre-moi un schéma du cycle.',
+    'Actually, show me a diagram of it.',
+    'What does this graph mean?',
+    "J'ai besoin d'un schéma.",
+    'I need a diagram of the circuit.',
+    "I don't understand the graph.",
+    'Je ne comprends pas le graphique.',
+    'This is not the time to draw.',
+    // Style requests that name no visual are not a refusal of visuals.
+    "Don't use jargon.",
+    'Please do not make it long.',
+    'never show your work',
+    'Do not use the formula yet.',
+    'ne me montre pas la solution',
+    "don't make a fuss",
+    "Don't make it too long.",
+    "Je n'ai pas le temps de faire un point.",
+    'Explique la différence entre un diagramme et un tableau.',
+    '',
+  ])('is false for %j', (text) => { expect(refusesVisual(text)).toBe(false); });
+
+  it('ignores a refusal written inside code', () => {
+    expect(refusesVisual(['Voici :', '```', 'sans schéma', '```'].join(String.fromCharCode(10)))).toBe(false);
+  });
+});
+
+describe('missingArtefacts', () => {
+  const missingArtefacts = (question: string, markdown: string) => findMissingArtefacts(question, markdown).map((types) => types.join('|'));
+  const fence = (type: string, id = 'v1') => '```student-visual-request\n' + JSON.stringify({ id, type, intent: 'I', content: 'C' }) + '\n```';
+
+  it('returns each named type with no request or visual, in the order of the message', () => {
+    expect(missingArtefacts('Fais un graphique, ajoute un arbre et termine par un quiz.', 'Prose.')).toEqual(['plot', 'diagram', 'quiz']);
+    expect(missingArtefacts('Fais un graphique et un quiz.', `Prose.\n\n${fence('plot')}`)).toEqual(['quiz']);
+    expect(missingArtefacts('Fais un graphique et un quiz.', `Prose.\n\n${fence('plot')}\n\n${direct(quiz)}`)).toEqual([]);
+  });
+
+  it('counts what is there against an explicit count', () => {
+    expect(missingArtefacts('Fais un seul graphique.', `Prose.\n\n${fence('plot')}`)).toEqual([]);
+    expect(missingArtefacts('Fais deux graphiques.', `Prose.\n\n${fence('plot')}`)).toEqual(['plot']);
+    expect(missingArtefacts('Fais deux graphiques.', 'Prose.')).toEqual(['plot', 'plot']);
+  });
+
+  it('stays within the limit of automatic visuals', () => {
+    const three = [1, 2, 3].map((n) => fence('plot', `v${n}`)).join('\n\n');
+    expect(missingArtefacts('Ajoute un arbre et un quiz.', `Prose.\n\n${three}`)).toEqual(['diagram']);
+    const full = Array.from({ length: MAX_AUTOMATIC_VISUALS }, (_, n) => fence('plot', `v${n}`)).join('\n\n');
+    expect(missingArtefacts('Ajoute un quiz.', `Prose.\n\n${full}`)).toEqual([]);
+  });
+
+  it('leaves a family with a block alone, whichever word of the family the learner used', () => {
+    expect(missingArtefacts('Fais un seul schéma du pendule.', `Prose.\n\n${fence('figure')}`)).toEqual([]);
+    expect(missingArtefacts('Fais un seul schéma du pendule.', 'Prose.')).toEqual(['diagram|figure']);
+  });
+
+  it('asks for nothing when no artefact word is there, and does not count a quoted fence', () => {
+    expect(missingArtefacts('Pourquoi le ciel est-il bleu ?', 'Prose.')).toEqual([]);
+    expect(missingArtefacts('Ajoute un quiz.', '> ' + fence('quiz').replace(/\n/g, '\n> '))).toEqual(['quiz']);
+  });
+});

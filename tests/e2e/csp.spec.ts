@@ -63,7 +63,7 @@ async function mockLoopbackServices(page: Page, options: { llm: 'online' | 'offl
     if (options.llm === 'offline') return route.abort('connectionrefused');
     if (request.url().endsWith('/models')) return json(route, { data: [{ id: 'fixture-model' }] });
     const content = 'Scaling keeps softmax sensitive: $\\frac{QK^T}{\\sqrt{d_k}}$.';
-    return json(route, { model: 'fixture-model', choices: [{ message: { content: request.postDataJSON()?.response_format?.json_schema?.name === 'teaching_answer' ? JSON.stringify({ sections: [{ markdown: content, visual: null }] }) : content } }] });
+    return json(route, { model: 'fixture-model', choices: [{ message: { content } }] });
   });
 }
 

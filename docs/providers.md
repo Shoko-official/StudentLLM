@@ -46,7 +46,7 @@ The browser calls the same-origin route `/nvidia-nim/v1`. The Vite dev server re
 
 - never returns the credential to the page and never logs it;
 - ignores `.env` files for the key, because the variable must come from the Windows User environment;
-- exposes only `GET /models`, non-streaming `POST /chat/completions`, and constrained text-only `POST /embeddings`;
+- exposes only `GET /models`, `POST /chat/completions` (streamed when the request asks for it), and constrained text-only `POST /embeddings`;
 - answers only same-origin browser requests (`Sec-Fetch-Site: same-origin`) from a loopback client on a loopback host, so another website, device, script or tunnel cannot spend the key;
 - does not follow `NVIDIA_BASE_URL`, so the key cannot be redirected to another host.
 

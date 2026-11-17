@@ -23,6 +23,8 @@ export interface ProviderGenerateOptions {
   signal?: AbortSignal;
   responseFormat?: ProviderResponseFormat;
   maxTokens?: number;
+  /** Receives the whole visible text so far. Asks the server for a stream, so it is ignored with a responseFormat. */
+  onText?: (text: string) => void;
 }
 
 export interface LLMProvider {
@@ -56,6 +58,87 @@ function isRetryableProviderFailure(status: number, detail: string) {
   return status === 408 || status === 429 || status >= 500 || /engine protocol predict stream returned an error/i.test(detail);
 }
 
+function errorDetail(errorValue: unknown) {
+  return typeof errorValue === 'string'
+    ? errorValue
+    : errorValue && typeof errorValue === 'object' && typeof (errorValue as { message?: unknown }).message === 'string'
+      ? (errorValue as { message: string }).message
+      : undefined;
+}
+
+function finalAnswer(text: string) {
+  const content = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  if (!content || content.startsWith('<think>')) throw new Error('The model returned no final answer. Try again or choose another model in Settings.');
+  return content;
+}
+
+function visibleText(text: string) {
+  const closed = text.replace(/<think>[\s\S]*?<\/think>/g, '');
+  const open = closed.indexOf('<think>');
+  // The end of the text may be the beginning of a tag that the next chunk completes.
+  return (open === -1 ? closed : closed.slice(0, open)).replace(/<(?:t(?:h(?:i(?:nk?)?)?)?)?$/, '').trimStart();
+}
+
+function isEventStream(response: Response) {
+  return /^text\/event-stream\b/i.test(response.headers?.get?.('content-type') ?? '');
+}
+
+const STREAM_INTERRUPTED = 'Provider stream interrupted.';
+
+async function readEventStream(response: Response, onText: ProviderGenerateOptions['onText']) {
+  const tooLarge = () => new Error('The provider response is too large.');
+  if (Number(response.headers.get('content-length')) > MAX_JSON_RESPONSE_BYTES) throw tooLarge();
+  const parser = createEventStreamParser();
+  let text = '';
+  let visible = '';
+  let model: string | undefined;
+  let size = 0;
+  let finished = false;
+  // Servers differ on which end signal they send, but a body that stops with neither was cut, even if it closed normally.
+  let clean = false;
+  const reader = response.body?.getReader();
+  try {
+    while (reader && !finished) {
+      let next: ReadableStreamReadResult<Uint8Array>;
+      try {
+        next = await reader.read();
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') throw error;
+        // Each browser words a failed body read its own way, and none of them tells a student anything.
+        throw new Error(STREAM_INTERRUPTED);
+      }
+      if (!next.done) {
+        size += next.value.byteLength;
+        if (size > MAX_JSON_RESPONSE_BYTES) throw tooLarge();
+      }
+      finished = next.done;
+      for (const payload of next.done ? parser.end() : parser.push(next.value)) {
+        if (payload.trim() === '[DONE]') { finished = clean = true; break; }
+        let chunk: { model?: unknown; error?: unknown; choices?: { delta?: { content?: unknown }; finish_reason?: unknown }[] } | null;
+        try { chunk = JSON.parse(payload); } catch { continue; }
+        if (chunk?.error) {
+          const detail = errorDetail(chunk.error);
+          throw new Error(`Provider request failed${detail ? `: ${detail}` : ''}`);
+        }
+        if (typeof chunk?.model === 'string') model = chunk.model;
+        const choice = Array.isArray(chunk?.choices) ? chunk.choices[0] : undefined;
+        if (typeof choice?.delta?.content === 'string') text += choice.delta.content;
+        if (choice?.finish_reason === 'error') throw new Error(STREAM_INTERRUPTED);
+        if (choice?.finish_reason && typeof choice.finish_reason === 'string') finished = clean = true;
+      }
+      const nextVisible = visibleText(text);
+      if (nextVisible !== visible) {
+        visible = nextVisible;
+        onText?.(visible);
+      }
+    }
+  } finally {
+    void reader?.cancel().catch(() => undefined);
+  }
+  if (!clean) throw new Error(STREAM_INTERRUPTED);
+  return { text, model };
+}
+
 export class OpenAICompatibleProvider implements LLMProvider {
   readonly supportsStructuredOutputs = true;
   private readonly baseUrl: string;
@@ -84,6 +167,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
     // Qwen3-family models (qwen3-4b, qwen3.8-9b, ...) reason by default and can spend the whole
     // token budget before answering; ask for a direct answer and drop the switch if a server rejects it.
     const directAnswer = /qwen3/i.test(this.model);
+    const onText = options?.responseFormat ? undefined : options?.onText;
     const buildBody = (withReasoningSwitch: boolean) => JSON.stringify({
       model: this.model,
       messages: directAnswer
@@ -91,7 +175,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
         : messages,
       temperature: 0,
       max_tokens: maxTokens,
-      stream: false,
+      stream: Boolean(onText),
       ...(this.chatTemplateKwargs ? { chat_template_kwargs: this.chatTemplateKwargs } : {}),
       ...(withReasoningSwitch ? { reasoning_effort: 'none' } : {}),
       ...(options?.responseFormat ? { response_format: options.responseFormat } : {}),
@@ -108,14 +192,13 @@ export class OpenAICompatibleProvider implements LLMProvider {
           body: requestBody,
           signal: controller.signal,
         });
+        if (response.ok && isEventStream(response)) {
+          const { text, model } = await readEventStream(response, onText);
+          return { content: finalAnswer(text), model: model ?? this.model };
+        }
         const responseBody = await readJsonResponse(response, 'provider');
         if (!response.ok) {
-          const errorValue = responseBody.error;
-          const detail = typeof errorValue === 'string'
-            ? errorValue
-            : errorValue && typeof errorValue === 'object' && typeof (errorValue as { message?: unknown }).message === 'string'
-              ? (errorValue as { message: string }).message
-              : undefined;
+          const detail = errorDetail(responseBody.error);
           if (reasoningSwitchSent && response.status === 400 && /reasoning/i.test(detail ?? '')) {
             reasoningSwitchSent = false;
             requestBody = buildBody(false);
@@ -131,11 +214,9 @@ export class OpenAICompatibleProvider implements LLMProvider {
         const choices = Array.isArray(responseBody.choices) ? responseBody.choices : [];
         const message = choices[0] && typeof choices[0] === 'object' ? (choices[0] as { message?: unknown }).message : undefined;
         const messageRecord = message && typeof message === 'object' ? message as { content?: unknown } : {};
-        const content = typeof messageRecord.content === 'string'
-          ? messageRecord.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
-          : '';
-        if (!content || content.startsWith('<think>')) throw new Error('The model returned no final answer. Try again or choose another model in Settings.');
-        return { content: content.trim(), model: typeof responseBody.model === 'string' ? responseBody.model : this.model };
+        const content = finalAnswer(typeof messageRecord.content === 'string' ? messageRecord.content : '');
+        onText?.(content);
+        return { content, model: typeof responseBody.model === 'string' ? responseBody.model : this.model };
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError' && !options?.signal?.aborted) throw new Error('Provider request timed out.');
@@ -190,5 +271,6 @@ export function createLocalLLMProvider(env: Record<string, string | undefined> =
     return null;
   }
 }
-import { MAX_JSON_REQUEST_BYTES, readJsonResponse } from './response-json';
+import { createEventStreamParser } from './event-stream';
+import { MAX_JSON_REQUEST_BYTES, MAX_JSON_RESPONSE_BYTES, readJsonResponse } from './response-json';
 import { normalizeServiceBaseUrl } from './service-url';

@@ -5,9 +5,12 @@ const NETWORK_FAILURE = /failed to fetch|networkerror|network request failed|loa
 // The development proxy and most reverse proxies answer 502/503/504 with no detail when nothing listens behind them.
 // A gateway answer means nothing is listening behind it, whatever body the proxy attached.
 const GATEWAY_FAILURE = /^Provider request failed \((?:502|503|504)\)(?:: (.*))?$/s;
+// Once answers are streamed, a gateway that fails after its headers cuts the stream instead of answering 504.
+const STREAM_INTERRUPTED = /^Provider stream interrupted/;
 
 export const AI_UNREACHABLE_MESSAGE = 'The AI model is not reachable. Start LM Studio, load a model and switch on its local server (the desktop app also needs its "Enable CORS" option), then try again. Settings shows the connection status.';
 export const CLOUD_AI_UNREACHABLE_MESSAGE = 'The NVIDIA NIM service is not reachable. Check your internet connection and that NVIDIA_API_KEY is set for the dev server, then try again. Settings shows the connection status.';
+export const AI_CONNECTION_LOST_MESSAGE = 'The connection to the AI model was lost while it was answering. Check that LM Studio is still running with a model loaded, then try again. Settings shows the connection status.';
 export const AI_TIMEOUT_MESSAGE = 'The AI model took too long to answer. Try again, ask a shorter question, or pick a smaller model in Settings.';
 
 export function isNetworkFailure(error: unknown) {
@@ -19,9 +22,10 @@ export function describeAiFailure(error: unknown, fallback = 'The AI model could
   if (!(error instanceof Error)) return fallback;
   const message = error.message.trim();
   if (!message) return fallback;
-  if (options.cloud && (/timed out/i.test(message) || /^Provider request failed \(504\)/.test(message))) return 'The NVIDIA model is not answering right now. Try another model in Settings.';
+  if (options.cloud && (/timed out/i.test(message) || /^Provider request failed \(504\)/.test(message) || STREAM_INTERRUPTED.test(message))) return 'The NVIDIA model is not answering right now. Try another model in Settings.';
   if (options.cloud && /^Provider request failed \((?:404|410)\)/.test(message)) return 'This NVIDIA model is no longer available. Choose another model in Settings.';
   const unreachable = options.cloud ? CLOUD_AI_UNREACHABLE_MESSAGE : AI_UNREACHABLE_MESSAGE;
+  if (STREAM_INTERRUPTED.test(message)) return AI_CONNECTION_LOST_MESSAGE;
   if (isNetworkFailure(error)) return unreachable;
   const gateway = GATEWAY_FAILURE.exec(message);
   if (gateway) {

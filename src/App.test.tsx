@@ -10,6 +10,7 @@ import { SOURCE_REMOVAL_MAX_MS, SOURCE_REMOVAL_UNDO_MS } from './lib/source-remo
 import type { SourceBlobStore } from './lib/source-storage';
 import { WORKSPACE_STORAGE_KEY } from './lib/workspace-storage';
 import { createFixtureWorkspace, FIXTURE_LESSON_ID } from './test/workspace-fixture';
+import { TUTOR_LENGTH_REMINDER, tutorLanguageNote } from './prompts';
 
 const transcriptPreview = () => within(screen.getByRole('region', { name: 'Transcript preview' }));
 type User = ReturnType<typeof userEvent.setup>;
@@ -543,8 +544,9 @@ describe('StudentLLM workspace', () => {
     expect(await screen.findByText('The source explains gradient descent.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Source · optimization.md · part 1' })).toBeInTheDocument();
     expect(screen.getByText('LM Studio · mock-local-model')).toBeInTheDocument();
-    const chatCall = generate.mock.calls.at(-1)!;
-    expect(chatCall[0].at(-1)).toEqual({ role: 'user', content: 'What updates parameters using the learning rate?' });
+    const chatCall = generate.mock.calls.filter((call) => !call[0][0].content.includes('Deciding whether an answer needs a visual')).at(-1)!;
+    expect(chatCall[0].at(-2)).toEqual({ role: 'user', content: 'What updates parameters using the learning rate?' });
+    expect(chatCall[0].at(-1)).toEqual({ role: 'user', content: `${TUTOR_LENGTH_REMINDER} ${tutorLanguageNote('English')}` });
     expect(chatCall[0][0].content).not.toContain('undefined');
     expect(chatCall[0][0].content).not.toContain('Gradient descent updates parameters');
     expect(chatCall[0].find((message: { role: string; content: string }) => message.role === 'user' && message.content.includes('course_evidence'))?.content).toContain('Gradient descent updates parameters');
@@ -573,7 +575,8 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText('The boiling point depends on the local pressure; specify pressure before calculating it.')).toBeInTheDocument();
-    expect(generate).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate.mock.calls[1][0][0].content).toContain('Deciding whether an answer needs a visual');
   });
 
   it('answers a general visualization request without requiring course evidence', async () => {
@@ -589,7 +592,8 @@ describe('StudentLLM workspace', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByText(/Here is the unit circle/)).toBeInTheDocument();
-    expect(generate).toHaveBeenCalledTimes(1);
+    // The answer, the call for the named visualisation, and the general call after that reply could not be read.
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(3));
     expect(screen.queryByRole('button', { name: /Source ·/ })).not.toBeInTheDocument();
   });
 

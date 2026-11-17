@@ -16,20 +16,23 @@ test.beforeEach(async ({ page }) => {
 test('renders a generated visual lesson, recalculates locally and restores the answer after reload', async ({ page }) => {
   const messages: unknown[] = [];
   await page.route('**/fixture-provider/v1/models', route => route.fulfill({ json: { data: [{ id: 'test-visual-model' }] } }));
+  const visuals = [...lesson.matchAll(/```student-visual\n([\s\S]*?)```/g)].map((match) => JSON.parse(match[1]));
+  let index = 0;
+  const tutorMarkdown = lesson.replace(/```student-visual\n([\s\S]*?)```/g, (_whole, raw) => {
+    const visual = JSON.parse(raw);
+    index += 1;
+    return '```student-visual-request\n' + JSON.stringify({ id: `v${index}`, type: visual.type, intent: visual.title, content: visual.title }) + '\n```';
+  });
   await page.route('**/v1/chat/completions', async route => {
     const request = route.request().postDataJSON();
     messages.push(request);
-    const sections: Array<{ markdown: string; visual: unknown }> = [];
-    let cursor = 0;
-    for (const match of lesson.matchAll(/```student-visual\n([\s\S]*?)```/g)) {
-      const visual = JSON.parse(match[1]);
-      if (visual.type === 'plot') visual.outputs[0].unit = ' ';
-      sections.push({ markdown: lesson.slice(cursor, match.index).trim(), visual });
-      cursor = match.index! + match[0].length;
-    }
-    if (lesson.slice(cursor).trim()) sections.push({ markdown: lesson.slice(cursor).trim(), visual: null });
-    expect(request.response_format.json_schema.name).toBe('teaching_answer');
-    await route.fulfill({ json: { model: 'test-visual-model', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({ sections }) } }] } });
+    const format = request.response_format?.json_schema?.name as string | undefined;
+    if (!format) return route.fulfill({ json: { model: 'test-visual-model', choices: [{ finish_reason: 'stop', message: { content: tutorMarkdown } }] } });
+    const { request: brief } = JSON.parse(request.messages.at(-1).content);
+    const visual = structuredClone(visuals[Number(brief.id.slice(1)) - 1]);
+    expect(format).toBe(`teaching_${visual.type}`);
+    if (visual.type === 'plot') visual.outputs[0].unit = ' ';
+    await route.fulfill({ json: { model: 'test-visual-model', choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(visual) } }] } });
   });
   await page.goto('/');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -61,8 +64,8 @@ test('renders a generated visual lesson, recalculates locally and restores the a
   await page.getByRole('tab', { name: 'Chat', exact: true }).click();
   await expect(slider).toHaveValue('1');
   expect(messages).toHaveLength(requestsBefore);
-  const request = messages.at(-1) as { messages: Array<{ role: string; content: string }> };
-  expect(request.messages[0].content).toContain('student-visual');
+  const request = messages[0] as { messages: Array<{ role: string; content: string }> };
+  expect(request.messages[0].content).toContain('student-visual-request');
 });
 
 test('keeps visual lessons usable at320px and keyboard accessible in dark mode', async ({ page }) => {

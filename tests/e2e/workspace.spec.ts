@@ -59,7 +59,7 @@ async function connectFixtureProvider(page: Page, content: string, status = 200)
   await page.route('**/fixture-provider/v1/chat/completions', (route) => route.fulfill({
     status,
     json: status === 200
-      ? { model: 'fixture-model', choices: [{ message: { content: route.request().postDataJSON()?.response_format?.json_schema?.name === 'teaching_answer' ? JSON.stringify({ sections: [{ markdown: content, visual: null }] }) : content } }] }
+      ? { model: 'fixture-model', choices: [{ message: { content } }] }
       : { error: { message: content } },
   }));
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -1250,6 +1250,16 @@ test.describe('StudentLLM workspace', () => {
     await page.getByRole('button', { name: 'Close navigation', exact: true }).click();
     await expect(navigation).toBeHidden();
     await expect(page.getByRole('tab', { name: 'Study' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  test('reserves the scrollbar strip only on wide windows, so a narrow page cannot scroll sideways', async ({ page }) => {
+    await page.addInitScript((workspace) => localStorage.setItem('studentllm.workspace.v1', JSON.stringify(workspace)), createFixtureWorkspace());
+    const gutter = () => page.evaluate(() => getComputedStyle(document.documentElement).scrollbarGutter);
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.goto('/');
+    expect(await gutter()).toBe('auto');
+    await page.setViewportSize({ width: 1100, height: 800 });
+    expect(await gutter()).toBe('stable');
   });
 });
 

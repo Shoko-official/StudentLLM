@@ -19,6 +19,27 @@ Version `0.1.0` is prepared for its first tagged release. `main` carries the fix
 
 Known limits of this release: the installers are not code signed, the macOS build targets Apple Silicon only, and the optional Python speech and document services are not bundled. The Tauri content security policy is still unset (set in Unreleased, see CHANGELOG). The provider and benchmark evidence below was not re-run for this release.
 
+## 2026-11-03 tutor pipeline gate
+
+Course chat now builds an answer in two steps: the tutor writes the explanation and requests visuals, then each visual is built, checked and retried on its own (see [teaching visuals](teaching-visuals.md)). The previous single-envelope pipeline and its prompts are removed. The change was decided by a measured gate that compared both pipelines on the same questions, fixed before the first run, in `benchmarks/tutor/evaluate.mjs`.
+
+The gate passed at commit `8e3864f` on `nvidia/nemotron-3.5-lightning-30b-a3b` (Lightning) and `nvidia/nemotron-3.5-super-vl-120b-a12b` (Super), both with thinking disabled, through NVIDIA's hosted endpoint. Two samples of each quality question per model, with hidden test questions: 6 quality cases (4 committed, 2 held out and hidden) and 10 rate prompts per model, 132 cells and 230 requests in all.
+
+| Measure | Old pipeline | Tutor pipeline |
+| --- | --- | --- |
+| Complete artefacts, both models, of 52 | 22 | 43 |
+| Complete artefacts, sealed questions alone, of 16 | 5 | 12 |
+| Complete artefacts, Lightning / Super, of 26 each | 6 / 16 | 22 / 21 |
+| Numeric errors in a visual | 9 | 3 |
+| Failed replies | 5 | 0 |
+| Median time to first text, Lightning / Super | 12.3 s / 6.0 s (whole reply) | 5.4 s / 3.0 s |
+| Visual offered for an explanatory question | not a criterion | 100 % |
+| Visual offered for a definition | not a criterion | 0 % |
+
+All seven criteria passed. `mistralai/mistral-large-4-1t-a52b` was measured apart, as report-only, and produced no complete artefact in either pipeline: 39 of its 44 cells timed out at the 120 s limit (all 24 quality cells and 15 of the 20 rate cells), and the 5 that answered were definitions in the rate cells (2 old, 3 new), so it says nothing about the change.
+
+Small exploratory samples on synthetic cases. Local models were not measured. The gate counts a number as wrong only inside a visual: wrong numbers in the prose are not measured by it, and an independent blind reading of the replies found that they remain, more often on Lightning. Curves, answer keys and figures in the text still need review. One commit after `8e3864f` changed only the detection of the message language (`src/lib/message-language.ts`) and was not re-measured. The harness that produced these numbers needed the old pipeline: `benchmarks/tutor/run.mjs` now only checks case files, and earlier results stay valid only for the commit recorded in their `run.json`.
+
 ## 2026-09-16 completion baseline
 
 At that date `main` was `f4f54ef`, the squash merge of PRs [#321](https://github.com/Shoko-official/StudentLLM/pull/321) and [#322](https://github.com/Shoko-official/StudentLLM/pull/322). These deliveries separate general educational requests from course-specific evidence requirements, preserve extracted math structure, and make chat and Study citations open the original local source.
